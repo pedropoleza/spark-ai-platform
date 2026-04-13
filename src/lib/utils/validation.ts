@@ -97,6 +97,7 @@ export const updateAgentConfigSchema = z.object({
   data_fields: z.array(dataFieldSchema).optional(),
   ai_model: z.string().min(1).optional(),
   custom_instructions: z.string().optional(),
+  knowledge_base_instructions: z.string().optional(),
   system_prompt_override: z.string().nullable().optional(),
   debounce_seconds: z.number().min(5).max(60).optional(),
   max_messages_per_conversation: z.number().min(10).max(200).optional(),

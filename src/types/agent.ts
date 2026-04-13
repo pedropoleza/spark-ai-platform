@@ -92,6 +92,7 @@ export interface AgentConfig {
   data_fields: DataField[];
   ai_model: string;
   custom_instructions: string;
+  knowledge_base_instructions: string;
   system_prompt_override: string | null;
   debounce_seconds: number;
   max_messages_per_conversation: number;

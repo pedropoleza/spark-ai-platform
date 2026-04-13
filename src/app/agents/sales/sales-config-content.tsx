@@ -65,6 +65,7 @@ const defaultConfig: ConfigForm = {
   ],
   ai_model: "gpt-4.1-mini",
   custom_instructions: "",
+  knowledge_base_instructions: "",
   system_prompt_override: null,
   debounce_seconds: 15,
   max_messages_per_conversation: 50,
@@ -472,8 +473,25 @@ export function SalesConfigContent() {
                 O conteudo sera incluido no contexto do prompt automaticamente.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <KnowledgeBaseEditor agentId={agentId} />
+            <CardContent className="space-y-6">
+              <div>
+                <Label className="text-sm font-medium">Instrucoes gerais da base de conhecimento</Label>
+                <p className="text-xs text-neutral-500 mb-2">
+                  Descreva os processos e como a IA deve usar TODO o material abaixo. Ex: prioridades, o que nunca dizer, ordem de consulta, termos proibidos, tom ao citar informacoes do material.
+                </p>
+                <Textarea
+                  value={config.knowledge_base_instructions || ""}
+                  onChange={(e) => updateConfig("knowledge_base_instructions", e.target.value)}
+                  rows={8}
+                  placeholder={`Exemplo:\n- Sempre que o lead perguntar sobre precos, consulte primeiro o PDF "Tabela 2026" e cite o valor exato.\n- Processo de venda: qualificar necessidade -> apresentar planos do documento oficial -> agendar reuniao.\n- NUNCA ofereca desconto. Nao esta previsto em nenhum material.\n- Se o lead pedir algo tecnico nao coberto, diga que vai confirmar com a equipe.\n- Ao citar numeros (prazos, valores, SKUs), use exatamente o que esta no material.`}
+                />
+                <p className="text-[10px] text-neutral-400 mt-1">
+                  Este texto eh injetado no prompt junto com todos os itens da base. Para instrucoes especificas de UM item (um PDF em particular), use o botao de editar no item individual abaixo.
+                </p>
+              </div>
+              <div className="border-t border-neutral-200 pt-6">
+                <KnowledgeBaseEditor agentId={agentId} />
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

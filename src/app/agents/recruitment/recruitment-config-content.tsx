@@ -64,6 +64,7 @@ const defaultConfig: ConfigForm = {
   ],
   ai_model: "gpt-4.1-mini",
   custom_instructions: "",
+  knowledge_base_instructions: "",
   system_prompt_override: null,
   debounce_seconds: 15,
   max_messages_per_conversation: 50,
@@ -311,7 +312,26 @@ export function RecruitmentConfigContent() {
         <TabsContent value="context">
           <Card>
             <CardHeader><CardTitle>Knowledge Base</CardTitle><CardDescription>Documentos e informacoes sobre a oportunidade, empresa, etc.</CardDescription></CardHeader>
-            <CardContent><KnowledgeBaseEditor agentId={agentId} /></CardContent>
+            <CardContent className="space-y-6">
+              <div>
+                <Label className="text-sm font-medium">Instrucoes gerais da base de conhecimento</Label>
+                <p className="text-xs text-neutral-500 mb-2">
+                  Descreva os processos e como a IA deve usar TODO o material abaixo. Ex: prioridades, o que nunca dizer, ordem de consulta, tom ao citar informacoes do material.
+                </p>
+                <Textarea
+                  value={config.knowledge_base_instructions || ""}
+                  onChange={(e) => updateConfig("knowledge_base_instructions", e.target.value)}
+                  rows={8}
+                  placeholder={`Exemplo:\n- Use o PDF "Descricao da vaga" como fonte unica de verdade sobre responsabilidades.\n- Nunca cite valores de salario que nao estejam no material.\n- Se o lead pedir detalhes tecnicos, cite exatamente o que esta no documento.`}
+                />
+                <p className="text-[10px] text-neutral-400 mt-1">
+                  Este texto eh injetado no prompt junto com todos os itens da base. Para instrucoes de UM item especifico, use o botao de editar no item individual abaixo.
+                </p>
+              </div>
+              <div className="border-t border-neutral-200 pt-6">
+                <KnowledgeBaseEditor agentId={agentId} />
+              </div>
+            </CardContent>
           </Card>
         </TabsContent>
 

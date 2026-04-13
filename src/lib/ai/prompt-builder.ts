@@ -498,7 +498,8 @@ function buildFeedbackSection(ctx: PromptContext): string {
 }
 
 function buildKnowledgeBaseSection(ctx: PromptContext): string {
-  if (!ctx.knowledgeBase || ctx.knowledgeBase.length === 0) return "";
+  const generalInstructions = (ctx.config.knowledge_base_instructions || "").trim();
+  if ((!ctx.knowledgeBase || ctx.knowledgeBase.length === 0) && !generalInstructions) return "";
 
   // Budget: 20000 chars totais, 5000 por item no maximo
   const GLOBAL_CAP = 20000;
@@ -506,14 +507,15 @@ function buildKnowledgeBaseSection(ctx: PromptContext): string {
 
   let remaining = GLOBAL_CAP;
   const renderedItems: string[] = [];
+  const kbItems = ctx.knowledgeBase || [];
 
-  for (let i = 0; i < ctx.knowledgeBase.length; i++) {
+  for (let i = 0; i < kbItems.length; i++) {
     if (remaining <= 0) {
-      renderedItems.push(`[... ${ctx.knowledgeBase.length - i} item(ns) adicionais omitido(s) por limite de contexto]`);
+      renderedItems.push(`[... ${kbItems.length - i} item(ns) adicionais omitido(s) por limite de contexto]`);
       break;
     }
 
-    const item = ctx.knowledgeBase[i];
+    const item = kbItems[i];
     const title = sanitize(item.title || "Sem titulo", 100);
 
     let typeLabel: string;
@@ -548,6 +550,14 @@ function buildKnowledgeBaseSection(ctx: PromptContext): string {
     renderedItems.push(`${header}${meta ? "\n" + meta : ""}\nConteudo:\n${body}${suffix}`);
   }
 
+  const generalBlock = generalInstructions
+    ? `\n### INSTRUCOES GERAIS DA BASE (definidas pelo administrador)\n${sanitize(generalInstructions, 4000)}\n`
+    : "";
+
+  const itemsBlock = renderedItems.length > 0
+    ? `\n### ITENS DA BASE\n\n${renderedItems.join("\n\n")}`
+    : "\n(Nenhum item cadastrado — siga as instrucoes gerais acima)";
+
   return `## BASE DE CONHECIMENTO (FONTE PRIMARIA DE VERDADE)
 
 As informacoes abaixo foram fornecidas pelo administrador deste agente e representam a VERDADE oficial sobre a empresa, produtos, servicos, processos e politicas. Elas tem PRIORIDADE ABSOLUTA sobre qualquer conhecimento geral que voce possa ter.
@@ -560,10 +570,7 @@ REGRAS OBRIGATORIAS DA BASE:
 5. NUNCA mencione ao lead que voce "tem uma base de conhecimento", "documento", "arquivo de referencia" ou similar — use a informacao de forma natural, como quem sabe do assunto
 6. Se a base tiver multiplos itens sobre o mesmo topico, combine as informacoes coerentemente. Se houver conflito entre itens, use o item mais recente (ITEM de numero maior) como fonte
 7. Se o lead pedir detalhes especificos (valores, datas, numeros) que estao na base, repita-os com precisao — nao arredonde, nao aproxime
-
-### ITENS DA BASE
-
-${renderedItems.join("\n\n")}`;
+${generalBlock}${itemsBlock}`;
 }
 
 function buildCustomInstructionsSection(ctx: PromptContext): string {
