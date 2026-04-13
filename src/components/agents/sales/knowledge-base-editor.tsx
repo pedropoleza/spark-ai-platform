@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, FileText, Globe, Type, Upload, Loader2 } from "lucide-react";
+import { Plus, Trash2, FileText, Globe, Type, Upload, Loader2, Pencil, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +16,8 @@ interface KBItem {
   content: string;
   file_name?: string;
   file_url?: string;
+  description?: string | null;
+  usage_instructions?: string | null;
   token_count: number;
   created_at: string;
 }
@@ -24,6 +26,12 @@ interface KnowledgeBaseEditorProps {
   agentId: string | null;
 }
 
+const INSTRUCTION_PLACEHOLDER =
+  "Ex: Use este documento como fonte oficial para responder sobre precos e politicas de entrega. Se o lead perguntar prazos, cite exatamente os valores da tabela. Nunca mencione o nome do arquivo.";
+
+const DESCRIPTION_PLACEHOLDER =
+  "Ex: Tabela de precos e prazos de entrega (2026). Contem SKUs, valores e regioes atendidas.";
+
 export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
   const [items, setItems] = useState<KBItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +39,15 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
   const [addType, setAddType] = useState<"text" | "file" | "url" | null>(null);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
+  const [description, setDescription] = useState("");
+  const [usageInstructions, setUsageInstructions] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editUsage, setEditUsage] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const fetchItems = useCallback(async () => {
     if (!agentId) return;
@@ -52,6 +68,15 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
 
   const totalTokens = items.reduce((sum, item) => sum + (item.token_count || 0), 0);
 
+  const resetForm = () => {
+    setAddType(null);
+    setAdding(false);
+    setTitle("");
+    setContent("");
+    setDescription("");
+    setUsageInstructions("");
+  };
+
   const handleAddText = async () => {
     if (!agentId || !title || !content) return;
     setUploading(true);
@@ -59,7 +84,14 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
       const res = await fetch("/api/knowledge-base", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_id: agentId, type: "text", title, content }),
+        body: JSON.stringify({
+          agent_id: agentId,
+          type: "text",
+          title,
+          content,
+          description,
+          usage_instructions: usageInstructions,
+        }),
       });
       if (res.ok) {
         await fetchItems();
@@ -77,7 +109,14 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
       const res = await fetch("/api/knowledge-base", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agent_id: agentId, type: "url", title, content }),
+        body: JSON.stringify({
+          agent_id: agentId,
+          type: "url",
+          title,
+          content,
+          description,
+          usage_instructions: usageInstructions,
+        }),
       });
       if (res.ok) {
         await fetchItems();
@@ -97,6 +136,8 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
       formData.append("file", file);
       formData.append("agent_id", agentId);
       formData.append("title", title || file.name);
+      formData.append("description", description);
+      formData.append("usage_instructions", usageInstructions);
 
       const res = await fetch("/api/knowledge-base", {
         method: "POST",
@@ -116,11 +157,42 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
     setItems((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const resetForm = () => {
-    setAddType(null);
-    setAdding(false);
-    setTitle("");
-    setContent("");
+  const startEdit = (item: KBItem) => {
+    setEditingId(item.id);
+    setEditTitle(item.title);
+    setEditDescription(item.description || "");
+    setEditUsage(item.usage_instructions || "");
+    setExpandedId(item.id);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditTitle("");
+    setEditDescription("");
+    setEditUsage("");
+  };
+
+  const saveEdit = async () => {
+    if (!editingId) return;
+    setSavingEdit(true);
+    try {
+      const res = await fetch("/api/knowledge-base", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingId,
+          title: editTitle,
+          description: editDescription,
+          usage_instructions: editUsage,
+        }),
+      });
+      if (res.ok) {
+        await fetchItems();
+        cancelEdit();
+      }
+    } finally {
+      setSavingEdit(false);
+    }
   };
 
   const iconMap = { text: Type, file: FileText, url: Globe };
@@ -152,22 +224,111 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
         <div className="space-y-2">
           {items.map((item) => {
             const Icon = iconMap[item.type] || FileText;
+            const isExpanded = expandedId === item.id;
+            const isEditing = editingId === item.id;
+            const hasMeta = !!(item.description || item.usage_instructions);
             return (
-              <div key={item.id} className="flex items-center gap-3 p-3 bg-white border border-neutral-200 rounded-lg group">
-                <Icon className="w-4 h-4 text-neutral-400 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium text-neutral-900 block truncate">{item.title}</span>
-                  <span className="text-xs text-neutral-400">
-                    {item.type === "file" ? item.file_name : item.type === "url" ? "URL" : "Texto"}
-                    {" — ~"}{item.token_count.toLocaleString()} tokens
-                  </span>
+              <div key={item.id} className="bg-white border border-neutral-200 rounded-lg group overflow-hidden">
+                <div className="flex items-center gap-3 p-3">
+                  <Icon className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(isExpanded ? null : item.id)}
+                    className="flex-1 min-w-0 text-left"
+                  >
+                    <span className="text-sm font-medium text-neutral-900 block truncate">{item.title}</span>
+                    <span className="text-xs text-neutral-400">
+                      {item.type === "file" ? item.file_name : item.type === "url" ? "URL" : "Texto"}
+                      {" — ~"}{item.token_count.toLocaleString()} tokens
+                      {hasMeta && " · com instrucoes"}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setExpandedId(isExpanded ? null : item.id)}
+                    className="text-neutral-300 hover:text-neutral-600"
+                    title={isExpanded ? "Recolher" : "Expandir"}
+                  >
+                    {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                  <button
+                    onClick={() => startEdit(item)}
+                    className="text-neutral-300 hover:text-neutral-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Editar descricao e instrucoes"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(item.id)}
+                    className="text-neutral-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    title="Remover"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleDelete(item.id)}
-                  className="text-neutral-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+
+                {isExpanded && (
+                  <div className="px-3 pb-3 border-t border-neutral-100 pt-3 space-y-3">
+                    {isEditing ? (
+                      <>
+                        <div>
+                          <Label className="text-xs">Titulo</Label>
+                          <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Descricao (o que este material contem)</Label>
+                          <Textarea
+                            value={editDescription}
+                            onChange={(e) => setEditDescription(e.target.value)}
+                            rows={2}
+                            placeholder={DESCRIPTION_PLACEHOLDER}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs">Instrucoes para a IA (como usar este material)</Label>
+                          <Textarea
+                            value={editUsage}
+                            onChange={(e) => setEditUsage(e.target.value)}
+                            rows={4}
+                            placeholder={INSTRUCTION_PLACEHOLDER}
+                          />
+                          <p className="text-[10px] text-neutral-400 mt-1">
+                            Estas instrucoes sao enviadas junto com o conteudo para a IA e orientam como ela deve aplicar este item especifico.
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={saveEdit} disabled={savingEdit || !editTitle}>
+                            {savingEdit ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
+                            Salvar
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={cancelEdit}>Cancelar</Button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {item.description ? (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-neutral-400 mb-0.5">Descricao</p>
+                            <p className="text-xs text-neutral-700 whitespace-pre-wrap">{item.description}</p>
+                          </div>
+                        ) : null}
+                        {item.usage_instructions ? (
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-neutral-400 mb-0.5">Instrucoes para a IA</p>
+                            <p className="text-xs text-neutral-700 whitespace-pre-wrap">{item.usage_instructions}</p>
+                          </div>
+                        ) : null}
+                        {!hasMeta && (
+                          <p className="text-xs text-neutral-400 italic">
+                            Nenhuma instrucao definida. Clique no lapis para orientar a IA sobre como usar este material.
+                          </p>
+                        )}
+                        {item.type === "url" && item.file_url && (
+                          <p className="text-[10px] text-neutral-400 break-all">Fonte: {item.file_url}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -205,43 +366,96 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                   <span className="text-[10px] text-neutral-400">Importar de um site</span>
                 </button>
               </div>
-            ) : addType === "text" ? (
-              <>
-                <Label className="text-xs">Titulo</Label>
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Informacoes sobre produtos" />
-                <Label className="text-xs">Conteudo</Label>
-                <Textarea value={content} onChange={(e) => setContent(e.target.value)} rows={6} placeholder="Cole aqui o texto que a IA deve usar como referencia..." />
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={handleAddText} disabled={!title || !content || uploading}>
-                    {uploading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
-                    Adicionar
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={resetForm}>Cancelar</Button>
-                </div>
-              </>
-            ) : addType === "file" ? (
-              <>
-                <Label className="text-xs">Titulo (opcional)</Label>
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Nome do documento" />
-                <Label className="text-xs">Arquivo</Label>
-                <Input type="file" accept=".pdf,.txt,.doc,.docx,.csv,.md" onChange={handleUploadFile} disabled={uploading} />
-                {uploading && <p className="text-xs text-neutral-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Processando arquivo...</p>}
-                <Button size="sm" variant="ghost" onClick={resetForm}>Cancelar</Button>
-              </>
             ) : (
               <>
-                <Label className="text-xs">Titulo</Label>
-                <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Site da empresa" />
-                <Label className="text-xs">URL</Label>
-                <Input value={content} onChange={(e) => setContent(e.target.value)} placeholder="https://..." />
-                <p className="text-xs text-neutral-400">O sistema vai extrair o texto do site automaticamente</p>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={handleAddUrl} disabled={!title || !content || uploading}>
-                    {uploading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
-                    Importar
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={resetForm}>Cancelar</Button>
+                {addType === "text" && (
+                  <>
+                    <div>
+                      <Label className="text-xs">Titulo</Label>
+                      <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Informacoes sobre produtos" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Conteudo</Label>
+                      <Textarea value={content} onChange={(e) => setContent(e.target.value)} rows={6} placeholder="Cole aqui o texto que a IA deve usar como referencia..." />
+                    </div>
+                  </>
+                )}
+
+                {addType === "file" && (
+                  <>
+                    <div>
+                      <Label className="text-xs">Titulo (opcional)</Label>
+                      <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Nome do documento" />
+                    </div>
+                  </>
+                )}
+
+                {addType === "url" && (
+                  <>
+                    <div>
+                      <Label className="text-xs">Titulo</Label>
+                      <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Site da empresa" />
+                    </div>
+                    <div>
+                      <Label className="text-xs">URL</Label>
+                      <Input value={content} onChange={(e) => setContent(e.target.value)} placeholder="https://..." />
+                      <p className="text-[10px] text-neutral-400 mt-1">O sistema vai extrair o texto do site automaticamente</p>
+                    </div>
+                  </>
+                )}
+
+                {/* Campos comuns: descricao + instrucoes */}
+                <div className="pt-2 border-t border-neutral-100 space-y-3">
+                  <div>
+                    <Label className="text-xs">Descricao (o que este material contem)</Label>
+                    <Textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      rows={2}
+                      placeholder={DESCRIPTION_PLACEHOLDER}
+                    />
+                    <p className="text-[10px] text-neutral-400 mt-1">
+                      Ajuda voce a identificar o item depois. Tambem eh enviada para a IA como contexto.
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Instrucoes para a IA (como usar este material)</Label>
+                    <Textarea
+                      value={usageInstructions}
+                      onChange={(e) => setUsageInstructions(e.target.value)}
+                      rows={4}
+                      placeholder={INSTRUCTION_PLACEHOLDER}
+                    />
+                    <p className="text-[10px] text-neutral-400 mt-1">
+                      Seja especifico: diga quando usar, o que extrair e o que evitar. Ex: "Quando o lead perguntar sobre prazos, cite exatamente os valores da tabela. Nao fale em desconto — nao eh oferecido."
+                    </p>
+                  </div>
                 </div>
+
+                {addType === "file" ? (
+                  <>
+                    <Label className="text-xs">Arquivo</Label>
+                    <Input type="file" accept=".pdf,.txt,.doc,.docx,.csv,.md" onChange={handleUploadFile} disabled={uploading} />
+                    {uploading && <p className="text-xs text-neutral-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Processando arquivo...</p>}
+                    <Button size="sm" variant="ghost" onClick={resetForm}>Cancelar</Button>
+                  </>
+                ) : addType === "text" ? (
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={handleAddText} disabled={!title || !content || uploading}>
+                      {uploading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
+                      Adicionar
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={resetForm}>Cancelar</Button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={handleAddUrl} disabled={!title || !content || uploading}>
+                      {uploading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
+                      Importar
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={resetForm}>Cancelar</Button>
+                  </div>
+                )}
               </>
             )}
           </CardContent>

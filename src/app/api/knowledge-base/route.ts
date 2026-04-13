@@ -40,6 +40,8 @@ export async function POST(request: NextRequest) {
     const file = formData.get("file") as File | null;
     const agentId = formData.get("agent_id") as string;
     const title = formData.get("title") as string || file?.name || "Documento";
+    const description = (formData.get("description") as string) || null;
+    const usageInstructions = (formData.get("usage_instructions") as string) || null;
 
     if (!file || !agentId) {
       return NextResponse.json({ error: "file e agent_id obrigatorios" }, { status: 400 });
@@ -86,6 +88,8 @@ export async function POST(request: NextRequest) {
         content,
         file_name: file.name,
         token_count: tokenEstimate,
+        description,
+        usage_instructions: usageInstructions,
       })
       .select()
       .single();
@@ -98,7 +102,7 @@ export async function POST(request: NextRequest) {
   } else {
     // Texto ou URL
     const body = await request.json();
-    const { agent_id, type, title, content } = body;
+    const { agent_id, type, title, content, description, usage_instructions } = body;
 
     if (!agent_id || !type || !title) {
       return NextResponse.json({ error: "Campos obrigatorios faltando" }, { status: 400 });
@@ -139,6 +143,8 @@ export async function POST(request: NextRequest) {
         content: finalContent,
         file_url: type === "url" ? content : null,
         token_count: tokenEstimate,
+        description: description || null,
+        usage_instructions: usage_instructions || null,
       })
       .select()
       .single();
@@ -149,6 +155,44 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ item: data }, { status: 201 });
   }
+}
+
+// PATCH /api/knowledge-base — atualizar titulo, descricao e instrucoes
+export async function PATCH(request: NextRequest) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
+  }
+
+  const body = await request.json();
+  const { id, title, description, usage_instructions } = body;
+  if (!id) {
+    return NextResponse.json({ error: "id obrigatorio" }, { status: 400 });
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (typeof title === "string") updates.title = title;
+  if (description !== undefined) updates.description = description || null;
+  if (usage_instructions !== undefined) updates.usage_instructions = usage_instructions || null;
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "Nada para atualizar" }, { status: 400 });
+  }
+
+  const supabase = createServerClient();
+  const { data, error } = await supabase
+    .from("knowledge_base")
+    .update(updates)
+    .eq("id", id)
+    .eq("location_id", session.locationId)
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ item: data });
 }
 
 // DELETE /api/knowledge-base?id=xxx

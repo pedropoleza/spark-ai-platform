@@ -47,6 +47,8 @@ export interface KnowledgeBaseItem {
   content: string;
   file_name?: string | null;
   file_url?: string | null;
+  description?: string | null;
+  usage_instructions?: string | null;
 }
 
 interface PromptContext {
@@ -536,9 +538,14 @@ function buildKnowledgeBaseSection(ctx: PromptContext): string {
     remaining -= content.length;
 
     const header = `[ITEM ${i + 1}] Tipo: ${typeLabel} | Titulo: "${title}"${sourceLabel}`;
+    const descLine = item.description ? `Descricao: ${sanitize(item.description, 500)}` : "";
+    const usageLine = item.usage_instructions
+      ? `Como usar: ${sanitize(item.usage_instructions, 800)}`
+      : "";
+    const meta = [descLine, usageLine].filter(Boolean).join("\n");
     const body = content || "(vazio)";
     const suffix = truncated ? "\n[...conteudo truncado]" : "";
-    renderedItems.push(`${header}\n${body}${suffix}`);
+    renderedItems.push(`${header}${meta ? "\n" + meta : ""}\nConteudo:\n${body}${suffix}`);
   }
 
   return `## BASE DE CONHECIMENTO (FONTE PRIMARIA DE VERDADE)
