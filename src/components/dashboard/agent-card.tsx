@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils/cn";
 import type { AgentType, AgentStatus } from "@/types/agent";
 
 const iconMap = {
@@ -50,11 +51,24 @@ export function AgentCard({
   const isActive = status === "active";
 
   return (
-    <Card className={comingSoon ? "opacity-60" : ""}>
+    <Card className={cn("group relative overflow-hidden surface-glass-hover", comingSoon && "opacity-60")}>
+      {isActive && !comingSoon && (
+        <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-violet-500/60 to-transparent" />
+      )}
       <CardContent className="p-6">
-        <div className="flex items-start justify-between mb-4">
-          <div className="w-10 h-10 rounded-lg bg-neutral-100 flex items-center justify-center">
-            <Icon className="w-5 h-5 text-neutral-600" />
+        <div className="flex items-start justify-between mb-5">
+          <div className="relative">
+            <div className={cn(
+              "w-11 h-11 rounded-xl flex items-center justify-center border transition-all duration-300",
+              isActive && !comingSoon
+                ? "brand-gradient border-violet-400/40 shadow-[0_8px_20px_-8px_rgba(139,92,246,0.6)]"
+                : "bg-white/5 border-white/10"
+            )}>
+              <Icon className={cn("w-5 h-5", isActive && !comingSoon ? "text-white" : "text-neutral-400")} />
+            </div>
+            {isActive && !comingSoon && (
+              <div className="absolute inset-0 brand-gradient rounded-xl blur-xl opacity-30 -z-10" />
+            )}
           </div>
           {comingSoon ? (
             <Badge variant="secondary">Em breve</Badge>
@@ -72,8 +86,8 @@ export function AgentCard({
           )}
         </div>
 
-        <h3 className="font-semibold text-neutral-900 mb-1">{info.name}</h3>
-        <p className="text-sm text-neutral-500 mb-4">{info.description}</p>
+        <h3 className="font-semibold text-neutral-50 mb-1 tracking-tight">{info.name}</h3>
+        <p className="text-sm text-neutral-400 mb-5 leading-relaxed">{info.description}</p>
 
         {!comingSoon && (
           <Button

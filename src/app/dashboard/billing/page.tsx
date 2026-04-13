@@ -138,7 +138,7 @@ export default function BillingPage() {
 
           {/* Info sobre chave propria */}
           {summary.using_custom_key > 0 && (
-            <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 px-4 py-3 rounded-lg">
+            <div className="flex items-center gap-2 text-sm text-emerald-300 bg-emerald-500/10 px-4 py-3 rounded-lg">
               <Key className="w-4 h-4" />
               <span>
                 {summary.using_custom_key} interacoes usaram chave OpenAI propria (sem cobranca de markup)
@@ -160,11 +160,11 @@ export default function BillingPage() {
                     {models.map((m) => (
                       <div key={m.model} className="flex items-center justify-between">
                         <div>
-                          <span className="text-sm font-medium text-neutral-900">{m.model}</span>
+                          <span className="text-sm font-medium text-neutral-100">{m.model}</span>
                           <span className="text-xs text-neutral-400 ml-2">{m.count} chamadas</span>
                         </div>
                         <div className="text-right">
-                          <span className="text-sm font-medium text-neutral-900">{formatUsd(m.cost)}</span>
+                          <span className="text-sm font-medium text-neutral-100">{formatUsd(m.cost)}</span>
                           <span className="text-xs text-neutral-400 ml-2">{formatTokens(m.tokens)} tokens</span>
                         </div>
                       </div>
@@ -192,7 +192,7 @@ export default function BillingPage() {
                         <span className="text-neutral-500 w-24">{d.date}</span>
                         <span className="text-neutral-400">{d.interactions} msgs</span>
                         <span className="text-neutral-400">{formatTokens(d.tokens)}</span>
-                        <span className="font-medium text-neutral-900">{formatUsd(d.cost)}</span>
+                        <span className="font-medium text-neutral-100">{formatUsd(d.cost)}</span>
                       </div>
                     ))}
                   </div>
@@ -213,15 +213,15 @@ export default function BillingPage() {
               ) : (
                 <div className="space-y-1">
                   {recent.map((r) => (
-                    <div key={r.id} className="flex items-center justify-between py-2 text-sm border-b border-neutral-100 last:border-0">
+                    <div key={r.id} className="flex items-center justify-between py-2 text-sm border-b border-white/5 last:border-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-neutral-700">{formatAction(r.action_type)}</span>
+                        <span className="text-neutral-200">{formatAction(r.action_type)}</span>
                         <Badge variant="secondary" className="text-[10px]">{r.model}</Badge>
                         {r.custom_key && <Badge variant="outline" className="text-[10px]">Chave propria</Badge>}
                       </div>
                       <div className="flex items-center gap-3 text-xs">
                         <span className="text-neutral-400">{formatTokens(r.tokens)} tokens</span>
-                        <span className={r.custom_key ? "text-green-600" : "font-medium text-neutral-900"}>
+                        <span className={r.custom_key ? "text-emerald-400" : "font-medium text-neutral-100"}>
                           {r.custom_key ? "Gratis" : formatUsd(r.cost)}
                         </span>
                         {!r.custom_key && (
@@ -252,7 +252,7 @@ function MetricCard({ icon: Icon, label, value, sub }: { icon: typeof DollarSign
           <Icon className="w-4 h-4 text-neutral-400" />
           <span className="text-xs text-neutral-500">{label}</span>
         </div>
-        <span className="text-2xl font-semibold text-neutral-900">{value}</span>
+        <span className="text-2xl font-semibold text-neutral-100">{value}</span>
         {sub && <p className="text-[10px] text-neutral-400 mt-1">{sub}</p>}
       </CardContent>
     </Card>

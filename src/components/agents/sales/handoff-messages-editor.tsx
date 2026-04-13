@@ -92,7 +92,7 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
 
             if (isEditing) {
               return (
-                <div key={msg.id} className="border border-neutral-300 rounded-lg p-4 bg-neutral-50 space-y-3">
+                <div key={msg.id} className="border border-white/15 rounded-lg p-4 bg-white/[0.02] space-y-3">
                   <div>
                     <Label className="text-xs">Identificacao</Label>
                     <Input
@@ -115,7 +115,7 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
                       O sistema compara o texto enviado com este exato (ignorando espacos extras). Mantenha a mensagem curta e consistente.
                     </p>
                   </div>
-                  <div className="flex items-center justify-between p-2 bg-white rounded border border-neutral-200">
+                  <div className="flex items-center justify-between p-2 bg-white/5 rounded border border-white/10">
                     <div className="flex items-center gap-2">
                       <PowerOff className="w-3.5 h-3.5 text-red-500" />
                       <Label className="text-xs font-medium">Desativar IA ao enviar</Label>
@@ -138,11 +138,11 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
             }
 
             return (
-              <div key={msg.id} className="border border-neutral-200 rounded-lg p-3 bg-white group">
+              <div key={msg.id} className="border border-white/10 rounded-lg p-3 bg-white/5 group">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-medium text-neutral-900 truncate">{msg.label}</span>
+                      <span className="text-sm font-medium text-neutral-100 truncate">{msg.label}</span>
                       {msg.auto_deactivate ? (
                         <Badge variant="destructive" className="text-[10px] h-4 gap-1">
                           <PowerOff className="w-2.5 h-2.5" /> Desativa IA
@@ -153,12 +153,12 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
                         </Badge>
                       )}
                     </div>
-                    <p className="text-xs text-neutral-600 line-clamp-2">&ldquo;{msg.text}&rdquo;</p>
+                    <p className="text-xs text-neutral-300 line-clamp-2">&ldquo;{msg.text}&rdquo;</p>
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => startEdit(msg)}
-                      className="text-neutral-300 hover:text-neutral-700 transition-colors"
+                      className="text-neutral-300 hover:text-neutral-200 transition-colors"
                       title="Editar"
                     >
                       <Pencil className="w-3.5 h-3.5" />
@@ -180,7 +180,7 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
 
       {/* Adicionar */}
       {adding ? (
-        <div className="border border-neutral-300 rounded-lg p-4 bg-neutral-50 space-y-3">
+        <div className="border border-white/15 rounded-lg p-4 bg-white/[0.02] space-y-3">
           <div>
             <Label className="text-xs">Identificacao</Label>
             <Input
@@ -203,7 +203,7 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
               O sistema compara o texto enviado com este exato (ignorando espacos extras). Mantenha a mensagem curta e consistente.
             </p>
           </div>
-          <div className="flex items-center justify-between p-2 bg-white rounded border border-neutral-200">
+          <div className="flex items-center justify-between p-2 bg-white/5 rounded border border-white/10">
             <div className="flex items-center gap-2">
               <PowerOff className="w-3.5 h-3.5 text-red-500" />
               <Label className="text-xs font-medium">Desativar IA ao enviar</Label>

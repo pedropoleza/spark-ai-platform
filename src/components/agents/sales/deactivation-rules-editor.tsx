@@ -44,7 +44,7 @@ export function DeactivationRulesEditor({ rules, tags, customFields, onChange }:
       </div>
 
       {rules.map((rule) => (
-        <div key={rule.id} className="flex items-center gap-2 p-3 bg-white border border-neutral-200 rounded-lg">
+        <div key={rule.id} className="flex items-center gap-2 p-3 bg-white/5 border border-white/10 rounded-lg">
           <span className="text-xs text-neutral-500 flex-shrink-0">Desligar quando:</span>
 
           <Select

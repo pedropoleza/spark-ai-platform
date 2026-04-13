@@ -89,7 +89,7 @@ export function TargetingRulesEditor({
           return (
             <div
               key={rule.id}
-              className="p-4 bg-white border border-neutral-200 rounded-lg space-y-3"
+              className="p-4 bg-white/5 border border-white/10 rounded-lg space-y-3"
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -240,10 +240,10 @@ export function TargetingRulesEditor({
                   key={rt.value}
                   type="button"
                   onClick={() => addRule(rt.value)}
-                  className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-neutral-200 rounded-xl hover:border-neutral-400 transition-colors"
+                  className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-white/10 rounded-xl hover:border-white/30 transition-colors"
                 >
                   <Icon className="w-5 h-5 text-neutral-400" />
-                  <span className="text-sm font-medium text-neutral-700">{rt.label}</span>
+                  <span className="text-sm font-medium text-neutral-200">{rt.label}</span>
                   <span className="text-[10px] text-neutral-400 text-center">{rt.description}</span>
                 </button>
               );

@@ -41,14 +41,14 @@ export function NotificationsConfigEditor({ config, onChange }: NotificationsCon
       <div className="space-y-3">
         <Label>Eventos</Label>
         {events.map((event) => (
-          <div key={event.key} className="flex items-center gap-3 p-3 bg-white border border-neutral-200 rounded-lg">
+          <div key={event.key} className="flex items-center gap-3 p-3 bg-white/5 border border-white/10 rounded-lg">
             <Switch
               checked={config[event.key]}
               onCheckedChange={(v) => update(event.key, v)}
               disabled={!config.notification_email}
             />
             <div>
-              <span className="text-sm font-medium text-neutral-900">{event.label}</span>
+              <span className="text-sm font-medium text-neutral-100">{event.label}</span>
               <p className="text-xs text-neutral-400">{event.description}</p>
             </div>
           </div>

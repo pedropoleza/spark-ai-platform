@@ -43,7 +43,7 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
             : "Muito humano. Divide mensagens, sem ponto final, abreviacoes, digitacao espontanea."}
         </p>
         {naturalness >= 60 && (
-          <div className="mt-2 text-[10px] text-neutral-400 bg-neutral-50 rounded-lg p-2.5 space-y-1">
+          <div className="mt-2 text-[10px] text-neutral-400 bg-white/[0.02] rounded-lg p-2.5 space-y-1">
             <p className="font-medium text-neutral-500">Com naturalidade alta, a IA vai:</p>
             <ul className="list-disc list-inside space-y-0.5">
               <li>Dividir respostas em 2-3 mensagens separadas</li>

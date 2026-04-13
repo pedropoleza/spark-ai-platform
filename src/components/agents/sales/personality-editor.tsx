@@ -136,11 +136,11 @@ function IdentityCard({
       onClick={onClick}
       className={cn(
         "flex flex-col items-start gap-2 p-4 border-2 rounded-xl text-left transition-all",
-        selected ? "border-neutral-900 bg-neutral-50" : "border-neutral-200 hover:border-neutral-300"
+        selected ? "border-violet-500/60 bg-violet-500/10 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]" : "border-white/10 hover:border-white/15"
       )}
     >
-      <Icon className={cn("w-5 h-5", selected ? "text-neutral-900" : "text-neutral-400")} />
-      <span className={cn("text-sm font-medium", selected ? "text-neutral-900" : "text-neutral-700")}>
+      <Icon className={cn("w-5 h-5", selected ? "text-neutral-100" : "text-neutral-400")} />
+      <span className={cn("text-sm font-medium", selected ? "text-neutral-100" : "text-neutral-200")}>
         {label}
       </span>
       <span className="text-xs text-neutral-500">{description}</span>

@@ -54,12 +54,12 @@ export function ChannelSelector({ selected, onChange }: ChannelSelectorProps) {
               className={cn(
                 "flex flex-col items-center gap-2 p-4 border-2 rounded-xl transition-all",
                 isSelected
-                  ? "border-neutral-900 bg-neutral-50"
-                  : "border-neutral-200 hover:border-neutral-300 opacity-50"
+                  ? "border-violet-500/60 bg-violet-500/10 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
+                  : "border-white/10 hover:border-white/15 opacity-50"
               )}
             >
-              <Icon className={cn("w-5 h-5", isSelected ? "text-neutral-900" : "text-neutral-400")} />
-              <span className={cn("text-sm font-medium", isSelected ? "text-neutral-900" : "text-neutral-500")}>
+              <Icon className={cn("w-5 h-5", isSelected ? "text-neutral-100" : "text-neutral-400")} />
+              <span className={cn("text-sm font-medium", isSelected ? "text-neutral-100" : "text-neutral-500")}>
                 {ch.label}
               </span>
               <span className="text-[10px] text-neutral-400">{ch.description}</span>

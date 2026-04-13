@@ -129,7 +129,7 @@ export function DataFieldsEditor({
         {fields.map((field, index) => (
           <div
             key={`${field.key}-${index}`}
-            className="flex items-center gap-3 p-3 bg-white border border-neutral-200 rounded-lg group"
+            className="flex items-center gap-3 p-3 bg-white/5 border border-white/10 rounded-lg group"
           >
             <div className="flex flex-col gap-0.5">
               <button
@@ -151,7 +151,7 @@ export function DataFieldsEditor({
             </div>
 
             <div className="flex-1 min-w-0">
-              <span className="text-sm font-medium text-neutral-900 block truncate">
+              <span className="text-sm font-medium text-neutral-100 block truncate">
                 {field.label}
               </span>
               <span className="text-xs text-neutral-400">{field.key}</span>
@@ -169,7 +169,7 @@ export function DataFieldsEditor({
               </Badge>
             )}
 
-            <span className="text-xs text-neutral-400 px-2 py-0.5 bg-neutral-100 rounded">
+            <span className="text-xs text-neutral-400 px-2 py-0.5 bg-white/5 rounded">
               {field.type}
             </span>
 
@@ -204,15 +204,15 @@ export function DataFieldsEditor({
 
       {/* Adicionar campo */}
       {showAddForm ? (
-        <div className="p-4 border border-neutral-200 rounded-lg bg-neutral-50 space-y-4">
+        <div className="p-4 border border-white/10 rounded-lg bg-white/[0.02] space-y-4">
           {!addMode ? (
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={() => setAddMode("custom_field")}
-                className="flex flex-col items-center gap-2 p-4 border-2 border-neutral-200 rounded-lg hover:border-neutral-400 transition-colors"
+                className="flex flex-col items-center gap-2 p-4 border-2 border-white/10 rounded-lg hover:border-white/30 transition-colors"
               >
-                <Database className="w-5 h-5 text-neutral-600" />
+                <Database className="w-5 h-5 text-neutral-300" />
                 <span className="text-sm font-medium">Custom Field</span>
                 <span className="text-xs text-neutral-400 text-center">
                   Vincula a um campo do Spark e atualiza automaticamente
@@ -221,9 +221,9 @@ export function DataFieldsEditor({
               <button
                 type="button"
                 onClick={() => setAddMode("simple")}
-                className="flex flex-col items-center gap-2 p-4 border-2 border-neutral-200 rounded-lg hover:border-neutral-400 transition-colors"
+                className="flex flex-col items-center gap-2 p-4 border-2 border-white/10 rounded-lg hover:border-white/30 transition-colors"
               >
-                <FileText className="w-5 h-5 text-neutral-600" />
+                <FileText className="w-5 h-5 text-neutral-300" />
                 <span className="text-sm font-medium">Campo simples</span>
                 <span className="text-xs text-neutral-400 text-center">
                   Coleta a informacao mas nao atualiza no sistema

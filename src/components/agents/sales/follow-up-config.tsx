@@ -100,11 +100,11 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                 className={cn(
                   "flex flex-col items-start gap-2 p-4 border-2 rounded-xl text-left transition-all",
                   config.mode === "ai_auto"
-                    ? "border-neutral-900 bg-neutral-50"
-                    : "border-neutral-200 hover:border-neutral-300"
+                    ? "border-violet-500/60 bg-violet-500/10 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
+                    : "border-white/10 hover:border-white/15"
                 )}
               >
-                <Brain className={cn("w-5 h-5", config.mode === "ai_auto" ? "text-neutral-900" : "text-neutral-400")} />
+                <Brain className={cn("w-5 h-5", config.mode === "ai_auto" ? "text-neutral-100" : "text-neutral-400")} />
                 <span className="text-sm font-medium">IA automatica</span>
                 <span className="text-xs text-neutral-500">
                   A IA decide quando e o que enviar com base na intensidade
@@ -116,11 +116,11 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                 className={cn(
                   "flex flex-col items-start gap-2 p-4 border-2 rounded-xl text-left transition-all",
                   config.mode === "manual"
-                    ? "border-neutral-900 bg-neutral-50"
-                    : "border-neutral-200 hover:border-neutral-300"
+                    ? "border-violet-500/60 bg-violet-500/10 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
+                    : "border-white/10 hover:border-white/15"
                 )}
               >
-                <Clock className={cn("w-5 h-5", config.mode === "manual" ? "text-neutral-900" : "text-neutral-400")} />
+                <Clock className={cn("w-5 h-5", config.mode === "manual" ? "text-neutral-100" : "text-neutral-400")} />
                 <span className="text-sm font-medium">Manual</span>
                 <span className="text-xs text-neutral-500">
                   Voce define os horarios e mensagens de cada follow-up
@@ -211,14 +211,14 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                   {config.manual_steps.map((step, index) => (
                     <div
                       key={index}
-                      className="p-3 bg-white border border-neutral-200 rounded-lg space-y-2"
+                      className="p-3 bg-white/5 border border-white/10 rounded-lg space-y-2"
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <Badge variant="secondary" className="text-xs">
                             #{index + 1}
                           </Badge>
-                          <span className="text-sm text-neutral-700">
+                          <span className="text-sm text-neutral-200">
                             Apos {formatDelay(step.delay_minutes)}
                           </span>
                         </div>

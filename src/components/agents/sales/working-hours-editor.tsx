@@ -117,14 +117,14 @@ export function WorkingHoursEditor({ config, onChange }: WorkingHoursEditorProps
                 return (
                   <div
                     key={key}
-                    className="flex items-center gap-3 p-2.5 bg-white border border-neutral-200 rounded-lg"
+                    className="flex items-center gap-3 p-2.5 bg-white/5 border border-white/10 rounded-lg"
                   >
                     <Switch
                       checked={day.enabled}
                       onCheckedChange={(v) => updateDay(key, { enabled: v })}
                       className="scale-75"
                     />
-                    <span className="text-sm font-medium text-neutral-700 w-20">
+                    <span className="text-sm font-medium text-neutral-200 w-20">
                       {label}
                     </span>
                     {day.enabled ? (

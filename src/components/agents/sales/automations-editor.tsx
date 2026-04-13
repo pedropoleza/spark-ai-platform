@@ -95,9 +95,9 @@ export function AutomationsEditor({ rules, pipelines, tags, customFields, onChan
 
       {/* Lista de regras */}
       {rules.map((rule) => (
-        <div key={rule.id} className="border border-neutral-200 rounded-lg overflow-hidden">
+        <div key={rule.id} className="border border-white/10 rounded-lg overflow-hidden">
           {/* Header da regra */}
-          <div className="flex items-center justify-between p-3 bg-neutral-50">
+          <div className="flex items-center justify-between p-3 bg-white/[0.02]">
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-neutral-500" />
               <span className="text-sm font-medium">Quando:</span>
@@ -118,7 +118,7 @@ export function AutomationsEditor({ rules, pipelines, tags, customFields, onChan
               const selectedPipeline = pipelines.find((p) => p.id === action.pipeline_id);
 
               return (
-                <div key={actionIdx} className="flex items-center gap-2 p-2 bg-white border border-neutral-100 rounded-lg">
+                <div key={actionIdx} className="flex items-center gap-2 p-2 bg-white/5 border border-white/5 rounded-lg">
                   {/* Tipo da acao */}
                   <Select
                     value={action.type}
@@ -225,7 +225,7 @@ export function AutomationsEditor({ rules, pipelines, tags, customFields, onChan
 
       {/* Adicionar regra */}
       {showAdd ? (
-        <div className="p-4 border border-neutral-200 rounded-lg bg-neutral-50 space-y-3">
+        <div className="p-4 border border-white/10 rounded-lg bg-white/[0.02] space-y-3">
           <Label className="text-xs">Evento disparador</Label>
           <Select value={newEvent} onValueChange={setNewEvent}>
             <SelectTrigger>

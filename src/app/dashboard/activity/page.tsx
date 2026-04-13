@@ -149,10 +149,10 @@ export default function ActivityPage() {
           ) : (
             <div className="space-y-2">
               {conversations.map((conv) => (
-                <div key={conv.id} className="flex items-center gap-4 p-4 bg-white border border-neutral-200 rounded-lg">
+                <div key={conv.id} className="flex items-center gap-4 p-4 bg-white/5 border border-white/10 rounded-lg">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-medium text-neutral-900 truncate">
+                      <span className="text-sm font-medium text-neutral-100 truncate">
                         {conv.contact_id}
                       </span>
                       <Badge variant={STATUS_COLORS[conv.status] || "secondary"} className="text-[10px]">
@@ -168,7 +168,7 @@ export default function ActivityPage() {
                   {Object.keys(conv.collected_data || {}).length > 0 && (
                     <div className="hidden md:flex gap-1 flex-wrap max-w-xs">
                       {Object.entries(conv.collected_data).slice(0, 3).map(([k, v]) => (
-                        <span key={k} className="text-[10px] bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded">
+                        <span key={k} className="text-[10px] bg-white/5 text-neutral-300 px-1.5 py-0.5 rounded">
                           {k}: {String(v).substring(0, 20)}
                         </span>
                       ))}
@@ -189,17 +189,17 @@ export default function ActivityPage() {
               {logs.map((log) => {
                 const Icon = ACTION_ICONS[log.action_type] || Zap;
                 return (
-                  <div key={log.id} className="flex items-center gap-3 p-3 hover:bg-neutral-50 rounded-lg transition-colors">
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${log.success ? "bg-neutral-100" : "bg-red-50"}`}>
+                  <div key={log.id} className="flex items-center gap-3 p-3 hover:bg-white/[0.02] rounded-lg transition-colors">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${log.success ? "bg-white/5" : "bg-red-500/10"}`}>
                       {log.success ? (
-                        <Icon className="w-3.5 h-3.5 text-neutral-600" />
+                        <Icon className="w-3.5 h-3.5 text-neutral-300" />
                       ) : (
                         <XCircle className="w-3.5 h-3.5 text-red-500" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm text-neutral-900">{formatActionType(log.action_type)}</span>
+                        <span className="text-sm text-neutral-100">{formatActionType(log.action_type)}</span>
                         {log.error_message && (
                           <span className="text-xs text-red-500 truncate max-w-xs">{log.error_message}</span>
                         )}
@@ -227,10 +227,10 @@ export default function ActivityPage() {
           ) : (
             <div className="space-y-2">
               {followups.map((fu) => (
-                <div key={fu.id} className="flex items-center gap-4 p-3 bg-white border border-neutral-200 rounded-lg">
-                  <div className="w-7 h-7 rounded-full bg-neutral-100 flex items-center justify-center flex-shrink-0">
+                <div key={fu.id} className="flex items-center gap-4 p-3 bg-white/5 border border-white/10 rounded-lg">
+                  <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center flex-shrink-0">
                     {fu.status === "sent" ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                     ) : fu.status === "pending" ? (
                       <Clock className="w-3.5 h-3.5 text-amber-500" />
                     ) : fu.status === "failed" ? (
@@ -241,7 +241,7 @@ export default function ActivityPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-sm text-neutral-900">
+                      <span className="text-sm text-neutral-100">
                         Follow-up #{fu.attempt_number}
                       </span>
                       <Badge variant={STATUS_COLORS[fu.status] || "secondary"} className="text-[10px]">
@@ -276,7 +276,7 @@ function MetricCard({ icon: Icon, label, value, sub }: { icon: typeof MessageSqu
           <Icon className="w-4 h-4 text-neutral-400" />
           <span className="text-xs text-neutral-500">{label}</span>
         </div>
-        <span className="text-2xl font-semibold text-neutral-900">{value}</span>
+        <span className="text-2xl font-semibold text-neutral-100">{value}</span>
         {sub && <p className="text-[10px] text-neutral-400 mt-0.5">{sub}</p>}
       </CardContent>
     </Card>
