@@ -59,3 +59,65 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({ feedback: data || [] });
 }
+
+// DELETE /api/feedback?id=xxx — apagar feedback
+export async function DELETE(request: NextRequest) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
+  }
+
+  const id = request.nextUrl.searchParams.get("id");
+  if (!id) {
+    return NextResponse.json({ error: "id obrigatorio" }, { status: 400 });
+  }
+
+  const supabase = createServerClient();
+  const { error } = await supabase
+    .from("agent_feedback")
+    .delete()
+    .eq("id", id)
+    .eq("location_id", session.locationId);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
+}
+
+// PATCH /api/feedback — editar feedback existente (rating/suggestion)
+export async function PATCH(request: NextRequest) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
+  }
+
+  const body = await request.json();
+  const { id, rating, suggestion } = body;
+
+  if (!id) {
+    return NextResponse.json({ error: "id obrigatorio" }, { status: 400 });
+  }
+
+  const update: Record<string, unknown> = {};
+  if (rating === "positive" || rating === "negative") update.rating = rating;
+  if (suggestion !== undefined) update.suggestion = suggestion || null;
+
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: "Nenhum campo para atualizar" }, { status: 400 });
+  }
+
+  const supabase = createServerClient();
+  const { error } = await supabase
+    .from("agent_feedback")
+    .update(update)
+    .eq("id", id)
+    .eq("location_id", session.locationId);
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true });
+}

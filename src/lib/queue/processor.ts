@@ -337,13 +337,11 @@ async function processGroup(
   // Buscar knowledge base
   const { data: kbData } = await supabase
     .from("knowledge_base")
-    .select("title, content")
+    .select("title, type, content, file_name, file_url")
     .eq("agent_id", agent.id)
     .order("created_at", { ascending: true });
 
-  const knowledgeBase = (kbData || [])
-    .map((kb) => `### ${kb.title}\n${kb.content}`)
-    .join("\n\n");
+  const knowledgeBase = (kbData || []) as import("@/lib/ai/prompt-builder").KnowledgeBaseItem[];
 
   const systemPrompt = buildSystemPrompt({
     config,
@@ -354,7 +352,7 @@ async function processGroup(
     timezone: locationTz,
     availableSlots,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
-    knowledgeBase: knowledgeBase || undefined,
+    knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
   });
 
   // 6. Chamar OpenAI

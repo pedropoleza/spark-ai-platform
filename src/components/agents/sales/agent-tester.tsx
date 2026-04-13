@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, AlertTriangle, CheckCircle2, ThumbsUp, ThumbsDown } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, AlertTriangle, CheckCircle2, ThumbsUp, ThumbsDown, Pencil, Trash2, X, Check } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +25,15 @@ interface ChatMessage {
   actionsError?: string | null;
 }
 
+interface SavedFeedback {
+  id: string;
+  rating: "positive" | "negative";
+  ai_message: string;
+  user_message: string | null;
+  suggestion: string | null;
+  created_at: string;
+}
+
 interface AgentTesterProps {
   agentId: string | null;
 }
@@ -38,7 +48,30 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   const [feedbackIdx, setFeedbackIdx] = useState<number | null>(null);
   const [feedbackSuggestion, setFeedbackSuggestion] = useState("");
   const [feedbackSent, setFeedbackSent] = useState<Set<number>>(new Set());
+  const [savedFeedbacks, setSavedFeedbacks] = useState<SavedFeedback[]>([]);
+  const [loadingFeedbacks, setLoadingFeedbacks] = useState(false);
+  const [editingFeedbackId, setEditingFeedbackId] = useState<string | null>(null);
+  const [editingSuggestion, setEditingSuggestion] = useState("");
+  const [editingRating, setEditingRating] = useState<"positive" | "negative">("negative");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const fetchFeedbacks = useCallback(async () => {
+    if (!agentId) return;
+    setLoadingFeedbacks(true);
+    try {
+      const res = await fetch(`/api/feedback?agent_id=${agentId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSavedFeedbacks(data.feedback || []);
+      }
+    } finally {
+      setLoadingFeedbacks(false);
+    }
+  }, [agentId]);
+
+  useEffect(() => {
+    fetchFeedbacks();
+  }, [fetchFeedbacks]);
 
   const sendFeedback = async (msgIndex: number, rating: "positive" | "negative", suggestion?: string) => {
     if (!agentId) return;
@@ -62,6 +95,48 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     setFeedbackSent((prev) => new Set(prev).add(msgIndex));
     setFeedbackIdx(null);
     setFeedbackSuggestion("");
+    fetchFeedbacks();
+  };
+
+  const deleteFeedback = async (id: string) => {
+    const res = await fetch(`/api/feedback?id=${id}`, { method: "DELETE" });
+    if (res.ok) {
+      setSavedFeedbacks((prev) => prev.filter((f) => f.id !== id));
+    }
+  };
+
+  const startEditFeedback = (fb: SavedFeedback) => {
+    setEditingFeedbackId(fb.id);
+    setEditingSuggestion(fb.suggestion || "");
+    setEditingRating(fb.rating);
+  };
+
+  const cancelEditFeedback = () => {
+    setEditingFeedbackId(null);
+    setEditingSuggestion("");
+  };
+
+  const saveEditFeedback = async () => {
+    if (!editingFeedbackId) return;
+    const res = await fetch("/api/feedback", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: editingFeedbackId,
+        rating: editingRating,
+        suggestion: editingRating === "negative" ? editingSuggestion : null,
+      }),
+    });
+    if (res.ok) {
+      setSavedFeedbacks((prev) =>
+        prev.map((f) =>
+          f.id === editingFeedbackId
+            ? { ...f, rating: editingRating, suggestion: editingRating === "negative" ? editingSuggestion : null }
+            : f
+        )
+      );
+      cancelEditFeedback();
+    }
   };
 
   useEffect(() => {
@@ -458,6 +533,164 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           </Card>
         </div>
       </div>
+
+      {/* Feedbacks registrados */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Feedbacks registrados</CardTitle>
+          <CardDescription>
+            Positivos reforcam o estilo que a IA deve repetir. Negativos incluem como
+            deveria ter respondido e a IA aprende com eles. Vc pode editar ou apagar.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {loadingFeedbacks ? (
+            <div className="flex justify-center py-6">
+              <Loader2 className="w-4 h-4 animate-spin text-neutral-400" />
+            </div>
+          ) : savedFeedbacks.length === 0 ? (
+            <p className="text-sm text-neutral-400">
+              Nenhum feedback registrado. Use os botoes de curtir/descurtir nas respostas do agente acima.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {savedFeedbacks.map((fb) => {
+                const isEditing = editingFeedbackId === fb.id;
+                return (
+                  <div
+                    key={fb.id}
+                    className={`border rounded-lg p-3 ${
+                      fb.rating === "positive"
+                        ? "border-green-200 bg-green-50/40"
+                        : "border-red-200 bg-red-50/40"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        {isEditing ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => setEditingRating("positive")}
+                              className={`p-1 rounded ${editingRating === "positive" ? "bg-green-100 text-green-600" : "text-neutral-300"}`}
+                              title="Marcar como positivo"
+                            >
+                              <ThumbsUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setEditingRating("negative")}
+                              className={`p-1 rounded ${editingRating === "negative" ? "bg-red-100 text-red-600" : "text-neutral-300"}`}
+                              title="Marcar como negativo"
+                            >
+                              <ThumbsDown className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : fb.rating === "positive" ? (
+                          <Badge variant="success" className="text-[10px]">
+                            <ThumbsUp className="w-2.5 h-2.5 mr-1" />
+                            Positivo
+                          </Badge>
+                        ) : (
+                          <Badge variant="destructive" className="text-[10px]">
+                            <ThumbsDown className="w-2.5 h-2.5 mr-1" />
+                            Negativo
+                          </Badge>
+                        )}
+                        <span className="text-[10px] text-neutral-400">
+                          {new Date(fb.created_at).toLocaleString("pt-BR", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {isEditing ? (
+                          <>
+                            <button
+                              onClick={saveEditFeedback}
+                              className="text-neutral-400 hover:text-green-600 transition-colors"
+                              title="Salvar"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={cancelEditFeedback}
+                              className="text-neutral-400 hover:text-neutral-600 transition-colors"
+                              title="Cancelar"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => startEditFeedback(fb)}
+                              className="text-neutral-300 hover:text-neutral-700 transition-colors"
+                              title="Editar"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => deleteFeedback(fb.id)}
+                              className="text-neutral-300 hover:text-red-500 transition-colors"
+                              title="Apagar"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {fb.user_message && (
+                      <div className="mb-2">
+                        <span className="text-[10px] font-medium text-neutral-500 uppercase tracking-wide">
+                          Lead disse
+                        </span>
+                        <p className="text-xs text-neutral-700 mt-0.5 italic">&ldquo;{fb.user_message}&rdquo;</p>
+                      </div>
+                    )}
+
+                    <div className="mb-2">
+                      <span className="text-[10px] font-medium text-neutral-500 uppercase tracking-wide">
+                        IA respondeu
+                      </span>
+                      <p className="text-xs text-neutral-900 mt-0.5">{fb.ai_message}</p>
+                    </div>
+
+                    {isEditing ? (
+                      editingRating === "negative" && (
+                        <div>
+                          <span className="text-[10px] font-medium text-neutral-500 uppercase tracking-wide">
+                            Como deveria ter respondido
+                          </span>
+                          <Textarea
+                            value={editingSuggestion}
+                            onChange={(e) => setEditingSuggestion(e.target.value)}
+                            placeholder="Instrucao de correcao..."
+                            rows={2}
+                            className="mt-1 text-xs"
+                          />
+                        </div>
+                      )
+                    ) : (
+                      fb.suggestion && (
+                        <div className="bg-white border border-neutral-200 rounded p-2">
+                          <span className="text-[10px] font-medium text-red-600 uppercase tracking-wide">
+                            Correcao (deveria ser)
+                          </span>
+                          <p className="text-xs text-neutral-900 mt-0.5">{fb.suggestion}</p>
+                        </div>
+                      )
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

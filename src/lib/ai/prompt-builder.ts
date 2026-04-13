@@ -41,6 +41,14 @@ interface FeedbackItem {
   suggestion?: string;
 }
 
+export interface KnowledgeBaseItem {
+  title: string;
+  type: "text" | "file" | "url";
+  content: string;
+  file_name?: string | null;
+  file_url?: string | null;
+}
+
 interface PromptContext {
   config: AgentConfig;
   contactName: string;
@@ -50,7 +58,7 @@ interface PromptContext {
   timezone: string;
   availableSlots?: string;
   feedback?: FeedbackItem[];
-  knowledgeBase?: string;
+  knowledgeBase?: KnowledgeBaseItem[];
 }
 
 export function buildSystemPrompt(ctx: PromptContext): string {
@@ -488,17 +496,67 @@ function buildFeedbackSection(ctx: PromptContext): string {
 }
 
 function buildKnowledgeBaseSection(ctx: PromptContext): string {
-  if (!ctx.knowledgeBase) return "";
+  if (!ctx.knowledgeBase || ctx.knowledgeBase.length === 0) return "";
 
-  // Limitar a ~4000 tokens (~16000 chars)
-  const kb = ctx.knowledgeBase.substring(0, 16000);
+  // Budget: 20000 chars totais, 5000 por item no maximo
+  const GLOBAL_CAP = 20000;
+  const PER_ITEM_CAP = 5000;
 
-  return `## BASE DE CONHECIMENTO
-Use as informacoes abaixo como referencia para responder perguntas do lead.
-Se o lead perguntar algo coberto por este conteudo, responda com base nele.
-Se nao souber a resposta, diga que vai confirmar e retornar.
+  let remaining = GLOBAL_CAP;
+  const renderedItems: string[] = [];
 
-${kb}`;
+  for (let i = 0; i < ctx.knowledgeBase.length; i++) {
+    if (remaining <= 0) {
+      renderedItems.push(`[... ${ctx.knowledgeBase.length - i} item(ns) adicionais omitido(s) por limite de contexto]`);
+      break;
+    }
+
+    const item = ctx.knowledgeBase[i];
+    const title = sanitize(item.title || "Sem titulo", 100);
+
+    let typeLabel: string;
+    let sourceLabel = "";
+    if (item.type === "file") {
+      typeLabel = "arquivo";
+      if (item.file_name) sourceLabel = ` | Fonte: ${sanitize(item.file_name, 120)}`;
+    } else if (item.type === "url") {
+      typeLabel = "url";
+      if (item.file_url) sourceLabel = ` | Fonte: ${sanitize(item.file_url, 200)}`;
+    } else {
+      typeLabel = "texto";
+    }
+
+    const itemCap = Math.min(PER_ITEM_CAP, remaining);
+    let content = (item.content || "").trim();
+    let truncated = false;
+    if (content.length > itemCap) {
+      content = content.substring(0, itemCap);
+      truncated = true;
+    }
+    remaining -= content.length;
+
+    const header = `[ITEM ${i + 1}] Tipo: ${typeLabel} | Titulo: "${title}"${sourceLabel}`;
+    const body = content || "(vazio)";
+    const suffix = truncated ? "\n[...conteudo truncado]" : "";
+    renderedItems.push(`${header}\n${body}${suffix}`);
+  }
+
+  return `## BASE DE CONHECIMENTO (FONTE PRIMARIA DE VERDADE)
+
+As informacoes abaixo foram fornecidas pelo administrador deste agente e representam a VERDADE oficial sobre a empresa, produtos, servicos, processos e politicas. Elas tem PRIORIDADE ABSOLUTA sobre qualquer conhecimento geral que voce possa ter.
+
+REGRAS OBRIGATORIAS DA BASE:
+1. SEMPRE consulte mentalmente esta base ANTES de responder qualquer pergunta do lead sobre empresa, produtos, precos, servicos, processos, politicas, horarios ou qualquer assunto coberto aqui
+2. Se a resposta estiver na base, use EXATAMENTE a informacao daqui. Nao invente, nao parafraseie adicionando suposicoes, nao complemente com "conhecimento geral"
+3. Se o lead perguntar algo NAO coberto pela base, NUNCA invente — responda "deixa eu confirmar essa informacao com a equipe e te retorno" (ou equivalente natural ao tom configurado)
+4. Se seu conhecimento geral parece contradizer a base, a BASE SEMPRE VENCE. Ignore o conhecimento externo
+5. NUNCA mencione ao lead que voce "tem uma base de conhecimento", "documento", "arquivo de referencia" ou similar — use a informacao de forma natural, como quem sabe do assunto
+6. Se a base tiver multiplos itens sobre o mesmo topico, combine as informacoes coerentemente. Se houver conflito entre itens, use o item mais recente (ITEM de numero maior) como fonte
+7. Se o lead pedir detalhes especificos (valores, datas, numeros) que estao na base, repita-os com precisao — nao arredonde, nao aproxime
+
+### ITENS DA BASE
+
+${renderedItems.join("\n\n")}`;
 }
 
 function buildCustomInstructionsSection(ctx: PromptContext): string {
