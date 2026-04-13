@@ -126,6 +126,22 @@ async function processGroup(
     : agent.agent_configs;
   if (!config) return;
 
+  // Gate de handoff manual: se o operador humano pausou a IA para este
+  // contato (enviando uma mensagem de encerramento), skip o processamento.
+  const { data: pauseCheck } = await supabase
+    .from("conversation_state")
+    .select("ai_paused_at, ai_paused_reason")
+    .eq("agent_id", agent.id)
+    .eq("contact_id", group.contactId)
+    .maybeSingle();
+
+  if (pauseCheck?.ai_paused_at) {
+    console.log(
+      `[Processor] IA pausada para contato ${group.contactId} (${pauseCheck.ai_paused_reason || "sem motivo"}), skipping`
+    );
+    return;
+  }
+
   // 2. Buscar location para pegar companyId
   const { data: location } = await supabase
     .from("locations")

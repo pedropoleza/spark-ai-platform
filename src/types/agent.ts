@@ -101,6 +101,7 @@ export interface AgentConfig {
   notifications: NotificationsConfig;
   automations: AutomationRule[];
   deactivation_rules: DeactivationRule[];
+  handoff_messages: HandoffMessage[];
   // Recruitment-specific
   specialist_name?: string;        // Nome do especialista que faz o Zoom
   specialist_role?: string;        // Descrição do papel ("especialista", "recrutadora")
@@ -132,6 +133,18 @@ export interface DeactivationRule {
   tag?: string;
   field_key?: string;
   field_value?: string;
+}
+
+/**
+ * Mensagem de encerramento manual. Quando o operador humano envia uma
+ * dessas mensagens ao contato (via GHL), a IA pode ser pausada
+ * automaticamente para aquele contato especifico.
+ */
+export interface HandoffMessage {
+  id: string;
+  label: string;          // nome amigavel pro admin identificar
+  text: string;           // conteudo exato da mensagem
+  auto_deactivate: boolean; // se true, pausa a IA ao enviar essa mensagem
 }
 
 export interface TimezoneConfig {
@@ -173,6 +186,8 @@ export interface ConversationState {
   message_count: number;
   last_message_at: string | null;
   last_ai_response_at: string | null;
+  ai_paused_at: string | null;
+  ai_paused_reason: string | null;
   created_at: string;
   updated_at: string;
 }

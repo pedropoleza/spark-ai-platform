@@ -28,9 +28,10 @@ import { PostBookingConfigEditor } from "@/components/agents/sales/post-booking-
 import { AutomationsEditor } from "@/components/agents/sales/automations-editor";
 import { KnowledgeBaseEditor } from "@/components/agents/sales/knowledge-base-editor";
 import { DeactivationRulesEditor } from "@/components/agents/sales/deactivation-rules-editor";
+import { HandoffMessagesEditor } from "@/components/agents/sales/handoff-messages-editor";
 import { useGHLData } from "@/hooks/use-ghl-data";
 import { AI_MODELS } from "@/lib/utils/constants";
-import type { AgentConfig, AgentObjective, AgentPersonality, PostBookingConfig, DataField, FollowUpConfig, TargetingRule, WorkingHoursConfig, TimezoneConfig, NotificationsConfig, AutomationRule, DeactivationRule, CommunicationChannel } from "@/types/agent";
+import type { AgentConfig, AgentObjective, AgentPersonality, PostBookingConfig, DataField, FollowUpConfig, TargetingRule, WorkingHoursConfig, TimezoneConfig, NotificationsConfig, AutomationRule, DeactivationRule, HandoffMessage, CommunicationChannel } from "@/types/agent";
 
 type ConfigForm = Omit<AgentConfig, "id" | "agent_id" | "created_at" | "updated_at">;
 
@@ -106,6 +107,7 @@ const defaultConfig: ConfigForm = {
   },
   automations: [],
   deactivation_rules: [],
+  handoff_messages: [],
 };
 
 export function SalesConfigContent() {
@@ -381,6 +383,25 @@ export function SalesConfigContent() {
                 <FollowUpConfigEditor
                   config={config.follow_up_config}
                   onChange={(v: FollowUpConfig) => updateConfig("follow_up_config", v)}
+                />
+              </CardContent>
+            </Card>
+
+            {/* Mensagens de encerramento / handoff manual */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Mensagens de encerramento</CardTitle>
+                <CardDescription>
+                  Cadastre mensagens prontas para encerrar o atendimento da IA e
+                  assumir pessoalmente a conversa. Quando voce enviar uma dessas
+                  mensagens ao contato, a IA para de responder aquele contato
+                  automaticamente.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <HandoffMessagesEditor
+                  messages={config.handoff_messages || []}
+                  onChange={(v: HandoffMessage[]) => updateConfig("handoff_messages", v)}
                 />
               </CardContent>
             </Card>

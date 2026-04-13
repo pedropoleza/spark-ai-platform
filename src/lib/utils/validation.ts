@@ -137,6 +137,12 @@ export const updateAgentConfigSchema = z.object({
     field_key: z.string().optional(),
     field_value: z.string().optional(),
   })).optional(),
+  handoff_messages: z.array(z.object({
+    id: z.string(),
+    label: z.string().min(1).max(100),
+    text: z.string().min(1).max(2000),
+    auto_deactivate: z.boolean(),
+  })).optional(),
   notifications: z.object({
     on_qualified: z.boolean(),
     on_booked: z.boolean(),

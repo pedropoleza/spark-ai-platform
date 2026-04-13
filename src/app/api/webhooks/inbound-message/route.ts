@@ -60,6 +60,69 @@ export async function POST(request: NextRequest) {
     }
 
     if (direction === "outbound") {
+      // Detectar mensagens de encerramento (handoff manual).
+      // Se o operador humano enviou uma das mensagens cadastradas com
+      // auto_deactivate=true, pausar a IA para aquele contato.
+      try {
+        const supabaseAdmin = createAdminClient();
+        const { data: outboundAgent } = await supabaseAdmin
+          .from("agents")
+          .select("id, agent_configs(handoff_messages)")
+          .eq("location_id", locationId)
+          .eq("status", "active")
+          .in("type", ["sales_agent", "recruitment_agent"])
+          .limit(1)
+          .single();
+
+        if (outboundAgent) {
+          const outboundConfig = Array.isArray(outboundAgent.agent_configs)
+            ? outboundAgent.agent_configs[0]
+            : outboundAgent.agent_configs;
+          const handoffMessages = (outboundConfig?.handoff_messages || []) as {
+            id: string;
+            label: string;
+            text: string;
+            auto_deactivate: boolean;
+          }[];
+
+          const normalize = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+          const bodyNorm = normalize(messageBody);
+
+          const matched = handoffMessages.find(
+            (m) => m.auto_deactivate && normalize(m.text) === bodyNorm
+          );
+
+          if (matched) {
+            const nowIso = new Date().toISOString();
+            // Upsert: garantir que exista conversation_state antes de pausar
+            await supabaseAdmin
+              .from("conversation_state")
+              .upsert(
+                {
+                  agent_id: outboundAgent.id,
+                  location_id: locationId,
+                  contact_id: contactId,
+                  conversation_id: conversationId || "",
+                  status: "handed_off",
+                  ai_paused_at: nowIso,
+                  ai_paused_reason: `handoff_message:${matched.label}`,
+                  updated_at: nowIso,
+                },
+                { onConflict: "agent_id,contact_id" }
+              );
+
+            console.log(`[Handoff] IA pausada para contato ${contactId} via "${matched.label}"`);
+            return NextResponse.json({
+              received: true,
+              skipped: "outbound_handoff_triggered",
+              paused: true,
+            });
+          }
+        }
+      } catch (error) {
+        console.error("[Handoff] Erro ao processar outbound:", error);
+      }
+
       return NextResponse.json({ received: true, skipped: "outbound" });
     }
 

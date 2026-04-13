@@ -30,7 +30,8 @@ import { KnowledgeBaseEditor } from "@/components/agents/sales/knowledge-base-ed
 import { DeactivationRulesEditor } from "@/components/agents/sales/deactivation-rules-editor";
 import { useGHLData } from "@/hooks/use-ghl-data";
 import { AI_MODELS } from "@/lib/utils/constants";
-import type { AgentConfig, AgentObjective, AgentPersonality, PostBookingConfig, DataField, FollowUpConfig, TargetingRule, WorkingHoursConfig, TimezoneConfig, NotificationsConfig, AutomationRule, DeactivationRule, CommunicationChannel } from "@/types/agent";
+import { HandoffMessagesEditor } from "@/components/agents/sales/handoff-messages-editor";
+import type { AgentConfig, AgentObjective, AgentPersonality, PostBookingConfig, DataField, FollowUpConfig, TargetingRule, WorkingHoursConfig, TimezoneConfig, NotificationsConfig, AutomationRule, DeactivationRule, HandoffMessage, CommunicationChannel } from "@/types/agent";
 
 type ConfigForm = Omit<AgentConfig, "id" | "agent_id" | "created_at" | "updated_at">;
 
@@ -105,6 +106,7 @@ const defaultConfig: ConfigForm = {
   },
   automations: [],
   deactivation_rules: [],
+  handoff_messages: [],
   // Recruitment-specific
   specialist_name: "",
   specialist_role: "especialista",
@@ -259,6 +261,23 @@ export function RecruitmentConfigContent() {
               <CardHeader><CardTitle>Follow-up automatico</CardTitle></CardHeader>
               <CardContent>
                 <FollowUpConfigEditor config={config.follow_up_config} onChange={(v: FollowUpConfig) => updateConfig("follow_up_config", v)} />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle>Mensagens de encerramento</CardTitle>
+                <CardDescription>
+                  Cadastre mensagens prontas para encerrar o atendimento da IA e
+                  assumir pessoalmente a conversa. Quando voce enviar uma dessas
+                  mensagens ao contato, a IA para de responder aquele contato
+                  automaticamente.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <HandoffMessagesEditor
+                  messages={config.handoff_messages || []}
+                  onChange={(v: HandoffMessage[]) => updateConfig("handoff_messages", v)}
+                />
               </CardContent>
             </Card>
           </div>
