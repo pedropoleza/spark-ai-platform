@@ -198,15 +198,15 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
   const iconMap = { text: Type, file: FileText, url: Globe };
 
   if (!agentId) {
-    return <p className="text-sm text-neutral-400">Salve o agente primeiro para adicionar conhecimento.</p>;
+    return <p className="text-sm text-neutral-500">Salve o agente primeiro para adicionar conhecimento.</p>;
   }
 
   return (
     <div className="space-y-4">
       {/* Status */}
       <div className="flex items-center justify-between">
-        <p className="text-xs text-neutral-400">
-          {items.length} item(ns) | ~{totalTokens.toLocaleString()} tokens no contexto
+        <p className="text-xs text-neutral-500">
+          <span className="text-neutral-300 font-medium">{items.length}</span> item(ns) · ~<span className="text-neutral-300 font-medium">{totalTokens.toLocaleString()}</span> tokens no contexto
         </p>
         {totalTokens > 8000 && (
           <Badge variant="warning" className="text-[10px]">
@@ -228,38 +228,40 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
             const isEditing = editingId === item.id;
             const hasMeta = !!(item.description || item.usage_instructions);
             return (
-              <div key={item.id} className="bg-white border border-neutral-200 rounded-lg group overflow-hidden">
+              <div key={item.id} className="rounded-xl border border-white/8 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/15 transition-all duration-200 group overflow-hidden">
                 <div className="flex items-center gap-3 p-3">
-                  <Icon className="w-4 h-4 text-neutral-400 flex-shrink-0" />
+                  <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center flex-shrink-0">
+                    <Icon className="w-4 h-4 text-violet-300" />
+                  </div>
                   <button
                     type="button"
                     onClick={() => setExpandedId(isExpanded ? null : item.id)}
                     className="flex-1 min-w-0 text-left"
                   >
-                    <span className="text-sm font-medium text-neutral-900 block truncate">{item.title}</span>
-                    <span className="text-xs text-neutral-400">
+                    <span className="text-sm font-medium text-neutral-100 block truncate">{item.title}</span>
+                    <span className="text-xs text-neutral-500">
                       {item.type === "file" ? item.file_name : item.type === "url" ? "URL" : "Texto"}
-                      {" — ~"}{item.token_count.toLocaleString()} tokens
-                      {hasMeta && " · com instrucoes"}
+                      {" · ~"}{item.token_count.toLocaleString()} tokens
+                      {hasMeta && <span className="ml-1 text-violet-400">· com instrucoes</span>}
                     </span>
                   </button>
                   <button
                     onClick={() => setExpandedId(isExpanded ? null : item.id)}
-                    className="text-neutral-300 hover:text-neutral-600"
+                    className="text-neutral-500 hover:text-neutral-200 transition-colors"
                     title={isExpanded ? "Recolher" : "Expandir"}
                   >
                     {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </button>
                   <button
                     onClick={() => startEdit(item)}
-                    className="text-neutral-300 hover:text-neutral-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="text-neutral-500 hover:text-violet-300 opacity-0 group-hover:opacity-100 transition-all"
                     title="Editar descricao e instrucoes"
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDelete(item.id)}
-                    className="text-neutral-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
                     title="Remover"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -267,7 +269,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                 </div>
 
                 {isExpanded && (
-                  <div className="px-3 pb-3 border-t border-neutral-100 pt-3 space-y-3">
+                  <div className="px-3 pb-3 border-t border-white/5 pt-3 space-y-3 bg-black/20">
                     {isEditing ? (
                       <>
                         <div>
@@ -307,23 +309,23 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                       <>
                         {item.description ? (
                           <div>
-                            <p className="text-[10px] uppercase tracking-wide text-neutral-400 mb-0.5">Descricao</p>
-                            <p className="text-xs text-neutral-700 whitespace-pre-wrap">{item.description}</p>
+                            <p className="text-[10px] uppercase tracking-wider text-violet-400/80 font-semibold mb-1">Descricao</p>
+                            <p className="text-xs text-neutral-300 whitespace-pre-wrap leading-relaxed">{item.description}</p>
                           </div>
                         ) : null}
                         {item.usage_instructions ? (
                           <div>
-                            <p className="text-[10px] uppercase tracking-wide text-neutral-400 mb-0.5">Instrucoes para a IA</p>
-                            <p className="text-xs text-neutral-700 whitespace-pre-wrap">{item.usage_instructions}</p>
+                            <p className="text-[10px] uppercase tracking-wider text-violet-400/80 font-semibold mb-1">Instrucoes para a IA</p>
+                            <p className="text-xs text-neutral-300 whitespace-pre-wrap leading-relaxed">{item.usage_instructions}</p>
                           </div>
                         ) : null}
                         {!hasMeta && (
-                          <p className="text-xs text-neutral-400 italic">
+                          <p className="text-xs text-neutral-500 italic">
                             Nenhuma instrucao definida. Clique no lapis para orientar a IA sobre como usar este material.
                           </p>
                         )}
                         {item.type === "url" && item.file_url && (
-                          <p className="text-[10px] text-neutral-400 break-all">Fonte: {item.file_url}</p>
+                          <p className="text-[10px] text-neutral-500 break-all font-mono">{item.file_url}</p>
                         )}
                       </>
                     )}
@@ -343,27 +345,27 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
               <div className="grid grid-cols-3 gap-3">
                 <button
                   onClick={() => setAddType("text")}
-                  className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-neutral-200 rounded-xl hover:border-neutral-400 transition-colors"
+                  className="flex flex-col items-center gap-2 p-4 border border-dashed border-white/10 rounded-xl bg-white/[0.02] hover:border-violet-500/40 hover:bg-violet-500/5 transition-all duration-200 group"
                 >
-                  <Type className="w-5 h-5 text-neutral-400" />
-                  <span className="text-sm font-medium">Texto</span>
-                  <span className="text-[10px] text-neutral-400">Cole conteudo diretamente</span>
+                  <Type className="w-5 h-5 text-neutral-400 group-hover:text-violet-300 transition-colors" />
+                  <span className="text-sm font-medium text-neutral-100">Texto</span>
+                  <span className="text-[10px] text-neutral-500">Cole conteudo diretamente</span>
                 </button>
                 <button
                   onClick={() => setAddType("file")}
-                  className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-neutral-200 rounded-xl hover:border-neutral-400 transition-colors"
+                  className="flex flex-col items-center gap-2 p-4 border border-dashed border-white/10 rounded-xl bg-white/[0.02] hover:border-violet-500/40 hover:bg-violet-500/5 transition-all duration-200 group"
                 >
-                  <Upload className="w-5 h-5 text-neutral-400" />
-                  <span className="text-sm font-medium">Arquivo</span>
-                  <span className="text-[10px] text-neutral-400">PDF, TXT, DOC, CSV</span>
+                  <Upload className="w-5 h-5 text-neutral-400 group-hover:text-violet-300 transition-colors" />
+                  <span className="text-sm font-medium text-neutral-100">Arquivo</span>
+                  <span className="text-[10px] text-neutral-500">PDF, TXT, DOC, CSV</span>
                 </button>
                 <button
                   onClick={() => setAddType("url")}
-                  className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-neutral-200 rounded-xl hover:border-neutral-400 transition-colors"
+                  className="flex flex-col items-center gap-2 p-4 border border-dashed border-white/10 rounded-xl bg-white/[0.02] hover:border-violet-500/40 hover:bg-violet-500/5 transition-all duration-200 group"
                 >
-                  <Globe className="w-5 h-5 text-neutral-400" />
-                  <span className="text-sm font-medium">URL</span>
-                  <span className="text-[10px] text-neutral-400">Importar de um site</span>
+                  <Globe className="w-5 h-5 text-neutral-400 group-hover:text-violet-300 transition-colors" />
+                  <span className="text-sm font-medium text-neutral-100">URL</span>
+                  <span className="text-[10px] text-neutral-500">Importar de um site</span>
                 </button>
               </div>
             ) : (

@@ -489,7 +489,7 @@ export function SalesConfigContent() {
                   Este texto eh injetado no prompt junto com todos os itens da base. Para instrucoes especificas de UM item (um PDF em particular), use o botao de editar no item individual abaixo.
                 </p>
               </div>
-              <div className="border-t border-neutral-200 pt-6">
+              <div className="border-t border-white/5 pt-6">
                 <KnowledgeBaseEditor agentId={agentId} />
               </div>
             </CardContent>

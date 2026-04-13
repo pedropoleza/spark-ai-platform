@@ -102,22 +102,22 @@ function SSOHandler() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+      <div className="min-h-screen flex items-center justify-center bg-transparent">
         <div className="text-center max-w-lg px-6">
-          <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
-            <span className="text-red-600 text-xl font-bold">!</span>
+          <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto mb-4">
+            <span className="text-red-400 text-xl font-bold">!</span>
           </div>
-          <h1 className="text-lg font-semibold text-neutral-900 mb-2">
+          <h1 className="text-lg font-semibold text-neutral-100 mb-2">
             Erro de autenticacao
           </h1>
-          <p className="text-sm text-neutral-500 break-words">{error}</p>
+          <p className="text-sm text-neutral-400 break-words">{error}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+    <div className="min-h-screen flex items-center justify-center bg-transparent">
       <div className="text-center">
         <Loader2 className="h-8 w-8 animate-spin text-neutral-400 mx-auto mb-4" />
         <p className="text-sm text-neutral-500">{status}</p>
@@ -130,7 +130,7 @@ export default function SSOEntryPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+        <div className="min-h-screen flex items-center justify-center bg-transparent">
           <div className="text-center">
             <Loader2 className="h-8 w-8 animate-spin text-neutral-400 mx-auto mb-4" />
             <p className="text-sm text-neutral-500">Carregando...</p>

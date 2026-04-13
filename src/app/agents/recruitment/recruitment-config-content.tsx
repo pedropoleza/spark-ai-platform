@@ -328,7 +328,7 @@ export function RecruitmentConfigContent() {
                   Este texto eh injetado no prompt junto com todos os itens da base. Para instrucoes de UM item especifico, use o botao de editar no item individual abaixo.
                 </p>
               </div>
-              <div className="border-t border-neutral-200 pt-6">
+              <div className="border-t border-white/5 pt-6">
                 <KnowledgeBaseEditor agentId={agentId} />
               </div>
             </CardContent>
