@@ -18,7 +18,9 @@ export function TopNav() {
   const { locationName } = useTenant();
 
   return (
-    <div className="border-b border-gray-200 bg-white">
+    <div className="relative border-b border-gray-200 bg-white">
+      {/* Linha azul fina no topo */}
+      <div className="absolute top-0 left-0 right-0 h-0.5 brand-gradient" />
       {/* Top row: brand + search + tenant */}
       <div className="flex items-center justify-between gap-6 px-8 h-16">
         {/* Logo */}
@@ -57,8 +59,8 @@ export function TopNav() {
         </div>
       </div>
 
-      {/* Bottom row: module tabs */}
-      <nav className="px-8 -mb-px overflow-x-auto">
+      {/* Bottom row: module tabs on subtle gray bar */}
+      <nav className="px-8 -mb-px overflow-x-auto bg-gray-50/70 border-t border-gray-100">
         <div className="flex items-center gap-1 min-w-min">
           {navItems.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + "/");

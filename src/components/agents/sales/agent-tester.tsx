@@ -357,7 +357,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                   }`}
                 >
                   {msg.role === "agent" && (
-                    <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <div className="w-7 h-7 rounded-full brand-gradient flex items-center justify-center flex-shrink-0 mt-0.5 shadow-[0_2px_8px_-2px_rgba(22,117,242,0.45)]">
                       <Bot className="w-3.5 h-3.5 text-white" />
                     </div>
                   )}
@@ -491,7 +491,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
               {loading && (
                 <div className="flex gap-2.5">
-                  <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center flex-shrink-0">
+                  <div className="w-7 h-7 rounded-full brand-gradient flex items-center justify-center flex-shrink-0 shadow-[0_2px_8px_-2px_rgba(22,117,242,0.45)]">
                     <Bot className="w-3.5 h-3.5 text-white" />
                   </div>
                   <div className="bg-gray-50 rounded-2xl rounded-bl-md px-4 py-2.5">

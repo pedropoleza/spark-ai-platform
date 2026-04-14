@@ -16,12 +16,14 @@
 
   html, body {
     color: rgb(var(--foreground));
-    background: rgb(var(--background));
+    background: rgb(248 250 252);
     min-height: 100vh;
   }
 
   body {
-    background: rgb(var(--background));
+    background:
+      linear-gradient(180deg, rgb(235 243 254 / 0.6) 0%, transparent 240px),
+      rgb(248 250 252);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 

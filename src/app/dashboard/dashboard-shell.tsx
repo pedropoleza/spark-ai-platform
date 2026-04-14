@@ -21,7 +21,7 @@ export function DashboardShell({
         userId: session.userId,
       }}
     >
-      <div className="flex flex-col h-screen bg-gray-50/50">
+      <div className="flex flex-col h-screen">
         <TopNav />
         <main className="flex-1 overflow-y-auto">
           {children}
