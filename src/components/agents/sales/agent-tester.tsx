@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { composePersonalityProfile, type PersonalityProfile } from "@/lib/ai/behavior-blocks";
 import type { AIResponse } from "@/types/ai";
@@ -56,6 +57,14 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   const [editingRating, setEditingRating] = useState<"positive" | "negative">("negative");
   const [profile, setProfile] = useState<PersonalityProfile | null>(null);
   const [expandedBlock, setExpandedBlock] = useState<string | null>(null);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [editValues, setEditValues] = useState({
+    tone_creativity: 50,
+    tone_formality: 50,
+    tone_naturalness: 50,
+    tone_aggressiveness: 50,
+  });
+  const [savingProfile, setSavingProfile] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Carrega config do agente e resolve o perfil comportamental atual
@@ -65,17 +74,50 @@ export function AgentTester({ agentId }: AgentTesterProps) {
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!data?.config) return;
-        setProfile(
-          composePersonalityProfile({
-            tone_creativity: data.config.tone_creativity,
-            tone_formality: data.config.tone_formality,
-            tone_naturalness: data.config.tone_naturalness,
-            tone_aggressiveness: data.config.tone_aggressiveness,
-          })
-        );
+        const values = {
+          tone_creativity: data.config.tone_creativity ?? 50,
+          tone_formality: data.config.tone_formality ?? 50,
+          tone_naturalness: data.config.tone_naturalness ?? 50,
+          tone_aggressiveness: data.config.tone_aggressiveness ?? 50,
+        };
+        setEditValues(values);
+        setProfile(composePersonalityProfile(values));
       })
       .catch(() => {});
   }, [agentId]);
+
+  const startEditProfile = () => setEditingProfile(true);
+
+  const cancelEditProfile = () => {
+    // Restaurar valores a partir do perfil atual
+    if (profile) {
+      setEditValues({
+        tone_creativity: profile.creativity.percent,
+        tone_formality: profile.formality.percent,
+        tone_naturalness: profile.naturalness.percent,
+        tone_aggressiveness: profile.aggressiveness.percent,
+      });
+    }
+    setEditingProfile(false);
+  };
+
+  const saveEditProfile = async () => {
+    if (!agentId) return;
+    setSavingProfile(true);
+    try {
+      const res = await fetch(`/api/agents/${agentId}/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editValues),
+      });
+      if (res.ok) {
+        setProfile(composePersonalityProfile(editValues));
+        setEditingProfile(false);
+      }
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   const fetchFeedbacks = useCallback(async () => {
     if (!agentId) return;
@@ -555,15 +597,75 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           </Card>
 
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Perfil comportamental</CardTitle>
-              <CardDescription>
-                Blocos selecionados a partir dos percentuais. Clique para ver as diretrizes que sao enviadas para a IA.
-              </CardDescription>
+            <CardHeader className="pb-3 flex-row items-start justify-between gap-2">
+              <div>
+                <CardTitle className="text-base">Perfil comportamental</CardTitle>
+                <CardDescription>
+                  {editingProfile
+                    ? "Ajuste os percentuais. Ao salvar, o proximo teste ja usa o novo perfil."
+                    : "Blocos selecionados a partir dos percentuais. Clique no lapis para editar."}
+                </CardDescription>
+              </div>
+              {!editingProfile && profile && (
+                <button
+                  type="button"
+                  onClick={startEditProfile}
+                  className="p-1.5 rounded-lg text-gray-500 hover:text-brand-600 hover:bg-brand-50 transition-colors flex-shrink-0"
+                  title="Editar perfil"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+              )}
             </CardHeader>
             <CardContent className="space-y-2">
               {!profile ? (
                 <p className="text-xs text-gray-500">Carregando perfil...</p>
+              ) : editingProfile ? (
+                <div className="space-y-5">
+                  {(
+                    [
+                      { key: "tone_creativity", title: "Criatividade", low: "Preciso", high: "Criativo" },
+                      { key: "tone_formality", title: "Formalidade", low: "Informal", high: "Formal" },
+                      { key: "tone_naturalness", title: "Naturalidade", low: "Robotico", high: "Humano" },
+                      { key: "tone_aggressiveness", title: "Agressividade", low: "Passivo", high: "Agressivo" },
+                    ] as const
+                  ).map(({ key, title, low, high }) => {
+                    const value = editValues[key];
+                    return (
+                      <div key={key}>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <Label className="text-xs font-semibold text-gray-900">{title}</Label>
+                          <span className="text-xs font-mono text-brand-600">{value}%</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-gray-400 w-14 truncate">{low}</span>
+                          <Slider
+                            value={[value]}
+                            onValueChange={([v]) => setEditValues((prev) => ({ ...prev, [key]: v }))}
+                            max={100}
+                            step={5}
+                            className="flex-1"
+                          />
+                          <span className="text-[10px] text-gray-400 w-14 truncate text-right">{high}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="flex gap-2 pt-2 border-t border-gray-100">
+                    <Button size="sm" onClick={saveEditProfile} disabled={savingProfile} className="flex-1">
+                      {savingProfile ? (
+                        <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                      ) : (
+                        <Check className="w-3.5 h-3.5 mr-1" />
+                      )}
+                      Salvar
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEditProfile} disabled={savingProfile}>
+                      <X className="w-3.5 h-3.5 mr-1" />
+                      Cancelar
+                    </Button>
+                  </div>
+                </div>
               ) : (
                 (
                   [
@@ -585,9 +687,9 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-semibold text-gray-900">{title}</span>
-                            <span className="text-[10px] font-mono text-brand-600">{block.percent}%</span>
+                            <span className="text-[11px] font-mono text-brand-600">{block.percent}%</span>
                           </div>
-                          <span className="text-[10px] text-gray-500 block truncate">{block.label} · {block.summary}</span>
+                          <span className="text-[11px] text-gray-500 block truncate">{block.label} · {block.summary}</span>
                         </div>
                         <span className="text-[10px] uppercase tracking-wider text-brand-500/80 font-medium flex-shrink-0">
                           {isOpen ? "Fechar" : "Ver"}
@@ -595,7 +697,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                       </button>
                       {isOpen && (
                         <div className="px-3 pb-3 pt-1 border-t border-gray-100 bg-gray-50/60">
-                          <pre className="text-[10px] text-gray-700 whitespace-pre-wrap leading-relaxed font-sans">
+                          <pre className="text-[11px] text-gray-700 whitespace-pre-wrap leading-relaxed font-sans">
                             {block.directives}
                           </pre>
                         </div>
