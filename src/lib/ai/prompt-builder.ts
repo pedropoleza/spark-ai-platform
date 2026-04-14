@@ -1,5 +1,6 @@
 import type { AgentConfig, DataField } from "@/types/agent";
 import { getTimezoneFromState, getCurrentTimeInTimezone } from "@/lib/utils/timezone";
+import { composePersonalityProfile, type PersonalityProfile } from "@/lib/ai/behavior-blocks";
 
 /**
  * Sanitiza texto para prevenir prompt injection.
@@ -68,6 +69,12 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     return ctx.config.system_prompt_override;
   }
 
+  // Ordem de montagem fixa. Ao reorganizar, mantenha a separacao:
+  //   1. base estrutural (identidade, objetivo, recrutamento)
+  //   2. blocos comportamentais (tone) — composicao do registry de bandas
+  //   3. coleta de dados + regras de conversa + agendamento
+  //   4. seções complementares isoladas (feedback, knowledge base, instrucoes extras)
+  //   5. formato de resposta
   const sections = [
     buildIdentitySection(ctx),
     buildObjectiveSection(ctx),
@@ -228,91 +235,34 @@ ${legalCheck}`;
 }
 
 function buildToneSection(ctx: PromptContext): string {
-  const { tone_creativity, tone_formality, tone_naturalness, tone_aggressiveness } = ctx.config;
-  const naturalness = tone_naturalness ?? 50;
-  const aggressiveness = tone_aggressiveness ?? 50;
+  // Composicao a partir do registry de blocos comportamentais.
+  // Cada percentual escolhe uma das 5 bandas pre-definidas em behavior-blocks.ts.
+  // O prompt-builder NAO improvisa textos aqui — apenas reorganiza blocos.
+  const profile = composePersonalityProfile({
+    tone_creativity: ctx.config.tone_creativity,
+    tone_formality: ctx.config.tone_formality,
+    tone_naturalness: ctx.config.tone_naturalness,
+    tone_aggressiveness: ctx.config.tone_aggressiveness,
+  });
 
-  let creativityDesc: string;
-  if (tone_creativity < 30) creativityDesc = "Seja direto e objetivo.";
-  else if (tone_creativity < 70) creativityDesc = "Equilibre objetividade com naturalidade.";
-  else creativityDesc = "Seja conversacional. Use humor leve quando apropriado.";
+  const renderBlock = (
+    title: string,
+    block: PersonalityProfile["creativity"]
+  ) => `### ${title} — ${block.percent}% [${block.label}]
+${block.directives}`;
 
-  let formalityDesc: string;
-  if (tone_formality < 30) formalityDesc = "Tom casual e informal.";
-  else if (tone_formality < 70) formalityDesc = "Tom profissional mas acessivel.";
-  else formalityDesc = "Tom formal e corporativo.";
+  return `## PERFIL COMPORTAMENTAL
+Os blocos abaixo foram selecionados a partir dos percentuais configurados pelo administrador. Aplique-os de forma combinada e consistente em TODAS as mensagens.
 
-  let naturalnessDesc: string;
-  if (naturalness < 20) {
-    naturalnessDesc = `Estilo: formal e estruturado. Pontuacao completa. Palavras inteiras. UMA mensagem unica.
-Use "message" como string.`;
-  } else if (naturalness < 40) {
-    naturalnessDesc = `Estilo: profissional. Pontuacao normal. Palavras completas. UMA mensagem.
-Use "message" como string.`;
-  } else if (naturalness < 60) {
-    naturalnessDesc = `Estilo: equilibrado. Pode omitir ponto final. 1-2 mensagens.
-Use "message" como array se dividir: ["msg1", "msg2"]`;
-  } else if (naturalness < 80) {
-    naturalnessDesc = `Estilo: casual, como WhatsApp. Abreviacoes: vc, tb, pfv, ta, blz, ne, pq.
-Omita ponto final. Divida em 2-3 mensagens.
-Use "message" como array: ["oi", "tudo bem?", "pergunta aqui"]`;
-  } else {
-    naturalnessDesc = `Estilo: muito humano, digitacao rapida. USE abreviacoes: vc, tb, pfv, ta, blz.
-NUNCA ponto final. SEMPRE divida em 2-3 msgs curtas.
-Use "message" como array: ["eai", "blz?", "sobre o seguro..."]`;
-  }
+${renderBlock("Criatividade", profile.creativity)}
 
-  let aggressivenessDesc: string;
-  if (aggressiveness < 20) {
-    aggressivenessDesc = `Abordagem PASSIVA:
-- So responda quando o lead perguntar algo. NAO proponha agendamento proativamente
-- Se o lead disser "nao" a qualquer coisa, aceite imediatamente sem insistir
-- Nao crie urgencia nem pressione de nenhuma forma
-- Foque em informar, nao em vender`;
-  } else if (aggressiveness < 40) {
-    aggressivenessDesc = `Abordagem SUAVE:
-- Sugira agendamento educadamente apos coletar os dados
-- Se o lead recusar, aceite e diga que esta disponivel quando ele quiser
-- Nao insista, nao crie urgencia
-- Tom consultivo: "quando vc quiser, estou aqui"`;
-  } else if (aggressiveness < 60) {
-    aggressivenessDesc = `Abordagem EQUILIBRADA:
-- Proponha agendamento apos qualificar o lead
-- IMPORTANTE: quando o lead disser "nao quero", "nao tenho interesse" ou recusar, NAO desqualifique imediatamente
-- Na PRIMEIRA recusa, SEMPRE tente reconquistar com um argumento: "entendo, mas e uma conversa rapida de 10 min, sem compromisso"
-- Use beneficios suaves: "a ligacao e rapidinha, 15 minutinhos", "so pra vc conhecer as opcoes"
-- Mantenha conversation_status = "active" na primeira recusa
-- So defina "disqualified" se o lead recusar DUAS vezes ou disser explicitamente "nao me procure mais"`;
+${renderBlock("Formalidade", profile.formality)}
 
-  } else if (aggressiveness < 80) {
-    aggressivenessDesc = `Abordagem PROATIVA:
-- Proponha agendamento assim que possivel
-- Se recusar, insista 2 vezes com argumentos diferentes
-- Crie senso de urgencia leve: "tenho poucos horarios essa semana"
-- Destaque beneficios concretos: "muitas pessoas na sua situacao conseguiram economizar bastante"
-- Use prova social: "varios clientes na Florida ja fizeram"
-- Se recusar 2x, aceite`;
-  } else {
-    aggressivenessDesc = `Abordagem AGRESSIVA:
-- Proponha agendamento o mais rapido possivel, mesmo antes de coletar todos os dados
-- Se recusar, insista ate 3 vezes com argumentos DIFERENTES a cada tentativa
-- Use escassez: "esse horario e o ultimo disponivel essa semana"
-- Use FOMO: "vi que voce se qualifica pra uma condicao especial, mas precisa ser agora"
-- Rebata objecoes ativamente: se disser "to ocupado" -> "entendo, por isso mesmo a ligacao e super rapida, 10 min"
-- Use gatilhos emocionais: protecao da familia, seguranca financeira
-- Se recusar 3x, aceite mas deixe a porta aberta`;
-  }
+${renderBlock("Naturalidade", profile.naturalness)}
 
-  return `## TOM DE VOZ
-${creativityDesc} ${formalityDesc}
+${renderBlock("Agressividade na venda", profile.aggressiveness)}
 
-## NATURALIDADE
-${naturalnessDesc}
-
-## AGRESSIVIDADE NA VENDA
-${aggressivenessDesc}
-
-Regras:
+### Regras gerais
 - Maximo 1 pergunta por mensagem
 - Nao repita perguntas ja respondidas`;
 }
