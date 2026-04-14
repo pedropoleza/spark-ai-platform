@@ -153,7 +153,8 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
   };
 
   const handleDelete = async (id: string) => {
-    await fetch(`/api/knowledge-base?id=${id}`, { method: "DELETE" });
+    if (!agentId) return;
+    await fetch(`/api/knowledge-base?id=${id}&agent_id=${agentId}`, { method: "DELETE" });
     setItems((prev) => prev.filter((item) => item.id !== id));
   };
 
@@ -181,6 +182,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: editingId,
+          agent_id: agentId,
           title: editTitle,
           description: editDescription,
           usage_instructions: editUsage,

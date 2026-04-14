@@ -165,9 +165,9 @@ export async function PATCH(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { id, title, description, usage_instructions } = body;
-  if (!id) {
-    return NextResponse.json({ error: "id obrigatorio" }, { status: 400 });
+  const { id, agent_id, title, description, usage_instructions } = body;
+  if (!id || !agent_id) {
+    return NextResponse.json({ error: "id e agent_id obrigatorios" }, { status: 400 });
   }
 
   const updates: Record<string, unknown> = {};
@@ -184,6 +184,7 @@ export async function PATCH(request: NextRequest) {
     .from("knowledge_base")
     .update(updates)
     .eq("id", id)
+    .eq("agent_id", agent_id)
     .eq("location_id", session.locationId)
     .select()
     .single();
@@ -203,8 +204,9 @@ export async function DELETE(request: NextRequest) {
   }
 
   const id = request.nextUrl.searchParams.get("id");
-  if (!id) {
-    return NextResponse.json({ error: "id obrigatorio" }, { status: 400 });
+  const agentId = request.nextUrl.searchParams.get("agent_id");
+  if (!id || !agentId) {
+    return NextResponse.json({ error: "id e agent_id obrigatorios" }, { status: 400 });
   }
 
   const supabase = createServerClient();
@@ -212,6 +214,7 @@ export async function DELETE(request: NextRequest) {
     .from("knowledge_base")
     .delete()
     .eq("id", id)
+    .eq("agent_id", agentId)
     .eq("location_id", session.locationId);
 
   return NextResponse.json({ success: true });

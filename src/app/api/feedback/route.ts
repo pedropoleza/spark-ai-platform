@@ -68,8 +68,9 @@ export async function DELETE(request: NextRequest) {
   }
 
   const id = request.nextUrl.searchParams.get("id");
-  if (!id) {
-    return NextResponse.json({ error: "id obrigatorio" }, { status: 400 });
+  const agentId = request.nextUrl.searchParams.get("agent_id");
+  if (!id || !agentId) {
+    return NextResponse.json({ error: "id e agent_id obrigatorios" }, { status: 400 });
   }
 
   const supabase = createServerClient();
@@ -77,6 +78,7 @@ export async function DELETE(request: NextRequest) {
     .from("agent_feedback")
     .delete()
     .eq("id", id)
+    .eq("agent_id", agentId)
     .eq("location_id", session.locationId);
 
   if (error) {
@@ -94,10 +96,10 @@ export async function PATCH(request: NextRequest) {
   }
 
   const body = await request.json();
-  const { id, rating, suggestion } = body;
+  const { id, agent_id, rating, suggestion } = body;
 
-  if (!id) {
-    return NextResponse.json({ error: "id obrigatorio" }, { status: 400 });
+  if (!id || !agent_id) {
+    return NextResponse.json({ error: "id e agent_id obrigatorios" }, { status: 400 });
   }
 
   const update: Record<string, unknown> = {};
@@ -113,6 +115,7 @@ export async function PATCH(request: NextRequest) {
     .from("agent_feedback")
     .update(update)
     .eq("id", id)
+    .eq("agent_id", agent_id)
     .eq("location_id", session.locationId);
 
   if (error) {

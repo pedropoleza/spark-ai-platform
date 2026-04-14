@@ -163,7 +163,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   };
 
   const deleteFeedback = async (id: string) => {
-    const res = await fetch(`/api/feedback?id=${id}`, { method: "DELETE" });
+    if (!agentId) return;
+    const res = await fetch(`/api/feedback?id=${id}&agent_id=${agentId}`, { method: "DELETE" });
     if (res.ok) {
       setSavedFeedbacks((prev) => prev.filter((f) => f.id !== id));
     }
@@ -187,6 +188,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: editingFeedbackId,
+        agent_id: agentId,
         rating: editingRating,
         suggestion: editingRating === "negative" ? editingSuggestion : null,
       }),

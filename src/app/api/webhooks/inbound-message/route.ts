@@ -68,16 +68,47 @@ export async function POST(request: NextRequest) {
       // IMPORTANTE: ignorar mensagens enviadas pela propria IA. A IA
       // grava uma fingerprint na execution_log com o texto/contact_id
       // imediatamente antes de chamar o GHL, e checamos isso aqui.
+      //
+      // ROTA: se houver conversation_state para este contato, pausamos
+      // exatamente aquele agente. Sales e recrutamento sao totalmente
+      // separados e nao compartilham conversation_state.
       try {
         const supabaseAdmin = createAdminClient();
-        const { data: outboundAgent } = await supabaseAdmin
-          .from("agents")
-          .select("id, agent_configs(handoff_messages, auto_pause_on_human_message)")
+
+        // 1) Tenta resolver o agente pelo conversation_state do contato
+        const { data: existingStates } = await supabaseAdmin
+          .from("conversation_state")
+          .select("agent_id")
           .eq("location_id", locationId)
-          .eq("status", "active")
-          .in("type", ["sales_agent", "recruitment_agent"])
-          .limit(1)
-          .single();
+          .eq("contact_id", contactId);
+
+        let outboundAgent: { id: string; agent_configs: unknown } | null = null;
+
+        const stateAgentIds = (existingStates || []).map((r) => r.agent_id).filter(Boolean);
+        if (stateAgentIds.length > 0) {
+          const { data: picked } = await supabaseAdmin
+            .from("agents")
+            .select("id, agent_configs(handoff_messages, auto_pause_on_human_message)")
+            .in("id", stateAgentIds)
+            .eq("status", "active")
+            .limit(1)
+            .maybeSingle();
+          if (picked) outboundAgent = picked as { id: string; agent_configs: unknown };
+        }
+
+        // 2) Fallback: nao tem state — aplica apenas se existir exatamente UM
+        //    agente ativo na location (senao nao sabemos pra qual aplicar)
+        if (!outboundAgent) {
+          const { data: active } = await supabaseAdmin
+            .from("agents")
+            .select("id, agent_configs(handoff_messages, auto_pause_on_human_message)")
+            .eq("location_id", locationId)
+            .eq("status", "active")
+            .in("type", ["sales_agent", "recruitment_agent"]);
+          if (active && active.length === 1) {
+            outboundAgent = active[0] as { id: string; agent_configs: unknown };
+          }
+        }
 
         if (outboundAgent) {
           const outboundConfig = Array.isArray(outboundAgent.agent_configs)
@@ -180,26 +211,82 @@ export async function POST(request: NextRequest) {
     const channel = detectChannel(messageType, (body.customData as Record<string, unknown>)?.channel as string | undefined);
     const supabase = createAdminClient();
 
-    // ===== BUSCAR AGENTE ATIVO (sales ou recruitment) =====
-    const { data: agents } = await supabase
+    // ===== BUSCAR TODOS os agentes ativos (sales + recruitment) =====
+    // Nao podemos mais pegar "o primeiro" — sales e recrutamento sao
+    // totalmente separados. Precisamos decidir explicitamente qual agente
+    // recebe esta mensagem:
+    //   1) Se ja existe conversation_state para este contato -> esse agente
+    //   2) Senao, iterar por ordem (sales primeiro por historico) e selecionar
+    //      o primeiro agente cujas targeting_rules batem
+    //   3) Se nenhum bater, skip
+    const { data: allAgents } = await supabase
       .from("agents")
-      .select("id, type, location_id, agent_configs(debounce_seconds, targeting_rules, enabled_channels, deactivation_rules)")
+      .select("id, type, location_id, agent_configs(debounce_seconds, targeting_rules, enabled_channels, deactivation_rules, working_hours)")
       .eq("location_id", locationId)
       .eq("status", "active")
-      .in("type", ["sales_agent", "recruitment_agent"])
-      .limit(1);
+      .in("type", ["sales_agent", "recruitment_agent"]);
 
-    const agent = agents?.[0];
-    if (!agent) {
+    if (!allAgents || allAgents.length === 0) {
       return NextResponse.json({ received: true, skipped: "no_active_agent" });
     }
 
+    // 1) Agente ja dono da conversa
+    const { data: existingStates } = await supabase
+      .from("conversation_state")
+      .select("agent_id")
+      .eq("location_id", locationId)
+      .eq("contact_id", contactId);
+
+    const stateAgentIds = new Set((existingStates || []).map((r) => r.agent_id).filter(Boolean));
+
+    type AgentRow = typeof allAgents[number];
+    let selectedAgent: AgentRow | null = null;
+
+    if (stateAgentIds.size > 0) {
+      selectedAgent = allAgents.find((a) => stateAgentIds.has(a.id)) || null;
+    }
+
+    // Precisamos da location para checar targeting
+    const { data: location } = await supabase
+      .from("locations")
+      .select("company_id")
+      .eq("location_id", locationId)
+      .single();
+
+    if (!location) {
+      return NextResponse.json({ received: true, skipped: "location_not_found" });
+    }
+
+    // 2) Rotear por targeting quando nao houver conversa anterior
+    if (!selectedAgent) {
+      for (const candidate of allAgents) {
+        const cfg = Array.isArray(candidate.agent_configs)
+          ? candidate.agent_configs[0]
+          : candidate.agent_configs;
+        const rules: TargetingRule[] = cfg?.targeting_rules || [];
+        if (rules.length === 0) {
+          // Agente sem targeting aceita qualquer contato — vira fallback
+          if (!selectedAgent) selectedAgent = candidate;
+          continue;
+        }
+        const matches = await checkTargetingRules(rules, contactId, location.company_id, locationId);
+        if (matches) {
+          selectedAgent = candidate;
+          break;
+        }
+      }
+    }
+
+    if (!selectedAgent) {
+      return NextResponse.json({ received: true, skipped: "no_agent_matched_targeting" });
+    }
+
+    const agent = selectedAgent;
     const config = Array.isArray(agent.agent_configs)
       ? agent.agent_configs[0]
       : agent.agent_configs;
 
     const debounceSeconds = config?.debounce_seconds || 15;
-    const targetingRules: TargetingRule[] = config?.targeting_rules || [];
     const enabledChannels: string[] = config?.enabled_channels || ["SMS", "WhatsApp"];
 
     // ===== FILTRO: Canal habilitado =====
@@ -207,51 +294,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ received: true, skipped: "channel_not_enabled" });
     }
 
-    // ===== FILTRO: Targeting rules (FAIL CLOSED) =====
-    if (targetingRules.length > 0) {
-      const { data: location } = await supabase
-        .from("locations")
-        .select("company_id")
-        .eq("location_id", locationId)
-        .single();
-
-      if (!location) {
-        return NextResponse.json({ received: true, skipped: "location_not_found" });
-      }
-
-      const matches = await checkTargetingRules(
-        targetingRules, contactId, location.company_id, locationId
+    // ===== FILTRO: Regras de desligamento (agente ja selecionado) =====
+    const deactivationRules = config?.deactivation_rules || [];
+    if (deactivationRules.length > 0) {
+      const shouldDeactivate = await checkDeactivationRules(
+        deactivationRules, contactId, location.company_id, locationId
       );
-
-      // FAIL CLOSED: se não conseguiu verificar ou não bateu, rejeitar
-      if (!matches) {
-        return NextResponse.json({ received: true, skipped: "targeting_not_matched" });
-      }
-
-      // ===== FILTRO: Regras de desligamento =====
-      const deactivationRules = config?.deactivation_rules || [];
-      if (deactivationRules.length > 0) {
-        const shouldDeactivate = await checkDeactivationRules(
-          deactivationRules, contactId, location.company_id, locationId
-        );
-        if (shouldDeactivate) {
-          return NextResponse.json({ received: true, skipped: "deactivated_by_rule" });
-        }
+      if (shouldDeactivate) {
+        return NextResponse.json({ received: true, skipped: "deactivated_by_rule" });
       }
     }
 
     // ===== FILTRO: Working hours =====
-    const { data: workingHoursConfig } = await supabase
-      .from("agent_configs")
-      .select("working_hours")
-      .eq("agent_id", agent.id)
-      .single();
-
-    if (workingHoursConfig?.working_hours) {
-      const wh = workingHoursConfig.working_hours;
-      if (wh.enabled && !isWithinWorkingHours(wh)) {
-        return NextResponse.json({ received: true, skipped: "outside_working_hours" });
-      }
+    const wh = config?.working_hours;
+    if (wh?.enabled && !isWithinWorkingHours(wh)) {
+      return NextResponse.json({ received: true, skipped: "outside_working_hours" });
     }
 
     // ===== DEBOUNCE ATÔMICO: usar RPC ou transação =====
@@ -259,8 +316,10 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString();
 
     // Atualizar pendentes + inserir nova em uma sequência atômica
-    // Primeiro inserir a mensagem
+    // Primeiro inserir a mensagem (com agent_id explicito — crucial para
+    // evitar cross-contamination no processor)
     const { error: insertError } = await supabase.from("message_queue").insert({
+      agent_id: agent.id,
       location_id: locationId,
       contact_id: contactId,
       conversation_id: conversationId || "",
@@ -279,15 +338,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "queue_insert_failed" }, { status: 500 });
     }
 
-    // Depois empurrar TODAS as pendentes (incluindo a que acabou de inserir)
+    // Depois empurrar TODAS as pendentes do MESMO agente + contato
     await supabase
       .from("message_queue")
       .update({ process_after: processAfter })
-      .eq("location_id", locationId)
+      .eq("agent_id", agent.id)
       .eq("contact_id", contactId)
       .eq("status", "pending");
 
-    return NextResponse.json({ received: true, queued: true });
+    return NextResponse.json({ received: true, queued: true, agent_id: agent.id, agent_type: agent.type });
   } catch (error) {
     console.error("Erro no webhook:", error);
     return NextResponse.json({ error: "internal_error" }, { status: 500 });

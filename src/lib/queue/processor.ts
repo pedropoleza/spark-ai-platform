@@ -9,6 +9,7 @@ import type { GHLMessage } from "@/types/ghl";
 
 interface QueuedMessage {
   id: string;
+  agent_id: string | null;
   location_id: string;
   contact_id: string;
   conversation_id: string;
@@ -17,6 +18,7 @@ interface QueuedMessage {
 }
 
 interface MessageGroup {
+  agentId: string | null;
   locationId: string;
   contactId: string;
   conversationId: string;
@@ -51,13 +53,16 @@ export async function processMessageQueue(): Promise<{
     return { processed: 0, errors: 0 };
   }
 
-  // 3. Agrupar por (location_id, contact_id)
+  // 3. Agrupar por (agent_id, contact_id) — crucial: sales e recrutamento
+  // NAO podem ser agrupados juntos mesmo quando o mesmo contato mandou
+  // mensagem para os dois.
   const groups = new Map<string, MessageGroup>();
 
   for (const msg of pendingMessages) {
-    const key = `${msg.location_id}:${msg.contact_id}`;
+    const key = `${msg.agent_id || msg.location_id}:${msg.contact_id}`;
     if (!groups.has(key)) {
       groups.set(key, {
+        agentId: msg.agent_id || null,
         locationId: msg.location_id,
         contactId: msg.contact_id,
         conversationId: msg.conversation_id,
@@ -109,15 +114,30 @@ async function processGroup(
   supabase: ReturnType<typeof createAdminClient>,
   group: MessageGroup
 ): Promise<void> {
-  // 1. Buscar agente e config para esta location
-  const { data: agent } = await supabase
-    .from("agents")
-    .select("*, agent_configs(*)")
-    .eq("location_id", group.locationId)
-    .eq("status", "active")
-    .in("type", ["sales_agent", "recruitment_agent"])
-    .limit(1)
-    .single();
+  // 1. Buscar o agente exato gravado na fila. Se agent_id existir,
+  // carregamos diretamente por id — sem cair no fallback por location,
+  // que misturaria sales com recrutamento. Se nao existir (linha
+  // legada pre-migration 00013), usamos fallback por location mas
+  // APENAS quando houver 1 agente ativo.
+  let agentQuery;
+  if (group.agentId) {
+    agentQuery = supabase
+      .from("agents")
+      .select("*, agent_configs(*)")
+      .eq("id", group.agentId)
+      .eq("status", "active")
+      .maybeSingle();
+  } else {
+    agentQuery = supabase
+      .from("agents")
+      .select("*, agent_configs(*)")
+      .eq("location_id", group.locationId)
+      .eq("status", "active")
+      .in("type", ["sales_agent", "recruitment_agent"])
+      .limit(1)
+      .maybeSingle();
+  }
+  const { data: agent } = await agentQuery;
 
   if (!agent) return;
 
