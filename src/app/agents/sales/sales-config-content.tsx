@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToneSliders } from "@/components/agents/sales/tone-sliders";
@@ -109,6 +110,7 @@ const defaultConfig: ConfigForm = {
   automations: [],
   deactivation_rules: [],
   handoff_messages: [],
+  auto_pause_on_human_message: false,
 };
 
 export function SalesConfigContent() {
@@ -388,22 +390,49 @@ export function SalesConfigContent() {
               </CardContent>
             </Card>
 
-            {/* Mensagens de encerramento / handoff manual */}
+            {/* Pausa manual da IA */}
             <Card>
               <CardHeader>
-                <CardTitle>Mensagens de encerramento</CardTitle>
+                <CardTitle>Pausa manual da IA</CardTitle>
                 <CardDescription>
-                  Cadastre mensagens prontas para encerrar o atendimento da IA e
-                  assumir pessoalmente a conversa. Quando voce enviar uma dessas
-                  mensagens ao contato, a IA para de responder aquele contato
-                  automaticamente.
+                  Controle como a IA deve parar de responder quando voce assumir a conversa.
                 </CardDescription>
               </CardHeader>
-              <CardContent>
-                <HandoffMessagesEditor
-                  messages={config.handoff_messages || []}
-                  onChange={(v: HandoffMessage[]) => updateConfig("handoff_messages", v)}
-                />
+              <CardContent className="space-y-6">
+                {/* Toggle principal: pausar em qualquer mensagem manual */}
+                <div className="flex items-start justify-between gap-4 p-4 rounded-xl border border-brand-200 bg-brand-50/40">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Label className="text-sm font-semibold text-gray-900">
+                        Pausar em qualquer mensagem manual
+                      </Label>
+                      <Badge variant="default" className="text-[10px]">Recomendado</Badge>
+                    </div>
+                    <p className="text-xs text-gray-600 leading-relaxed">
+                      Quando ativo, a IA pausa automaticamente em qualquer contato no momento em que voce (ou outro humano) enviar uma mensagem manual pelo GHL. Sem precisar cadastrar texto fixo. As respostas da propria IA sao ignoradas pela deteccao.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={config.auto_pause_on_human_message ?? false}
+                    onCheckedChange={(v) => updateConfig("auto_pause_on_human_message", v)}
+                  />
+                </div>
+
+                {/* Modo legado: mensagens fixas (apenas se toggle desligado) */}
+                {!(config.auto_pause_on_human_message ?? false) && (
+                  <div className="pt-2 border-t border-gray-200">
+                    <div className="mb-3">
+                      <Label className="text-sm font-medium text-gray-900">Mensagens de encerramento (modo legado)</Label>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Apenas quando o toggle acima esta desligado. A IA pausa apenas quando voce enviar uma das mensagens cadastradas com texto exato.
+                      </p>
+                    </div>
+                    <HandoffMessagesEditor
+                      messages={config.handoff_messages || []}
+                      onChange={(v: HandoffMessage[]) => updateConfig("handoff_messages", v)}
+                    />
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

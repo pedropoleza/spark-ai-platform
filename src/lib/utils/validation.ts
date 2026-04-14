@@ -144,6 +144,7 @@ export const updateAgentConfigSchema = z.object({
     text: z.string().min(1).max(2000),
     auto_deactivate: z.boolean(),
   })).optional(),
+  auto_pause_on_human_message: z.boolean().optional(),
   notifications: z.object({
     on_qualified: z.boolean(),
     on_booked: z.boolean(),

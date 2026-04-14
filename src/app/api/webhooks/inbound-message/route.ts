@@ -60,14 +60,19 @@ export async function POST(request: NextRequest) {
     }
 
     if (direction === "outbound") {
-      // Detectar mensagens de encerramento (handoff manual).
-      // Se o operador humano enviou uma das mensagens cadastradas com
-      // auto_deactivate=true, pausar a IA para aquele contato.
+      // Detectar handoff manual.
+      // Duas formas de pausar a IA quando o humano envia mensagem:
+      //   1) auto_pause_on_human_message = true  -> pausa em QUALQUER mensagem manual
+      //   2) handoff_messages com auto_deactivate -> pausa apenas se bater o texto exato
+      //
+      // IMPORTANTE: ignorar mensagens enviadas pela propria IA. A IA
+      // grava uma fingerprint na execution_log com o texto/contact_id
+      // imediatamente antes de chamar o GHL, e checamos isso aqui.
       try {
         const supabaseAdmin = createAdminClient();
         const { data: outboundAgent } = await supabaseAdmin
           .from("agents")
-          .select("id, agent_configs(handoff_messages)")
+          .select("id, agent_configs(handoff_messages, auto_pause_on_human_message)")
           .eq("location_id", locationId)
           .eq("status", "active")
           .in("type", ["sales_agent", "recruitment_agent"])
@@ -78,6 +83,8 @@ export async function POST(request: NextRequest) {
           const outboundConfig = Array.isArray(outboundAgent.agent_configs)
             ? outboundAgent.agent_configs[0]
             : outboundAgent.agent_configs;
+
+          const autoPauseEnabled = outboundConfig?.auto_pause_on_human_message === true;
           const handoffMessages = (outboundConfig?.handoff_messages || []) as {
             id: string;
             label: string;
@@ -88,13 +95,56 @@ export async function POST(request: NextRequest) {
           const normalize = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
           const bodyNorm = normalize(messageBody);
 
-          const matched = handoffMessages.find(
-            (m) => m.auto_deactivate && normalize(m.text) === bodyNorm
-          );
+          // Heuristica anti-eco: a IA, ao mandar uma mensagem via GHL,
+          // tambem dispara este mesmo webhook como outbound. Para nao
+          // pausar a IA por causa da propria IA, checamos o execution_log
+          // dos ultimos 90s buscando um send_message para este contato
+          // cujo texto bate com o que chegou.
+          let isFromAi = false;
+          if (autoPauseEnabled) {
+            const ninetySecondsAgo = new Date(Date.now() - 90_000).toISOString();
+            const { data: aiResponses } = await supabaseAdmin
+              .from("execution_log")
+              .select("action_payload")
+              .eq("location_id", locationId)
+              .eq("contact_id", contactId)
+              .eq("action_type", "send_message")
+              .eq("success", true)
+              .gte("created_at", ninetySecondsAgo)
+              .order("created_at", { ascending: false })
+              .limit(10);
 
-          if (matched) {
+            if (aiResponses) {
+              for (const row of aiResponses) {
+                const payload = (row.action_payload || {}) as { message?: unknown };
+                const msg = payload.message;
+                const candidates: string[] = Array.isArray(msg)
+                  ? msg.filter((m): m is string => typeof m === "string")
+                  : typeof msg === "string"
+                  ? [msg]
+                  : [];
+                if (candidates.some((c) => normalize(c) === bodyNorm)) {
+                  isFromAi = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          let pauseReason: string | null = null;
+
+          if (autoPauseEnabled && !isFromAi) {
+            pauseReason = "auto_pause:human_message";
+          } else if (!autoPauseEnabled) {
+            // Modo legado: match exato com handoff_messages
+            const matched = handoffMessages.find(
+              (m) => m.auto_deactivate && normalize(m.text) === bodyNorm
+            );
+            if (matched) pauseReason = `handoff_message:${matched.label}`;
+          }
+
+          if (pauseReason) {
             const nowIso = new Date().toISOString();
-            // Upsert: garantir que exista conversation_state antes de pausar
             await supabaseAdmin
               .from("conversation_state")
               .upsert(
@@ -105,17 +155,18 @@ export async function POST(request: NextRequest) {
                   conversation_id: conversationId || "",
                   status: "handed_off",
                   ai_paused_at: nowIso,
-                  ai_paused_reason: `handoff_message:${matched.label}`,
+                  ai_paused_reason: pauseReason,
                   updated_at: nowIso,
                 },
                 { onConflict: "agent_id,contact_id" }
               );
 
-            console.log(`[Handoff] IA pausada para contato ${contactId} via "${matched.label}"`);
+            console.log(`[Handoff] IA pausada para contato ${contactId} (${pauseReason})`);
             return NextResponse.json({
               received: true,
               skipped: "outbound_handoff_triggered",
               paused: true,
+              reason: pauseReason,
             });
           }
         }
