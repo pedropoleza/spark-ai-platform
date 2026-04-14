@@ -531,14 +531,14 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
         {/* Sidebar - Dados coletados + Perfil comportamental */}
         <div className="space-y-4">
-          <Card className="h-[260px] overflow-y-auto">
+          <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Dados coletados</CardTitle>
               <CardDescription>
                 Informacoes extraidas pela IA durante a conversa
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="space-y-3 max-h-[220px] overflow-y-auto">
               {Object.keys(collectedData).length === 0 ? (
                 <p className="text-sm text-gray-500">Nenhum dado coletado ainda</p>
               ) : (
@@ -554,7 +554,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             </CardContent>
           </Card>
 
-          <Card className="h-[274px] overflow-y-auto">
+          <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Perfil comportamental</CardTitle>
               <CardDescription>
@@ -670,8 +670,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                             Negativo
                           </Badge>
                         )}
-                        <span className="text-[10px] text-gray-500">
-                          {new Date(fb.created_at).toLocaleString("pt-BR", {
+                        <span className="text-xs text-gray-500">                          {new Date(fb.created_at).toLocaleString("pt-BR", {
                             day: "2-digit",
                             month: "2-digit",
                             hour: "2-digit",
@@ -720,24 +719,24 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
                     {fb.user_message && (
                       <div className="mb-2">
-                        <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
+                        <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
                           Lead disse
                         </span>
-                        <p className="text-xs text-gray-800 mt-0.5 italic">&ldquo;{fb.user_message}&rdquo;</p>
+                        <p className="text-sm text-gray-800 mt-1 italic">&ldquo;{fb.user_message}&rdquo;</p>
                       </div>
                     )}
 
                     <div className="mb-2">
-                      <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
+                      <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
                         IA respondeu
                       </span>
-                      <p className="text-xs text-gray-900 mt-0.5">{fb.ai_message}</p>
+                      <p className="text-sm text-gray-900 mt-1">{fb.ai_message}</p>
                     </div>
 
                     {isEditing ? (
                       editingRating === "negative" && (
                         <div>
-                          <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
+                          <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
                             Como deveria ter respondido
                           </span>
                           <Textarea
@@ -752,10 +751,10 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     ) : (
                       fb.suggestion && (
                         <div className="bg-gray-50 border border-gray-200 rounded p-2">
-                          <span className="text-[10px] font-medium text-red-600 uppercase tracking-wide">
+                          <span className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">
                             Correcao (deveria ser)
                           </span>
-                          <p className="text-xs text-gray-900 mt-0.5">{fb.suggestion}</p>
+                          <p className="text-sm text-gray-900 mt-1">{fb.suggestion}</p>
                         </div>
                       )
                     )}

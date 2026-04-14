@@ -14,6 +14,10 @@
     --brand-2: 41 128 242;         /* #2980F2 */
   }
 
+  html {
+    font-size: 17px;
+  }
+
   html, body {
     color: rgb(var(--foreground));
     background: rgb(248 250 252);
