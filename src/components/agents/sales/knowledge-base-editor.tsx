@@ -198,15 +198,15 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
   const iconMap = { text: Type, file: FileText, url: Globe };
 
   if (!agentId) {
-    return <p className="text-sm text-neutral-500">Salve o agente primeiro para adicionar conhecimento.</p>;
+    return <p className="text-sm text-gray-400">Salve o agente primeiro para adicionar conhecimento.</p>;
   }
 
   return (
     <div className="space-y-4">
       {/* Status */}
       <div className="flex items-center justify-between">
-        <p className="text-xs text-neutral-500">
-          <span className="text-neutral-300 font-medium">{items.length}</span> item(ns) · ~<span className="text-neutral-300 font-medium">{totalTokens.toLocaleString()}</span> tokens no contexto
+        <p className="text-xs text-gray-400">
+          <span className="text-gray-700 font-medium">{items.length}</span> item(ns) · ~<span className="text-gray-700 font-medium">{totalTokens.toLocaleString()}</span> tokens no contexto
         </p>
         {totalTokens > 8000 && (
           <Badge variant="warning" className="text-[10px]">
@@ -218,7 +218,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
       {/* Lista de itens */}
       {loading ? (
         <div className="flex justify-center py-8">
-          <Loader2 className="w-5 h-5 animate-spin text-neutral-400" />
+          <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
         </div>
       ) : (
         <div className="space-y-2">
@@ -228,40 +228,40 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
             const isEditing = editingId === item.id;
             const hasMeta = !!(item.description || item.usage_instructions);
             return (
-              <div key={item.id} className="rounded-xl border border-white/8 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/15 transition-all duration-200 group overflow-hidden">
+              <div key={item.id} className="rounded-xl border border-gray-200 bg-gray-50 hover:bg-gray-100 hover:border-gray-200 transition-all duration-200 group overflow-hidden">
                 <div className="flex items-center gap-3 p-3">
-                  <div className="w-8 h-8 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center flex-shrink-0">
-                    <Icon className="w-4 h-4 text-violet-300" />
+                  <div className="w-8 h-8 rounded-lg bg-brand-50 border border-brand-200 flex items-center justify-center flex-shrink-0">
+                    <Icon className="w-4 h-4 text-brand-600" />
                   </div>
                   <button
                     type="button"
                     onClick={() => setExpandedId(isExpanded ? null : item.id)}
                     className="flex-1 min-w-0 text-left"
                   >
-                    <span className="text-sm font-medium text-neutral-100 block truncate">{item.title}</span>
-                    <span className="text-xs text-neutral-500">
+                    <span className="text-sm font-medium text-gray-900 block truncate">{item.title}</span>
+                    <span className="text-xs text-gray-400">
                       {item.type === "file" ? item.file_name : item.type === "url" ? "URL" : "Texto"}
                       {" · ~"}{item.token_count.toLocaleString()} tokens
-                      {hasMeta && <span className="ml-1 text-violet-400">· com instrucoes</span>}
+                      {hasMeta && <span className="ml-1 text-brand-500">· com instrucoes</span>}
                     </span>
                   </button>
                   <button
                     onClick={() => setExpandedId(isExpanded ? null : item.id)}
-                    className="text-neutral-500 hover:text-neutral-200 transition-colors"
+                    className="text-gray-400 hover:text-gray-800 transition-colors"
                     title={isExpanded ? "Recolher" : "Expandir"}
                   >
                     {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                   </button>
                   <button
                     onClick={() => startEdit(item)}
-                    className="text-neutral-500 hover:text-violet-300 opacity-0 group-hover:opacity-100 transition-all"
+                    className="text-gray-400 hover:text-brand-600 opacity-0 group-hover:opacity-100 transition-all"
                     title="Editar descricao e instrucoes"
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDelete(item.id)}
-                    className="text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                    className="text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-all"
                     title="Remover"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -269,7 +269,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                 </div>
 
                 {isExpanded && (
-                  <div className="px-3 pb-3 border-t border-white/5 pt-3 space-y-3 bg-black/20">
+                  <div className="px-3 pb-3 border-t border-gray-100 pt-3 space-y-3 bg-gray-50">
                     {isEditing ? (
                       <>
                         <div>
@@ -293,7 +293,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                             rows={4}
                             placeholder={INSTRUCTION_PLACEHOLDER}
                           />
-                          <p className="text-[10px] text-neutral-400 mt-1">
+                          <p className="text-[10px] text-gray-500 mt-1">
                             Estas instrucoes sao enviadas junto com o conteudo para a IA e orientam como ela deve aplicar este item especifico.
                           </p>
                         </div>
@@ -309,23 +309,23 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                       <>
                         {item.description ? (
                           <div>
-                            <p className="text-[10px] uppercase tracking-wider text-violet-400/80 font-semibold mb-1">Descricao</p>
-                            <p className="text-xs text-neutral-300 whitespace-pre-wrap leading-relaxed">{item.description}</p>
+                            <p className="text-[10px] uppercase tracking-wider text-brand-500/80 font-semibold mb-1">Descricao</p>
+                            <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{item.description}</p>
                           </div>
                         ) : null}
                         {item.usage_instructions ? (
                           <div>
-                            <p className="text-[10px] uppercase tracking-wider text-violet-400/80 font-semibold mb-1">Instrucoes para a IA</p>
-                            <p className="text-xs text-neutral-300 whitespace-pre-wrap leading-relaxed">{item.usage_instructions}</p>
+                            <p className="text-[10px] uppercase tracking-wider text-brand-500/80 font-semibold mb-1">Instrucoes para a IA</p>
+                            <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{item.usage_instructions}</p>
                           </div>
                         ) : null}
                         {!hasMeta && (
-                          <p className="text-xs text-neutral-500 italic">
+                          <p className="text-xs text-gray-400 italic">
                             Nenhuma instrucao definida. Clique no lapis para orientar a IA sobre como usar este material.
                           </p>
                         )}
                         {item.type === "url" && item.file_url && (
-                          <p className="text-[10px] text-neutral-500 break-all font-mono">{item.file_url}</p>
+                          <p className="text-[10px] text-gray-400 break-all font-mono">{item.file_url}</p>
                         )}
                       </>
                     )}
@@ -345,27 +345,27 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
               <div className="grid grid-cols-3 gap-3">
                 <button
                   onClick={() => setAddType("text")}
-                  className="flex flex-col items-center gap-2 p-4 border border-dashed border-white/10 rounded-xl bg-white/[0.02] hover:border-violet-500/40 hover:bg-violet-500/5 transition-all duration-200 group"
+                  className="flex flex-col items-center gap-2 p-4 border border-dashed border-gray-200 rounded-xl bg-gray-50 hover:border-brand-300 hover:bg-brand-50 transition-all duration-200 group"
                 >
-                  <Type className="w-5 h-5 text-neutral-400 group-hover:text-violet-300 transition-colors" />
-                  <span className="text-sm font-medium text-neutral-100">Texto</span>
-                  <span className="text-[10px] text-neutral-500">Cole conteudo diretamente</span>
+                  <Type className="w-5 h-5 text-gray-500 group-hover:text-brand-600 transition-colors" />
+                  <span className="text-sm font-medium text-gray-900">Texto</span>
+                  <span className="text-[10px] text-gray-400">Cole conteudo diretamente</span>
                 </button>
                 <button
                   onClick={() => setAddType("file")}
-                  className="flex flex-col items-center gap-2 p-4 border border-dashed border-white/10 rounded-xl bg-white/[0.02] hover:border-violet-500/40 hover:bg-violet-500/5 transition-all duration-200 group"
+                  className="flex flex-col items-center gap-2 p-4 border border-dashed border-gray-200 rounded-xl bg-gray-50 hover:border-brand-300 hover:bg-brand-50 transition-all duration-200 group"
                 >
-                  <Upload className="w-5 h-5 text-neutral-400 group-hover:text-violet-300 transition-colors" />
-                  <span className="text-sm font-medium text-neutral-100">Arquivo</span>
-                  <span className="text-[10px] text-neutral-500">PDF, TXT, DOC, CSV</span>
+                  <Upload className="w-5 h-5 text-gray-500 group-hover:text-brand-600 transition-colors" />
+                  <span className="text-sm font-medium text-gray-900">Arquivo</span>
+                  <span className="text-[10px] text-gray-400">PDF, TXT, DOC, CSV</span>
                 </button>
                 <button
                   onClick={() => setAddType("url")}
-                  className="flex flex-col items-center gap-2 p-4 border border-dashed border-white/10 rounded-xl bg-white/[0.02] hover:border-violet-500/40 hover:bg-violet-500/5 transition-all duration-200 group"
+                  className="flex flex-col items-center gap-2 p-4 border border-dashed border-gray-200 rounded-xl bg-gray-50 hover:border-brand-300 hover:bg-brand-50 transition-all duration-200 group"
                 >
-                  <Globe className="w-5 h-5 text-neutral-400 group-hover:text-violet-300 transition-colors" />
-                  <span className="text-sm font-medium text-neutral-100">URL</span>
-                  <span className="text-[10px] text-neutral-500">Importar de um site</span>
+                  <Globe className="w-5 h-5 text-gray-500 group-hover:text-brand-600 transition-colors" />
+                  <span className="text-sm font-medium text-gray-900">URL</span>
+                  <span className="text-[10px] text-gray-400">Importar de um site</span>
                 </button>
               </div>
             ) : (
@@ -401,7 +401,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                     <div>
                       <Label className="text-xs">URL</Label>
                       <Input value={content} onChange={(e) => setContent(e.target.value)} placeholder="https://..." />
-                      <p className="text-[10px] text-neutral-400 mt-1">O sistema vai extrair o texto do site automaticamente</p>
+                      <p className="text-[10px] text-gray-500 mt-1">O sistema vai extrair o texto do site automaticamente</p>
                     </div>
                   </>
                 )}
@@ -416,7 +416,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                       rows={2}
                       placeholder={DESCRIPTION_PLACEHOLDER}
                     />
-                    <p className="text-[10px] text-neutral-400 mt-1">
+                    <p className="text-[10px] text-gray-500 mt-1">
                       Ajuda voce a identificar o item depois. Tambem eh enviada para a IA como contexto.
                     </p>
                   </div>
@@ -428,7 +428,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                       rows={4}
                       placeholder={INSTRUCTION_PLACEHOLDER}
                     />
-                    <p className="text-[10px] text-neutral-400 mt-1">
+                    <p className="text-[10px] text-gray-500 mt-1">
                       Seja especifico: diga quando usar, o que extrair e o que evitar. Ex: &ldquo;Quando o lead perguntar sobre prazos, cite exatamente os valores da tabela. Nao fale em desconto — nao eh oferecido.&rdquo;
                     </p>
                   </div>
@@ -438,7 +438,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                   <>
                     <Label className="text-xs">Arquivo</Label>
                     <Input type="file" accept=".pdf,.txt,.doc,.docx,.csv,.md" onChange={handleUploadFile} disabled={uploading} />
-                    {uploading && <p className="text-xs text-neutral-400 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Processando arquivo...</p>}
+                    {uploading && <p className="text-xs text-gray-500 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Processando arquivo...</p>}
                     <Button size="sm" variant="ghost" onClick={resetForm}>Cancelar</Button>
                   </>
                 ) : addType === "text" ? (

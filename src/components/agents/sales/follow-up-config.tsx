@@ -82,7 +82,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
           <Label htmlFor="followup-enabled" className="font-medium">
             Follow-up automatico
           </Label>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-gray-500">
             A IA reentra em contato com o lead caso ele pare de responder
           </p>
         </div>
@@ -100,13 +100,13 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                 className={cn(
                   "flex flex-col items-start gap-2 p-4 border-2 rounded-xl text-left transition-all",
                   config.mode === "ai_auto"
-                    ? "border-violet-500/60 bg-violet-500/10 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
-                    : "border-white/10 hover:border-white/15"
+                    ? "border-brand-500 bg-brand-50 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
+                    : "border-gray-200 hover:border-gray-200"
                 )}
               >
-                <Brain className={cn("w-5 h-5", config.mode === "ai_auto" ? "text-neutral-100" : "text-neutral-400")} />
+                <Brain className={cn("w-5 h-5", config.mode === "ai_auto" ? "text-gray-900" : "text-gray-500")} />
                 <span className="text-sm font-medium">IA automatica</span>
-                <span className="text-xs text-neutral-500">
+                <span className="text-xs text-gray-400">
                   A IA decide quando e o que enviar com base na intensidade
                 </span>
               </button>
@@ -116,13 +116,13 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                 className={cn(
                   "flex flex-col items-start gap-2 p-4 border-2 rounded-xl text-left transition-all",
                   config.mode === "manual"
-                    ? "border-violet-500/60 bg-violet-500/10 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
-                    : "border-white/10 hover:border-white/15"
+                    ? "border-brand-500 bg-brand-50 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
+                    : "border-gray-200 hover:border-gray-200"
                 )}
               >
-                <Clock className={cn("w-5 h-5", config.mode === "manual" ? "text-neutral-100" : "text-neutral-400")} />
+                <Clock className={cn("w-5 h-5", config.mode === "manual" ? "text-gray-900" : "text-gray-500")} />
                 <span className="text-sm font-medium">Manual</span>
-                <span className="text-xs text-neutral-500">
+                <span className="text-xs text-gray-400">
                   Voce define os horarios e mensagens de cada follow-up
                 </span>
               </button>
@@ -144,7 +144,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                   max={10}
                   step={1}
                 />
-                <p className="text-xs text-neutral-400 mt-2">
+                <p className="text-xs text-gray-500 mt-2">
                   {INTENSITY_LABELS[config.intensity] || ""}
                 </p>
               </div>
@@ -161,9 +161,9 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                       onChange={(e) => update("min_delay_minutes", Number(e.target.value) || 10)}
                       className="w-20"
                     />
-                    <span className="text-sm text-neutral-500">minutos</span>
+                    <span className="text-sm text-gray-400">minutos</span>
                   </div>
-                  <p className="text-xs text-neutral-400 mt-1">
+                  <p className="text-xs text-gray-500 mt-1">
                     Tempo minimo ate o 1o follow-up
                   </p>
                 </div>
@@ -177,9 +177,9 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                       onChange={(e) => update("max_delay_minutes", (Number(e.target.value) || 7) * 1440)}
                       className="w-20"
                     />
-                    <span className="text-sm text-neutral-500">dias</span>
+                    <span className="text-sm text-gray-400">dias</span>
                   </div>
-                  <p className="text-xs text-neutral-400 mt-1">
+                  <p className="text-xs text-gray-500 mt-1">
                     Tempo maximo para o ultimo follow-up
                   </p>
                 </div>
@@ -195,7 +195,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                   onChange={(e) => update("max_attempts", Number(e.target.value) || 5)}
                   className="mt-1.5 w-32"
                 />
-                <p className="text-xs text-neutral-400 mt-1">
+                <p className="text-xs text-gray-500 mt-1">
                   Numero maximo de follow-ups antes de parar
                 </p>
               </div>
@@ -211,21 +211,21 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                   {config.manual_steps.map((step, index) => (
                     <div
                       key={index}
-                      className="p-3 bg-white/5 border border-white/10 rounded-lg space-y-2"
+                      className="p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2"
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <Badge variant="secondary" className="text-xs">
                             #{index + 1}
                           </Badge>
-                          <span className="text-sm text-neutral-200">
+                          <span className="text-sm text-gray-800">
                             Apos {formatDelay(step.delay_minutes)}
                           </span>
                         </div>
                         <button
                           type="button"
                           onClick={() => removeManualStep(index)}
-                          className="text-neutral-300 hover:text-red-500"
+                          className="text-gray-700 hover:text-red-500"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -240,7 +240,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                   ))}
 
                   {config.manual_steps.length === 0 && (
-                    <p className="text-sm text-neutral-400">Nenhuma etapa configurada</p>
+                    <p className="text-sm text-gray-500">Nenhuma etapa configurada</p>
                   )}
                 </div>
               </div>
@@ -287,7 +287,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
               rows={4}
               className="mt-1.5"
             />
-            <p className="text-xs text-neutral-400 mt-1">
+            <p className="text-xs text-gray-500 mt-1">
               Instrucoes adicionais para a IA usar nos follow-ups
             </p>
           </div>

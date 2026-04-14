@@ -50,25 +50,25 @@ export function ObjectiveSelector({ value, onChange }: ObjectiveSelectorProps) {
             className={cn(
               "relative flex flex-col items-start p-4 rounded-xl border-2 text-left transition-all",
               isSelected
-                ? "border-violet-500/60 bg-violet-500/10 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
-                : "border-white/10 hover:border-white/15"
+                ? "border-brand-500 bg-brand-50 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
+                : "border-gray-200 hover:border-gray-200"
             )}
           >
             <Icon
               className={cn(
                 "w-5 h-5 mb-3",
-                isSelected ? "text-neutral-100" : "text-neutral-400"
+                isSelected ? "text-gray-900" : "text-gray-500"
               )}
             />
             <span
               className={cn(
                 "text-sm font-medium mb-1",
-                isSelected ? "text-neutral-100" : "text-neutral-200"
+                isSelected ? "text-gray-900" : "text-gray-800"
               )}
             >
               {obj.label}
             </span>
-            <span className="text-xs text-neutral-500">{obj.description}</span>
+            <span className="text-xs text-gray-400">{obj.description}</span>
           </button>
         );
       })}

@@ -30,7 +30,7 @@ export function PersonalityEditor({ personality, onChange }: PersonalityEditorPr
             placeholder="Ex: Ana, Spark, Julia"
             className="mt-1.5"
           />
-          <p className="text-xs text-neutral-400 mt-1">
+          <p className="text-xs text-gray-500 mt-1">
             Como a IA se identifica nas conversas
           </p>
         </div>
@@ -82,7 +82,7 @@ export function PersonalityEditor({ personality, onChange }: PersonalityEditorPr
             placeholder="Ex: Oi {name}! Tudo bem?"
             className="mt-1.5"
           />
-          <p className="text-xs text-neutral-400 mt-1">
+          <p className="text-xs text-gray-500 mt-1">
             Use {"{name}"} para o nome do contato
           </p>
         </div>
@@ -107,7 +107,7 @@ export function PersonalityEditor({ personality, onChange }: PersonalityEditorPr
           rows={4}
           className="mt-1.5"
         />
-        <p className="text-xs text-neutral-400 mt-1">
+        <p className="text-xs text-gray-500 mt-1">
           Quanto mais detalhada a descricao, mais consistente sera o comportamento
         </p>
       </div>
@@ -136,15 +136,15 @@ function IdentityCard({
       onClick={onClick}
       className={cn(
         "flex flex-col items-start gap-2 p-4 border-2 rounded-xl text-left transition-all",
-        selected ? "border-violet-500/60 bg-violet-500/10 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]" : "border-white/10 hover:border-white/15"
+        selected ? "border-brand-500 bg-brand-50 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]" : "border-gray-200 hover:border-gray-200"
       )}
     >
-      <Icon className={cn("w-5 h-5", selected ? "text-neutral-100" : "text-neutral-400")} />
-      <span className={cn("text-sm font-medium", selected ? "text-neutral-100" : "text-neutral-200")}>
+      <Icon className={cn("w-5 h-5", selected ? "text-gray-900" : "text-gray-500")} />
+      <span className={cn("text-sm font-medium", selected ? "text-gray-900" : "text-gray-800")}>
         {label}
       </span>
-      <span className="text-xs text-neutral-500">{description}</span>
-      <span className="text-[10px] text-neutral-400 italic mt-1">{example}</span>
+      <span className="text-xs text-gray-400">{description}</span>
+      <span className="text-[10px] text-gray-500 italic mt-1">{example}</span>
     </button>
   );
 }

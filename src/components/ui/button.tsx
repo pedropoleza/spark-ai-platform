@@ -4,22 +4,22 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils/cn";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap rounded-lg text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center whitespace-nowrap rounded-lg text-sm font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
         default:
-          "brand-gradient brand-gradient-hover text-white shadow-[0_4px_14px_-4px_rgba(139,92,246,0.5)]",
+          "bg-brand-500 text-white shadow-[0_1px_2px_0_rgba(22,117,242,0.2),inset_0_0_0_1px_rgba(255,255,255,0.1)] hover:bg-brand-600 hover:shadow-[0_4px_12px_-2px_rgba(22,117,242,0.35)]",
         secondary:
-          "bg-white/5 text-neutral-100 border border-white/10 hover:bg-white/10 hover:border-white/20",
+          "bg-gray-100 text-gray-900 border border-gray-200 hover:bg-gray-200 hover:border-gray-300",
         outline:
-          "border border-white/10 bg-white/[0.02] text-neutral-100 hover:bg-white/5 hover:border-white/20",
+          "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-300 hover:text-gray-900",
         ghost:
-          "text-neutral-300 hover:bg-white/5 hover:text-neutral-100",
+          "text-gray-600 hover:bg-gray-100 hover:text-gray-900",
         destructive:
-          "bg-red-500/90 text-white hover:bg-red-500 shadow-[0_4px_14px_-4px_rgba(239,68,68,0.5)]",
+          "bg-red-600 text-white hover:bg-red-700 shadow-[0_1px_2px_0_rgba(220,38,38,0.2)]",
         link:
-          "text-violet-400 underline-offset-4 hover:underline hover:text-violet-300",
+          "text-brand-500 underline-offset-4 hover:underline hover:text-brand-600",
       },
       size: {
         default: "h-10 px-4 py-2",

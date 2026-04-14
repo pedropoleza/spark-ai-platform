@@ -39,7 +39,7 @@ export function TimezoneConfigEditor({ config, locationTimezone, onChange }: Tim
         />
         <div>
           <Label htmlFor="tz-default">Usar timezone da conta</Label>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-gray-500">
             Timezone atual da conta: {locationTimezone}
           </p>
         </div>
@@ -75,7 +75,7 @@ export function TimezoneConfigEditor({ config, locationTimezone, onChange }: Tim
         />
         <div>
           <Label htmlFor="tz-autodetect">Detectar timezone pelo estado</Label>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-gray-500">
             Se o lead informar o estado (ex: Florida), o sistema detecta o timezone automaticamente
           </p>
         </div>
@@ -90,7 +90,7 @@ export function TimezoneConfigEditor({ config, locationTimezone, onChange }: Tim
         />
         <div>
           <Label htmlFor="tz-confirm">Confirmar timezone antes de agendar</Label>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-gray-500">
             A IA pergunta ao lead se o timezone esta correto antes de marcar o agendamento
           </p>
         </div>

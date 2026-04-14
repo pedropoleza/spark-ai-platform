@@ -58,7 +58,7 @@ export function WorkingHoursEditor({ config, onChange }: WorkingHoursEditorProps
           <Label htmlFor="wh-enabled" className="font-medium">
             Horario de funcionamento
           </Label>
-          <p className="text-xs text-neutral-400">
+          <p className="text-xs text-gray-500">
             Controle em quais horarios o agente esta ativo
           </p>
         </div>
@@ -82,7 +82,7 @@ export function WorkingHoursEditor({ config, onChange }: WorkingHoursEditorProps
                   <SelectItem value="only_outside">Ativar APENAS fora destes horarios</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-neutral-400 mt-1">
+              <p className="text-xs text-gray-500 mt-1">
                 {config.mode === "only_during"
                   ? "O agente so responde nos horarios configurados"
                   : "O agente so responde fora dos horarios configurados (ex: apenas fora do expediente)"}
@@ -117,14 +117,14 @@ export function WorkingHoursEditor({ config, onChange }: WorkingHoursEditorProps
                 return (
                   <div
                     key={key}
-                    className="flex items-center gap-3 p-2.5 bg-white/5 border border-white/10 rounded-lg"
+                    className="flex items-center gap-3 p-2.5 bg-gray-50 border border-gray-200 rounded-lg"
                   >
                     <Switch
                       checked={day.enabled}
                       onCheckedChange={(v) => updateDay(key, { enabled: v })}
                       className="scale-75"
                     />
-                    <span className="text-sm font-medium text-neutral-200 w-20">
+                    <span className="text-sm font-medium text-gray-800 w-20">
                       {label}
                     </span>
                     {day.enabled ? (
@@ -135,7 +135,7 @@ export function WorkingHoursEditor({ config, onChange }: WorkingHoursEditorProps
                           onChange={(e) => updateDay(key, { start: e.target.value })}
                           className="w-28 h-8 text-sm"
                         />
-                        <span className="text-xs text-neutral-400">ate</span>
+                        <span className="text-xs text-gray-500">ate</span>
                         <Input
                           type="time"
                           value={day.end}
@@ -144,7 +144,7 @@ export function WorkingHoursEditor({ config, onChange }: WorkingHoursEditorProps
                         />
                       </div>
                     ) : (
-                      <span className="text-xs text-neutral-400">Desativado</span>
+                      <span className="text-xs text-gray-500">Desativado</span>
                     )}
                   </div>
                 );

@@ -9,7 +9,7 @@ export default function SalesAgentConfigPage() {
     <Suspense
       fallback={
         <div className="flex items-center justify-center h-64">
-          <Loader2 className="w-6 h-6 animate-spin text-neutral-400" />
+          <Loader2 className="w-6 h-6 animate-spin text-gray-500" />
         </div>
       }
     >

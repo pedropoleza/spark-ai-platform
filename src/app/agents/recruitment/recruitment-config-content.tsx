@@ -315,7 +315,7 @@ export function RecruitmentConfigContent() {
             <CardContent className="space-y-6">
               <div>
                 <Label className="text-sm font-medium">Instrucoes gerais da base de conhecimento</Label>
-                <p className="text-xs text-neutral-500 mb-2">
+                <p className="text-xs text-gray-400 mb-2">
                   Descreva os processos e como a IA deve usar TODO o material abaixo. Ex: prioridades, o que nunca dizer, ordem de consulta, tom ao citar informacoes do material.
                 </p>
                 <Textarea
@@ -324,11 +324,11 @@ export function RecruitmentConfigContent() {
                   rows={8}
                   placeholder={`Exemplo:\n- Use o PDF "Descricao da vaga" como fonte unica de verdade sobre responsabilidades.\n- Nunca cite valores de salario que nao estejam no material.\n- Se o lead pedir detalhes tecnicos, cite exatamente o que esta no documento.`}
                 />
-                <p className="text-[10px] text-neutral-400 mt-1">
+                <p className="text-[10px] text-gray-500 mt-1">
                   Este texto eh injetado no prompt junto com todos os itens da base. Para instrucoes de UM item especifico, use o botao de editar no item individual abaixo.
                 </p>
               </div>
-              <div className="border-t border-white/5 pt-6">
+              <div className="border-t border-gray-100 pt-6">
                 <KnowledgeBaseEditor agentId={agentId} />
               </div>
             </CardContent>
@@ -348,7 +348,7 @@ export function RecruitmentConfigContent() {
               <CardContent>
                 <Select value={config.ai_model} onValueChange={(v) => updateConfig("ai_model", v)}>
                   <SelectTrigger className="w-64"><SelectValue /></SelectTrigger>
-                  <SelectContent>{AI_MODELS.map((model) => (<SelectItem key={model.value} value={model.value}><div className="flex items-center justify-between w-full gap-3"><span>{model.label}</span><span className="text-[10px] text-neutral-400">{model.description}</span></div></SelectItem>))}</SelectContent>
+                  <SelectContent>{AI_MODELS.map((model) => (<SelectItem key={model.value} value={model.value}><div className="flex items-center justify-between w-full gap-3"><span>{model.label}</span><span className="text-[10px] text-gray-500">{model.description}</span></div></SelectItem>))}</SelectContent>
                 </Select>
               </CardContent>
             </Card>

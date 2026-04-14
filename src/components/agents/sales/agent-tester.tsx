@@ -243,7 +243,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     return (
       <Card>
         <CardContent className="p-8 text-center">
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-gray-400">
             Salve a configuracao do agente primeiro para poder testa-lo.
           </p>
         </CardContent>
@@ -267,7 +267,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                 <Label htmlFor="execute-actions" className="font-medium">
                   Executar acoes reais
                 </Label>
-                <p className="text-xs text-neutral-400 mt-0.5">
+                <p className="text-xs text-gray-500 mt-0.5">
                   {executeActions
                     ? "As acoes serao executadas de verdade no Spark (enviar mensagem, agendar, atualizar campos, tags)"
                     : "Modo simulacao — nenhuma acao sera executada no Spark"}
@@ -289,7 +289,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           </div>
 
           {executeActions && (
-            <div className="mt-3 flex items-center gap-2 text-xs text-amber-400 bg-amber-500/10 px-3 py-2 rounded-lg">
+            <div className="mt-3 flex items-center gap-2 text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
               <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
               <span>
                 Atencao: com acoes reais ativadas, o agente vai enviar mensagens,
@@ -321,7 +321,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             <CardContent className="flex-1 overflow-y-auto space-y-3 pb-0">
               {messages.length === 0 && (
                 <div className="flex items-center justify-center h-full">
-                  <p className="text-sm text-neutral-400">
+                  <p className="text-sm text-gray-500">
                     Envie uma mensagem para iniciar o teste
                   </p>
                 </div>
@@ -335,32 +335,32 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                   }`}
                 >
                   {msg.role === "agent" && (
-                    <div className="w-7 h-7 rounded-full bg-neutral-900 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center flex-shrink-0 mt-0.5">
                       <Bot className="w-3.5 h-3.5 text-white" />
                     </div>
                   )}
                   <div
                     className={`max-w-[80%] ${
                       msg.role === "user"
-                        ? "bg-neutral-900 text-white rounded-2xl rounded-br-md px-4 py-2.5"
+                        ? "bg-brand-500 text-white rounded-2xl rounded-br-md px-4 py-2.5"
                         : "space-y-1.5"
                     }`}
                   >
                     {msg.role === "agent" ? (
                       <>
-                        <div className="bg-white/5 rounded-2xl rounded-bl-md px-4 py-2.5">
-                          <p className="text-sm text-neutral-100">{msg.content}</p>
+                        <div className="bg-gray-50 rounded-2xl rounded-bl-md px-4 py-2.5">
+                          <p className="text-sm text-gray-900">{msg.content}</p>
                         </div>
                         {/* Meta info */}
                         <div className="flex items-center gap-2 px-1 flex-wrap">
                           {msg.duration_ms && (
-                            <span className="text-[10px] text-neutral-400 flex items-center gap-0.5">
+                            <span className="text-[10px] text-gray-500 flex items-center gap-0.5">
                               <Clock className="w-2.5 h-2.5" />
                               {(msg.duration_ms / 1000).toFixed(1)}s
                             </span>
                           )}
                           {msg.tokens && (
-                            <span className="text-[10px] text-neutral-400 flex items-center gap-0.5">
+                            <span className="text-[10px] text-gray-500 flex items-center gap-0.5">
                               <Zap className="w-2.5 h-2.5" />
                               {msg.tokens.prompt + msg.tokens.completion} tokens
                             </span>
@@ -371,7 +371,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                             </Badge>
                           )}
                           {msg.actionsExecuted && (
-                            <span className="text-[10px] text-emerald-400 flex items-center gap-0.5">
+                            <span className="text-[10px] text-emerald-600 flex items-center gap-0.5">
                               <CheckCircle2 className="w-2.5 h-2.5" />
                               Acoes executadas
                             </span>
@@ -436,14 +436,14 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                               <>
                                 <button
                                   onClick={() => sendFeedback(i, "positive")}
-                                  className="text-neutral-300 hover:text-green-500 transition-colors"
+                                  className="text-gray-700 hover:text-green-500 transition-colors"
                                   title="Boa resposta"
                                 >
                                   <ThumbsUp className="w-3 h-3" />
                                 </button>
                                 <button
                                   onClick={() => setFeedbackIdx(i)}
-                                  className="text-neutral-300 hover:text-red-500 transition-colors"
+                                  className="text-gray-700 hover:text-red-500 transition-colors"
                                   title="Resposta ruim"
                                 >
                                   <ThumbsDown className="w-3 h-3" />
@@ -452,7 +452,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                             )}
                           </div>
                         ) : (
-                          <span className="text-[10px] text-neutral-300 px-1">Feedback salvo</span>
+                          <span className="text-[10px] text-gray-700 px-1">Feedback salvo</span>
                         )}
                       </>
                     ) : (
@@ -460,8 +460,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     )}
                   </div>
                   {msg.role === "user" && (
-                    <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <User className="w-3.5 h-3.5 text-neutral-300" />
+                    <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <User className="w-3.5 h-3.5 text-gray-700" />
                     </div>
                   )}
                 </div>
@@ -469,11 +469,11 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
               {loading && (
                 <div className="flex gap-2.5">
-                  <div className="w-7 h-7 rounded-full bg-neutral-900 flex items-center justify-center flex-shrink-0">
+                  <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center flex-shrink-0">
                     <Bot className="w-3.5 h-3.5 text-white" />
                   </div>
-                  <div className="bg-white/5 rounded-2xl rounded-bl-md px-4 py-2.5">
-                    <Loader2 className="w-4 h-4 animate-spin text-neutral-400" />
+                  <div className="bg-gray-50 rounded-2xl rounded-bl-md px-4 py-2.5">
+                    <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
                   </div>
                 </div>
               )}
@@ -481,7 +481,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             </CardContent>
 
             {/* Input */}
-            <div className="p-4 border-t border-white/10">
+            <div className="p-4 border-t border-gray-200">
               {executeActions && !contactId && (
                 <p className="text-xs text-amber-500 mb-2">
                   Informe o Contact ID acima para executar acoes reais
@@ -518,12 +518,12 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             </CardHeader>
             <CardContent className="space-y-3">
               {Object.keys(collectedData).length === 0 ? (
-                <p className="text-sm text-neutral-400">Nenhum dado coletado ainda</p>
+                <p className="text-sm text-gray-500">Nenhum dado coletado ainda</p>
               ) : (
                 Object.entries(collectedData).map(([key, value]) => (
                   <div key={key} className="flex flex-col gap-0.5">
-                    <span className="text-xs font-medium text-neutral-500">{key}</span>
-                    <span className="text-sm text-neutral-100 bg-white/[0.02] px-2 py-1 rounded">
+                    <span className="text-xs font-medium text-gray-400">{key}</span>
+                    <span className="text-sm text-gray-900 bg-gray-50 px-2 py-1 rounded">
                       {value || "-"}
                     </span>
                   </div>
@@ -546,10 +546,10 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         <CardContent className="space-y-3">
           {loadingFeedbacks ? (
             <div className="flex justify-center py-6">
-              <Loader2 className="w-4 h-4 animate-spin text-neutral-400" />
+              <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
             </div>
           ) : savedFeedbacks.length === 0 ? (
-            <p className="text-sm text-neutral-400">
+            <p className="text-sm text-gray-500">
               Nenhum feedback registrado. Use os botoes de curtir/descurtir nas respostas do agente acima.
             </p>
           ) : (
@@ -561,8 +561,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     key={fb.id}
                     className={`border rounded-lg p-3 ${
                       fb.rating === "positive"
-                        ? "border-green-200 bg-emerald-500/10/40"
-                        : "border-red-200 bg-red-500/10/40"
+                        ? "border-green-200 bg-emerald-50/40"
+                        : "border-red-200 bg-red-50/40"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-2 mb-2">
@@ -571,14 +571,14 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                           <div className="flex items-center gap-1">
                             <button
                               onClick={() => setEditingRating("positive")}
-                              className={`p-1 rounded ${editingRating === "positive" ? "bg-emerald-500/15 text-emerald-400" : "text-neutral-300"}`}
+                              className={`p-1 rounded ${editingRating === "positive" ? "bg-emerald-100 text-emerald-600" : "text-gray-700"}`}
                               title="Marcar como positivo"
                             >
                               <ThumbsUp className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => setEditingRating("negative")}
-                              className={`p-1 rounded ${editingRating === "negative" ? "bg-red-500/15 text-red-400" : "text-neutral-300"}`}
+                              className={`p-1 rounded ${editingRating === "negative" ? "bg-red-100 text-red-600" : "text-gray-700"}`}
                               title="Marcar como negativo"
                             >
                               <ThumbsDown className="w-3.5 h-3.5" />
@@ -595,7 +595,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                             Negativo
                           </Badge>
                         )}
-                        <span className="text-[10px] text-neutral-400">
+                        <span className="text-[10px] text-gray-500">
                           {new Date(fb.created_at).toLocaleString("pt-BR", {
                             day: "2-digit",
                             month: "2-digit",
@@ -609,14 +609,14 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                           <>
                             <button
                               onClick={saveEditFeedback}
-                              className="text-neutral-400 hover:text-emerald-400 transition-colors"
+                              className="text-gray-500 hover:text-emerald-600 transition-colors"
                               title="Salvar"
                             >
                               <Check className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={cancelEditFeedback}
-                              className="text-neutral-400 hover:text-neutral-300 transition-colors"
+                              className="text-gray-500 hover:text-gray-700 transition-colors"
                               title="Cancelar"
                             >
                               <X className="w-3.5 h-3.5" />
@@ -626,14 +626,14 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                           <>
                             <button
                               onClick={() => startEditFeedback(fb)}
-                              className="text-neutral-300 hover:text-neutral-200 transition-colors"
+                              className="text-gray-700 hover:text-gray-800 transition-colors"
                               title="Editar"
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => deleteFeedback(fb.id)}
-                              className="text-neutral-300 hover:text-red-500 transition-colors"
+                              className="text-gray-700 hover:text-red-500 transition-colors"
                               title="Apagar"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -645,24 +645,24 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
                     {fb.user_message && (
                       <div className="mb-2">
-                        <span className="text-[10px] font-medium text-neutral-500 uppercase tracking-wide">
+                        <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
                           Lead disse
                         </span>
-                        <p className="text-xs text-neutral-200 mt-0.5 italic">&ldquo;{fb.user_message}&rdquo;</p>
+                        <p className="text-xs text-gray-800 mt-0.5 italic">&ldquo;{fb.user_message}&rdquo;</p>
                       </div>
                     )}
 
                     <div className="mb-2">
-                      <span className="text-[10px] font-medium text-neutral-500 uppercase tracking-wide">
+                      <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
                         IA respondeu
                       </span>
-                      <p className="text-xs text-neutral-100 mt-0.5">{fb.ai_message}</p>
+                      <p className="text-xs text-gray-900 mt-0.5">{fb.ai_message}</p>
                     </div>
 
                     {isEditing ? (
                       editingRating === "negative" && (
                         <div>
-                          <span className="text-[10px] font-medium text-neutral-500 uppercase tracking-wide">
+                          <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
                             Como deveria ter respondido
                           </span>
                           <Textarea
@@ -676,11 +676,11 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                       )
                     ) : (
                       fb.suggestion && (
-                        <div className="bg-white/5 border border-white/10 rounded p-2">
-                          <span className="text-[10px] font-medium text-red-400 uppercase tracking-wide">
+                        <div className="bg-gray-50 border border-gray-200 rounded p-2">
+                          <span className="text-[10px] font-medium text-red-600 uppercase tracking-wide">
                             Correcao (deveria ser)
                           </span>
-                          <p className="text-xs text-neutral-100 mt-0.5">{fb.suggestion}</p>
+                          <p className="text-xs text-gray-900 mt-0.5">{fb.suggestion}</p>
                         </div>
                       )
                     )}

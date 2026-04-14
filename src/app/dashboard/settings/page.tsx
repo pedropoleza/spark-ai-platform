@@ -135,26 +135,26 @@ export default function SettingsPage() {
             <div>
               <Label className="text-xs">URL do Webhook (Inbound Message)</Label>
               <div className="flex gap-2 mt-1">
-                <Input value={webhookUrl} readOnly className="font-mono text-xs bg-white/[0.02]" />
+                <Input value={webhookUrl} readOnly className="font-mono text-xs bg-gray-50" />
                 <Button
                   variant="outline"
                   size="icon"
                   onClick={() => copyToClipboard(webhookUrl, "webhook")}
                 >
-                  {copied === "webhook" ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  {copied === "webhook" ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
                 </Button>
               </div>
             </div>
             <div>
               <Label className="text-xs">Location ID</Label>
               <div className="flex gap-2 mt-1">
-                <Input value={locationId} readOnly className="font-mono text-xs bg-white/[0.02]" />
+                <Input value={locationId} readOnly className="font-mono text-xs bg-gray-50" />
                 <Button
                   variant="outline"
                   size="icon"
                   onClick={() => copyToClipboard(locationId, "location")}
                 >
-                  {copied === "location" ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  {copied === "location" ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
                 </Button>
               </div>
             </div>
@@ -174,7 +174,7 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {settings.has_custom_key && (
-              <div className="flex items-center gap-2 text-sm text-emerald-300 bg-emerald-500/10 px-3 py-2 rounded-lg">
+              <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 px-3 py-2 rounded-lg">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 Chave personalizada ativa: {settings.openai_api_key}
               </div>
@@ -233,7 +233,7 @@ export default function SettingsPage() {
                 onChange={(e) => setSettings({ ...settings, daily_message_limit: Number(e.target.value) })}
                 className="mt-1.5 w-32"
               />
-              <p className="text-xs text-neutral-400 mt-1">
+              <p className="text-xs text-gray-500 mt-1">
                 O agente para de enviar quando atingir este limite
               </p>
             </div>
@@ -247,7 +247,7 @@ export default function SettingsPage() {
                 onChange={(e) => setSettings({ ...settings, cost_alert_threshold: Number(e.target.value) })}
                 className="mt-1.5 w-32"
               />
-              <p className="text-xs text-neutral-400 mt-1">
+              <p className="text-xs text-gray-500 mt-1">
                 Voce sera notificado quando os gastos com tokens atingirem este valor
               </p>
             </div>

@@ -6,12 +6,13 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttribu
     return (
       <textarea
         className={cn(
-          "flex min-h-[80px] w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-neutral-100",
-          "placeholder:text-neutral-500",
-          "transition-colors duration-150",
-          "hover:border-white/20",
-          "focus-visible:outline-none focus-visible:border-violet-500/60 focus-visible:ring-2 focus-visible:ring-violet-500/25",
-          "disabled:cursor-not-allowed disabled:opacity-50",
+          "flex min-h-[80px] w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900",
+          "placeholder:text-gray-400",
+          "shadow-[0_1px_2px_0_rgba(15,23,42,0.04)]",
+          "transition-all duration-150",
+          "hover:border-gray-300",
+          "focus-visible:outline-none focus-visible:border-brand-500 focus-visible:ring-2 focus-visible:ring-brand-500/15",
+          "disabled:cursor-not-allowed disabled:opacity-50 disabled:bg-gray-50",
           "resize-y",
           className
         )}

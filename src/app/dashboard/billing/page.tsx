@@ -138,7 +138,7 @@ export default function BillingPage() {
 
           {/* Info sobre chave propria */}
           {summary.using_custom_key > 0 && (
-            <div className="flex items-center gap-2 text-sm text-emerald-300 bg-emerald-500/10 px-4 py-3 rounded-lg">
+            <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 px-4 py-3 rounded-lg">
               <Key className="w-4 h-4" />
               <span>
                 {summary.using_custom_key} interacoes usaram chave OpenAI propria (sem cobranca de markup)
@@ -154,18 +154,18 @@ export default function BillingPage() {
               </CardHeader>
               <CardContent>
                 {models.length === 0 ? (
-                  <p className="text-sm text-neutral-400">Nenhum uso registrado</p>
+                  <p className="text-sm text-gray-500">Nenhum uso registrado</p>
                 ) : (
                   <div className="space-y-3">
                     {models.map((m) => (
                       <div key={m.model} className="flex items-center justify-between">
                         <div>
-                          <span className="text-sm font-medium text-neutral-100">{m.model}</span>
-                          <span className="text-xs text-neutral-400 ml-2">{m.count} chamadas</span>
+                          <span className="text-sm font-medium text-gray-900">{m.model}</span>
+                          <span className="text-xs text-gray-500 ml-2">{m.count} chamadas</span>
                         </div>
                         <div className="text-right">
-                          <span className="text-sm font-medium text-neutral-100">{formatUsd(m.cost)}</span>
-                          <span className="text-xs text-neutral-400 ml-2">{formatTokens(m.tokens)} tokens</span>
+                          <span className="text-sm font-medium text-gray-900">{formatUsd(m.cost)}</span>
+                          <span className="text-xs text-gray-500 ml-2">{formatTokens(m.tokens)} tokens</span>
                         </div>
                       </div>
                     ))}
@@ -184,15 +184,15 @@ export default function BillingPage() {
               </CardHeader>
               <CardContent>
                 {daily.length === 0 ? (
-                  <p className="text-sm text-neutral-400">Nenhum uso registrado</p>
+                  <p className="text-sm text-gray-500">Nenhum uso registrado</p>
                 ) : (
                   <div className="space-y-2 max-h-64 overflow-y-auto">
                     {daily.slice(-14).map((d) => (
                       <div key={d.date} className="flex items-center justify-between text-sm">
-                        <span className="text-neutral-500 w-24">{d.date}</span>
-                        <span className="text-neutral-400">{d.interactions} msgs</span>
-                        <span className="text-neutral-400">{formatTokens(d.tokens)}</span>
-                        <span className="font-medium text-neutral-100">{formatUsd(d.cost)}</span>
+                        <span className="text-gray-400 w-24">{d.date}</span>
+                        <span className="text-gray-500">{d.interactions} msgs</span>
+                        <span className="text-gray-500">{formatTokens(d.tokens)}</span>
+                        <span className="font-medium text-gray-900">{formatUsd(d.cost)}</span>
                       </div>
                     ))}
                   </div>
@@ -209,19 +209,19 @@ export default function BillingPage() {
             </CardHeader>
             <CardContent>
               {recent.length === 0 ? (
-                <p className="text-sm text-neutral-400">Nenhum registro</p>
+                <p className="text-sm text-gray-500">Nenhum registro</p>
               ) : (
                 <div className="space-y-1">
                   {recent.map((r) => (
-                    <div key={r.id} className="flex items-center justify-between py-2 text-sm border-b border-white/5 last:border-0">
+                    <div key={r.id} className="flex items-center justify-between py-2 text-sm border-b border-gray-100 last:border-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-neutral-200">{formatAction(r.action_type)}</span>
+                        <span className="text-gray-800">{formatAction(r.action_type)}</span>
                         <Badge variant="secondary" className="text-[10px]">{r.model}</Badge>
                         {r.custom_key && <Badge variant="outline" className="text-[10px]">Chave propria</Badge>}
                       </div>
                       <div className="flex items-center gap-3 text-xs">
-                        <span className="text-neutral-400">{formatTokens(r.tokens)} tokens</span>
-                        <span className={r.custom_key ? "text-emerald-400" : "font-medium text-neutral-100"}>
+                        <span className="text-gray-500">{formatTokens(r.tokens)} tokens</span>
+                        <span className={r.custom_key ? "text-emerald-600" : "font-medium text-gray-900"}>
                           {r.custom_key ? "Gratis" : formatUsd(r.cost)}
                         </span>
                         {!r.custom_key && (
@@ -238,7 +238,7 @@ export default function BillingPage() {
           </Card>
         </div>
       ) : (
-        <p className="text-sm text-neutral-400">Erro ao carregar dados de billing</p>
+        <p className="text-sm text-gray-500">Erro ao carregar dados de billing</p>
       )}
     </PageWrapper>
   );
@@ -249,11 +249,11 @@ function MetricCard({ icon: Icon, label, value, sub }: { icon: typeof DollarSign
     <Card>
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-2">
-          <Icon className="w-4 h-4 text-neutral-400" />
-          <span className="text-xs text-neutral-500">{label}</span>
+          <Icon className="w-4 h-4 text-gray-500" />
+          <span className="text-xs text-gray-400">{label}</span>
         </div>
-        <span className="text-2xl font-semibold text-neutral-100">{value}</span>
-        {sub && <p className="text-[10px] text-neutral-400 mt-1">{sub}</p>}
+        <span className="text-2xl font-semibold text-gray-900">{value}</span>
+        {sub && <p className="text-[10px] text-gray-500 mt-1">{sub}</p>}
       </CardContent>
     </Card>
   );

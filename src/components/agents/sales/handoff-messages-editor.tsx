@@ -77,7 +77,7 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-neutral-500">
+      <p className="text-xs text-gray-400">
         Cadastre mensagens prontas que voce envia manualmente ao cliente (pelo Spark
         ou pelo GHL) para encerrar o atendimento da IA. Quando a mensagem cadastrada
         aqui for detectada no envio saindo, a IA pausa automaticamente para aquele
@@ -92,7 +92,7 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
 
             if (isEditing) {
               return (
-                <div key={msg.id} className="border border-white/15 rounded-lg p-4 bg-white/[0.02] space-y-3">
+                <div key={msg.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 space-y-3">
                   <div>
                     <Label className="text-xs">Identificacao</Label>
                     <Input
@@ -111,11 +111,11 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
                       rows={3}
                       className="mt-1"
                     />
-                    <p className="text-[10px] text-neutral-400 mt-1">
+                    <p className="text-[10px] text-gray-500 mt-1">
                       O sistema compara o texto enviado com este exato (ignorando espacos extras). Mantenha a mensagem curta e consistente.
                     </p>
                   </div>
-                  <div className="flex items-center justify-between p-2 bg-white/5 rounded border border-white/10">
+                  <div className="flex items-center justify-between p-2 bg-gray-50 rounded border border-gray-200">
                     <div className="flex items-center gap-2">
                       <PowerOff className="w-3.5 h-3.5 text-red-500" />
                       <Label className="text-xs font-medium">Desativar IA ao enviar</Label>
@@ -138,11 +138,11 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
             }
 
             return (
-              <div key={msg.id} className="border border-white/10 rounded-lg p-3 bg-white/5 group">
+              <div key={msg.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50 group">
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-medium text-neutral-100 truncate">{msg.label}</span>
+                      <span className="text-sm font-medium text-gray-900 truncate">{msg.label}</span>
                       {msg.auto_deactivate ? (
                         <Badge variant="destructive" className="text-[10px] h-4 gap-1">
                           <PowerOff className="w-2.5 h-2.5" /> Desativa IA
@@ -153,19 +153,19 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
                         </Badge>
                       )}
                     </div>
-                    <p className="text-xs text-neutral-300 line-clamp-2">&ldquo;{msg.text}&rdquo;</p>
+                    <p className="text-xs text-gray-700 line-clamp-2">&ldquo;{msg.text}&rdquo;</p>
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => startEdit(msg)}
-                      className="text-neutral-300 hover:text-neutral-200 transition-colors"
+                      className="text-gray-700 hover:text-gray-800 transition-colors"
                       title="Editar"
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => remove(msg.id)}
-                      className="text-neutral-300 hover:text-red-500 transition-colors"
+                      className="text-gray-700 hover:text-red-500 transition-colors"
                       title="Apagar"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -180,7 +180,7 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
 
       {/* Adicionar */}
       {adding ? (
-        <div className="border border-white/15 rounded-lg p-4 bg-white/[0.02] space-y-3">
+        <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 space-y-3">
           <div>
             <Label className="text-xs">Identificacao</Label>
             <Input
@@ -199,11 +199,11 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
               rows={3}
               className="mt-1"
             />
-            <p className="text-[10px] text-neutral-400 mt-1">
+            <p className="text-[10px] text-gray-500 mt-1">
               O sistema compara o texto enviado com este exato (ignorando espacos extras). Mantenha a mensagem curta e consistente.
             </p>
           </div>
-          <div className="flex items-center justify-between p-2 bg-white/5 rounded border border-white/10">
+          <div className="flex items-center justify-between p-2 bg-gray-50 rounded border border-gray-200">
             <div className="flex items-center gap-2">
               <PowerOff className="w-3.5 h-3.5 text-red-500" />
               <Label className="text-xs font-medium">Desativar IA ao enviar</Label>
@@ -232,7 +232,7 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
       )}
 
       {messages.length === 0 && !adding && (
-        <p className="text-xs text-neutral-400 text-center py-2">
+        <p className="text-xs text-gray-500 text-center py-2">
           Nenhuma mensagem de encerramento cadastrada.
         </p>
       )}

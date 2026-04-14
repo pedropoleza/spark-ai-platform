@@ -75,7 +75,7 @@ export function TargetingRulesEditor({
   return (
     <div className="space-y-4">
       {rules.length > 0 && (
-        <p className="text-xs text-neutral-400">
+        <p className="text-xs text-gray-500">
           O agente ativa quando <strong>qualquer uma</strong> das regras abaixo for atendida.
         </p>
       )}
@@ -89,7 +89,7 @@ export function TargetingRulesEditor({
           return (
             <div
               key={rule.id}
-              className="p-4 bg-white/5 border border-white/10 rounded-lg space-y-3"
+              className="p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-3"
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -97,12 +97,12 @@ export function TargetingRulesEditor({
                     <Icon className="w-3 h-3" />
                     {ruleType?.label}
                   </Badge>
-                  <span className="text-xs text-neutral-400">Regra {index + 1}</span>
+                  <span className="text-xs text-gray-500">Regra {index + 1}</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => removeRule(rule.id)}
-                  className="text-neutral-300 hover:text-red-500 transition-colors"
+                  className="text-gray-700 hover:text-red-500 transition-colors"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -229,7 +229,7 @@ export function TargetingRulesEditor({
       {/* Adicionar regra */}
       {rules.length === 0 ? (
         <div className="space-y-3">
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-gray-400">
             Adicione pelo menos uma regra para definir quais leads o agente deve abordar.
           </p>
           <div className="grid grid-cols-3 gap-3">
@@ -240,11 +240,11 @@ export function TargetingRulesEditor({
                   key={rt.value}
                   type="button"
                   onClick={() => addRule(rt.value)}
-                  className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-white/10 rounded-xl hover:border-white/30 transition-colors"
+                  className="flex flex-col items-center gap-2 p-4 border-2 border-dashed border-gray-200 rounded-xl hover:border-gray-300 transition-colors"
                 >
-                  <Icon className="w-5 h-5 text-neutral-400" />
-                  <span className="text-sm font-medium text-neutral-200">{rt.label}</span>
-                  <span className="text-[10px] text-neutral-400 text-center">{rt.description}</span>
+                  <Icon className="w-5 h-5 text-gray-500" />
+                  <span className="text-sm font-medium text-gray-800">{rt.label}</span>
+                  <span className="text-[10px] text-gray-500 text-center">{rt.description}</span>
                 </button>
               );
             })}
@@ -252,7 +252,7 @@ export function TargetingRulesEditor({
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <span className="text-xs text-neutral-400">Adicionar outra regra:</span>
+          <span className="text-xs text-gray-500">Adicionar outra regra:</span>
           {RULE_TYPES.map((rt) => (
             <Button
               key={rt.value}

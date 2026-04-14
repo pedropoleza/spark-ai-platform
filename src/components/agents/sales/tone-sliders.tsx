@@ -18,10 +18,10 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
       <div>
         <div className="flex items-center justify-between mb-3">
           <Label>Naturalidade</Label>
-          <span className="text-xs text-neutral-400">{naturalness}%</span>
+          <span className="text-xs text-gray-500">{naturalness}%</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-neutral-400 w-16">Robotico</span>
+          <span className="text-xs text-gray-500 w-16">Robotico</span>
           <Slider
             value={[naturalness]}
             onValueChange={([v]) => onChange("tone_naturalness", v)}
@@ -29,9 +29,9 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
             step={5}
             className="flex-1"
           />
-          <span className="text-xs text-neutral-400 w-16 text-right">Humano</span>
+          <span className="text-xs text-gray-500 w-16 text-right">Humano</span>
         </div>
-        <p className="text-xs text-neutral-400 mt-1.5">
+        <p className="text-xs text-gray-500 mt-1.5">
           {naturalness < 20
             ? "Formal e estruturado. Mensagem unica com pontuacao completa."
             : naturalness < 40
@@ -43,8 +43,8 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
             : "Muito humano. Divide mensagens, sem ponto final, abreviacoes, digitacao espontanea."}
         </p>
         {naturalness >= 60 && (
-          <div className="mt-2 text-[10px] text-neutral-400 bg-white/[0.02] rounded-lg p-2.5 space-y-1">
-            <p className="font-medium text-neutral-500">Com naturalidade alta, a IA vai:</p>
+          <div className="mt-2 text-[10px] text-gray-500 bg-gray-50 rounded-lg p-2.5 space-y-1">
+            <p className="font-medium text-gray-400">Com naturalidade alta, a IA vai:</p>
             <ul className="list-disc list-inside space-y-0.5">
               <li>Dividir respostas em 2-3 mensagens separadas</li>
               <li>Usar abreviacoes: vc, tb, pfv, ta, blz</li>
@@ -59,10 +59,10 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
       <div>
         <div className="flex items-center justify-between mb-3">
           <Label>Criatividade</Label>
-          <span className="text-xs text-neutral-400">{creativity}%</span>
+          <span className="text-xs text-gray-500">{creativity}%</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-neutral-400 w-16">Preciso</span>
+          <span className="text-xs text-gray-500 w-16">Preciso</span>
           <Slider
             value={[creativity]}
             onValueChange={([v]) => onChange("tone_creativity", v)}
@@ -70,9 +70,9 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
             step={5}
             className="flex-1"
           />
-          <span className="text-xs text-neutral-400 w-16 text-right">Criativo</span>
+          <span className="text-xs text-gray-500 w-16 text-right">Criativo</span>
         </div>
-        <p className="text-xs text-neutral-400 mt-1.5">
+        <p className="text-xs text-gray-500 mt-1.5">
           {creativity < 30
             ? "Respostas diretas e objetivas"
             : creativity < 70
@@ -85,10 +85,10 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
       <div>
         <div className="flex items-center justify-between mb-3">
           <Label>Formalidade</Label>
-          <span className="text-xs text-neutral-400">{formality}%</span>
+          <span className="text-xs text-gray-500">{formality}%</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-neutral-400 w-16">Informal</span>
+          <span className="text-xs text-gray-500 w-16">Informal</span>
           <Slider
             value={[formality]}
             onValueChange={([v]) => onChange("tone_formality", v)}
@@ -96,9 +96,9 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
             step={5}
             className="flex-1"
           />
-          <span className="text-xs text-neutral-400 w-16 text-right">Formal</span>
+          <span className="text-xs text-gray-500 w-16 text-right">Formal</span>
         </div>
-        <p className="text-xs text-neutral-400 mt-1.5">
+        <p className="text-xs text-gray-500 mt-1.5">
           {formality < 30
             ? "Tom casual, usa girias leves"
             : formality < 70
@@ -111,10 +111,10 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
       <div>
         <div className="flex items-center justify-between mb-3">
           <Label>Agressividade na venda</Label>
-          <span className="text-xs text-neutral-400">{aggressiveness}%</span>
+          <span className="text-xs text-gray-500">{aggressiveness}%</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-neutral-400 w-16">Passivo</span>
+          <span className="text-xs text-gray-500 w-16">Passivo</span>
           <Slider
             value={[aggressiveness]}
             onValueChange={([v]) => onChange("tone_aggressiveness", v)}
@@ -122,9 +122,9 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
             step={5}
             className="flex-1"
           />
-          <span className="text-xs text-neutral-400 w-16 text-right">Agressivo</span>
+          <span className="text-xs text-gray-500 w-16 text-right">Agressivo</span>
         </div>
-        <p className="text-xs text-neutral-400 mt-1.5">
+        <p className="text-xs text-gray-500 mt-1.5">
           {aggressiveness < 20
             ? "Passivo: so responde, nunca propoe agendamento proativamente"
             : aggressiveness < 40

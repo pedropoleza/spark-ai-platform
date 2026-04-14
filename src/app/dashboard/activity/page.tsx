@@ -149,17 +149,17 @@ export default function ActivityPage() {
           ) : (
             <div className="space-y-2">
               {conversations.map((conv) => (
-                <div key={conv.id} className="flex items-center gap-4 p-4 bg-white/5 border border-white/10 rounded-lg">
+                <div key={conv.id} className="flex items-center gap-4 p-4 bg-gray-50 border border-gray-200 rounded-lg">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <span className="text-sm font-medium text-neutral-100 truncate">
+                      <span className="text-sm font-medium text-gray-900 truncate">
                         {conv.contact_id}
                       </span>
                       <Badge variant={STATUS_COLORS[conv.status] || "secondary"} className="text-[10px]">
                         {conv.status}
                       </Badge>
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-neutral-400">
+                    <div className="flex items-center gap-3 text-xs text-gray-500">
                       <span>{conv.message_count} msgs</span>
                       <span>{Object.keys(conv.collected_data || {}).length} dados coletados</span>
                       {conv.last_message_at && <span>{timeAgo(conv.last_message_at)}</span>}
@@ -168,7 +168,7 @@ export default function ActivityPage() {
                   {Object.keys(conv.collected_data || {}).length > 0 && (
                     <div className="hidden md:flex gap-1 flex-wrap max-w-xs">
                       {Object.entries(conv.collected_data).slice(0, 3).map(([k, v]) => (
-                        <span key={k} className="text-[10px] bg-white/5 text-neutral-300 px-1.5 py-0.5 rounded">
+                        <span key={k} className="text-[10px] bg-gray-50 text-gray-700 px-1.5 py-0.5 rounded">
                           {k}: {String(v).substring(0, 20)}
                         </span>
                       ))}
@@ -189,28 +189,28 @@ export default function ActivityPage() {
               {logs.map((log) => {
                 const Icon = ACTION_ICONS[log.action_type] || Zap;
                 return (
-                  <div key={log.id} className="flex items-center gap-3 p-3 hover:bg-white/[0.02] rounded-lg transition-colors">
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${log.success ? "bg-white/5" : "bg-red-500/10"}`}>
+                  <div key={log.id} className="flex items-center gap-3 p-3 hover:bg-gray-50 rounded-lg transition-colors">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${log.success ? "bg-gray-50" : "bg-red-50"}`}>
                       {log.success ? (
-                        <Icon className="w-3.5 h-3.5 text-neutral-300" />
+                        <Icon className="w-3.5 h-3.5 text-gray-700" />
                       ) : (
                         <XCircle className="w-3.5 h-3.5 text-red-500" />
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm text-neutral-100">{formatActionType(log.action_type)}</span>
+                        <span className="text-sm text-gray-900">{formatActionType(log.action_type)}</span>
                         {log.error_message && (
                           <span className="text-xs text-red-500 truncate max-w-xs">{log.error_message}</span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-[10px] text-neutral-400">
+                      <div className="flex items-center gap-2 text-[10px] text-gray-500">
                         <span>{log.contact_id?.substring(0, 12)}...</span>
                         {log.duration_ms && <span>{log.duration_ms}ms</span>}
                         {log.prompt_tokens && <span>{(log.prompt_tokens || 0) + (log.completion_tokens || 0)} tokens</span>}
                       </div>
                     </div>
-                    <span className="text-xs text-neutral-400 flex-shrink-0">
+                    <span className="text-xs text-gray-500 flex-shrink-0">
                       {timeAgo(log.created_at)}
                     </span>
                   </div>
@@ -227,34 +227,34 @@ export default function ActivityPage() {
           ) : (
             <div className="space-y-2">
               {followups.map((fu) => (
-                <div key={fu.id} className="flex items-center gap-4 p-3 bg-white/5 border border-white/10 rounded-lg">
-                  <div className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center flex-shrink-0">
+                <div key={fu.id} className="flex items-center gap-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+                  <div className="w-7 h-7 rounded-full bg-gray-50 flex items-center justify-center flex-shrink-0">
                     {fu.status === "sent" ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                     ) : fu.status === "pending" ? (
                       <Clock className="w-3.5 h-3.5 text-amber-500" />
                     ) : fu.status === "failed" ? (
                       <XCircle className="w-3.5 h-3.5 text-red-500" />
                     ) : (
-                      <AlertTriangle className="w-3.5 h-3.5 text-neutral-400" />
+                      <AlertTriangle className="w-3.5 h-3.5 text-gray-500" />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <span className="text-sm text-neutral-100">
+                      <span className="text-sm text-gray-900">
                         Follow-up #{fu.attempt_number}
                       </span>
                       <Badge variant={STATUS_COLORS[fu.status] || "secondary"} className="text-[10px]">
                         {fu.status}
                       </Badge>
                     </div>
-                    <span className="text-xs text-neutral-400">{fu.contact_id?.substring(0, 16)}...</span>
+                    <span className="text-xs text-gray-500">{fu.contact_id?.substring(0, 16)}...</span>
                   </div>
                   <div className="text-right flex-shrink-0">
-                    <span className="text-xs text-neutral-500 block">
+                    <span className="text-xs text-gray-400 block">
                       {new Date(fu.scheduled_at).toLocaleDateString("pt-BR")}
                     </span>
-                    <span className="text-[10px] text-neutral-400">
+                    <span className="text-[10px] text-gray-500">
                       {new Date(fu.scheduled_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
                     </span>
                   </div>
@@ -273,11 +273,11 @@ function MetricCard({ icon: Icon, label, value, sub }: { icon: typeof MessageSqu
     <Card>
       <CardContent className="p-4">
         <div className="flex items-center gap-2 mb-2">
-          <Icon className="w-4 h-4 text-neutral-400" />
-          <span className="text-xs text-neutral-500">{label}</span>
+          <Icon className="w-4 h-4 text-gray-500" />
+          <span className="text-xs text-gray-400">{label}</span>
         </div>
-        <span className="text-2xl font-semibold text-neutral-100">{value}</span>
-        {sub && <p className="text-[10px] text-neutral-400 mt-0.5">{sub}</p>}
+        <span className="text-2xl font-semibold text-gray-900">{value}</span>
+        {sub && <p className="text-[10px] text-gray-500 mt-0.5">{sub}</p>}
       </CardContent>
     </Card>
   );
@@ -286,7 +286,7 @@ function MetricCard({ icon: Icon, label, value, sub }: { icon: typeof MessageSqu
 function EmptyState({ text }: { text: string }) {
   return (
     <div className="flex items-center justify-center py-16">
-      <p className="text-sm text-neutral-400">{text}</p>
+      <p className="text-sm text-gray-500">{text}</p>
     </div>
   );
 }

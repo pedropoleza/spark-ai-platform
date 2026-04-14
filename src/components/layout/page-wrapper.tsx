@@ -29,15 +29,15 @@ export function PageWrapper({
             {backHref && (
               <Link
                 href={backHref}
-                className="inline-flex items-center gap-1.5 text-sm text-neutral-500 hover:text-violet-300 mb-3 transition-colors"
+                className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-brand-600 mb-3 transition-colors"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
                 Voltar
               </Link>
             )}
-            <h1 className="text-2xl font-semibold tracking-tight text-neutral-50">{title}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-gray-900">{title}</h1>
             {subtitle && (
-              <p className="text-sm text-neutral-400 mt-1">{subtitle}</p>
+              <p className="text-sm text-gray-500 mt-1">{subtitle}</p>
             )}
           </div>
           {actions && <div className="flex items-center gap-3">{actions}</div>}

@@ -89,21 +89,21 @@ export function AutomationsEditor({ rules, pipelines, tags, customFields, onChan
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-neutral-400">
+      <p className="text-xs text-gray-500">
         Configure acoes automaticas que sao executadas quando um evento acontece na conversa.
       </p>
 
       {/* Lista de regras */}
       {rules.map((rule) => (
-        <div key={rule.id} className="border border-white/10 rounded-lg overflow-hidden">
+        <div key={rule.id} className="border border-gray-200 rounded-lg overflow-hidden">
           {/* Header da regra */}
-          <div className="flex items-center justify-between p-3 bg-white/[0.02]">
+          <div className="flex items-center justify-between p-3 bg-gray-50">
             <div className="flex items-center gap-2">
-              <Zap className="w-4 h-4 text-neutral-500" />
+              <Zap className="w-4 h-4 text-gray-400" />
               <span className="text-sm font-medium">Quando:</span>
               <Badge variant="secondary">{rule.event_label || getEventLabel(rule.event)}</Badge>
             </div>
-            <button onClick={() => removeRule(rule.id)} className="text-neutral-300 hover:text-red-500">
+            <button onClick={() => removeRule(rule.id)} className="text-gray-700 hover:text-red-500">
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
@@ -111,14 +111,14 @@ export function AutomationsEditor({ rules, pipelines, tags, customFields, onChan
           {/* Actions */}
           <div className="p-3 space-y-2">
             {rule.actions.length === 0 && (
-              <p className="text-xs text-neutral-400">Nenhuma acao configurada</p>
+              <p className="text-xs text-gray-500">Nenhuma acao configurada</p>
             )}
 
             {rule.actions.map((action, actionIdx) => {
               const selectedPipeline = pipelines.find((p) => p.id === action.pipeline_id);
 
               return (
-                <div key={actionIdx} className="flex items-center gap-2 p-2 bg-white/5 border border-white/5 rounded-lg">
+                <div key={actionIdx} className="flex items-center gap-2 p-2 bg-gray-50 border border-gray-100 rounded-lg">
                   {/* Tipo da acao */}
                   <Select
                     value={action.type}
@@ -208,7 +208,7 @@ export function AutomationsEditor({ rules, pipelines, tags, customFields, onChan
                     </>
                   )}
 
-                  <button onClick={() => removeAction(rule.id, actionIdx)} className="text-neutral-300 hover:text-red-500">
+                  <button onClick={() => removeAction(rule.id, actionIdx)} className="text-gray-700 hover:text-red-500">
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -225,7 +225,7 @@ export function AutomationsEditor({ rules, pipelines, tags, customFields, onChan
 
       {/* Adicionar regra */}
       {showAdd ? (
-        <div className="p-4 border border-white/10 rounded-lg bg-white/[0.02] space-y-3">
+        <div className="p-4 border border-gray-200 rounded-lg bg-gray-50 space-y-3">
           <Label className="text-xs">Evento disparador</Label>
           <Select value={newEvent} onValueChange={setNewEvent}>
             <SelectTrigger>

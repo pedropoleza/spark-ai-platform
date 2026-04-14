@@ -37,15 +37,15 @@ export function DeactivationRulesEditor({ rules, tags, customFields, onChange }:
           <Power className="w-4 h-4" />
           Regras de desligamento
         </Label>
-        <p className="text-xs text-neutral-400 mt-1">
+        <p className="text-xs text-gray-500 mt-1">
           A IA para de responder quando qualquer uma dessas condicoes for atendida.
           Tambem para se o contato perder o criterio de ativacao (targeting rules).
         </p>
       </div>
 
       {rules.map((rule) => (
-        <div key={rule.id} className="flex items-center gap-2 p-3 bg-white/5 border border-white/10 rounded-lg">
-          <span className="text-xs text-neutral-500 flex-shrink-0">Desligar quando:</span>
+        <div key={rule.id} className="flex items-center gap-2 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+          <span className="text-xs text-gray-400 flex-shrink-0">Desligar quando:</span>
 
           <Select
             value={rule.type}
@@ -101,7 +101,7 @@ export function DeactivationRulesEditor({ rules, tags, customFields, onChange }:
             </>
           )}
 
-          <button onClick={() => removeRule(rule.id)} className="text-neutral-300 hover:text-red-500">
+          <button onClick={() => removeRule(rule.id)} className="text-gray-700 hover:text-red-500">
             <Trash2 className="w-4 h-4" />
           </button>
         </div>

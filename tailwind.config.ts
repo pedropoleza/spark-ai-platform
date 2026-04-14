@@ -11,6 +11,21 @@ const config: Config = {
       fontFamily: {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],
       },
+      colors: {
+        brand: {
+          DEFAULT: "#1675F2",
+          50: "#EBF3FE",
+          100: "#D6E7FD",
+          200: "#AECFFB",
+          300: "#85B7F9",
+          400: "#5D9FF7",
+          500: "#1675F2",
+          600: "#1267D8",
+          700: "#0E54B0",
+          800: "#0A4188",
+          900: "#062E60",
+        },
+      },
       keyframes: {
         "fade-in": {
           from: { opacity: "0" },

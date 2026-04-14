@@ -37,7 +37,7 @@ export function ChannelSelector({ selected, onChange }: ChannelSelectorProps) {
     <div className="space-y-3">
       <div>
         <Label>Canais de comunicacao</Label>
-        <p className="text-xs text-neutral-400 mt-0.5">
+        <p className="text-xs text-gray-500 mt-0.5">
           O agente responde pelo mesmo canal que o lead usou para enviar a mensagem
         </p>
       </div>
@@ -54,15 +54,15 @@ export function ChannelSelector({ selected, onChange }: ChannelSelectorProps) {
               className={cn(
                 "flex flex-col items-center gap-2 p-4 border-2 rounded-xl transition-all",
                 isSelected
-                  ? "border-violet-500/60 bg-violet-500/10 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
-                  : "border-white/10 hover:border-white/15 opacity-50"
+                  ? "border-brand-500 bg-brand-50 shadow-[0_0_0_1px_rgba(139,92,246,0.2),0_8px_24px_-8px_rgba(139,92,246,0.3)]"
+                  : "border-gray-200 hover:border-gray-200 opacity-50"
               )}
             >
-              <Icon className={cn("w-5 h-5", isSelected ? "text-neutral-100" : "text-neutral-400")} />
-              <span className={cn("text-sm font-medium", isSelected ? "text-neutral-100" : "text-neutral-500")}>
+              <Icon className={cn("w-5 h-5", isSelected ? "text-gray-900" : "text-gray-500")} />
+              <span className={cn("text-sm font-medium", isSelected ? "text-gray-900" : "text-gray-400")}>
                 {ch.label}
               </span>
-              <span className="text-[10px] text-neutral-400">{ch.description}</span>
+              <span className="text-[10px] text-gray-500">{ch.description}</span>
             </button>
           );
         })}

@@ -121,7 +121,7 @@ export function DataFieldsEditor({
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <Label>Campos para coletar</Label>
-        <span className="text-xs text-neutral-400">{fields.length} campos</span>
+        <span className="text-xs text-gray-500">{fields.length} campos</span>
       </div>
 
       {/* Lista de campos */}
@@ -129,12 +129,12 @@ export function DataFieldsEditor({
         {fields.map((field, index) => (
           <div
             key={`${field.key}-${index}`}
-            className="flex items-center gap-3 p-3 bg-white/5 border border-white/10 rounded-lg group"
+            className="flex items-center gap-3 p-3 bg-gray-50 border border-gray-200 rounded-lg group"
           >
             <div className="flex flex-col gap-0.5">
               <button
                 type="button"
-                className="text-neutral-300 hover:text-neutral-500 disabled:opacity-20"
+                className="text-gray-700 hover:text-gray-400 disabled:opacity-20"
                 onClick={() => handleMoveUp(index)}
                 disabled={index === 0}
               >
@@ -142,7 +142,7 @@ export function DataFieldsEditor({
               </button>
               <button
                 type="button"
-                className="text-neutral-300 hover:text-neutral-500 disabled:opacity-20"
+                className="text-gray-700 hover:text-gray-400 disabled:opacity-20"
                 onClick={() => handleMoveDown(index)}
                 disabled={index === fields.length - 1}
               >
@@ -151,10 +151,10 @@ export function DataFieldsEditor({
             </div>
 
             <div className="flex-1 min-w-0">
-              <span className="text-sm font-medium text-neutral-100 block truncate">
+              <span className="text-sm font-medium text-gray-900 block truncate">
                 {field.label}
               </span>
-              <span className="text-xs text-neutral-400">{field.key}</span>
+              <span className="text-xs text-gray-500">{field.key}</span>
             </div>
 
             {field.sync_to_ghl ? (
@@ -169,12 +169,12 @@ export function DataFieldsEditor({
               </Badge>
             )}
 
-            <span className="text-xs text-neutral-400 px-2 py-0.5 bg-white/5 rounded">
+            <span className="text-xs text-gray-500 px-2 py-0.5 bg-gray-50 rounded">
               {field.type}
             </span>
 
             <div className="flex items-center gap-1.5" title="Campo obrigatorio">
-              <span className="text-xs text-neutral-400">Obrig.</span>
+              <span className="text-xs text-gray-500">Obrig.</span>
               <Switch
                 checked={field.required}
                 onCheckedChange={() => handleToggleRequired(index)}
@@ -183,7 +183,7 @@ export function DataFieldsEditor({
             </div>
 
             <div className="flex items-center gap-1.5" title="Pular se ja estiver preenchido no contato">
-              <span className="text-xs text-neutral-400">Pular se preenchido</span>
+              <span className="text-xs text-gray-500">Pular se preenchido</span>
               <Switch
                 checked={field.skip_if_filled ?? true}
                 onCheckedChange={() => handleToggleSkipIfFilled(index)}
@@ -194,7 +194,7 @@ export function DataFieldsEditor({
             <button
               type="button"
               onClick={() => handleRemove(index)}
-              className="text-neutral-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="text-gray-700 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -204,28 +204,28 @@ export function DataFieldsEditor({
 
       {/* Adicionar campo */}
       {showAddForm ? (
-        <div className="p-4 border border-white/10 rounded-lg bg-white/[0.02] space-y-4">
+        <div className="p-4 border border-gray-200 rounded-lg bg-gray-50 space-y-4">
           {!addMode ? (
             <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
                 onClick={() => setAddMode("custom_field")}
-                className="flex flex-col items-center gap-2 p-4 border-2 border-white/10 rounded-lg hover:border-white/30 transition-colors"
+                className="flex flex-col items-center gap-2 p-4 border-2 border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
               >
-                <Database className="w-5 h-5 text-neutral-300" />
+                <Database className="w-5 h-5 text-gray-700" />
                 <span className="text-sm font-medium">Custom Field</span>
-                <span className="text-xs text-neutral-400 text-center">
+                <span className="text-xs text-gray-500 text-center">
                   Vincula a um campo do Spark e atualiza automaticamente
                 </span>
               </button>
               <button
                 type="button"
                 onClick={() => setAddMode("simple")}
-                className="flex flex-col items-center gap-2 p-4 border-2 border-white/10 rounded-lg hover:border-white/30 transition-colors"
+                className="flex flex-col items-center gap-2 p-4 border-2 border-gray-200 rounded-lg hover:border-gray-300 transition-colors"
               >
-                <FileText className="w-5 h-5 text-neutral-300" />
+                <FileText className="w-5 h-5 text-gray-700" />
                 <span className="text-sm font-medium">Campo simples</span>
-                <span className="text-xs text-neutral-400 text-center">
+                <span className="text-xs text-gray-500 text-center">
                   Coleta a informacao mas nao atualiza no sistema
                 </span>
               </button>
@@ -241,7 +241,7 @@ export function DataFieldsEditor({
                   <SelectContent>
                     {customFields.filter((f) => f.isStandard).length > 0 && (
                       <>
-                        <div className="px-2 py-1.5 text-xs font-semibold text-neutral-400">
+                        <div className="px-2 py-1.5 text-xs font-semibold text-gray-500">
                           Campos padrao
                         </div>
                         {customFields
@@ -255,7 +255,7 @@ export function DataFieldsEditor({
                     )}
                     {customFields.filter((f) => !f.isStandard).length > 0 && (
                       <>
-                        <div className="px-2 py-1.5 text-xs font-semibold text-neutral-400 mt-1">
+                        <div className="px-2 py-1.5 text-xs font-semibold text-gray-500 mt-1">
                           Custom Fields
                         </div>
                         {customFields
@@ -269,7 +269,7 @@ export function DataFieldsEditor({
                     )}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-neutral-400 mt-1">
+                <p className="text-xs text-gray-500 mt-1">
                   A IA vai atualizar este campo no contato automaticamente
                 </p>
               </div>
