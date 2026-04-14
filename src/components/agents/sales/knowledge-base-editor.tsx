@@ -429,7 +429,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                       placeholder={INSTRUCTION_PLACEHOLDER}
                     />
                     <p className="text-[10px] text-neutral-400 mt-1">
-                      Seja especifico: diga quando usar, o que extrair e o que evitar. Ex: "Quando o lead perguntar sobre prazos, cite exatamente os valores da tabela. Nao fale em desconto — nao eh oferecido."
+                      Seja especifico: diga quando usar, o que extrair e o que evitar. Ex: &ldquo;Quando o lead perguntar sobre prazos, cite exatamente os valores da tabela. Nao fale em desconto — nao eh oferecido.&rdquo;
                     </p>
                   </div>
                 </div>
