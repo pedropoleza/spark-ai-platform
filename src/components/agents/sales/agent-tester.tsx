@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { composePersonalityProfile, type PersonalityProfile } from "@/lib/ai/behavior-blocks";
 import type { AIResponse } from "@/types/ai";
 
 interface ChatMessage {
@@ -53,7 +54,28 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   const [editingFeedbackId, setEditingFeedbackId] = useState<string | null>(null);
   const [editingSuggestion, setEditingSuggestion] = useState("");
   const [editingRating, setEditingRating] = useState<"positive" | "negative">("negative");
+  const [profile, setProfile] = useState<PersonalityProfile | null>(null);
+  const [expandedBlock, setExpandedBlock] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Carrega config do agente e resolve o perfil comportamental atual
+  useEffect(() => {
+    if (!agentId) return;
+    fetch(`/api/agents/${agentId}/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data?.config) return;
+        setProfile(
+          composePersonalityProfile({
+            tone_creativity: data.config.tone_creativity,
+            tone_formality: data.config.tone_formality,
+            tone_naturalness: data.config.tone_naturalness,
+            tone_aggressiveness: data.config.tone_aggressiveness,
+          })
+        );
+      })
+      .catch(() => {});
+  }, [agentId]);
 
   const fetchFeedbacks = useCallback(async () => {
     if (!agentId) return;
@@ -507,9 +529,9 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           </Card>
         </div>
 
-        {/* Sidebar - Dados coletados */}
-        <div>
-          <Card className="h-[550px] overflow-y-auto">
+        {/* Sidebar - Dados coletados + Perfil comportamental */}
+        <div className="space-y-4">
+          <Card className="h-[260px] overflow-y-auto">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Dados coletados</CardTitle>
               <CardDescription>
@@ -528,6 +550,59 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     </span>
                   </div>
                 ))
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="h-[274px] overflow-y-auto">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Perfil comportamental</CardTitle>
+              <CardDescription>
+                Blocos selecionados a partir dos percentuais. Clique para ver as diretrizes que sao enviadas para a IA.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {!profile ? (
+                <p className="text-xs text-gray-500">Carregando perfil...</p>
+              ) : (
+                (
+                  [
+                    { key: "creativity", title: "Criatividade" },
+                    { key: "formality", title: "Formalidade" },
+                    { key: "naturalness", title: "Naturalidade" },
+                    { key: "aggressiveness", title: "Agressividade" },
+                  ] as const
+                ).map(({ key, title }) => {
+                  const block = profile[key];
+                  const isOpen = expandedBlock === key;
+                  return (
+                    <div key={key} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedBlock(isOpen ? null : key)}
+                        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-gray-900">{title}</span>
+                            <span className="text-[10px] font-mono text-brand-600">{block.percent}%</span>
+                          </div>
+                          <span className="text-[10px] text-gray-500 block truncate">{block.label} · {block.summary}</span>
+                        </div>
+                        <span className="text-[10px] uppercase tracking-wider text-brand-500/80 font-medium flex-shrink-0">
+                          {isOpen ? "Fechar" : "Ver"}
+                        </span>
+                      </button>
+                      {isOpen && (
+                        <div className="px-3 pb-3 pt-1 border-t border-gray-100 bg-gray-50/60">
+                          <pre className="text-[10px] text-gray-700 whitespace-pre-wrap leading-relaxed font-sans">
+                            {block.directives}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
               )}
             </CardContent>
           </Card>
