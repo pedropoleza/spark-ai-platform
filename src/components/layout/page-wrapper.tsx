@@ -22,7 +22,7 @@ export function PageWrapper({
 }: PageWrapperProps) {
   return (
     <div className={cn("flex-1 overflow-y-auto", className)}>
-      <div className="max-w-5xl mx-auto px-8 py-8">
+      <div className="mx-auto w-full max-w-[1600px] px-6 lg:px-10 xl:px-14 py-8">
         {/* Header */}
         <div className="flex items-start justify-between mb-8">
           <div>

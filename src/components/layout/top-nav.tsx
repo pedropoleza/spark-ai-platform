@@ -22,7 +22,7 @@ export function TopNav() {
       {/* Linha azul fina no topo */}
       <div className="absolute top-0 left-0 right-0 h-0.5 brand-gradient" />
       {/* Top row: brand + search + tenant */}
-      <div className="flex items-center justify-between gap-6 px-8 h-16">
+      <div className="mx-auto w-full max-w-[1600px] flex items-center justify-between gap-6 px-6 lg:px-10 xl:px-14 h-16">
         {/* Logo */}
         <Link href="/dashboard" className="flex items-center gap-3 group">
           <div className="relative">
@@ -37,7 +37,7 @@ export function TopNav() {
         </Link>
 
         {/* Search */}
-        <div className="flex-1 max-w-md hidden md:block">
+        <div className="flex-1 max-w-xl hidden md:block">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
@@ -60,8 +60,8 @@ export function TopNav() {
       </div>
 
       {/* Bottom row: module tabs on subtle gray bar */}
-      <nav className="px-8 -mb-px overflow-x-auto bg-gray-50/70 border-t border-gray-100">
-        <div className="flex items-center gap-1 min-w-min">
+      <nav className="-mb-px overflow-x-auto bg-gray-50/70 border-t border-gray-100">
+        <div className="mx-auto w-full max-w-[1600px] px-6 lg:px-10 xl:px-14 flex items-center gap-1 min-w-min">
           {navItems.map((item) => {
             const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
             const Icon = item.icon;
