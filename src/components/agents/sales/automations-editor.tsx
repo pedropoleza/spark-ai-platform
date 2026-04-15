@@ -33,7 +33,7 @@ const DEFAULT_EVENTS = [
 const OPERATORS = [
   { value: "any_value", label: "For preenchido com qualquer valor" },
   { value: "equals", label: "For igual a" },
-  { value: "contains", label: "Contiver" },
+  { value: "contains", label: "Contem" },
   { value: "matches_regex", label: "Bater com regex" },
 ];
 

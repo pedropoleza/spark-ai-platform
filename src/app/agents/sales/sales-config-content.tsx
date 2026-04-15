@@ -29,10 +29,9 @@ import { PostBookingConfigEditor } from "@/components/agents/sales/post-booking-
 import { AutomationsEditor } from "@/components/agents/sales/automations-editor";
 import { KnowledgeBaseEditor } from "@/components/agents/sales/knowledge-base-editor";
 import { DeactivationRulesEditor } from "@/components/agents/sales/deactivation-rules-editor";
-import { HandoffMessagesEditor } from "@/components/agents/sales/handoff-messages-editor";
 import { useGHLData } from "@/hooks/use-ghl-data";
 import { AI_MODELS } from "@/lib/utils/constants";
-import type { AgentConfig, AgentObjective, AgentPersonality, PostBookingConfig, DataField, FollowUpConfig, TargetingRule, WorkingHoursConfig, TimezoneConfig, NotificationsConfig, AutomationRule, DeactivationRule, HandoffMessage, CommunicationChannel } from "@/types/agent";
+import type { AgentConfig, AgentObjective, AgentPersonality, PostBookingConfig, DataField, FollowUpConfig, TargetingRule, WorkingHoursConfig, TimezoneConfig, NotificationsConfig, AutomationRule, DeactivationRule, CommunicationChannel } from "@/types/agent";
 
 type ConfigForm = Omit<AgentConfig, "id" | "agent_id" | "created_at" | "updated_at">;
 
@@ -110,7 +109,7 @@ const defaultConfig: ConfigForm = {
   automations: [],
   deactivation_rules: [],
   handoff_messages: [],
-  auto_pause_on_human_message: false,
+  auto_pause_on_human_message: true,
 };
 
 export function SalesConfigContent() {
@@ -418,21 +417,6 @@ export function SalesConfigContent() {
                   />
                 </div>
 
-                {/* Modo legado: mensagens fixas (apenas se toggle desligado) */}
-                {!(config.auto_pause_on_human_message ?? false) && (
-                  <div className="pt-2 border-t border-gray-200">
-                    <div className="mb-3">
-                      <Label className="text-sm font-medium text-gray-900">Mensagens de encerramento (modo legado)</Label>
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        Apenas quando o toggle acima esta desligado. A IA pausa apenas quando voce enviar uma das mensagens cadastradas com texto exato.
-                      </p>
-                    </div>
-                    <HandoffMessagesEditor
-                      messages={config.handoff_messages || []}
-                      onChange={(v: HandoffMessage[]) => updateConfig("handoff_messages", v)}
-                    />
-                  </div>
-                )}
               </CardContent>
             </Card>
           </div>
