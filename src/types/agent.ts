@@ -114,18 +114,59 @@ export interface AgentConfig {
 }
 
 export interface AutomationAction {
-  type: "add_tag" | "remove_tag" | "move_pipeline" | "update_field";
+  type:
+    | "add_tag"
+    | "remove_tag"
+    | "move_pipeline"
+    | "update_field"
+    | "send_media"
+    | "send_text_fixed"
+    | "pause_ai"
+    | "webhook";
+  // add_tag / remove_tag
   tag?: string;
+  // move_pipeline
   pipeline_id?: string;
   stage_id?: string;
+  // update_field
   field_key?: string;
   field_value?: string;
+  // send_media
+  media_id?: string;
+  media_caption?: string;
+  // send_text_fixed
+  text?: string;
+  // pause_ai
+  pause_minutes?: number; // 0 = indefinido
+  // webhook
+  webhook_url?: string;
 }
+
+/**
+ * Trigger (condicao de disparo) de uma automation.
+ * - event-based: dispara em eventos de conversation_status (qualified, booked, etc)
+ * - data-field-based: dispara quando um campo do collected_data muda para um valor
+ */
+export type AutomationTrigger =
+  | {
+      kind: "event";
+      event: string; // "qualified" | "booked" | "handed_off" | custom
+      event_label?: string;
+    }
+  | {
+      kind: "on_data_field_set";
+      field_key: string;
+      operator: "any_value" | "equals" | "contains" | "matches_regex";
+      value?: string;
+    };
 
 export interface AutomationRule {
   id: string;
-  event: string;  // "qualified" | "booked" | "handed_off" | "disqualified" | custom
-  event_label?: string; // Label para eventos custom
+  // Campos legados (compatibilidade com regras event-based criadas antes do trigger explicito)
+  event?: string;
+  event_label?: string;
+  // Trigger explicito (novo). Se ausente, interpretamos como { kind: "event", event }
+  trigger?: AutomationTrigger;
   actions: AutomationAction[];
 }
 

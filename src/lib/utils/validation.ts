@@ -116,16 +116,47 @@ export const updateAgentConfigSchema = z.object({
   }).optional(),
   automations: z.array(z.object({
     id: z.string(),
-    event: z.string(),
+    event: z.string().optional(),
     event_label: z.string().optional(),
-    actions: z.array(z.object({
-      type: z.enum(["add_tag", "remove_tag", "move_pipeline", "update_field"]),
-      tag: z.string().optional(),
-      pipeline_id: z.string().optional(),
-      stage_id: z.string().optional(),
-      field_key: z.string().optional(),
-      field_value: z.string().optional(),
-    })),
+    trigger: z
+      .union([
+        z.object({
+          kind: z.literal("event"),
+          event: z.string(),
+          event_label: z.string().optional(),
+        }),
+        z.object({
+          kind: z.literal("on_data_field_set"),
+          field_key: z.string().min(1),
+          operator: z.enum(["any_value", "equals", "contains", "matches_regex"]),
+          value: z.string().optional(),
+        }),
+      ])
+      .optional(),
+    actions: z.array(
+      z.object({
+        type: z.enum([
+          "add_tag",
+          "remove_tag",
+          "move_pipeline",
+          "update_field",
+          "send_media",
+          "send_text_fixed",
+          "pause_ai",
+          "webhook",
+        ]),
+        tag: z.string().optional(),
+        pipeline_id: z.string().optional(),
+        stage_id: z.string().optional(),
+        field_key: z.string().optional(),
+        field_value: z.string().optional(),
+        media_id: z.string().optional(),
+        media_caption: z.string().optional(),
+        text: z.string().optional(),
+        pause_minutes: z.number().int().min(0).max(10080).optional(),
+        webhook_url: z.string().url().optional(),
+      })
+    ),
   })).optional(),
   specialist_name: z.string().optional(),
   specialist_role: z.string().optional(),

@@ -382,7 +382,7 @@ export function RecruitmentConfigContent() {
             <Card>
               <CardHeader><CardTitle>Automacoes</CardTitle></CardHeader>
               <CardContent>
-                <AutomationsEditor rules={config.automations} pipelines={ghl.pipelines} tags={ghl.tags} customFields={ghl.customFields} onChange={(rules: AutomationRule[]) => updateConfig("automations", rules)} />
+                <AutomationsEditor rules={config.automations} pipelines={ghl.pipelines} tags={ghl.tags} customFields={ghl.customFields} dataFields={config.data_fields || []} agentId={agentId} onChange={(rules: AutomationRule[]) => updateConfig("automations", rules)} />
               </CardContent>
             </Card>
             <Card>

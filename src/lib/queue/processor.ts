@@ -5,7 +5,9 @@ import { processWithAI } from "@/lib/ai/openai-client";
 import { executeActions } from "@/lib/ai/action-executor";
 import { scheduleFollowUps } from "@/lib/queue/follow-up-scheduler";
 import { trackAndCharge } from "@/lib/billing/charge";
+import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
 import type { GHLMessage } from "@/types/ghl";
+import type { AutomationRule } from "@/types/agent";
 
 interface QueuedMessage {
   id: string;
@@ -495,33 +497,89 @@ async function processGroup(
     });
   }
 
-  // 11. Executar automacoes configuradas para este evento
+  // 11a. Reacoes a dados coletados (on_data_field_set).
+  // Aplicado imediatamente apos executeActions, que ja atualizou
+  // conversation_state com o novo collected_data.
   if (config.automations && Array.isArray(config.automations) && config.automations.length > 0) {
-    await executeAutomations(
-      ghlClient,
-      config.automations,
-      finalStatus,
-      group.contactId,
-      group.locationId,
-      supabase,
-      agent.id
+    const rules = config.automations as AutomationRule[];
+    const dataFieldRules = rules.filter((r) => r.trigger?.kind === "on_data_field_set");
+
+    if (dataFieldRules.length > 0) {
+      const newCollected = (aiResult.response.collected_data || {}) as Record<string, string>;
+      const alreadyTriggered = new Set<string>(
+        Array.isArray(convState?.triggered_automations)
+          ? (convState.triggered_automations as string[])
+          : []
+      );
+
+      const toFire = pickTriggeredDataFieldRules(
+        dataFieldRules,
+        previousCollectedData,
+        newCollected,
+        alreadyTriggered
+      );
+
+      if (toFire.length > 0) {
+        const { executedRuleIds } = await executeReactionRules(toFire, {
+          agentId: agent.id,
+          locationId: group.locationId,
+          companyId: location.company_id,
+          contactId: group.contactId,
+          conversationId: group.conversationId,
+          channel: group.channel,
+        });
+
+        if (executedRuleIds.length > 0) {
+          const mergedSet = new Set<string>();
+          alreadyTriggered.forEach((v) => mergedSet.add(v));
+          executedRuleIds.forEach((v) => mergedSet.add(v));
+          const merged: string[] = [];
+          mergedSet.forEach((v) => merged.push(v));
+          await supabase
+            .from("conversation_state")
+            .update({ triggered_automations: merged })
+            .eq("agent_id", agent.id)
+            .eq("contact_id", group.contactId);
+        }
+      }
+    }
+
+    // 11b. Automacoes event-based legadas (qualified, booked, etc)
+    const eventRules = rules.filter(
+      (r) => !r.trigger || r.trigger.kind === "event"
     );
+    if (eventRules.length > 0) {
+      await executeAutomations(
+        ghlClient,
+        eventRules,
+        finalStatus,
+        group.contactId,
+        group.locationId,
+        supabase,
+        agent.id
+      );
+    }
   }
 }
 
 /**
- * Executa automacoes configuradas para um evento especifico.
+ * Executa automacoes event-based para um evento especifico.
+ * Aceita tanto o shape legado (`event: "qualified"`) quanto o novo
+ * (`trigger: { kind: "event", event: "qualified" }`).
  */
 async function executeAutomations(
   client: GHLClient,
-  automations: { event: string; actions: { type: string; tag?: string; pipeline_id?: string; stage_id?: string; field_key?: string; field_value?: string }[] }[],
+  automations: AutomationRule[],
   currentEvent: string,
   contactId: string,
   locationId: string,
   supabase: ReturnType<typeof createAdminClient>,
   agentId: string
 ): Promise<void> {
-  const matchingRules = automations.filter((a) => a.event === currentEvent);
+  const matchingRules = automations.filter((a) => {
+    if (a.trigger?.kind === "event") return a.trigger.event === currentEvent;
+    return a.event === currentEvent;
+  });
 
   for (const rule of matchingRules) {
     for (const action of rule.actions) {

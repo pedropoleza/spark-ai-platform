@@ -576,6 +576,8 @@ export function SalesConfigContent() {
                   pipelines={ghl.pipelines}
                   tags={ghl.tags}
                   customFields={ghl.customFields}
+                  dataFields={config.data_fields || []}
+                  agentId={agentId}
                   onChange={(rules: AutomationRule[]) => updateConfig("automations", rules)}
                 />
               </CardContent>
