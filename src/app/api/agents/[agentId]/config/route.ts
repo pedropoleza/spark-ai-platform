@@ -70,8 +70,11 @@ export async function PUT(
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
   }
 
+  // Filtra campos null/undefined para nao enviar ao Supabase
   const updateData: Record<string, unknown> = {
-    ...validatedBody,
+    ...Object.fromEntries(
+      Object.entries(validatedBody as Record<string, unknown>).filter(([, v]) => v != null)
+    ),
     updated_at: new Date().toISOString(),
   };
 

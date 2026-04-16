@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Open_Sans } from "next/font/google";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 const openSans = Open_Sans({
@@ -23,6 +24,7 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body className={`${openSans.variable} font-sans antialiased bg-gray-50 text-gray-900`}>
         {children}
+        <Toaster richColors position="top-center" />
       </body>
     </html>
   );

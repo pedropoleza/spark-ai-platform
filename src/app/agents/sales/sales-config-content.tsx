@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
-import { Save, Loader2 } from "lucide-react";
+import { Save, Loader2, CheckCircle2 } from "lucide-react";
+import { toast } from "sonner";
 import { PageWrapper } from "@/components/layout/page-wrapper";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -133,7 +134,10 @@ export function SalesConfigContent() {
       if (response.ok) {
         const data = await response.json();
         if (data.config) {
-          setConfig({ ...defaultConfig, ...data.config });
+          const dbConfig = Object.fromEntries(
+            Object.entries(data.config).filter(([, v]) => v != null)
+          );
+          setConfig({ ...defaultConfig, ...dbConfig });
         }
       }
     } catch (error) {
@@ -161,10 +165,24 @@ export function SalesConfigContent() {
 
       if (response.ok) {
         setSaved(true);
+        toast.success("Configuracoes salvas com sucesso!", {
+          description: "Todas as regras foram atualizadas.",
+          duration: 4000,
+        });
         setTimeout(() => setSaved(false), 3000);
+      } else {
+        const data = await response.json().catch(() => ({}));
+        toast.error("Erro ao salvar configuracoes", {
+          description: data.error || `Erro ${response.status}`,
+          duration: 6000,
+        });
       }
     } catch (error) {
       console.error("Erro ao salvar config:", error);
+      toast.error("Erro de conexao", {
+        description: "Nao foi possivel salvar. Verifique sua conexao.",
+        duration: 6000,
+      });
     } finally {
       setSaving(false);
     }
@@ -191,13 +209,15 @@ export function SalesConfigContent() {
       subtitle="Configure como o agente interage com seus leads"
       backHref="/dashboard"
       actions={
-        <Button onClick={handleSave} disabled={saving || !agentId}>
+        <Button onClick={handleSave} disabled={saving || !agentId} variant={saved ? "outline" : "default"} className={saved ? "border-green-500 text-green-600" : ""}>
           {saving ? (
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+          ) : saved ? (
+            <CheckCircle2 className="w-4 h-4 mr-2" />
           ) : (
             <Save className="w-4 h-4 mr-2" />
           )}
-          {saved ? "Salvo!" : "Salvar"}
+          {saving ? "Salvando..." : saved ? "Salvo!" : "Salvar"}
         </Button>
       }
     >
