@@ -3,6 +3,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt } from "@/lib/ai/prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
 import { executeActions } from "@/lib/ai/action-executor";
+import { transcribeAudioFromUrl } from "@/lib/ai/audio-transcriber";
 import { scheduleFollowUps } from "@/lib/queue/follow-up-scheduler";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
@@ -17,6 +18,8 @@ interface QueuedMessage {
   conversation_id: string;
   message_body: string;
   channel?: string;
+  audio_url?: string | null;
+  audio_mime_type?: string | null;
 }
 
 interface MessageGroup {
@@ -76,12 +79,22 @@ export async function processMessageQueue(): Promise<{
     groups.get(key)!.messages.push(msg);
   }
 
-  // Agregar bodies
+  // Agregar bodies (transcrever audios quando necessario)
   for (const group of Array.from(groups.values())) {
-    group.aggregatedBody = group.messages
-      .map((m) => m.message_body.trim())
-      .filter(Boolean)
-      .join("\n");
+    const parts: string[] = [];
+    for (const msg of group.messages) {
+      if (msg.audio_url) {
+        const result = await transcribeAudioFromUrl(msg.audio_url, msg.audio_mime_type || undefined);
+        if (result?.text) {
+          parts.push(result.text);
+        } else if (msg.message_body && msg.message_body !== "[audio]") {
+          parts.push(msg.message_body.trim());
+        }
+      } else if (msg.message_body.trim()) {
+        parts.push(msg.message_body.trim());
+      }
+    }
+    group.aggregatedBody = parts.filter(Boolean).join("\n");
   }
 
   // 4. Processar cada grupo

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
+import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import type { TargetingRule } from "@/types/agent";
 
 export async function POST(request: NextRequest) {
@@ -49,8 +50,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ received: true, skipped: "not_a_real_message" });
     }
 
+    // ===== AUDIO: Extrair URL se for mensagem de voz =====
+    const audioInfo = extractAudioUrl(body);
+    const audioUrl = audioInfo?.url || null;
+    const audioMimeType = audioInfo?.mimeType || null;
+
     // ===== VALIDAÇÃO: Campos obrigatórios =====
-    if (!locationId || !contactId || !messageBody) {
+    // Audio sem texto é valido (sera transcrito no processor)
+    if (!locationId || !contactId || (!messageBody && !audioUrl)) {
       return NextResponse.json({ received: true, skipped: "missing_fields" });
     }
 
@@ -124,7 +131,7 @@ export async function POST(request: NextRequest) {
           }[];
 
           const normalize = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
-          const bodyNorm = normalize(messageBody);
+          const bodyNorm = normalize(messageBody || "");
 
           // Heuristica anti-eco: a IA, ao mandar uma mensagem via GHL,
           // tambem dispara este mesmo webhook como outbound. Para nao
@@ -323,11 +330,13 @@ export async function POST(request: NextRequest) {
       location_id: locationId,
       contact_id: contactId,
       conversation_id: conversationId || "",
-      message_body: messageBody,
+      message_body: messageBody || "[audio]",
       message_type: messageType,
       message_direction: direction,
       channel: channel,
       ghl_message_id: (body.id as string) || null,
+      audio_url: audioUrl,
+      audio_mime_type: audioMimeType,
       received_at: now,
       process_after: processAfter,
       status: "pending",
