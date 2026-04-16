@@ -57,6 +57,16 @@ export async function PUT(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // Ao ATIVAR: limpar pausas de conversas para que o agente volte a
+  // responder contatos que estavam pausados antes da desativacao.
+  if (body.status === "active") {
+    await supabase
+      .from("conversation_state")
+      .update({ ai_paused_at: null, ai_paused_reason: null, status: "active" })
+      .eq("agent_id", params.agentId)
+      .not("ai_paused_at", "is", null);
+  }
+
   return NextResponse.json({ agent });
 }
 

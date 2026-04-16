@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { toast } from "sonner";
 import { PageWrapper } from "@/components/layout/page-wrapper";
 import { AgentCard } from "@/components/dashboard/agent-card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,7 +29,13 @@ export default function DashboardPage() {
     fetchAgents();
   }, [fetchAgents]);
 
+  const [togglingType, setTogglingType] = useState<string | null>(null);
+
+  const agentLabel = (type: string) =>
+    type === "sales_agent" ? "Agente de Vendas" : type === "recruitment_agent" ? "Agente de Recrutamento" : "Assistente";
+
   const handleToggle = async (agentType: string, active: boolean) => {
+    setTogglingType(agentType);
     try {
       const existingAgent = agents.find((a) => a.type === agentType);
 
@@ -49,13 +56,28 @@ export default function DashboardPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        console.error("Erro ao atualizar agente:", data.error);
+        toast.error(`Erro ao ${active ? "ativar" : "desativar"} ${agentLabel(agentType)}`, {
+          description: data.error || "Tente novamente.",
+        });
         return;
       }
 
       await fetchAgents();
+
+      if (active) {
+        toast.success(`${agentLabel(agentType)} ativado`, {
+          description: "O agente esta recebendo e processando mensagens.",
+        });
+      } else {
+        toast.info(`${agentLabel(agentType)} desativado`, {
+          description: "O agente nao ira processar novas mensagens.",
+        });
+      }
     } catch (error) {
       console.error("Erro ao atualizar agente:", error);
+      toast.error("Erro de conexao", { description: "Nao foi possivel atualizar o agente." });
+    } finally {
+      setTogglingType(null);
     }
   };
 
