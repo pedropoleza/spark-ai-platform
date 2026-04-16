@@ -11,23 +11,22 @@ export async function POST(request: NextRequest) {
     try {
       body = JSON.parse(rawBody);
     } catch {
+      console.error("[Webhook] JSON parse failed");
       return NextResponse.json({ error: "invalid_json" }, { status: 400 });
     }
 
     // ===== SEGURANÇA: Validar origem =====
-    // Se GHL_WEBHOOK_SECRET estiver configurado, verificar assinatura
     const webhookSecret = process.env.GHL_WEBHOOK_SECRET;
     if (webhookSecret) {
-      // GHL envia assinatura no header (verificar formato exato da GHL)
       const signature = request.headers.get("x-ghl-signature") ||
         request.headers.get("x-signature") ||
         request.headers.get("x-webhook-signature");
 
       if (!signature) {
+        console.warn("[Webhook] Missing signature header");
         return NextResponse.json({ error: "missing_signature" }, { status: 401 });
       }
 
-      // Verificar via HMAC (importar crypto nativo do Node)
       const { createHmac } = await import("crypto");
       const expectedSig = createHmac("sha256", webhookSecret).update(rawBody).digest("hex");
 
@@ -45,8 +44,11 @@ export async function POST(request: NextRequest) {
     const messageType = (body.messageType || body.type || "SMS") as string;
     const direction = (body.direction || "inbound") as string;
 
+    console.log(`[Webhook] ${direction} | type=${messageType} | loc=${locationId} | contact=${contactId} | body="${(messageBody || "").substring(0, 50)}"`);
+
     // ===== FILTRO: Apenas mensagens reais =====
     if (!isRealMessage(messageType, direction)) {
+      console.log(`[Webhook] Skipped: not_a_real_message (type=${messageType})`);
       return NextResponse.json({ received: true, skipped: "not_a_real_message" });
     }
 
@@ -54,15 +56,17 @@ export async function POST(request: NextRequest) {
     const audioInfo = extractAudioUrl(body);
     const audioUrl = audioInfo?.url || null;
     const audioMimeType = audioInfo?.mimeType || null;
+    if (audioUrl) console.log(`[Webhook] Audio detected: ${audioUrl}`);
 
     // ===== VALIDAÇÃO: Campos obrigatórios =====
-    // Audio sem texto é valido (sera transcrito no processor)
     if (!locationId || !contactId || (!messageBody && !audioUrl)) {
+      console.log(`[Webhook] Skipped: missing_fields (loc=${locationId}, contact=${contactId}, body=${!!messageBody}, audio=${!!audioUrl})`);
       return NextResponse.json({ received: true, skipped: "missing_fields" });
     }
 
-    // Validar formato dos IDs (alfanumérico)
-    if (!/^[a-zA-Z0-9]{5,50}$/.test(locationId) || !/^[a-zA-Z0-9]{5,50}$/.test(contactId)) {
+    // Validar formato dos IDs (aceita alfanumerico, hifens, underscores)
+    if (!/^[\w-]{2,100}$/.test(locationId) || !/^[\w-]{2,100}$/.test(contactId)) {
+      console.log(`[Webhook] Skipped: invalid_ids (loc=${locationId}, contact=${contactId})`);
       return NextResponse.json({ received: true, skipped: "invalid_ids" });
     }
 
@@ -234,8 +238,10 @@ export async function POST(request: NextRequest) {
       .in("type", ["sales_agent", "recruitment_agent"]);
 
     if (!allAgents || allAgents.length === 0) {
+      console.log(`[Webhook] Skipped: no_active_agent for location ${locationId}`);
       return NextResponse.json({ received: true, skipped: "no_active_agent" });
     }
+    console.log(`[Webhook] Found ${allAgents.length} active agent(s): ${allAgents.map(a => a.type).join(", ")}`);
 
     // 1) Agente ja dono da conversa
     const { data: existingStates } = await supabase
@@ -261,6 +267,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!location) {
+      console.log(`[Webhook] Skipped: location_not_found (${locationId})`);
       return NextResponse.json({ received: true, skipped: "location_not_found" });
     }
 
@@ -285,8 +292,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (!selectedAgent) {
+      console.log(`[Webhook] Skipped: no_agent_matched_targeting for contact ${contactId}`);
       return NextResponse.json({ received: true, skipped: "no_agent_matched_targeting" });
     }
+    console.log(`[Webhook] Selected agent: ${selectedAgent.type} (${selectedAgent.id})`);
 
     const agent = selectedAgent;
     const config = Array.isArray(agent.agent_configs)
@@ -298,6 +307,7 @@ export async function POST(request: NextRequest) {
 
     // ===== FILTRO: Canal habilitado =====
     if (!enabledChannels.includes(channel)) {
+      console.log(`[Webhook] Skipped: channel_not_enabled (${channel} not in [${enabledChannels}])`);
       return NextResponse.json({ received: true, skipped: "channel_not_enabled" });
     }
 
@@ -355,11 +365,44 @@ export async function POST(request: NextRequest) {
       .eq("contact_id", contactId)
       .eq("status", "pending");
 
+    console.log(`[Webhook] Queued for ${agent.type} | debounce=${debounceSeconds}s | channel=${channel}`);
+
+    // Disparar processamento apos debounce (nao depende apenas do cron).
+    // Fire-and-forget: nao esperamos resposta.
+    triggerProcessing(debounceSeconds);
+
     return NextResponse.json({ received: true, queued: true, agent_id: agent.id, agent_type: agent.type });
   } catch (error) {
     console.error("Erro no webhook:", error);
     return NextResponse.json({ error: "internal_error" }, { status: 500 });
   }
+}
+
+/**
+ * Dispara processamento da fila apos o debounce.
+ * Fire-and-forget: usa setTimeout + fetch para chamar o endpoint
+ * de processamento sem bloquear o webhook.
+ */
+function triggerProcessing(debounceSeconds: number) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) return;
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ||
+    process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}` ||
+    "";
+  if (!appUrl) return;
+
+  const delayMs = (debounceSeconds + 2) * 1000;
+
+  setTimeout(() => {
+    fetch(`${appUrl}/api/cron/process-queue`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${cronSecret}` },
+      signal: AbortSignal.timeout(55000),
+    }).catch((err) => {
+      console.error("[Webhook] Trigger processing failed:", err.message);
+    });
+  }, delayMs);
 }
 
 /**
