@@ -73,7 +73,8 @@ ${input.newMessages}`;
         userMessage,
       ],
       temperature: 0.7,
-      max_tokens: 1000,
+      max_tokens: 1500,
+      response_format: { type: "json_object" },
     });
 
     const responseText = completion.choices[0]?.message?.content;
@@ -81,12 +82,15 @@ ${input.newMessages}`;
       return { success: false, response: null, error: "Resposta vazia da OpenAI" };
     }
 
-    const parsed = parseAIResponse(responseText);
+    let parsed = parseAIResponse(responseText);
     if (!parsed) {
-      return {
-        success: false,
-        response: null,
-        error: `Falha ao parsear resposta: ${responseText.substring(0, 200)}`,
+      console.warn(`[OpenAI] JSON parse failed, using fallback. Raw: "${responseText.substring(0, 300)}"`);
+      parsed = {
+        message: responseText.trim(),
+        actions: [],
+        internal_notes: "",
+        collected_data: {},
+        conversation_status: "active",
       };
     }
 
