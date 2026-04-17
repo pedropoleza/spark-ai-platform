@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, FileText, Globe, Type, Upload, Loader2, Pencil, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Trash2, FileText, Globe, Type, Upload, Loader2, Pencil, ChevronDown, ChevronUp, CheckCircle2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -96,6 +97,10 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
       if (res.ok) {
         await fetchItems();
         resetForm();
+        toast.success("Texto adicionado a base de conhecimento");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Erro ao salvar texto", { description: data.error });
       }
     } finally {
       setUploading(false);
@@ -121,6 +126,10 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
       if (res.ok) {
         await fetchItems();
         resetForm();
+        toast.success("URL importada com sucesso");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Erro ao importar URL", { description: data.error });
       }
     } finally {
       setUploading(false);
@@ -146,16 +155,23 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
       if (res.ok) {
         await fetchItems();
         resetForm();
+        toast.success(`Arquivo "${file.name}" processado e salvo`);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Erro ao processar arquivo", { description: data.error });
       }
     } finally {
       setUploading(false);
+      e.target.value = "";
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!agentId) return;
+    const item = items.find((i) => i.id === id);
     await fetch(`/api/knowledge-base?id=${id}&agent_id=${agentId}`, { method: "DELETE" });
-    setItems((prev) => prev.filter((item) => item.id !== id));
+    setItems((prev) => prev.filter((i) => i.id !== id));
+    toast.info(`"${item?.title || "Item"}" removido da base`);
   };
 
   const startEdit = (item: KBItem) => {
@@ -191,6 +207,10 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
       if (res.ok) {
         await fetchItems();
         cancelEdit();
+        toast.success("Instrucoes atualizadas");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toast.error("Erro ao salvar", { description: data.error });
       }
     } finally {
       setSavingEdit(false);
