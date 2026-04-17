@@ -58,7 +58,20 @@ export async function POST(request: NextRequest) {
     const audioInfo = extractAudioUrl(body);
     const audioUrl = audioInfo?.url || null;
     const audioMimeType = audioInfo?.mimeType || null;
-    if (audioUrl) console.log(`[Webhook] Audio detected: ${audioUrl}`);
+
+    // Log completo para debugging de audio
+    const hasAttachments = Array.isArray(body.attachments) && (body.attachments as unknown[]).length > 0;
+    const hasMediaUrl = !!(body.mediaUrl || body.media_url);
+    if (audioUrl) {
+      console.log(`[Webhook] Audio detected: ${audioUrl} (mime: ${audioMimeType})`);
+    } else if (hasAttachments || hasMediaUrl) {
+      console.log(`[Webhook] Media present but not detected as audio:`, JSON.stringify({
+        attachments: body.attachments,
+        mediaUrl: body.mediaUrl || body.media_url,
+        contentType: body.contentType,
+        messageType,
+      }).substring(0, 500));
+    }
 
     // ===== VALIDAÇÃO: Campos obrigatórios =====
     if (!locationId || !contactId || (!messageBody && !audioUrl)) {
@@ -361,9 +374,13 @@ export async function POST(request: NextRequest) {
 
     let { error: insertError } = await supabase.from("message_queue").insert(queuePayload);
 
-    // Fallback: se falhou, tentar sem os campos novos
+    // Fallback: se falhou, tentar sem os campos opcionais
     if (insertError) {
-      console.warn("[Webhook] Insert failed, retrying without new columns:", insertError.message);
+      console.warn("[Webhook] Insert failed, retrying without optional columns:", insertError.message);
+      // Se tem audio, embutir URL no message_body para nao perder
+      if (audioUrl && queuePayload.message_body === "[audio]") {
+        queuePayload.message_body = `[audio: ${audioUrl}]`;
+      }
       delete queuePayload.channel;
       delete queuePayload.audio_url;
       delete queuePayload.audio_mime_type;

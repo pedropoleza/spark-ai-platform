@@ -83,14 +83,27 @@ export async function processMessageQueue(): Promise<{
   for (const group of Array.from(groups.values())) {
     const parts: string[] = [];
     for (const msg of group.messages) {
-      if (msg.audio_url) {
-        const result = await transcribeAudioFromUrl(msg.audio_url, msg.audio_mime_type || undefined);
+      // Detectar audio: coluna audio_url OU URL embutida no body [audio: URL]
+      let audioUrl = msg.audio_url || null;
+      let audioMime = msg.audio_mime_type || undefined;
+      if (!audioUrl && msg.message_body.startsWith("[audio: ")) {
+        const match = msg.message_body.match(/\[audio:\s*(https?:\/\/[^\]]+)\]/);
+        if (match) audioUrl = match[1];
+      }
+
+      if (audioUrl) {
+        console.log(`[Processor] Transcribing audio for contact ${group.contactId}: ${audioUrl.substring(0, 80)}`);
+        const result = await transcribeAudioFromUrl(audioUrl, audioMime);
         if (result?.text) {
+          console.log(`[Processor] Transcription OK: "${result.text.substring(0, 60)}"`);
           parts.push(result.text);
-        } else if (msg.message_body && msg.message_body !== "[audio]") {
-          parts.push(msg.message_body.trim());
+        } else {
+          console.warn(`[Processor] Transcription failed for ${audioUrl.substring(0, 80)}`);
+          if (msg.message_body && !msg.message_body.startsWith("[audio")) {
+            parts.push(msg.message_body.trim());
+          }
         }
-      } else if (msg.message_body.trim()) {
+      } else if (msg.message_body.trim() && !msg.message_body.startsWith("[audio")) {
         parts.push(msg.message_body.trim());
       }
     }
