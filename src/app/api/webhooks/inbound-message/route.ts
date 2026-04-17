@@ -19,24 +19,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "invalid_json" }, { status: 400 });
     }
 
-    // ===== SEGURANÇA: Validar origem =====
+    // ===== SEGURANÇA: Validar origem (opcional) =====
+    // GHL nem sempre envia header de assinatura — verificamos se
+    // presente, mas nao bloqueamos se estiver ausente.
     const webhookSecret = process.env.GHL_WEBHOOK_SECRET;
     if (webhookSecret) {
       const signature = request.headers.get("x-ghl-signature") ||
         request.headers.get("x-signature") ||
         request.headers.get("x-webhook-signature");
 
-      if (!signature) {
-        console.warn("[Webhook] Missing signature header");
-        return NextResponse.json({ error: "missing_signature" }, { status: 401 });
-      }
-
-      const { createHmac } = await import("crypto");
-      const expectedSig = createHmac("sha256", webhookSecret).update(rawBody).digest("hex");
-
-      if (signature !== expectedSig) {
-        console.warn("[Webhook] Invalid signature");
-        return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
+      if (signature) {
+        const { createHmac } = await import("crypto");
+        const expectedSig = createHmac("sha256", webhookSecret).update(rawBody).digest("hex");
+        if (signature !== expectedSig) {
+          console.warn("[Webhook] Invalid signature — rejecting");
+          return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
+        }
       }
     }
 
