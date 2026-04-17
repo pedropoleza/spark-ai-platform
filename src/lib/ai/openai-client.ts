@@ -53,7 +53,7 @@ ${input.newMessages}`;
         if (!imageUrl) continue;
         contentParts.push({
           type: "image_url",
-          image_url: { url: imageUrl, detail: "low" },
+          image_url: { url: imageUrl, detail: "auto" },
         });
       }
 

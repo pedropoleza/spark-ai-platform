@@ -48,35 +48,18 @@ async function processImage(att: MediaAttachment): Promise<ProcessedMedia> {
     fileName: att.fileName,
   };
 
-  try {
-    const head = await fetch(att.url, {
-      method: "HEAD",
-      signal: AbortSignal.timeout(5000),
-    });
-
-    if (head.ok) {
-      const size = head.headers.get("content-length");
-      if (size && parseInt(size) > MAX_IMAGE_SIZE) {
-        result.error = "imagem muito grande para processar";
-        return result;
-      }
-      return result;
-    }
-
-    // URL não acessível publicamente — baixar e converter para base64
-    console.log(`[Media] Image HEAD failed (${head.status}), downloading for base64...`);
-  } catch {
-    console.log("[Media] Image HEAD timeout, downloading for base64...");
-  }
-
-  const downloaded = await downloadBuffer(att.url, 5 * 1024 * 1024);
+  // Sempre baixar e converter para base64 — URLs do GHL sao
+  // temporarias/assinadas e o OpenAI nao consegue acessar diretamente.
+  const downloaded = await downloadBuffer(att.url, MAX_IMAGE_SIZE);
   if (!downloaded) {
-    result.error = "imagem indisponivel";
+    result.error = "imagem indisponivel ou muito grande";
     return result;
   }
 
   const mime = att.contentType || downloaded.contentType || "image/jpeg";
-  result.base64DataUri = `data:${mime};base64,${downloaded.buffer.toString("base64")}`;
+  const cleanMime = mime.split(";")[0].trim();
+  result.base64DataUri = `data:${cleanMime};base64,${downloaded.buffer.toString("base64")}`;
+  console.log(`[Media] Image downloaded and converted to base64: ${downloaded.buffer.length} bytes (${cleanMime})`);
   return result;
 }
 
