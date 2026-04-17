@@ -29,7 +29,7 @@ export default function DashboardPage() {
     fetchAgents();
   }, [fetchAgents]);
 
-  const [togglingType, setTogglingType] = useState<string | null>(null);
+  const [, setTogglingType] = useState<string | null>(null);
 
   const agentLabel = (type: string) =>
     type === "sales_agent" ? "Agente de Vendas" : type === "recruitment_agent" ? "Agente de Recrutamento" : "Assistente";
