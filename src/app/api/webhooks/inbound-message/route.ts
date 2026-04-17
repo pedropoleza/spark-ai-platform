@@ -337,7 +337,9 @@ export async function POST(request: NextRequest) {
     // Atualizar pendentes + inserir nova em uma sequência atômica
     // Primeiro inserir a mensagem (com agent_id explicito — crucial para
     // evitar cross-contamination no processor)
-    const { error: insertError } = await supabase.from("message_queue").insert({
+    // Montar payload — campos opcionais (channel, audio) so entram se
+    // as colunas existirem na tabela (evita 400 por schema desatualizado).
+    const queuePayload: Record<string, unknown> = {
       agent_id: agent.id,
       location_id: locationId,
       contact_id: contactId,
@@ -345,18 +347,33 @@ export async function POST(request: NextRequest) {
       message_body: messageBody || "[audio]",
       message_type: messageType,
       message_direction: direction,
-      channel: channel,
       ghl_message_id: (body.id as string) || null,
-      audio_url: audioUrl,
-      audio_mime_type: audioMimeType,
       received_at: now,
       process_after: processAfter,
       status: "pending",
-    });
+    };
+
+    // Campos adicionados em migrations recentes — tenta inserir e faz
+    // fallback sem eles se o schema cache ainda nao atualizou.
+    if (channel) queuePayload.channel = channel;
+    if (audioUrl) queuePayload.audio_url = audioUrl;
+    if (audioMimeType) queuePayload.audio_mime_type = audioMimeType;
+
+    let { error: insertError } = await supabase.from("message_queue").insert(queuePayload);
+
+    // Fallback: se falhou, tentar sem os campos novos
+    if (insertError) {
+      console.warn("[Webhook] Insert failed, retrying without new columns:", insertError.message);
+      delete queuePayload.channel;
+      delete queuePayload.audio_url;
+      delete queuePayload.audio_mime_type;
+      const retry = await supabase.from("message_queue").insert(queuePayload);
+      insertError = retry.error;
+    }
 
     if (insertError) {
-      console.error("Erro ao inserir na fila:", insertError);
-      return NextResponse.json({ error: "queue_insert_failed" }, { status: 500 });
+      console.error("[Webhook] Insert failed definitively:", insertError);
+      return NextResponse.json({ error: "queue_insert_failed", detail: insertError.message }, { status: 500 });
     }
 
     // Depois empurrar TODAS as pendentes do MESMO agente + contato
