@@ -3,6 +3,8 @@ import { processMessageQueue } from "@/lib/queue/processor";
 import { processScheduledFollowUps } from "@/lib/queue/follow-up-scheduler";
 import { chargeUnbilledRecords } from "@/lib/billing/charge";
 
+export const maxDuration = 60;
+
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;

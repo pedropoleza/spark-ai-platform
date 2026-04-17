@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
+
+export const maxDuration = 60;
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
+import { processMessageQueue } from "@/lib/queue/processor";
 import type { TargetingRule } from "@/types/agent";
 
 export async function POST(request: NextRequest) {
@@ -367,9 +371,19 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Webhook] Queued for ${agent.type} | debounce=${debounceSeconds}s | channel=${channel}`);
 
-    // Disparar processamento apos debounce (nao depende apenas do cron).
-    // Fire-and-forget: nao esperamos resposta.
-    triggerProcessing(debounceSeconds);
+    // Processar fila apos debounce usando waitUntil (mantém a função
+    // viva no background mesmo depois de retornar a resposta).
+    waitUntil(
+      sleep(debounceSeconds * 1000 + 2000).then(async () => {
+        try {
+          console.log("[Webhook:bg] Processing queue after debounce...");
+          const result = await processMessageQueue();
+          console.log(`[Webhook:bg] Done: ${result.processed} processed, ${result.errors} errors`);
+        } catch (err) {
+          console.error("[Webhook:bg] Processing failed:", err);
+        }
+      })
+    );
 
     return NextResponse.json({ received: true, queued: true, agent_id: agent.id, agent_type: agent.type });
   } catch (error) {
@@ -378,31 +392,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * Dispara processamento da fila apos o debounce.
- * Fire-and-forget: usa setTimeout + fetch para chamar o endpoint
- * de processamento sem bloquear o webhook.
- */
-function triggerProcessing(debounceSeconds: number) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return;
-
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}` ||
-    "";
-  if (!appUrl) return;
-
-  const delayMs = (debounceSeconds + 2) * 1000;
-
-  setTimeout(() => {
-    fetch(`${appUrl}/api/cron/process-queue`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${cronSecret}` },
-      signal: AbortSignal.timeout(55000),
-    }).catch((err) => {
-      console.error("[Webhook] Trigger processing failed:", err.message);
-    });
-  }, delayMs);
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
