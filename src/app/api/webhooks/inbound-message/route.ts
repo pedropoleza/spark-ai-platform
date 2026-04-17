@@ -49,6 +49,20 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Webhook] ${direction} | type=${messageType} | loc=${locationId} | contact=${contactId} | body="${(messageBody || "").substring(0, 50)}"`);
 
+    // Log RAW de campos de midia para diagnostico
+    const rawMediaFields = {
+      attachments: body.attachments,
+      Attachments: body.Attachments,
+      mediaUrl: body.mediaUrl,
+      media_url: body.media_url,
+      contentType: body.contentType,
+      messageType: body.messageType,
+    };
+    const hasAnyMedia = Object.values(rawMediaFields).some(v => v != null && v !== "" && v !== undefined);
+    if (hasAnyMedia) {
+      console.log(`[Webhook:RAW] Media fields:`, JSON.stringify(rawMediaFields).substring(0, 800));
+    }
+
     // ===== FILTRO: Apenas mensagens reais =====
     if (!isRealMessage(messageType, direction)) {
       console.log(`[Webhook] Skipped: not_a_real_message (type=${messageType})`);
