@@ -77,12 +77,17 @@ async function processPdf(att: MediaAttachment): Promise<ProcessedMedia> {
     return result;
   }
 
+  console.log(`[Media] PDF downloaded: ${downloaded.buffer.length} bytes, parsing...`);
+
+  // pdf-parse em serverless: importar o modulo interno diretamente
+  // para evitar o carregamento do arquivo de teste que falha no Vercel.
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const pdfParse = require("pdf-parse");
+    const pdfParse = require("pdf-parse/lib/pdf-parse");
     const pdfData = await pdfParse(downloaded.buffer);
     const text = (pdfData.text || "").trim();
     if (!text) {
+      console.warn("[Media] PDF parse returned empty text");
       result.error = "PDF sem texto extraivel (pode ser imagem escaneada)";
       return result;
     }
@@ -90,10 +95,27 @@ async function processPdf(att: MediaAttachment): Promise<ProcessedMedia> {
     if (text.length > MAX_EXTRACTED_TEXT) {
       result.extractedText += "\n[...documento truncado]";
     }
-    console.log(`[Media] PDF extracted ${text.length} chars from "${att.fileName || "document.pdf"}"`);
-  } catch (err) {
-    console.error("[Media] PDF parse error:", err instanceof Error ? err.message : err);
-    result.error = "erro ao ler PDF";
+    console.log(`[Media] PDF extracted ${text.length} chars from "${att.fileName || "document.pdf"}": "${text.substring(0, 80)}..."`);
+  } catch (err1) {
+    console.warn("[Media] pdf-parse/lib failed, trying default import:", err1 instanceof Error ? err1.message : err1);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const pdfParseFallback = require("pdf-parse");
+      const pdfData = await pdfParseFallback(downloaded.buffer);
+      const text = (pdfData.text || "").trim();
+      if (text) {
+        result.extractedText = text.substring(0, MAX_EXTRACTED_TEXT);
+        if (text.length > MAX_EXTRACTED_TEXT) {
+          result.extractedText += "\n[...documento truncado]";
+        }
+        console.log(`[Media] PDF fallback extracted ${text.length} chars`);
+      } else {
+        result.error = "PDF sem texto extraivel";
+      }
+    } catch (err2) {
+      console.error("[Media] PDF parse failed completely:", err2 instanceof Error ? err2.message : err2);
+      result.error = "erro ao ler PDF";
+    }
   }
 
   return result;
