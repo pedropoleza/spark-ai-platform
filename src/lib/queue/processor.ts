@@ -85,7 +85,7 @@ export async function processMessageQueue(): Promise<{
     for (const msg of group.messages) {
       // Detectar audio: coluna audio_url OU URL embutida no body [audio: URL]
       let audioUrl = msg.audio_url || null;
-      let audioMime = msg.audio_mime_type || undefined;
+      const audioMime = msg.audio_mime_type || undefined;
       if (!audioUrl && msg.message_body.startsWith("[audio: ")) {
         const match = msg.message_body.match(/\[audio:\s*(https?:\/\/[^\]]+)\]/);
         if (match) audioUrl = match[1];
