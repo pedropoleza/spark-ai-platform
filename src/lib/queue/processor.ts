@@ -2,8 +2,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt } from "@/lib/ai/prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
+import type { ImageInput } from "@/lib/ai/openai-client";
 import { executeActions } from "@/lib/ai/action-executor";
 import { transcribeAudioFromUrl } from "@/lib/ai/audio-transcriber";
+import { processMediaAttachments, type ProcessedMedia } from "@/lib/ai/media-processor";
+import type { MediaAttachment } from "@/lib/ai/media-extractor";
 import { scheduleFollowUps } from "@/lib/queue/follow-up-scheduler";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
@@ -20,6 +23,7 @@ interface QueuedMessage {
   channel?: string;
   audio_url?: string | null;
   audio_mime_type?: string | null;
+  media_attachments?: MediaAttachment[] | null;
 }
 
 interface MessageGroup {
@@ -30,6 +34,7 @@ interface MessageGroup {
   channel: string;
   messages: QueuedMessage[];
   aggregatedBody: string;
+  processedMedia: ProcessedMedia[];
 }
 
 /**
@@ -74,6 +79,7 @@ export async function processMessageQueue(): Promise<{
         channel: msg.channel || "SMS",
         messages: [],
         aggregatedBody: "",
+        processedMedia: [],
       });
     }
     groups.get(key)!.messages.push(msg);
@@ -107,6 +113,30 @@ export async function processMessageQueue(): Promise<{
         parts.push(msg.message_body.trim());
       }
     }
+    // Processar midia (imagens e documentos)
+    const allMediaAttachments: MediaAttachment[] = [];
+    for (const msg of group.messages) {
+      const atts = msg.media_attachments;
+      if (Array.isArray(atts) && atts.length > 0) {
+        allMediaAttachments.push(...atts);
+      }
+    }
+
+    if (allMediaAttachments.length > 0) {
+      console.log(`[Processor] Processing ${allMediaAttachments.length} media attachment(s) for contact ${group.contactId}`);
+      const processed = await processMediaAttachments(allMediaAttachments);
+      group.processedMedia = processed;
+
+      // Texto extraido de documentos entra como contexto na mensagem
+      for (const media of processed) {
+        if (media.type === "document" && media.extractedText) {
+          parts.push(`[Documento "${media.fileName || "anexo"}"]: ${media.extractedText}`);
+        } else if (media.error) {
+          parts.push(`[${media.type === "image" ? "Imagem" : "Arquivo"}: ${media.error}]`);
+        }
+      }
+    }
+
     group.aggregatedBody = parts.filter(Boolean).join("\n");
   }
 
@@ -419,12 +449,17 @@ async function processGroup(
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
   });
 
-  // 6. Chamar OpenAI
+  // 6. Chamar OpenAI (com imagens se houver)
+  const imageInputs: ImageInput[] = group.processedMedia
+    .filter((m) => m.type === "image" && !m.error)
+    .map((m) => ({ url: m.url, base64DataUri: m.base64DataUri }));
+
   const aiResult = await processWithAI({
     systemPrompt,
     conversationHistory,
     newMessages: group.aggregatedBody,
     model: config.ai_model || "gpt-4.1-mini",
+    images: imageInputs.length > 0 ? imageInputs : undefined,
   });
 
   if (!aiResult.success || !aiResult.response) {

@@ -5,6 +5,7 @@ export const maxDuration = 60;
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
+import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { processMessageQueue } from "@/lib/queue/processor";
 import type { TargetingRule } from "@/types/agent";
 
@@ -73,8 +74,14 @@ export async function POST(request: NextRequest) {
       }).substring(0, 500));
     }
 
+    // ===== MIDIA: Extrair imagens e documentos =====
+    const mediaAttachments = extractMediaAttachments(body);
+    if (mediaAttachments.length > 0) {
+      console.log(`[Webhook] Media detected: ${mediaAttachments.map(m => m.contentType).join(", ")}`);
+    }
+
     // ===== VALIDAÇÃO: Campos obrigatórios =====
-    if (!locationId || !contactId || (!messageBody && !audioUrl)) {
+    if (!locationId || !contactId || (!messageBody && !audioUrl && mediaAttachments.length === 0)) {
       console.log(`[Webhook] Skipped: missing_fields (loc=${locationId}, contact=${contactId}, body=${!!messageBody}, audio=${!!audioUrl})`);
       return NextResponse.json({ received: true, skipped: "missing_fields" });
     }
@@ -357,7 +364,7 @@ export async function POST(request: NextRequest) {
       location_id: locationId,
       contact_id: contactId,
       conversation_id: conversationId || "",
-      message_body: messageBody || "[audio]",
+      message_body: messageBody || (audioUrl ? "[audio]" : mediaAttachments.length > 0 ? "[media]" : ""),
       message_type: messageType,
       message_direction: direction,
       ghl_message_id: (body.id as string) || null,
@@ -371,6 +378,7 @@ export async function POST(request: NextRequest) {
     if (channel) queuePayload.channel = channel;
     if (audioUrl) queuePayload.audio_url = audioUrl;
     if (audioMimeType) queuePayload.audio_mime_type = audioMimeType;
+    if (mediaAttachments.length > 0) queuePayload.media_attachments = mediaAttachments;
 
     let { error: insertError } = await supabase.from("message_queue").insert(queuePayload);
 
@@ -384,6 +392,7 @@ export async function POST(request: NextRequest) {
       delete queuePayload.channel;
       delete queuePayload.audio_url;
       delete queuePayload.audio_mime_type;
+      delete queuePayload.media_attachments;
       const retry = await supabase.from("message_queue").insert(queuePayload);
       insertError = retry.error;
     }

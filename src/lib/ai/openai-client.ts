@@ -1,12 +1,19 @@
 import OpenAI from "openai";
 import type { AIResponse, AIProcessingResult } from "@/types/ai";
 
+const VISION_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"];
+
 function getOpenAIClient() {
   return new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
-    timeout: 30000, // 30s timeout
+    timeout: 30000,
     maxRetries: 1,
   });
+}
+
+export interface ImageInput {
+  url?: string;
+  base64DataUri?: string;
 }
 
 interface ProcessMessageInput {
@@ -14,23 +21,56 @@ interface ProcessMessageInput {
   conversationHistory: string;
   newMessages: string;
   model: string;
+  images?: ImageInput[];
+}
+
+function supportsVision(model: string): boolean {
+  return VISION_MODELS.some((m) => model.startsWith(m));
 }
 
 export async function processWithAI(input: ProcessMessageInput): Promise<AIProcessingResult> {
   const startTime = Date.now();
 
   try {
-    const userContent = `Historico da conversa:
+    const textContent = `Historico da conversa:
 ${input.conversationHistory || "Nenhum historico anterior."}
 
 Novas mensagens do lead:
 ${input.newMessages}`;
 
+    const hasImages = input.images && input.images.length > 0;
+    const modelSupportsVision = supportsVision(input.model);
+
+    let userMessage: OpenAI.ChatCompletionMessageParam;
+
+    if (hasImages && modelSupportsVision) {
+      const contentParts: OpenAI.ChatCompletionContentPart[] = [
+        { type: "text", text: textContent },
+      ];
+
+      for (const img of input.images!.slice(0, 4)) {
+        const imageUrl = img.base64DataUri || img.url;
+        if (!imageUrl) continue;
+        contentParts.push({
+          type: "image_url",
+          image_url: { url: imageUrl, detail: "low" },
+        });
+      }
+
+      userMessage = { role: "user" as const, content: contentParts };
+    } else {
+      let finalText = textContent;
+      if (hasImages && !modelSupportsVision) {
+        finalText += "\n\n[O contato enviou imagem(ns) mas o modelo atual nao suporta analise visual. Informe ao contato que voce nao consegue ver imagens.]";
+      }
+      userMessage = { role: "user" as const, content: finalText };
+    }
+
     const completion = await getOpenAIClient().chat.completions.create({
       model: input.model,
       messages: [
         { role: "system", content: input.systemPrompt },
-        { role: "user", content: userContent },
+        userMessage,
       ],
       temperature: 0.7,
       max_tokens: 1000,
@@ -41,7 +81,6 @@ ${input.newMessages}`;
       return { success: false, response: null, error: "Resposta vazia da OpenAI" };
     }
 
-    // Parse JSON da resposta
     const parsed = parseAIResponse(responseText);
     if (!parsed) {
       return {
@@ -70,7 +109,6 @@ ${input.newMessages}`;
 
 function parseAIResponse(text: string): AIResponse | null {
   try {
-    // Remover markdown code blocks se presentes
     let cleaned = text.trim();
     if (cleaned.startsWith("```json")) {
       cleaned = cleaned.slice(7);
@@ -84,7 +122,6 @@ function parseAIResponse(text: string): AIResponse | null {
 
     const parsed = JSON.parse(cleaned);
 
-    // Normalizar message (string ou array)
     let message: string | string[] = "";
     const rawMsg = parsed.message || parsed.message_to_user;
     if (Array.isArray(rawMsg)) {

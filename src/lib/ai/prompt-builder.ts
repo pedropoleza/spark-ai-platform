@@ -82,6 +82,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     buildToneSection(ctx),
     buildDataCollectionSection(ctx),
     buildConversationRulesSection(ctx),
+    buildMediaInstructionsSection(),
     buildBookingSection(ctx),
     buildFeedbackSection(ctx),
     buildKnowledgeBaseSection(ctx),
@@ -307,6 +308,21 @@ REGRA DE KEYS NO collected_data (OBRIGATORIO):
 Use EXATAMENTE estas keys: ${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}
 Exemplo correto: { ${ctx.config.data_fields.map((f) => `"${f.key}": "valor extraido"`).join(", ")} }
 NAO invente keys diferentes. NAO use portugues nas keys. Use EXATAMENTE as keys acima.`;
+}
+
+function buildMediaInstructionsSection(): string {
+  return `## MIDIA RECEBIDA
+Quando o lead enviar uma IMAGEM:
+- Descreva brevemente o que voce ve, de forma natural e contextual
+- Use a imagem para dar continuidade a conversa (ex: se e um curriculo, documento, produto, localizacao)
+- NAO diga "recebi sua imagem" de forma robotica — reaja como humano
+
+Quando o lead enviar um DOCUMENTO (PDF, DOC):
+- O conteudo extraido aparece na mensagem como [Documento "nome"]: texto...
+- Use o conteudo para responder perguntas — NAO repita o texto inteiro
+- Se o documento for relevante para a qualificacao, extraia dados e salve no collected_data
+
+Se receber midia que nao pode ser processada, diga de forma natural: "Nao consegui abrir esse arquivo. Pode mandar como PDF ou foto?"`;
 }
 
 function buildConversationRulesSection(ctx: PromptContext): string {
