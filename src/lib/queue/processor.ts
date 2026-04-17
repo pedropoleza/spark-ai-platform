@@ -486,25 +486,33 @@ async function processGroup(
   });
 
   // 7b. Billing — registrar custo e cobrar do wallet
-  const { data: locationSettings } = await supabase
-    .from("location_settings")
-    .select("openai_api_key")
-    .eq("location_id", group.locationId)
-    .single();
+  let usesCustomKey = false;
+  try {
+    const { data: locationSettings } = await supabase
+      .from("location_settings")
+      .select("openai_api_key")
+      .eq("location_id", group.locationId)
+      .maybeSingle();
+    usesCustomKey = !!locationSettings?.openai_api_key;
+  } catch {
+    // location_settings pode nao existir — prosseguir sem custom key
+  }
 
-  const usesCustomKey = !!locationSettings?.openai_api_key;
-
-  await trackAndCharge({
-    locationId: group.locationId,
-    companyId: location.company_id,
-    agentId: agent.id,
-    contactId: group.contactId,
-    actionType: "ai_processing",
-    model: config.ai_model || "gpt-4.1-mini",
-    promptTokens: aiResult.prompt_tokens || 0,
-    completionTokens: aiResult.completion_tokens || 0,
-    usesCustomKey,
-  });
+  try {
+    await trackAndCharge({
+      locationId: group.locationId,
+      companyId: location.company_id,
+      agentId: agent.id,
+      contactId: group.contactId,
+      actionType: "ai_processing",
+      model: config.ai_model || "gpt-4.1-mini",
+      promptTokens: aiResult.prompt_tokens || 0,
+      completionTokens: aiResult.completion_tokens || 0,
+      usesCustomKey,
+    });
+  } catch (billingError) {
+    console.error("[Processor] Billing failed (non-blocking):", billingError instanceof Error ? billingError.message : billingError);
+  }
 
   // 8. Executar acoes (enviar mensagem, atualizar campos, etc.)
   await executeActions(aiResult.response, {
