@@ -301,7 +301,7 @@ REGRAS CRITICAS DE COLETA:
 4. Se o lead responder MULTIPLOS dados de uma vez ("me chamo Ana, moro em NY, trabalho como advogada e quero mudar de carreira"), extraia TODOS de uma vez no collected_data
 5. Se a resposta for AMBIGUA, peca clarificacao
 6. NUNCA descarte informacao. Se o lead falou, GRAVE
-7. Se o lead enviar apenas emoji sem conteudo, defina should_send_message = false
+7. Se o lead enviar apenas emoji ou "ok", responda de forma natural e continue o atendimento
 8. Se o lead disser "depois", "to ocupado", encerre educadamente e defina conversation_status = "stale"
 
 REGRA DE KEYS NO collected_data (OBRIGATORIO):
@@ -562,7 +562,7 @@ Responda APENAS JSON valido, sem markdown:
 
 REGRAS DO JSON:
 1. "message": string ou array de strings. Use array para dividir mensagens
-2. "should_send_message": false quando o lead mandou apenas emoji, "ok", "blz", "👍" sem conteudo novo
+2. "should_send_message": SEMPRE true. Voce SEMPRE deve responder ao lead, mesmo que ele mande apenas emoji, "ok" ou "👍" — use como oportunidade para continuar a conversa
 3. "actions": array de acoes. Inclua APENAS acoes NOVAS (nao repita acoes de turnos anteriores)
 4. "collected_data": TODOS os dados coletados ate agora (cumulativo). Use EXATAMENTE as keys dos campos: ${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}
 5. "conversation_status": use "active" (em andamento), "qualified" (todos dados coletados), "booked" (agendamento feito), "stale" (lead sumiu/adiou), "handed_off" (pediu humano), "disqualified" (nao quer mais)
