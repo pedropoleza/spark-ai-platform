@@ -62,6 +62,15 @@ function matchesOperator(
       return !!expected && actual.toLowerCase().includes(expected.toLowerCase());
     case "matches_regex":
       if (!expected) return false;
+      // ReDoS protection: skip nested quantifiers and overly long input
+      if (/(\+|\*|\{)\s*\)(\+|\*|\{|\?)/.test(expected)) {
+        console.warn(`[ReactionEngine] Skipping potentially unsafe regex: ${expected}`);
+        return false;
+      }
+      if (actual.length > 10000) {
+        console.warn(`[ReactionEngine] Input too long (${actual.length} chars), skipping regex match`);
+        return false;
+      }
       try {
         return new RegExp(expected, "i").test(actual);
       } catch {

@@ -10,6 +10,7 @@ import type { MediaAttachment } from "@/lib/ai/media-extractor";
 import { scheduleFollowUps } from "@/lib/queue/follow-up-scheduler";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
+import { notifyCriticalError } from "@/lib/utils/notify";
 import type { GHLMessage } from "@/types/ghl";
 import type { AutomationRule } from "@/types/agent";
 
@@ -112,6 +113,13 @@ export async function processMessageQueue(): Promise<{
     } catch (error) {
       console.error(`[Processor] Erro grupo ${group.contactId}:`, error instanceof Error ? error.message : error);
       errors++;
+      notifyCriticalError({
+        locationId: group.locationId,
+        agentId: group.agentId || undefined,
+        contactId: group.contactId,
+        errorType: "queue_processing_failure",
+        message: error instanceof Error ? error.message : String(error),
+      }).catch(() => {});
     } finally {
       // SEMPRE marcar mensagens — evita orfãos em "processing"
       await supabase
@@ -120,6 +128,40 @@ export async function processMessageQueue(): Promise<{
         .in("id", ids)
         .eq("status", "processing");
     }
+  }
+
+  // Retry: re-enqueue failed messages from last 2 hours (max 10 per cycle)
+  try {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const { data: failedMessages } = await supabase
+      .from("message_queue")
+      .select("id, retry_count, created_at")
+      .eq("status", "failed")
+      .gte("created_at", twoHoursAgo)
+      .lt("retry_count", 3)
+      .order("created_at", { ascending: true })
+      .limit(10);
+
+    if (failedMessages && failedMessages.length > 0) {
+      for (const msg of failedMessages) {
+        const retryCount = (msg.retry_count || 0) + 1;
+        // Exponential backoff: 1min, 5min, 15min
+        const delayMinutes = retryCount === 1 ? 1 : retryCount === 2 ? 5 : 15;
+        const processAfter = new Date(Date.now() + delayMinutes * 60 * 1000).toISOString();
+
+        await supabase
+          .from("message_queue")
+          .update({
+            status: "pending",
+            retry_count: retryCount,
+            process_after: processAfter,
+          })
+          .eq("id", msg.id);
+      }
+      console.log(`[Processor] Retried ${failedMessages.length} failed messages`);
+    }
+  } catch (retryError) {
+    console.error("[Processor] Retry step failed:", retryError instanceof Error ? retryError.message : retryError);
   }
 
   return { processed, errors };

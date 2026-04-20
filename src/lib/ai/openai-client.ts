@@ -28,12 +28,32 @@ function supportsVision(model: string): boolean {
   return VISION_MODELS.some((m) => model.startsWith(m));
 }
 
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
 export async function processWithAI(input: ProcessMessageInput): Promise<AIProcessingResult> {
   const startTime = Date.now();
 
   try {
+    // Token budget check: truncate conversation history if total exceeds 100k tokens
+    let conversationHistory = input.conversationHistory;
+    const systemTokens = estimateTokens(input.systemPrompt);
+    const newMsgTokens = estimateTokens(input.newMessages);
+    const historyTokens = estimateTokens(conversationHistory || "");
+    const totalEstimate = systemTokens + newMsgTokens + historyTokens;
+
+    if (totalEstimate > 100000) {
+      console.warn(`[OpenAI] Token budget exceeded (~${totalEstimate} estimated). Truncating conversation history.`);
+      const availableForHistory = Math.max(0, 100000 - systemTokens - newMsgTokens);
+      const maxChars = availableForHistory * 4;
+      if (conversationHistory && conversationHistory.length > maxChars) {
+        conversationHistory = conversationHistory.slice(-maxChars);
+      }
+    }
+
     const textContent = `Historico da conversa:
-${input.conversationHistory || "Nenhum historico anterior."}
+${conversationHistory || "Nenhum historico anterior."}
 
 Novas mensagens do lead:
 ${input.newMessages}`;
