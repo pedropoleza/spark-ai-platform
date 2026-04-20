@@ -396,10 +396,15 @@ export async function POST(request: NextRequest) {
 
     let { error: insertError } = await supabase.from("message_queue").insert(queuePayload);
 
-    // Fallback: se falhou, tentar sem os campos opcionais
+    // Dedup: se o erro for unique constraint (webhook retry), skip silenciosamente
+    if (insertError && insertError.code === "23505") {
+      console.log(`[Webhook] Duplicate message ignored (ghl_message_id already exists)`);
+      return NextResponse.json({ received: true, skipped: "duplicate" });
+    }
+
+    // Fallback: se falhou por outro motivo, tentar sem os campos opcionais
     if (insertError) {
       console.warn("[Webhook] Insert failed, retrying without optional columns:", insertError.message);
-      // Se tem audio, embutir URL no message_body para nao perder
       if (audioUrl && queuePayload.message_body === "[audio]") {
         queuePayload.message_body = `[audio: ${audioUrl}]`;
       }
@@ -409,6 +414,10 @@ export async function POST(request: NextRequest) {
       delete queuePayload.media_attachments;
       const retry = await supabase.from("message_queue").insert(queuePayload);
       insertError = retry.error;
+      // Dedup no fallback tambem
+      if (insertError && insertError.code === "23505") {
+        return NextResponse.json({ received: true, skipped: "duplicate" });
+      }
     }
 
     if (insertError) {

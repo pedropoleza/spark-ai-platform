@@ -73,9 +73,18 @@ export async function executeActions(
 
   if (!ctx.skipSendMessage && messages.length > 0) {
     try {
-      // Se um agendamento/reagendamento falhou, avisar o lead
-      if (actionsFailed && failedActionError.includes("no longer available")) {
-        const errorMsg = "Desculpa, esse horario nao esta mais disponivel. Posso sugerir outro?";
+      // Se agendamento falhou, avisar o lead (detecta qualquer erro de booking)
+      const isBookingError = actionsFailed && (
+        failedActionError.includes("available") ||
+        failedActionError.includes("conflict") ||
+        failedActionError.includes("calendario") ||
+        failedActionError.includes("Calendario") ||
+        failedActionError.includes("slot") ||
+        failedActionError.includes("422") ||
+        failedActionError.includes("agendamento")
+      );
+      if (isBookingError) {
+        const errorMsg = "Desculpa, nao consegui agendar nesse horario. Posso sugerir outro?";
         await client.post("/conversations/messages", {
           type: messageType,
           contactId: ctx.contactId,
@@ -153,8 +162,10 @@ async function executeAction(
       break;
 
     case "book_appointment": {
-      // SEMPRE usar calendarId do config, nao o que a IA inventou
       const bookCalendarId = ctx.calendarId || action.calendar_id;
+      if (!bookCalendarId) {
+        throw new Error("Calendario nao configurado — agendamento impossivel");
+      }
       if (bookCalendarId && action.start_time) {
         const existingApptForBook = await findExistingAppointment(client, ctx.contactId, ctx.locationId);
 

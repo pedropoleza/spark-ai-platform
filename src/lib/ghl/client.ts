@@ -1,4 +1,4 @@
-import { getLocationToken } from "./auth";
+import { getLocationToken, invalidateTokenCache } from "./auth";
 import { GHL_API_BASE, GHL_API_VERSION } from "@/lib/utils/constants";
 
 export class GHLClient {
@@ -20,6 +20,30 @@ export class GHLClient {
     };
   }
 
+  private async retryOnAuth<T>(request: () => Promise<Response>): Promise<T> {
+    let response = await request();
+
+    // Se 401, invalidar cache e tentar com token novo
+    if (response.status === 401) {
+      console.warn(`[GHL] 401 received, invalidating token cache and retrying...`);
+      invalidateTokenCache(this.companyId, this.locationId);
+      const newHeaders = await this.getHeaders();
+      // Re-execute com headers frescos (o caller precisa passar a request factory)
+      response = await request();
+      if (response.status === 401) {
+        const body = await response.text();
+        throw new Error(`GHL API 401 after token refresh: ${body}`);
+      }
+    }
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`GHL API ${response.status}: ${errorBody.substring(0, 200)}`);
+    }
+
+    return response.json();
+  }
+
   async get<T>(path: string, params?: Record<string, string>): Promise<T> {
     const url = new URL(`${GHL_API_BASE}${path}`);
     if (params) {
@@ -28,62 +52,42 @@ export class GHLClient {
       });
     }
 
-    const headers = await this.getHeaders();
-    const response = await fetch(url.toString(), { headers });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`GHL API GET ${path} falhou: ${response.status} - ${errorBody}`);
-    }
-
-    return response.json();
+    return this.retryOnAuth<T>(async () => {
+      const headers = await this.getHeaders();
+      return fetch(url.toString(), { headers });
+    });
   }
 
   async post<T>(path: string, body?: Record<string, unknown>): Promise<T> {
-    const headers = await this.getHeaders();
-    const response = await fetch(`${GHL_API_BASE}${path}`, {
-      method: "POST",
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
+    return this.retryOnAuth<T>(async () => {
+      const headers = await this.getHeaders();
+      return fetch(`${GHL_API_BASE}${path}`, {
+        method: "POST",
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      });
     });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`GHL API POST ${path} falhou: ${response.status} - ${errorBody}`);
-    }
-
-    return response.json();
   }
 
   async put<T>(path: string, body: Record<string, unknown>): Promise<T> {
-    const headers = await this.getHeaders();
-    const response = await fetch(`${GHL_API_BASE}${path}`, {
-      method: "PUT",
-      headers,
-      body: JSON.stringify(body),
+    return this.retryOnAuth<T>(async () => {
+      const headers = await this.getHeaders();
+      return fetch(`${GHL_API_BASE}${path}`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(body),
+      });
     });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`GHL API PUT ${path} falhou: ${response.status} - ${errorBody}`);
-    }
-
-    return response.json();
   }
 
   async delete<T>(path: string, body?: Record<string, unknown>): Promise<T> {
-    const headers = await this.getHeaders();
-    const response = await fetch(`${GHL_API_BASE}${path}`, {
-      method: "DELETE",
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
+    return this.retryOnAuth<T>(async () => {
+      const headers = await this.getHeaders();
+      return fetch(`${GHL_API_BASE}${path}`, {
+        method: "DELETE",
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      });
     });
-
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(`GHL API DELETE ${path} falhou: ${response.status} - ${errorBody}`);
-    }
-
-    return response.json();
   }
 }
