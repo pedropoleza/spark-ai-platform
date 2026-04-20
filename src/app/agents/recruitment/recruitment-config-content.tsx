@@ -126,9 +126,11 @@ export function RecruitmentConfigContent() {
   const searchParams = useSearchParams();
   const agentId = searchParams.get("id");
   const [config, setConfig] = useState<ConfigForm>(defaultConfig);
+  const [savedConfig, setSavedConfig] = useState<ConfigForm>(defaultConfig);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const isDirty = JSON.stringify(config) !== JSON.stringify(savedConfig);
   const ghl = useGHLData();
 
   const fetchConfig = useCallback(async () => {
@@ -141,7 +143,9 @@ export function RecruitmentConfigContent() {
           const dbConfig = Object.fromEntries(
             Object.entries(data.config).filter(([, v]) => v != null)
           );
-          setConfig({ ...defaultConfig, ...dbConfig });
+          const merged = { ...defaultConfig, ...dbConfig };
+          setConfig(merged);
+          setSavedConfig(merged);
         }
       }
     } catch (error) {
@@ -152,6 +156,14 @@ export function RecruitmentConfigContent() {
   }, [agentId]);
 
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
+
+  // Warn before leaving with unsaved changes
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
 
   const handleSave = async () => {
     if (!agentId) return;
@@ -164,6 +176,7 @@ export function RecruitmentConfigContent() {
       });
       if (res.ok) {
         setSaved(true);
+        setSavedConfig(config);
         toast.success("Configuracoes salvas com sucesso!", {
           description: "Todas as regras foram atualizadas.",
           duration: 4000,
@@ -206,7 +219,10 @@ export function RecruitmentConfigContent() {
       actions={
         <Button onClick={handleSave} disabled={saving || !agentId} variant={saved ? "outline" : "default"} className={saved ? "border-green-500 text-green-600" : ""}>
           {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : saved ? <CheckCircle2 className="w-4 h-4 mr-2" /> : <Save className="w-4 h-4 mr-2" />}
-          {saving ? "Salvando..." : saved ? "Salvo!" : "Salvar"}
+          {saving ? "Salvando..." : saved ? "Salvo!" : isDirty ? "Salvar *" : "Salvar"}
+          {isDirty && !saving && !saved && (
+            <span className="ml-1.5 w-2 h-2 rounded-full bg-amber-400 inline-block" />
+          )}
         </Button>
       }
     >

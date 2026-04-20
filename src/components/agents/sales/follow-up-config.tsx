@@ -19,16 +19,16 @@ interface FollowUpConfigEditorProps {
 }
 
 const INTENSITY_LABELS: Record<number, string> = {
-  1: "Minimo — 1 follow-up leve",
-  2: "Muito baixo",
-  3: "Baixo — poucos follow-ups",
-  4: "Moderado baixo",
-  5: "Equilibrado",
-  6: "Moderado alto",
-  7: "Alto — follow-ups frequentes",
-  8: "Muito alto",
-  9: "Agressivo",
-  10: "Maximo — follow-ups constantes",
+  1: "Muito leve — 1 tentativa a cada 5-7 dias",
+  2: "Leve — 1 tentativa a cada 3-4 dias",
+  3: "Moderado baixo — 1 tentativa a cada 2 dias",
+  4: "Moderado — 1 tentativa por dia",
+  5: "Equilibrado — 1-2 tentativas por dia",
+  6: "Ativo — 2-3 tentativas por dia",
+  7: "Intenso — ate 3 tentativas por dia",
+  8: "Muito intenso — ate 4 tentativas por dia",
+  9: "Agressivo — 4-5 tentativas por dia",
+  10: "Maximo — segue ate o limite de tentativas",
 };
 
 function formatDelay(minutes: number): string {

@@ -35,7 +35,20 @@ interface AgentCardProps {
   status?: AgentStatus;
   agentId?: string;
   comingSoon?: boolean;
+  lastActivity?: string;
+  messagesProcessed24h?: number;
   onToggle?: (active: boolean) => void;
+}
+
+function formatTimeAgo(isoDate: string): string {
+  const diff = Date.now() - new Date(isoDate).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "agora";
+  if (minutes < 60) return `ha ${minutes}min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `ha ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `ha ${days}d`;
 }
 
 export function AgentCard({
@@ -43,6 +56,8 @@ export function AgentCard({
   status = "inactive",
   agentId,
   comingSoon = false,
+  lastActivity,
+  messagesProcessed24h,
   onToggle,
 }: AgentCardProps) {
   const router = useRouter();
@@ -84,7 +99,15 @@ export function AgentCard({
         </div>
 
         <h3 className="font-semibold text-gray-900 mb-1 tracking-tight">{info.name}</h3>
-        <p className="text-sm text-gray-500 mb-5 leading-relaxed">{info.description}</p>
+        <p className="text-sm text-gray-500 mb-2 leading-relaxed">{info.description}</p>
+
+        {!comingSoon && (
+          <p className="text-xs text-gray-400 mb-4">
+            {lastActivity
+              ? `Ultima atividade: ${formatTimeAgo(lastActivity)}${messagesProcessed24h ? ` · ${messagesProcessed24h} mensagens hoje` : ""}`
+              : "Sem atividade"}
+          </p>
+        )}
 
         {!comingSoon && (
           <Button

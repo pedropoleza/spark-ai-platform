@@ -166,12 +166,41 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = (id: string) => {
     if (!agentId) return;
     const item = items.find((i) => i.id === id);
-    await fetch(`/api/knowledge-base?id=${id}&agent_id=${agentId}`, { method: "DELETE" });
+    if (!item) return;
+
+    // Optimistic remove
     setItems((prev) => prev.filter((i) => i.id !== id));
-    toast.info(`"${item?.title || "Item"}" removido da base`);
+
+    // Show undo toast with delayed API call
+    let cancelled = false;
+    toast(`"${item.title}" removido`, {
+      action: {
+        label: "Desfazer",
+        onClick: () => {
+          cancelled = true;
+          setItems((prev) =>
+            [...prev, item].sort(
+              (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            )
+          );
+          toast.success("Item restaurado");
+        },
+      },
+      duration: 5000,
+      onAutoClose: () => {
+        if (!cancelled) {
+          fetch(`/api/knowledge-base?id=${id}&agent_id=${agentId}`, { method: "DELETE" });
+        }
+      },
+      onDismiss: () => {
+        if (!cancelled) {
+          fetch(`/api/knowledge-base?id=${id}&agent_id=${agentId}`, { method: "DELETE" });
+        }
+      },
+    });
   };
 
   const startEdit = (item: KBItem) => {

@@ -7,16 +7,44 @@ import { AgentCard } from "@/components/dashboard/agent-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Agent } from "@/types/agent";
 
+interface AgentActivity {
+  agentId: string;
+  lastActivity?: string;
+  messagesProcessed24h: number;
+}
+
 export default function DashboardPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activityMap, setActivityMap] = useState<Record<string, AgentActivity>>({});
 
   const fetchAgents = useCallback(async () => {
     try {
       const response = await fetch("/api/agents");
       if (response.ok) {
         const data = await response.json();
-        setAgents(data.agents || []);
+        const agentsList: Agent[] = data.agents || [];
+        setAgents(agentsList);
+
+        // Fetch activity stats for each agent
+        for (const agent of agentsList) {
+          try {
+            const actRes = await fetch(`/api/agents/${agent.id}/activity`);
+            if (actRes.ok) {
+              const actData = await actRes.json();
+              setActivityMap((prev) => ({
+                ...prev,
+                [agent.id]: {
+                  agentId: agent.id,
+                  lastActivity: actData.last_activity || undefined,
+                  messagesProcessed24h: actData.messages_24h || 0,
+                },
+              }));
+            }
+          } catch {
+            // Activity stats are non-critical
+          }
+        }
       }
     } catch (error) {
       console.error("Erro ao buscar agentes:", error);
@@ -68,6 +96,33 @@ export default function DashboardPage() {
         toast.success(`${agentLabel(agentType)} ativado`, {
           description: "O agente esta recebendo e processando mensagens.",
         });
+
+        // Activation Safety Gate: check config for missing rules/calendar
+        const activatedAgent = agents.find((a) => a.type === agentType) || (await res.json().catch(() => null));
+        const agentIdForCheck = existingAgent?.id || activatedAgent?.id;
+        if (agentIdForCheck) {
+          try {
+            const configRes = await fetch(`/api/agents/${agentIdForCheck}/config`);
+            if (configRes.ok) {
+              const configData = await configRes.json();
+              const agentConfig = configData.config;
+              if (agentConfig) {
+                if (!agentConfig.targeting_rules || agentConfig.targeting_rules.length === 0) {
+                  toast.warning("Agente ativado SEM regras de segmentacao — vai responder a TODOS os contatos. Configure as regras em Segmentacao.", { duration: 8000 });
+                }
+                if (
+                  agentConfig.objective &&
+                  agentConfig.objective.includes("booking") &&
+                  !agentConfig.calendar_id
+                ) {
+                  toast.warning("Agente ativado SEM calendario configurado — agendamentos nao vao funcionar.", { duration: 8000 });
+                }
+              }
+            }
+          } catch {
+            // Non-critical safety check
+          }
+        }
       } else {
         toast.info(`${agentLabel(agentType)} desativado`, {
           description: "O agente nao ira processar novas mensagens.",
@@ -100,12 +155,16 @@ export default function DashboardPage() {
             type="sales_agent"
             status={salesAgent?.status}
             agentId={salesAgent?.id}
+            lastActivity={salesAgent?.id ? activityMap[salesAgent.id]?.lastActivity : undefined}
+            messagesProcessed24h={salesAgent?.id ? activityMap[salesAgent.id]?.messagesProcessed24h : undefined}
             onToggle={(active) => handleToggle("sales_agent", active)}
           />
           <AgentCard
             type="recruitment_agent"
             status={recruitmentAgent?.status}
             agentId={recruitmentAgent?.id}
+            lastActivity={recruitmentAgent?.id ? activityMap[recruitmentAgent.id]?.lastActivity : undefined}
+            messagesProcessed24h={recruitmentAgent?.id ? activityMap[recruitmentAgent.id]?.messagesProcessed24h : undefined}
             onToggle={(active) => handleToggle("recruitment_agent", active)}
           />
           <AgentCard type="account_assistant" comingSoon />
