@@ -15,13 +15,15 @@ export async function GET(
 
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
+  const messageTypes = ["send_message", "reaction_send_text", "reaction_send_media"];
+
   const [lastActivityResult, messagesResult] = await Promise.all([
     supabase
       .from("execution_log")
       .select("created_at")
       .eq("agent_id", params.agentId)
       .eq("location_id", session.locationId)
-      .eq("action_type", "send_message")
+      .in("action_type", messageTypes)
       .eq("success", true)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -31,7 +33,7 @@ export async function GET(
       .select("id", { count: "exact", head: true })
       .eq("agent_id", params.agentId)
       .eq("location_id", session.locationId)
-      .eq("action_type", "send_message")
+      .in("action_type", messageTypes)
       .eq("success", true)
       .gte("created_at", twentyFourHoursAgo),
   ]);

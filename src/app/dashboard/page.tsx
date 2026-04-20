@@ -25,26 +25,30 @@ export default function DashboardPage() {
         const data = await response.json();
         const agentsList: Agent[] = data.agents || [];
         setAgents(agentsList);
+        setLoading(false);
 
-        // Fetch activity stats for each agent
-        for (const agent of agentsList) {
+        // Fetch activity stats em paralelo (nao bloqueia render)
+        const activityPromises = agentsList.map(async (agent) => {
           try {
             const actRes = await fetch(`/api/agents/${agent.id}/activity`);
             if (actRes.ok) {
               const actData = await actRes.json();
-              setActivityMap((prev) => ({
-                ...prev,
-                [agent.id]: {
-                  agentId: agent.id,
-                  lastActivity: actData.last_activity || undefined,
-                  messagesProcessed24h: actData.messages_24h || 0,
-                },
-              }));
+              return {
+                id: agent.id,
+                lastActivity: actData.last_activity || undefined,
+                messagesProcessed24h: actData.messages_24h || 0,
+              };
             }
-          } catch {
-            // Activity stats are non-critical
-          }
+          } catch { /* non-critical */ }
+          return null;
+        });
+
+        const results = await Promise.all(activityPromises);
+        const newMap: Record<string, AgentActivity> = {};
+        for (const r of results) {
+          if (r) newMap[r.id] = { agentId: r.id, lastActivity: r.lastActivity, messagesProcessed24h: r.messagesProcessed24h };
         }
+        setActivityMap(newMap);
       }
     } catch (error) {
       console.error("Erro ao buscar agentes:", error);

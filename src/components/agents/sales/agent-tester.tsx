@@ -86,6 +86,13 @@ export function AgentTester({ agentId }: AgentTesterProps) {
       .catch(() => {});
   }, [agentId]);
 
+  // Reset conversa ao trocar de agente
+  useEffect(() => {
+    setMessages([]);
+    setCollectedData({});
+    setInput("");
+  }, [agentId]);
+
   const startEditProfile = () => setEditingProfile(true);
 
   const cancelEditProfile = () => {
