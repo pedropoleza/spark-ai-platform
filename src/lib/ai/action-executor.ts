@@ -62,10 +62,10 @@ export async function executeActions(
     }
   }
 
-  // 2. Enviar mensagem(ns) pelo mesmo canal (pula no modo teste)
+  // 2. Enviar mensagem(ns) pelo mesmo canal (pula no modo teste ou se IA decidiu nao responder)
   const messages = normalizeMessages(response.message);
 
-  if (!ctx.skipSendMessage && messages.length > 0) {
+  if (!ctx.skipSendMessage && response.should_send_message !== false && messages.length > 0) {
     try {
       // Se um agendamento/reagendamento falhou, avisar o lead
       if (actionsFailed && failedActionError.includes("no longer available")) {

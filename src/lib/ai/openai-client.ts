@@ -87,6 +87,7 @@ ${input.newMessages}`;
       console.warn(`[OpenAI] JSON parse failed, using fallback. Raw: "${responseText.substring(0, 300)}"`);
       parsed = {
         message: responseText.trim(),
+        should_send_message: true,
         actions: [],
         internal_notes: "",
         collected_data: {},
@@ -136,6 +137,7 @@ function parseAIResponse(text: string): AIResponse | null {
 
     return {
       message,
+      should_send_message: parsed.should_send_message !== false,
       actions: Array.isArray(parsed.actions) ? parsed.actions : [],
       internal_notes: parsed.internal_notes || "",
       collected_data: parsed.collected_data || parsed.extracted_data || {},

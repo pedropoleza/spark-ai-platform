@@ -12,7 +12,8 @@ export interface AIAction {
 }
 
 export interface AIResponse {
-  message: string | string[];  // string unica ou array de mensagens separadas
+  message: string | string[];
+  should_send_message: boolean;
   actions: AIAction[];
   internal_notes: string;
   collected_data: Record<string, string>;

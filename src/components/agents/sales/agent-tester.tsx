@@ -261,13 +261,20 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         setCollectedData((prev) => ({ ...prev, ...aiResponse.collected_data }));
       }
 
+      let displayContent: string;
+      if (aiResponse.should_send_message === false) {
+        displayContent = "(IA decidiu nao enviar mensagem — lead nao disse nada relevante)";
+      } else if (Array.isArray(aiResponse.message)) {
+        displayContent = aiResponse.message.join("\n") || "(resposta vazia)";
+      } else {
+        displayContent = aiResponse.message || "(resposta vazia)";
+      }
+
       setMessages((prev) => [
         ...prev,
         {
           role: "agent",
-          content: Array.isArray(aiResponse.message)
-            ? aiResponse.message.join("\n")
-            : aiResponse.message || "(sem mensagem)",
+          content: displayContent,
           timestamp: new Date(),
           actions: aiResponse.actions,
           collected_data: aiResponse.collected_data,
