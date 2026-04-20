@@ -668,46 +668,69 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             </div>
           </Card>
 
-          {/* Prompt + KB abaixo do chat */}
+          {/* Prompt + KB abaixo do chat — cards grandes */}
           <div className="grid grid-cols-2 gap-3">
-            {/* Prompt */}
-            <Card
-              className="cursor-pointer hover:border-brand-200 transition-colors"
-              onClick={() => { setPromptEditing(systemPromptPreview); setShowPromptModal(true); }}
-            >
-              <CardContent className="p-3">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-sm font-semibold text-gray-900">Prompt</span>
-                  <Pencil className="w-3.5 h-3.5 text-gray-400" />
+            {/* Prompt — editavel inline + botao expandir */}
+            <Card className="flex flex-col">
+              <CardContent className="p-3 flex flex-col flex-1">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold text-gray-900">Prompt Override</span>
+                  <button
+                    onClick={() => { setPromptEditing(systemPromptPreview); setShowPromptModal(true); }}
+                    className="text-[10px] text-brand-600 hover:text-brand-700 font-medium flex items-center gap-1"
+                  >
+                    <Pencil className="w-3 h-3" />
+                    Expandir
+                  </button>
                 </div>
-                <p className="text-[11px] text-gray-500 line-clamp-4 font-mono leading-relaxed h-[60px] overflow-hidden">
-                  {systemPromptPreview || "(Automatico — clique para criar override)"}
+                <textarea
+                  value={systemPromptPreview}
+                  onChange={(e) => setSystemPromptPreview(e.target.value)}
+                  onBlur={() => {
+                    if (!agentId) return;
+                    fetch(`/api/agents/${agentId}/config`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ system_prompt_override: systemPromptPreview || null }),
+                    });
+                  }}
+                  className="flex-1 min-h-[140px] text-[11px] font-mono text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-brand-300"
+                  placeholder="Deixe vazio para prompt automatico. Edite aqui ou clique 'Expandir' para tela cheia."
+                />
+                <p className="text-[9px] text-gray-400 mt-1.5">
+                  {systemPromptPreview ? `~${Math.ceil(systemPromptPreview.length / 4)} tokens · Salva ao sair do campo` : "Usando prompt gerado automaticamente"}
                 </p>
               </CardContent>
             </Card>
 
-            {/* Knowledge Base inline */}
-            <Card>
-              <CardContent className="p-3">
-                <div className="flex items-center justify-between mb-1.5">
+            {/* Knowledge Base — lista com delete */}
+            <Card className="flex flex-col">
+              <CardContent className="p-3 flex flex-col flex-1">
+                <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-semibold text-gray-900">Knowledge Base</span>
-                  <Badge variant="secondary" className="text-[9px]">{kbItems.length}</Badge>
+                  <Badge variant="secondary" className="text-[9px]">{kbItems.length} itens</Badge>
                 </div>
-                <div className="space-y-1 max-h-[60px] overflow-y-auto">
+                <div className="flex-1 min-h-[140px] overflow-y-auto space-y-1.5 bg-gray-50 border border-gray-200 rounded-lg p-2.5">
                   {kbItems.length === 0 ? (
-                    <p className="text-[11px] text-gray-400">Adicione na aba Contexto</p>
+                    <p className="text-[11px] text-gray-400 text-center mt-8">Nenhum item. Adicione na aba Contexto.</p>
                   ) : kbItems.map((item) => (
-                    <div key={item.id} className="flex items-center gap-1 group">
+                    <div key={item.id} className="flex items-center gap-2 py-1.5 px-2 rounded bg-white border border-gray-100 group hover:border-gray-200 transition-colors">
+                      <FileText className="w-3 h-3 text-gray-400 flex-shrink-0" />
                       <span className="text-[11px] text-gray-700 truncate flex-1">{item.title}</span>
+                      <span className="text-[9px] text-gray-400 flex-shrink-0">~{item.token_count}</span>
                       <button
-                        onClick={(e) => { e.stopPropagation(); deleteKbItem(item.id); }}
-                        className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                        onClick={() => deleteKbItem(item.id)}
+                        className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                        title="Remover"
                       >
-                        <Trash2 className="w-2.5 h-2.5" />
+                        <Trash2 className="w-3 h-3" />
                       </button>
                     </div>
                   ))}
                 </div>
+                <p className="text-[9px] text-gray-400 mt-1.5">
+                  {kbItems.reduce((sum, i) => sum + i.token_count, 0).toLocaleString()} tokens totais no contexto
+                </p>
               </CardContent>
             </Card>
           </div>
