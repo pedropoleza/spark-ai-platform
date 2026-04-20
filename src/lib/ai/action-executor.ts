@@ -62,10 +62,16 @@ export async function executeActions(
     }
   }
 
-  // 2. Enviar mensagem(ns) pelo mesmo canal (pula no modo teste ou se IA decidiu nao responder)
-  const messages = normalizeMessages(response.message);
+  // 2. Enviar mensagem(ns) pelo mesmo canal (pula no modo teste)
+  let messages = normalizeMessages(response.message);
 
-  if (!ctx.skipSendMessage && response.should_send_message !== false && messages.length > 0) {
+  // Garantia: se should_send_message=true mas mensagem vazia, usar fallback
+  if (messages.length === 0 && response.should_send_message !== false) {
+    console.warn("[ActionExecutor] Empty message with should_send=true, using fallback");
+    messages = ["Oi! Como posso te ajudar?"];
+  }
+
+  if (!ctx.skipSendMessage && messages.length > 0) {
     try {
       // Se um agendamento/reagendamento falhou, avisar o lead
       if (actionsFailed && failedActionError.includes("no longer available")) {

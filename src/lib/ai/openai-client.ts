@@ -73,7 +73,7 @@ ${input.newMessages}`;
         userMessage,
       ],
       temperature: 0.7,
-      max_tokens: 1500,
+      max_tokens: 2500,
       response_format: { type: "json_object" },
     });
 
@@ -84,9 +84,9 @@ ${input.newMessages}`;
 
     let parsed = parseAIResponse(responseText);
     if (!parsed) {
-      console.warn(`[OpenAI] JSON parse failed, using fallback. Raw: "${responseText.substring(0, 300)}"`);
+      console.error(`[OpenAI] JSON parse failed. Raw response: "${responseText.substring(0, 500)}"`);
       parsed = {
-        message: responseText.trim(),
+        message: "Desculpa, tive um problema tecnico. Pode repetir?",
         should_send_message: true,
         actions: [],
         internal_notes: "",

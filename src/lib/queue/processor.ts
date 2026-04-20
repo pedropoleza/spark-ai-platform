@@ -85,13 +85,22 @@ export async function processMessageQueue(): Promise<{
     groups.get(key)!.messages.push(msg);
   }
 
-  // Agregar bodies (texto puro — audio e midia sao processados em processGroup
-  // onde temos acesso a config para checar os toggles de features).
+  // Agregar bodies (texto puro + placeholders para midia). Audio e imagens
+  // sao processados em processGroup onde temos acesso a config/toggles.
   for (const group of Array.from(groups.values())) {
-    group.aggregatedBody = group.messages
-      .map((m) => m.message_body.trim())
-      .filter((b) => b && !b.startsWith("[audio") && !b.startsWith("[media"))
-      .join("\n");
+    const parts: string[] = [];
+    for (const msg of group.messages) {
+      const body = msg.message_body.trim();
+      if (!body) continue;
+      if (body.startsWith("[audio")) {
+        parts.push("[O contato enviou um audio]");
+      } else if (body === "[media]") {
+        parts.push("[O contato enviou um arquivo/imagem]");
+      } else {
+        parts.push(body);
+      }
+    }
+    group.aggregatedBody = parts.join("\n");
   }
 
   // 4. Processar cada grupo

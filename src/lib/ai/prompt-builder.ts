@@ -553,7 +553,7 @@ function buildResponseFormatSection(ctx: PromptContext): string {
 Responda APENAS JSON valido, sem markdown:
 
 {
-  "message": "texto" ou ["msg1", "msg2"],
+  "message": "sua resposta aqui (NUNCA vazio)",
   "should_send_message": true,
   "actions": [],
   "collected_data": { ${exampleKeys} },
@@ -561,8 +561,8 @@ Responda APENAS JSON valido, sem markdown:
 }
 
 REGRAS DO JSON:
-1. "message": string ou array de strings. Use array para dividir mensagens
-2. "should_send_message": SEMPRE true. Voce SEMPRE deve responder ao lead, mesmo que ele mande apenas emoji, "ok" ou "👍" — use como oportunidade para continuar a conversa
+1. "message": OBRIGATORIO, NUNCA vazio. String ou array de strings. Use array para dividir em multiplas mensagens
+2. "should_send_message": SEMPRE true. Voce SEMPRE responde ao lead, sem excecao
 3. "actions": array de acoes. Inclua APENAS acoes NOVAS (nao repita acoes de turnos anteriores)
 4. "collected_data": TODOS os dados coletados ate agora (cumulativo). Use EXATAMENTE as keys dos campos: ${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}
 5. "conversation_status": use "active" (em andamento), "qualified" (todos dados coletados), "booked" (agendamento feito), "stale" (lead sumiu/adiou), "handed_off" (pediu humano), "disqualified" (nao quer mais)
@@ -630,5 +630,5 @@ JSON apenas:
   "conversation_status": "active"
 }
 
-Se nao faz sentido enviar, use should_send_message: false.`;
+SEMPRE envie a mensagem. should_send_message deve ser SEMPRE true.`;
 }

@@ -108,8 +108,7 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       console.error("[Test] Erro ao buscar free slots:", errMsg);
-      // Salvar o erro para retornar no response
-      availableSlots = `ERROR: ${errMsg}`;
+      availableSlots = "";
     }
   }
 
@@ -132,7 +131,7 @@ export async function POST(request: NextRequest) {
   // Buscar knowledge base
   const { data: kbData } = await supabase
     .from("knowledge_base")
-    .select("title, type, content, file_name, file_url")
+    .select("title, type, content, file_name, file_url, description, usage_instructions")
     .eq("agent_id", agent_id)
     .order("created_at", { ascending: true });
 
