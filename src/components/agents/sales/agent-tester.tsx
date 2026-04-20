@@ -213,7 +213,11 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   };
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // Scroll apenas dentro do container do chat, nao a pagina inteira
+    const container = messagesEndRef.current?.parentElement;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [messages]);
 
   const buildHistory = () => {

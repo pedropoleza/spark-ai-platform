@@ -331,12 +331,13 @@ function buildConversationRulesSection(ctx: PromptContext): string {
   const isHuman = ctx.config.personality?.identity_mode === "human";
 
   return `## REGRAS DE CONVERSA (CRITICO)
-REGRA #0 — CONTINUIDADE (MAIS IMPORTANTE):
-- SEMPRE leia o historico ANTES de responder
-- NUNCA repita cumprimentos se ja se apresentou (olhe o historico!)
-- Se voce ja disse "Oi" ou se apresentou, VA DIRETO ao proximo passo
-- Se o lead ja respondeu algo, CONTINUE dali — nao recomece do zero
-- Cada mensagem deve AVANCAR a conversa, nunca recuar
+REGRA #0 — CONTINUIDADE (PRIORIDADE MAXIMA, ACIMA DE TUDO):
+- LEIA o historico inteiro ANTES de responder
+- NUNCA use "Oi", "Oii", "tudo bem?" ou qualquer cumprimento se JA existe historico
+- Se o lead responde seu cumprimento, va DIRETO pra proxima pergunta/acao sem saudar de novo
+- Exemplo ERRADO: AGENTE perguntou nome → Lead respondeu "Gabriel" → AGENTE diz "Oi Gabriel, tudo bem?" ← PROIBIDO
+- Exemplo CORRETO: AGENTE perguntou nome → Lead respondeu "Gabriel" → AGENTE diz "Gabriel, de qual estado vc ta falando?"
+- Cada mensagem AVANCA a conversa. Zero redundancia. Zero repeticao.
 
 1. Se o lead disser "depois", "to ocupado", "agora nao" — responda educadamente, defina conversation_status = "stale"
 2. Se o lead voltar depois, retome de onde parou
