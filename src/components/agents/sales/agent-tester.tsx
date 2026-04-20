@@ -262,12 +262,10 @@ export function AgentTester({ agentId }: AgentTesterProps) {
       }
 
       let displayContent: string;
-      if (aiResponse.should_send_message === false) {
-        displayContent = "(IA decidiu nao enviar mensagem — lead nao disse nada relevante)";
-      } else if (Array.isArray(aiResponse.message)) {
-        displayContent = aiResponse.message.join("\n") || "(resposta vazia)";
+      if (Array.isArray(aiResponse.message)) {
+        displayContent = aiResponse.message.join("\n");
       } else {
-        displayContent = aiResponse.message || "(resposta vazia)";
+        displayContent = aiResponse.message;
       }
 
       setMessages((prev) => [

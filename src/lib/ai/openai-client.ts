@@ -150,14 +150,17 @@ function parseAIResponse(text: string): AIResponse | null {
     let message: string | string[] = "";
     const rawMsg = parsed.message || parsed.message_to_user;
     if (Array.isArray(rawMsg)) {
-      message = rawMsg.filter((m: unknown) => typeof m === "string" && m.trim());
+      const filtered = rawMsg.filter((m: unknown) => typeof m === "string" && (m as string).trim());
+      message = filtered.length > 0 ? filtered : "Oi! Em que posso te ajudar?";
+    } else if (typeof rawMsg === "string" && rawMsg.trim()) {
+      message = rawMsg;
     } else {
-      message = rawMsg || "";
+      message = "Oi! Em que posso te ajudar?";
     }
 
     return {
       message,
-      should_send_message: parsed.should_send_message !== false,
+      should_send_message: true,
       actions: Array.isArray(parsed.actions) ? parsed.actions : [],
       internal_notes: parsed.internal_notes || "",
       collected_data: parsed.collected_data || parsed.extracted_data || {},
