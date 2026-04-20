@@ -382,8 +382,11 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
     // Montar label visual para o usuario
     let displayContent = userMessage;
-    if (hasFile && !hasText) {
-      displayContent = `[${attachedFile!.type.startsWith("image/") ? "Imagem" : attachedFile!.type.startsWith("audio/") ? "Audio" : "Arquivo"}: ${attachedFile!.name}]`;
+    const isAudioFile = hasFile && attachedFile!.type.startsWith("audio/");
+    if (isAudioFile) {
+      displayContent = `🎤 [Audio gravado — transcrevendo...]`;
+    } else if (hasFile && !hasText) {
+      displayContent = `[${attachedFile!.type.startsWith("image/") ? "Imagem" : "Arquivo"}: ${attachedFile!.name}]`;
     } else if (hasFile && hasText) {
       const fileLabel = attachedFile!.type.startsWith("image/") ? "Imagem" : "Arquivo";
       displayContent = `${userMessage}\n[${fileLabel}: ${attachedFile!.name}]`;
@@ -401,7 +404,21 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     if (hasFile) {
       try {
         const file = attachedFile!;
-        if (file.type.startsWith("image/")) {
+        if (file.type.startsWith("audio/")) {
+          // Transcrever audio via Whisper antes de enviar para a IA
+          const formData = new FormData();
+          formData.append("audio", file);
+          const transcribeRes = await fetch("/api/agents/test/transcribe", {
+            method: "POST",
+            body: formData,
+          });
+          if (transcribeRes.ok) {
+            const { text } = await transcribeRes.json();
+            finalMessage = text || userMessage || "[audio sem conteudo]";
+          } else {
+            finalMessage = userMessage || "[Nao foi possivel transcrever o audio]";
+          }
+        } else if (file.type.startsWith("image/")) {
           const reader = new FileReader();
           const base64 = await new Promise<string>((resolve) => {
             reader.onload = () => resolve(reader.result as string);
@@ -410,8 +427,6 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           finalMessage = `${userMessage}\n[O contato enviou uma imagem — base64 para analise visual: ${base64.substring(0, 100)}... (imagem completa enviada)]`;
         } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
           finalMessage = `${userMessage}\n[O contato enviou um PDF: "${file.name}". O conteudo sera extraido em producao.]`;
-        } else if (file.type.startsWith("audio/")) {
-          finalMessage = `${userMessage}\n[O contato enviou um audio: "${file.name}". Sera transcrito em producao.]`;
         } else {
           finalMessage = `${userMessage}\n[O contato enviou um arquivo: "${file.name}" (${file.type})]`;
         }
