@@ -27,8 +27,6 @@ export class GHLClient {
     if (response.status === 401) {
       console.warn(`[GHL] 401 received, invalidating token cache and retrying...`);
       invalidateTokenCache(this.companyId, this.locationId);
-      const newHeaders = await this.getHeaders();
-      // Re-execute com headers frescos (o caller precisa passar a request factory)
       response = await request();
       if (response.status === 401) {
         const body = await response.text();
