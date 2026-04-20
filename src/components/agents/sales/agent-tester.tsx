@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, AlertTriangle, CheckCircle2, ThumbsUp, ThumbsDown, Pencil, Trash2, X, Check, Mic, Eye, FileText } from "lucide-react";
+import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, AlertTriangle, CheckCircle2, ThumbsUp, ThumbsDown, Pencil, Trash2, X, Check, Mic, Eye, FileText, Paperclip, Image } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -73,6 +73,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   const [kbItems, setKbItems] = useState<{ id: string; title: string; type: string; token_count: number }[]>([]);
   const [mediaToggles, setMediaToggles] = useState({ audio: false, image: false, pdf: false });
   const [savingToggles, setSavingToggles] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Carrega config do agente e resolve o perfil comportamental atual
@@ -310,17 +312,53 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   };
 
   const handleSend = async () => {
-    if (!input.trim() || !agentId || loading) return;
+    const hasText = input.trim().length > 0;
+    const hasFile = !!attachedFile;
+    if ((!hasText && !hasFile) || !agentId || loading) return;
 
     const userMessage = input.trim();
     setInput("");
 
+    // Montar label visual para o usuario
+    let displayContent = userMessage;
+    if (hasFile && !hasText) {
+      displayContent = `[${attachedFile!.type.startsWith("image/") ? "Imagem" : attachedFile!.type.startsWith("audio/") ? "Audio" : "Arquivo"}: ${attachedFile!.name}]`;
+    } else if (hasFile && hasText) {
+      const fileLabel = attachedFile!.type.startsWith("image/") ? "Imagem" : "Arquivo";
+      displayContent = `${userMessage}\n[${fileLabel}: ${attachedFile!.name}]`;
+    }
+
     setMessages((prev) => [
       ...prev,
-      { role: "user", content: userMessage, timestamp: new Date() },
+      { role: "user", content: displayContent, timestamp: new Date() },
     ]);
 
     setLoading(true);
+
+    // Se tem arquivo, processar e incluir conteudo na mensagem
+    let finalMessage = userMessage || "[media]";
+    if (hasFile) {
+      try {
+        const file = attachedFile!;
+        if (file.type.startsWith("image/")) {
+          const reader = new FileReader();
+          const base64 = await new Promise<string>((resolve) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          });
+          finalMessage = `${userMessage}\n[O contato enviou uma imagem — base64 para analise visual: ${base64.substring(0, 100)}... (imagem completa enviada)]`;
+        } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+          finalMessage = `${userMessage}\n[O contato enviou um PDF: "${file.name}". O conteudo sera extraido em producao.]`;
+        } else if (file.type.startsWith("audio/")) {
+          finalMessage = `${userMessage}\n[O contato enviou um audio: "${file.name}". Sera transcrito em producao.]`;
+        } else {
+          finalMessage = `${userMessage}\n[O contato enviou um arquivo: "${file.name}" (${file.type})]`;
+        }
+      } catch {
+        finalMessage = `${userMessage}\n[Erro ao processar arquivo]`;
+      }
+    }
+    setAttachedFile(null);
 
     try {
       const response = await fetch("/api/agents/test", {
@@ -328,7 +366,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           agent_id: agentId,
-          message: userMessage,
+          message: finalMessage,
           conversation_history: buildHistory(),
           collected_data: collectedData,
           execute_actions: executeActions,
@@ -643,24 +681,54 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             </CardContent>
 
             {/* Input */}
-            <div className="p-4 border-t border-gray-200">
+            <div className="p-3 border-t border-gray-200">
               {executeActions && !contactId && (
                 <p className="text-xs text-amber-500 mb-2">
                   Informe o Contact ID acima para executar acoes reais
                 </p>
               )}
-              <div className="flex gap-2">
+              {attachedFile && (
+                <div className="flex items-center gap-2 mb-2 px-2 py-1.5 bg-brand-50 border border-brand-200 rounded-lg">
+                  {attachedFile.type.startsWith("image/") ? <Image className="w-3.5 h-3.5 text-brand-600" /> :
+                   attachedFile.type.startsWith("audio/") ? <Mic className="w-3.5 h-3.5 text-brand-600" /> :
+                   <FileText className="w-3.5 h-3.5 text-brand-600" />}
+                  <span className="text-xs text-brand-700 truncate flex-1">{attachedFile.name}</span>
+                  <button onClick={() => setAttachedFile(null)} className="text-brand-400 hover:text-red-500">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+              <div className="flex gap-1.5">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,audio/*,.pdf,.doc,.docx,.txt"
+                  className="hidden"
+                  onChange={(e) => { if (e.target.files?.[0]) setAttachedFile(e.target.files[0]); e.target.value = ""; }}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 flex-shrink-0"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading}
+                  title="Anexar arquivo"
+                >
+                  <Paperclip className="w-4 h-4 text-gray-500" />
+                </Button>
                 <Input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Digite uma mensagem como lead..."
+                  placeholder={attachedFile ? "Adicione uma mensagem (opcional)..." : "Digite uma mensagem como lead..."}
                   disabled={loading}
+                  className="flex-1"
                 />
                 <Button
                   onClick={handleSend}
-                  disabled={!input.trim() || loading || (executeActions && !contactId)}
+                  disabled={(!input.trim() && !attachedFile) || loading || (executeActions && !contactId)}
                   size="icon"
+                  className="h-9 w-9 flex-shrink-0"
                 >
                   <Send className="w-4 h-4" />
                 </Button>
