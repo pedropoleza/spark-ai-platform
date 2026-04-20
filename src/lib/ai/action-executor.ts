@@ -65,10 +65,10 @@ export async function executeActions(
   // 2. Enviar mensagem(ns) pelo mesmo canal (pula no modo teste)
   let messages = normalizeMessages(response.message);
 
-  // Garantia: se should_send_message=true mas mensagem vazia, usar fallback
-  if (messages.length === 0 && response.should_send_message !== false) {
-    console.warn("[ActionExecutor] Empty message with should_send=true, using fallback");
-    messages = ["Oi! Como posso te ajudar?"];
+  // Garantia: se mensagem vazia, usar continuacao neutra (nao um cumprimento)
+  if (messages.length === 0) {
+    console.warn("[ActionExecutor] Empty message, using neutral continuation");
+    messages = ["Pode me contar mais sobre isso?"];
   }
 
   if (!ctx.skipSendMessage && messages.length > 0) {

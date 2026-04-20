@@ -151,11 +151,11 @@ function parseAIResponse(text: string): AIResponse | null {
     const rawMsg = parsed.message || parsed.message_to_user;
     if (Array.isArray(rawMsg)) {
       const filtered = rawMsg.filter((m: unknown) => typeof m === "string" && (m as string).trim());
-      message = filtered.length > 0 ? filtered : "Oi! Em que posso te ajudar?";
+      message = filtered.length > 0 ? filtered : "Pode me contar mais?";
     } else if (typeof rawMsg === "string" && rawMsg.trim()) {
       message = rawMsg;
     } else {
-      message = "Oi! Em que posso te ajudar?";
+      message = "Pode me contar mais?";
     }
 
     return {

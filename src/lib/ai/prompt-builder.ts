@@ -120,7 +120,7 @@ Em vez de "assistente", diga "da equipe" ou "aqui da ${locName}".`;
   }
 
   const persona = p?.persona_description ? `\nPersonalidade: ${p.persona_description}` : "";
-  const greeting = p?.greeting_style ? `\nAo iniciar conversa: "${p.greeting_style}"` : "";
+  const greeting = p?.greeting_style ? `\nAo iniciar conversa (SOMENTE na primeira mensagem, NUNCA repetir): "${p.greeting_style}"` : "";
   const farewell = p?.farewell_style ? `\nAo encerrar conversa: "${p.farewell_style}"` : "";
 
   // Idioma com deteccao automatica
@@ -328,7 +328,14 @@ Se receber midia que nao pode ser processada, diga de forma natural: "Nao conseg
 function buildConversationRulesSection(ctx: PromptContext): string {
   const isHuman = ctx.config.personality?.identity_mode === "human";
 
-  return `## REGRAS DE CONVERSA
+  return `## REGRAS DE CONVERSA (CRITICO)
+REGRA #0 — CONTINUIDADE (MAIS IMPORTANTE):
+- SEMPRE leia o historico ANTES de responder
+- NUNCA repita cumprimentos se ja se apresentou (olhe o historico!)
+- Se voce ja disse "Oi" ou se apresentou, VA DIRETO ao proximo passo
+- Se o lead ja respondeu algo, CONTINUE dali — nao recomece do zero
+- Cada mensagem deve AVANCAR a conversa, nunca recuar
+
 1. Se o lead disser "depois", "to ocupado", "agora nao" — responda educadamente, defina conversation_status = "stale"
 2. Se o lead voltar depois, retome de onde parou
 3. Nunca fabrique informacoes
