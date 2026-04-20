@@ -415,7 +415,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* Toggle de acoes reais */}
       <Card>
         <CardContent className="p-4">
@@ -463,10 +463,10 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-3 gap-3">
         {/* Chat */}
         <div className="col-span-2">
-          <Card className="flex flex-col h-[550px]">
+          <Card className="flex flex-col h-[520px]">
             <CardHeader className="pb-3 flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-base">Conversa de teste</CardTitle>
@@ -670,8 +670,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           </Card>
         </div>
 
-        {/* Sidebar - Recursos + Dados coletados + Perfil comportamental */}
-        <div className="space-y-4">
+        {/* Sidebar */}
+        <div className="space-y-3">
           {/* Media Toggles - Interativos */}
           <Card>
             <CardHeader className="pb-2">
@@ -891,8 +891,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         </div>
       </div>
 
-      {/* Feedbacks registrados */}
-      <Card>
+      {/* Feedbacks registrados — abaixo do grid, full width */}
+      <Card className="mt-0">
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Feedbacks registrados</CardTitle>
           <CardDescription>
