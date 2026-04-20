@@ -66,7 +66,9 @@ interface PromptContext {
 
 export function buildSystemPrompt(ctx: PromptContext): string {
   if (ctx.config.system_prompt_override) {
-    return ctx.config.system_prompt_override;
+    // Override substitui o conteudo mas SEMPRE inclui o formato de resposta
+    // para que o parser funcione corretamente.
+    return `${ctx.config.system_prompt_override}\n\n${buildResponseFormatSection(ctx)}`;
   }
 
   // Ordem de montagem fixa. Ao reorganizar, mantenha a separacao:
