@@ -85,59 +85,13 @@ export async function processMessageQueue(): Promise<{
     groups.get(key)!.messages.push(msg);
   }
 
-  // Agregar bodies (transcrever audios quando necessario)
+  // Agregar bodies (texto puro — audio e midia sao processados em processGroup
+  // onde temos acesso a config para checar os toggles de features).
   for (const group of Array.from(groups.values())) {
-    const parts: string[] = [];
-    for (const msg of group.messages) {
-      // Detectar audio: coluna audio_url OU URL embutida no body [audio: URL]
-      let audioUrl = msg.audio_url || null;
-      const audioMime = msg.audio_mime_type || undefined;
-      if (!audioUrl && msg.message_body.startsWith("[audio: ")) {
-        const match = msg.message_body.match(/\[audio:\s*(https?:\/\/[^\]]+)\]/);
-        if (match) audioUrl = match[1];
-      }
-
-      if (audioUrl) {
-        console.log(`[Processor] Transcribing audio for contact ${group.contactId}: ${audioUrl.substring(0, 80)}`);
-        const result = await transcribeAudioFromUrl(audioUrl, audioMime);
-        if (result?.text) {
-          console.log(`[Processor] Transcription OK: "${result.text.substring(0, 60)}"`);
-          parts.push(result.text);
-        } else {
-          console.warn(`[Processor] Transcription failed for ${audioUrl.substring(0, 80)}`);
-          if (msg.message_body && !msg.message_body.startsWith("[audio")) {
-            parts.push(msg.message_body.trim());
-          }
-        }
-      } else if (msg.message_body.trim() && !msg.message_body.startsWith("[audio")) {
-        parts.push(msg.message_body.trim());
-      }
-    }
-    // Processar midia (imagens e documentos)
-    const allMediaAttachments: MediaAttachment[] = [];
-    for (const msg of group.messages) {
-      const atts = msg.media_attachments;
-      if (Array.isArray(atts) && atts.length > 0) {
-        allMediaAttachments.push(...atts);
-      }
-    }
-
-    if (allMediaAttachments.length > 0) {
-      console.log(`[Processor] Processing ${allMediaAttachments.length} media attachment(s) for contact ${group.contactId}`);
-      const processed = await processMediaAttachments(allMediaAttachments);
-      group.processedMedia = processed;
-
-      // Texto extraido de documentos entra como contexto na mensagem
-      for (const media of processed) {
-        if (media.type === "document" && media.extractedText) {
-          parts.push(`[Documento "${media.fileName || "anexo"}"]: ${media.extractedText}`);
-        } else if (media.error) {
-          parts.push(`[${media.type === "image" ? "Imagem" : "Arquivo"}: ${media.error}]`);
-        }
-      }
-    }
-
-    group.aggregatedBody = parts.filter(Boolean).join("\n");
+    group.aggregatedBody = group.messages
+      .map((m) => m.message_body.trim())
+      .filter((b) => b && !b.startsWith("[audio") && !b.startsWith("[media"))
+      .join("\n");
   }
 
   // 4. Processar cada grupo
@@ -218,6 +172,58 @@ async function processGroup(
       `[Processor] IA pausada para contato ${group.contactId} (${pauseCheck.ai_paused_reason || "sem motivo"}), skipping`
     );
     return;
+  }
+
+  // 1b. Processar audio e midia conforme toggles habilitados
+  const enableAudio = config.enable_audio_transcription === true;
+  const enableImage = config.enable_image_analysis === true;
+  const enablePdf = config.enable_pdf_reading === true;
+
+  // Audio: transcrever se toggle ativo
+  if (enableAudio) {
+    for (const msg of group.messages) {
+      let audioUrl = msg.audio_url || null;
+      const audioMime = msg.audio_mime_type || undefined;
+      if (!audioUrl && msg.message_body.startsWith("[audio: ")) {
+        const match = msg.message_body.match(/\[audio:\s*(https?:\/\/[^\]]+)\]/);
+        if (match) audioUrl = match[1];
+      }
+      if (audioUrl) {
+        console.log(`[Processor] Transcribing audio (toggle ON): ${audioUrl.substring(0, 80)}`);
+        const result = await transcribeAudioFromUrl(audioUrl, audioMime);
+        if (result?.text) {
+          group.aggregatedBody = [group.aggregatedBody, result.text].filter(Boolean).join("\n");
+        }
+      }
+    }
+  }
+
+  // Midia: processar imagens e docs conforme toggles
+  if (enableImage || enablePdf) {
+    const allMediaAttachments: MediaAttachment[] = [];
+    for (const msg of group.messages) {
+      const atts = msg.media_attachments;
+      if (Array.isArray(atts) && atts.length > 0) {
+        // Filtrar apenas tipos habilitados
+        for (const att of atts) {
+          const mime = att.contentType.toLowerCase();
+          if (mime.startsWith("image/") && enableImage) allMediaAttachments.push(att);
+          else if (!mime.startsWith("image/") && enablePdf) allMediaAttachments.push(att);
+        }
+      }
+    }
+    if (allMediaAttachments.length > 0) {
+      console.log(`[Processor] Processing ${allMediaAttachments.length} media (image=${enableImage}, pdf=${enablePdf})`);
+      const processed = await processMediaAttachments(allMediaAttachments);
+      group.processedMedia = processed;
+      for (const media of processed) {
+        if (media.type === "document" && media.extractedText) {
+          group.aggregatedBody = [group.aggregatedBody, `[Documento "${media.fileName || "anexo"}"]: ${media.extractedText}`].filter(Boolean).join("\n");
+        } else if (media.error) {
+          group.aggregatedBody = [group.aggregatedBody, `[${media.type === "image" ? "Imagem" : "Arquivo"}: ${media.error}]`].filter(Boolean).join("\n");
+        }
+      }
+    }
   }
 
   // 2. Buscar location para pegar companyId

@@ -30,6 +30,7 @@ import { PostBookingConfigEditor } from "@/components/agents/sales/post-booking-
 import { AutomationsEditor } from "@/components/agents/sales/automations-editor";
 import { KnowledgeBaseEditor } from "@/components/agents/sales/knowledge-base-editor";
 import { DeactivationRulesEditor } from "@/components/agents/sales/deactivation-rules-editor";
+import { MediaFeaturesEditor } from "@/components/agents/sales/media-features-editor";
 import { useGHLData } from "@/hooks/use-ghl-data";
 import { AI_MODELS } from "@/lib/utils/constants";
 import type { AgentConfig, AgentObjective, AgentPersonality, PostBookingConfig, DataField, FollowUpConfig, TargetingRule, WorkingHoursConfig, TimezoneConfig, NotificationsConfig, AutomationRule, DeactivationRule, CommunicationChannel } from "@/types/agent";
@@ -110,6 +111,10 @@ const defaultConfig: ConfigForm = {
   deactivation_rules: [],
   handoff_messages: [],
   auto_pause_on_human_message: true,
+  // Media features
+  enable_audio_transcription: false,
+  enable_image_analysis: false,
+  enable_pdf_reading: false,
   // Recruitment-specific
   specialist_name: "",
   specialist_role: "especialista",
@@ -380,6 +385,22 @@ export function RecruitmentConfigContent() {
         {/* AVANCADO */}
         <TabsContent value="advanced">
           <div className="grid gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Recursos de midia</CardTitle>
+                <CardDescription>Habilite capacidades extras de processamento. Cada recurso tem custo adicional por uso.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <MediaFeaturesEditor
+                  enableAudio={config.enable_audio_transcription ?? false}
+                  enableImage={config.enable_image_analysis ?? false}
+                  enablePdf={config.enable_pdf_reading ?? false}
+                  onChangeAudio={(v) => updateConfig("enable_audio_transcription", v)}
+                  onChangeImage={(v) => updateConfig("enable_image_analysis", v)}
+                  onChangePdf={(v) => updateConfig("enable_pdf_reading", v)}
+                />
+              </CardContent>
+            </Card>
             <Card>
               <CardHeader><CardTitle>Modelo de IA</CardTitle></CardHeader>
               <CardContent>

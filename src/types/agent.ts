@@ -104,6 +104,10 @@ export interface AgentConfig {
   deactivation_rules: DeactivationRule[];
   handoff_messages: HandoffMessage[];
   auto_pause_on_human_message: boolean;
+  // Media features
+  enable_audio_transcription?: boolean;
+  enable_image_analysis?: boolean;
+  enable_pdf_reading?: boolean;
   // Recruitment-specific
   specialist_name?: string;        // Nome do especialista que faz o Zoom
   specialist_role?: string;        // Descrição do papel ("especialista", "recrutadora")
