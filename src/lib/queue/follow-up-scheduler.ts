@@ -203,16 +203,17 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         continue;
       }
 
-      // Buscar config do agente
+      // Buscar config do agente (so processa se ativo)
       const { data: agent } = await supabase
         .from("agents")
         .select("*, agent_configs(*)")
         .eq("id", followUp.agent_id)
-        .single();
+        .eq("status", "active")
+        .maybeSingle();
 
       if (!agent) {
-        await supabase.from("scheduled_followups").update({ status: "failed" }).eq("id", followUp.id);
-        errors++;
+        // Agente nao encontrado ou desativado — cancelar follow-up
+        await supabase.from("scheduled_followups").update({ status: "cancelled" }).eq("id", followUp.id);
         continue;
       }
 

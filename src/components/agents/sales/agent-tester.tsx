@@ -221,7 +221,10 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   }, [messages]);
 
   const buildHistory = () => {
+    // Excluir a ultima mensagem (a do usuario que esta sendo enviada agora)
+    // para evitar duplicacao — ela ja vai como `message` no request.
     return messages
+      .slice(0, -1)
       .map((m) => {
         const role = m.role === "user" ? "LEAD" : "AGENTE";
         return `${role}: ${m.content}`;
