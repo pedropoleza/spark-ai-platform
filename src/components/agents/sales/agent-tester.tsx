@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, AlertTriangle, CheckCircle2, ThumbsUp, ThumbsDown, Pencil, Trash2, X, Check } from "lucide-react";
+import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, AlertTriangle, CheckCircle2, ThumbsUp, ThumbsDown, Pencil, Trash2, X, Check, ChevronDown, Mic, Eye, FileText } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +65,12 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     tone_aggressiveness: 50,
   });
   const [savingProfile, setSavingProfile] = useState(false);
+  // Sidebar panels
+  const [showPrompt, setShowPrompt] = useState(false);
+  const [showKB, setShowKB] = useState(false);
+  const [systemPromptPreview, setSystemPromptPreview] = useState("");
+  const [kbItems, setKbItems] = useState<{ title: string; type: string; token_count: number }[]>([]);
+  const [mediaToggles, setMediaToggles] = useState({ audio: false, image: false, pdf: false });
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Carrega config do agente e resolve o perfil comportamental atual
@@ -82,6 +88,26 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         };
         setEditValues(values);
         setProfile(composePersonalityProfile(values));
+        // Media toggles
+        setMediaToggles({
+          audio: data.config.enable_audio_transcription ?? false,
+          image: data.config.enable_image_analysis ?? false,
+          pdf: data.config.enable_pdf_reading ?? false,
+        });
+        // System prompt preview
+        if (data.config.system_prompt_override) {
+          setSystemPromptPreview(data.config.system_prompt_override);
+        } else if (data.config.custom_instructions) {
+          setSystemPromptPreview(data.config.custom_instructions);
+        }
+      })
+      .catch(() => {});
+
+    // Fetch KB items
+    fetch(`/api/knowledge-base?agent_id=${agentId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.items) setKbItems(data.items.map((i: { title: string; type: string; token_count: number }) => ({ title: i.title, type: i.type, token_count: i.token_count })));
       })
       .catch(() => {});
   }, [agentId]);
@@ -592,8 +618,103 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           </Card>
         </div>
 
-        {/* Sidebar - Dados coletados + Perfil comportamental */}
+        {/* Sidebar - Recursos + Dados coletados + Perfil comportamental */}
         <div className="space-y-4">
+          {/* Media Toggles */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Recursos de midia</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Mic className={`w-3.5 h-3.5 ${mediaToggles.audio ? "text-brand-600" : "text-gray-400"}`} />
+                  <span className="text-xs">Audio</span>
+                </div>
+                <Badge variant={mediaToggles.audio ? "default" : "secondary"} className="text-[9px]">
+                  {mediaToggles.audio ? "ON" : "OFF"}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Eye className={`w-3.5 h-3.5 ${mediaToggles.image ? "text-brand-600" : "text-gray-400"}`} />
+                  <span className="text-xs">Imagem</span>
+                </div>
+                <Badge variant={mediaToggles.image ? "default" : "secondary"} className="text-[9px]">
+                  {mediaToggles.image ? "ON" : "OFF"}
+                </Badge>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileText className={`w-3.5 h-3.5 ${mediaToggles.pdf ? "text-brand-600" : "text-gray-400"}`} />
+                  <span className="text-xs">PDF/Docs</span>
+                </div>
+                <Badge variant={mediaToggles.pdf ? "default" : "secondary"} className="text-[9px]">
+                  {mediaToggles.pdf ? "ON" : "OFF"}
+                </Badge>
+              </div>
+              <p className="text-[10px] text-gray-400 pt-1 border-t border-gray-100">
+                Configure na aba Avancado
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Prompt Preview */}
+          <Card>
+            <button
+              type="button"
+              onClick={() => setShowPrompt(!showPrompt)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+            >
+              <span className="text-sm font-semibold text-gray-900">Prompt / Instrucoes</span>
+              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showPrompt ? "rotate-180" : ""}`} />
+            </button>
+            {showPrompt && (
+              <CardContent className="pt-0 pb-3">
+                <textarea
+                  readOnly
+                  value={systemPromptPreview || "(Usando prompt gerado automaticamente)"}
+                  className="w-full h-[200px] text-[11px] font-mono text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3 resize-y focus:outline-none focus:ring-1 focus:ring-brand-300"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">
+                  {systemPromptPreview ? "Override ativo — edite na aba Prompt" : "Gerado automaticamente a partir das configs"}
+                </p>
+              </CardContent>
+            )}
+          </Card>
+
+          {/* Knowledge Base */}
+          <Card>
+            <button
+              type="button"
+              onClick={() => setShowKB(!showKB)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-gray-900">Knowledge Base</span>
+                <Badge variant="secondary" className="text-[9px]">{kbItems.length} itens</Badge>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showKB ? "rotate-180" : ""}`} />
+            </button>
+            {showKB && (
+              <CardContent className="pt-0 pb-3 max-h-[200px] overflow-y-auto">
+                {kbItems.length === 0 ? (
+                  <p className="text-xs text-gray-400">Nenhum item na base. Adicione na aba Contexto.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {kbItems.map((item, i) => (
+                      <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded bg-gray-50">
+                        <span className="text-xs text-gray-700 truncate flex-1">{item.title}</span>
+                        <span className="text-[9px] text-gray-400 flex-shrink-0 ml-2">~{item.token_count} tok</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            )}
+          </Card>
+
+          {/* Dados coletados */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Dados coletados</CardTitle>
