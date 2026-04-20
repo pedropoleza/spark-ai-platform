@@ -66,11 +66,14 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   });
   const [savingProfile, setSavingProfile] = useState(false);
   // Sidebar panels
-  const [showPrompt, setShowPrompt] = useState(false);
+  const [showPromptModal, setShowPromptModal] = useState(false);
   const [showKB, setShowKB] = useState(false);
   const [systemPromptPreview, setSystemPromptPreview] = useState("");
-  const [kbItems, setKbItems] = useState<{ title: string; type: string; token_count: number }[]>([]);
+  const [promptEditing, setPromptEditing] = useState("");
+  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [kbItems, setKbItems] = useState<{ id: string; title: string; type: string; token_count: number }[]>([]);
   const [mediaToggles, setMediaToggles] = useState({ audio: false, image: false, pdf: false });
+  const [savingToggles, setSavingToggles] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Carrega config do agente e resolve o perfil comportamental atual
@@ -107,7 +110,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     fetch(`/api/knowledge-base?agent_id=${agentId}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (data?.items) setKbItems(data.items.map((i: { title: string; type: string; token_count: number }) => ({ title: i.title, type: i.type, token_count: i.token_count })));
+        if (data?.items) setKbItems(data.items.map((i: { id: string; title: string; type: string; token_count: number }) => ({ id: i.id, title: i.title, type: i.type, token_count: i.token_count })));
       })
       .catch(() => {});
   }, [agentId]);
@@ -118,6 +121,55 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     setCollectedData({});
     setInput("");
   }, [agentId]);
+
+  // Salvar toggles de midia via API
+  const saveMediaToggle = async (key: "audio" | "image" | "pdf", value: boolean) => {
+    if (!agentId) return;
+    const newToggles = { ...mediaToggles, [key]: value };
+    setMediaToggles(newToggles);
+    setSavingToggles(true);
+    try {
+      await fetch(`/api/agents/${agentId}/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enable_audio_transcription: newToggles.audio,
+          enable_image_analysis: newToggles.image,
+          enable_pdf_reading: newToggles.pdf,
+        }),
+      });
+    } finally {
+      setSavingToggles(false);
+    }
+  };
+
+  // Salvar prompt override
+  const savePrompt = async () => {
+    if (!agentId) return;
+    setSavingPrompt(true);
+    try {
+      const res = await fetch(`/api/agents/${agentId}/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_prompt_override: promptEditing || null,
+        }),
+      });
+      if (res.ok) {
+        setSystemPromptPreview(promptEditing);
+        setShowPromptModal(false);
+      }
+    } finally {
+      setSavingPrompt(false);
+    }
+  };
+
+  // Deletar KB item
+  const deleteKbItem = async (id: string) => {
+    if (!agentId) return;
+    setKbItems((prev) => prev.filter((i) => i.id !== id));
+    await fetch(`/api/knowledge-base?id=${id}&agent_id=${agentId}`, { method: "DELETE" });
+  };
 
   const startEditProfile = () => setEditingProfile(true);
 
@@ -620,70 +672,49 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
         {/* Sidebar - Recursos + Dados coletados + Perfil comportamental */}
         <div className="space-y-4">
-          {/* Media Toggles */}
+          {/* Media Toggles - Interativos */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">Recursos de midia</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Mic className={`w-3.5 h-3.5 ${mediaToggles.audio ? "text-brand-600" : "text-gray-400"}`} />
-                  <span className="text-xs">Audio</span>
+            <CardContent className="space-y-2.5">
+              {([
+                { key: "audio" as const, icon: Mic, label: "Transcricao de audio" },
+                { key: "image" as const, icon: Eye, label: "Analise de imagens" },
+                { key: "pdf" as const, icon: FileText, label: "Leitura de PDFs" },
+              ]).map(({ key, icon: Icon, label }) => (
+                <div key={key} className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Icon className={`w-3.5 h-3.5 ${mediaToggles[key] ? "text-brand-600" : "text-gray-400"}`} />
+                    <span className="text-xs">{label}</span>
+                  </div>
+                  <Switch
+                    checked={mediaToggles[key]}
+                    onCheckedChange={(v) => saveMediaToggle(key, v)}
+                    disabled={savingToggles}
+                  />
                 </div>
-                <Badge variant={mediaToggles.audio ? "default" : "secondary"} className="text-[9px]">
-                  {mediaToggles.audio ? "ON" : "OFF"}
-                </Badge>
+              ))}
+            </CardContent>
+          </Card>
+
+          {/* Prompt - Clica para abrir modal */}
+          <Card
+            className="cursor-pointer hover:border-brand-200 transition-colors"
+            onClick={() => { setPromptEditing(systemPromptPreview); setShowPromptModal(true); }}
+          >
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-sm font-semibold text-gray-900">Prompt</span>
+                <Pencil className="w-3.5 h-3.5 text-gray-400" />
               </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Eye className={`w-3.5 h-3.5 ${mediaToggles.image ? "text-brand-600" : "text-gray-400"}`} />
-                  <span className="text-xs">Imagem</span>
-                </div>
-                <Badge variant={mediaToggles.image ? "default" : "secondary"} className="text-[9px]">
-                  {mediaToggles.image ? "ON" : "OFF"}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <FileText className={`w-3.5 h-3.5 ${mediaToggles.pdf ? "text-brand-600" : "text-gray-400"}`} />
-                  <span className="text-xs">PDF/Docs</span>
-                </div>
-                <Badge variant={mediaToggles.pdf ? "default" : "secondary"} className="text-[9px]">
-                  {mediaToggles.pdf ? "ON" : "OFF"}
-                </Badge>
-              </div>
-              <p className="text-[10px] text-gray-400 pt-1 border-t border-gray-100">
-                Configure na aba Avancado
+              <p className="text-[11px] text-gray-500 line-clamp-3 font-mono leading-relaxed">
+                {systemPromptPreview || "(Prompt gerado automaticamente — clique para criar override)"}
               </p>
             </CardContent>
           </Card>
 
-          {/* Prompt Preview */}
-          <Card>
-            <button
-              type="button"
-              onClick={() => setShowPrompt(!showPrompt)}
-              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
-            >
-              <span className="text-sm font-semibold text-gray-900">Prompt / Instrucoes</span>
-              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showPrompt ? "rotate-180" : ""}`} />
-            </button>
-            {showPrompt && (
-              <CardContent className="pt-0 pb-3">
-                <textarea
-                  readOnly
-                  value={systemPromptPreview || "(Usando prompt gerado automaticamente)"}
-                  className="w-full h-[200px] text-[11px] font-mono text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3 resize-y focus:outline-none focus:ring-1 focus:ring-brand-300"
-                />
-                <p className="text-[10px] text-gray-400 mt-1">
-                  {systemPromptPreview ? "Override ativo — edite na aba Prompt" : "Gerado automaticamente a partir das configs"}
-                </p>
-              </CardContent>
-            )}
-          </Card>
-
-          {/* Knowledge Base */}
+          {/* Knowledge Base - Com delete */}
           <Card>
             <button
               type="button"
@@ -692,20 +723,27 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             >
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-gray-900">Knowledge Base</span>
-                <Badge variant="secondary" className="text-[9px]">{kbItems.length} itens</Badge>
+                <Badge variant="secondary" className="text-[9px]">{kbItems.length}</Badge>
               </div>
               <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showKB ? "rotate-180" : ""}`} />
             </button>
             {showKB && (
-              <CardContent className="pt-0 pb-3 max-h-[200px] overflow-y-auto">
+              <CardContent className="pt-0 pb-3 max-h-[220px] overflow-y-auto">
                 {kbItems.length === 0 ? (
-                  <p className="text-xs text-gray-400">Nenhum item na base. Adicione na aba Contexto.</p>
+                  <p className="text-xs text-gray-400">Nenhum item. Adicione na aba Contexto.</p>
                 ) : (
-                  <div className="space-y-1.5">
-                    {kbItems.map((item, i) => (
-                      <div key={i} className="flex items-center justify-between py-1.5 px-2 rounded bg-gray-50">
+                  <div className="space-y-1">
+                    {kbItems.map((item) => (
+                      <div key={item.id} className="flex items-center gap-2 py-1.5 px-2 rounded bg-gray-50 group">
                         <span className="text-xs text-gray-700 truncate flex-1">{item.title}</span>
-                        <span className="text-[9px] text-gray-400 flex-shrink-0 ml-2">~{item.token_count} tok</span>
+                        <span className="text-[9px] text-gray-400 flex-shrink-0">~{item.token_count}</span>
+                        <button
+                          onClick={() => deleteKbItem(item.id)}
+                          className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
+                          title="Remover"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -1009,6 +1047,42 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           )}
         </CardContent>
       </Card>
+      {/* Modal: Prompt Editor */}
+      {showPromptModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowPromptModal(false)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-[90vw] max-w-3xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">System Prompt Override</h2>
+                <p className="text-xs text-gray-500">Substitui o prompt gerado automaticamente. Deixe vazio para usar o padrao.</p>
+              </div>
+              <button onClick={() => setShowPromptModal(false)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 p-6 overflow-hidden">
+              <textarea
+                value={promptEditing}
+                onChange={(e) => setPromptEditing(e.target.value)}
+                className="w-full h-full min-h-[400px] text-sm font-mono text-gray-800 bg-gray-50 border border-gray-200 rounded-xl p-4 resize-none focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-brand-300"
+                placeholder="Cole aqui o prompt completo do sistema..."
+              />
+            </div>
+            <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200">
+              <p className="text-xs text-gray-400">
+                {promptEditing ? `${Math.ceil(promptEditing.length / 4)} tokens estimados` : "Vazio = prompt automatico"}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setShowPromptModal(false)}>Cancelar</Button>
+                <Button onClick={savePrompt} disabled={savingPrompt}>
+                  {savingPrompt ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  Salvar
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
