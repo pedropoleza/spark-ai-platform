@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, AlertTriangle, CheckCircle2, ThumbsUp, ThumbsDown, Pencil, Trash2, X, Check, ChevronDown, Mic, Eye, FileText } from "lucide-react";
+import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, AlertTriangle, CheckCircle2, ThumbsUp, ThumbsDown, Pencil, Trash2, X, Check, Mic, Eye, FileText } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -67,7 +67,6 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   const [savingProfile, setSavingProfile] = useState(false);
   // Sidebar panels
   const [showPromptModal, setShowPromptModal] = useState(false);
-  const [showKB, setShowKB] = useState(false);
   const [systemPromptPreview, setSystemPromptPreview] = useState("");
   const [promptEditing, setPromptEditing] = useState("");
   const [savingPrompt, setSavingPrompt] = useState(false);
@@ -465,8 +464,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
       <div className="grid grid-cols-3 gap-3">
         {/* Chat */}
-        <div className="col-span-2">
-          <Card className="flex flex-col h-[520px]">
+        <div className="col-span-2 flex flex-col gap-3">
+          <Card className="flex flex-col h-[480px]">
             <CardHeader className="pb-3 flex-row items-center justify-between">
               <div>
                 <CardTitle className="text-base">Conversa de teste</CardTitle>
@@ -668,6 +667,50 @@ export function AgentTester({ agentId }: AgentTesterProps) {
               </div>
             </div>
           </Card>
+
+          {/* Prompt + KB abaixo do chat */}
+          <div className="grid grid-cols-2 gap-3">
+            {/* Prompt */}
+            <Card
+              className="cursor-pointer hover:border-brand-200 transition-colors"
+              onClick={() => { setPromptEditing(systemPromptPreview); setShowPromptModal(true); }}
+            >
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-sm font-semibold text-gray-900">Prompt</span>
+                  <Pencil className="w-3.5 h-3.5 text-gray-400" />
+                </div>
+                <p className="text-[11px] text-gray-500 line-clamp-4 font-mono leading-relaxed h-[60px] overflow-hidden">
+                  {systemPromptPreview || "(Automatico — clique para criar override)"}
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* Knowledge Base inline */}
+            <Card>
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-sm font-semibold text-gray-900">Knowledge Base</span>
+                  <Badge variant="secondary" className="text-[9px]">{kbItems.length}</Badge>
+                </div>
+                <div className="space-y-1 max-h-[60px] overflow-y-auto">
+                  {kbItems.length === 0 ? (
+                    <p className="text-[11px] text-gray-400">Adicione na aba Contexto</p>
+                  ) : kbItems.map((item) => (
+                    <div key={item.id} className="flex items-center gap-1 group">
+                      <span className="text-[11px] text-gray-700 truncate flex-1">{item.title}</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteKbItem(item.id); }}
+                        className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                      >
+                        <Trash2 className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
 
         {/* Sidebar */}
@@ -696,60 +739,6 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                 </div>
               ))}
             </CardContent>
-          </Card>
-
-          {/* Prompt - Clica para abrir modal */}
-          <Card
-            className="cursor-pointer hover:border-brand-200 transition-colors"
-            onClick={() => { setPromptEditing(systemPromptPreview); setShowPromptModal(true); }}
-          >
-            <CardContent className="p-3">
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-sm font-semibold text-gray-900">Prompt</span>
-                <Pencil className="w-3.5 h-3.5 text-gray-400" />
-              </div>
-              <p className="text-[11px] text-gray-500 line-clamp-3 font-mono leading-relaxed">
-                {systemPromptPreview || "(Prompt gerado automaticamente — clique para criar override)"}
-              </p>
-            </CardContent>
-          </Card>
-
-          {/* Knowledge Base - Com delete */}
-          <Card>
-            <button
-              type="button"
-              onClick={() => setShowKB(!showKB)}
-              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-gray-900">Knowledge Base</span>
-                <Badge variant="secondary" className="text-[9px]">{kbItems.length}</Badge>
-              </div>
-              <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showKB ? "rotate-180" : ""}`} />
-            </button>
-            {showKB && (
-              <CardContent className="pt-0 pb-3 max-h-[220px] overflow-y-auto">
-                {kbItems.length === 0 ? (
-                  <p className="text-xs text-gray-400">Nenhum item. Adicione na aba Contexto.</p>
-                ) : (
-                  <div className="space-y-1">
-                    {kbItems.map((item) => (
-                      <div key={item.id} className="flex items-center gap-2 py-1.5 px-2 rounded bg-gray-50 group">
-                        <span className="text-xs text-gray-700 truncate flex-1">{item.title}</span>
-                        <span className="text-[9px] text-gray-400 flex-shrink-0">~{item.token_count}</span>
-                        <button
-                          onClick={() => deleteKbItem(item.id)}
-                          className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
-                          title="Remover"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            )}
           </Card>
 
           {/* Dados coletados */}
