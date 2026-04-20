@@ -105,26 +105,20 @@ export async function processMessageQueue(): Promise<{
 
   // 4. Processar cada grupo
   for (const group of Array.from(groups.values())) {
+    const ids = group.messages.map((m) => m.id);
     try {
       await processGroup(supabase, group);
       processed++;
-
-      // Marcar como completed
-      const ids = group.messages.map((m) => m.id);
-      await supabase
-        .from("message_queue")
-        .update({ status: "completed" })
-        .in("id", ids);
     } catch (error) {
-      console.error(`Erro ao processar grupo ${group.locationId}:${group.contactId}:`, error);
+      console.error(`[Processor] Erro grupo ${group.contactId}:`, error instanceof Error ? error.message : error);
       errors++;
-
-      // Marcar como failed
-      const ids = group.messages.map((m) => m.id);
+    } finally {
+      // SEMPRE marcar mensagens — evita orfãos em "processing"
       await supabase
         .from("message_queue")
-        .update({ status: "failed" })
-        .in("id", ids);
+        .update({ status: errors > processed ? "failed" : "completed" })
+        .in("id", ids)
+        .eq("status", "processing");
     }
   }
 
@@ -160,15 +154,20 @@ async function processGroup(
   }
   const { data: agent } = await agentQuery;
 
-  if (!agent) return;
+  if (!agent) {
+    console.log(`[Processor] Agent not found/inactive for ${group.contactId}, skipping`);
+    return;
+  }
 
   const config = Array.isArray(agent.agent_configs)
     ? agent.agent_configs[0]
     : agent.agent_configs;
-  if (!config) return;
+  if (!config) {
+    console.log(`[Processor] No config for agent ${agent.id}, skipping`);
+    return;
+  }
 
-  // Gate de handoff manual: se o operador humano pausou a IA para este
-  // contato (enviando uma mensagem de encerramento), skip o processamento.
+  // Gate de handoff manual
   const { data: pauseCheck } = await supabase
     .from("conversation_state")
     .select("ai_paused_at, ai_paused_reason")
@@ -177,9 +176,7 @@ async function processGroup(
     .maybeSingle();
 
   if (pauseCheck?.ai_paused_at) {
-    console.log(
-      `[Processor] IA pausada para contato ${group.contactId} (${pauseCheck.ai_paused_reason || "sem motivo"}), skipping`
-    );
+    console.log(`[Processor] IA pausada para ${group.contactId} (${pauseCheck.ai_paused_reason || "manual"}), skipping`);
     return;
   }
 

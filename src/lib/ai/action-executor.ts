@@ -293,6 +293,17 @@ async function updateConversationState(
   ctx: ExecutionContext,
   response: AIResponse
 ): Promise<void> {
+  // Merge collected_data com dados existentes (nao sobrescreve campos anteriores)
+  const { data: existing } = await supabase
+    .from("conversation_state")
+    .select("collected_data")
+    .eq("agent_id", ctx.agentId)
+    .eq("contact_id", ctx.contactId)
+    .maybeSingle();
+
+  const previousData = (existing?.collected_data as Record<string, string>) || {};
+  const mergedData = { ...previousData, ...response.collected_data };
+
   await supabase
     .from("conversation_state")
     .upsert(
@@ -302,7 +313,7 @@ async function updateConversationState(
         contact_id: ctx.contactId,
         conversation_id: ctx.conversationId,
         status: response.conversation_status,
-        collected_data: response.collected_data,
+        collected_data: mergedData,
         last_ai_response_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },
