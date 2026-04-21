@@ -15,3 +15,8 @@ CREATE INDEX IF NOT EXISTS idx_followups_pending
 
 CREATE INDEX IF NOT EXISTS idx_followups_agent_contact
   ON scheduled_followups(agent_id, contact_id, status);
+
+-- Dashboard metrics: queries por location + action_type + created_at
+CREATE INDEX IF NOT EXISTS idx_exec_log_location_action
+  ON execution_log(location_id, action_type, created_at DESC)
+  WHERE success = true;

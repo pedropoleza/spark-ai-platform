@@ -134,17 +134,33 @@ export async function POST(request: NextRequest) {
       const bodyLower = (messageBody || "").toLowerCase().trim();
       if (stopKeywords.includes(bodyLower)) {
         const supabaseStop = createAdminClient();
-        // Pause AI for ALL agents on this contact
-        await supabaseStop
-          .from("conversation_state")
-          .update({
-            ai_paused_at: new Date().toISOString(),
-            ai_paused_reason: "opt_out:" + bodyLower,
-            status: "disqualified"
-          })
+        const nowIso = new Date().toISOString();
+
+        // Buscar agentes ativos da location para garantir opt-out mesmo
+        // sem conversation_state existente
+        const { data: activeAgents } = await supabaseStop
+          .from("agents")
+          .select("id")
           .eq("location_id", locationId)
-          .eq("contact_id", contactId);
-        console.log(`[Webhook] Opt-out: contact ${contactId} sent "${bodyLower}"`);
+          .eq("status", "active")
+          .in("type", ["sales_agent", "recruitment_agent"]);
+
+        for (const agent of activeAgents || []) {
+          await supabaseStop
+            .from("conversation_state")
+            .upsert({
+              agent_id: agent.id,
+              location_id: locationId,
+              contact_id: contactId,
+              conversation_id: conversationId || "",
+              status: "disqualified",
+              ai_paused_at: nowIso,
+              ai_paused_reason: "opt_out:" + bodyLower,
+              updated_at: nowIso,
+            }, { onConflict: "agent_id,contact_id" });
+        }
+
+        console.log(`[Webhook] Opt-out: contact ${contactId} sent "${bodyLower}" — ${(activeAgents || []).length} agent(s) paused`);
         return NextResponse.json({ received: true, skipped: "opt_out" });
       }
     }
