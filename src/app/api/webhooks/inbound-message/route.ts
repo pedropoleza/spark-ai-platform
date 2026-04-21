@@ -107,23 +107,29 @@ export async function POST(request: NextRequest) {
     }
 
     if (direction === "outbound") {
-      console.log(`[Webhook:outbound] Mensagem manual detectada | contact=${contactId} | body="${(messageBody || "").substring(0, 50)}"`);
-      // Detectar handoff manual.
-      // Duas formas de pausar a IA quando o humano envia mensagem:
-      //   1) auto_pause_on_human_message = true  -> pausa em QUALQUER mensagem manual
-      //   2) handoff_messages com auto_deactivate -> pausa apenas se bater o texto exato
+      // ===== DETECÇÃO DE MENSAGEM HUMANA (HANDOFF) =====
+      // GHL envia campo "source" e "userId" no payload do webhook:
+      //   - source="app" + userId presente = humano enviou pelo CRM
+      //   - source="api" ou sem userId = enviado via API (nossa IA)
+      //   - source="workflow" = automação do GHL
       //
-      // IMPORTANTE: ignorar mensagens enviadas pela propria IA. A IA
-      // grava uma fingerprint na execution_log com o texto/contact_id
-      // imediatamente antes de chamar o GHL, e checamos isso aqui.
-      //
-      // ROTA: se houver conversation_state para este contato, pausamos
-      // exatamente aquele agente. Sales e recrutamento sao totalmente
-      // separados e nao compartilham conversation_state.
+      // Combinamos source/userId com heurística anti-eco como fallback.
+      const webhookSource = (body.source || "") as string;
+      const webhookUserId = (body.userId || body.user_id || "") as string;
+      const isFromGhlApp = webhookSource === "app" && !!webhookUserId;
+      const isFromApi = webhookSource === "api" || webhookSource === "workflow";
+
+      console.log(`[Webhook:outbound] contact=${contactId} | source="${webhookSource}" | userId="${webhookUserId}" | isApp=${isFromGhlApp} | body="${(messageBody || "").substring(0, 40)}"`);
+
+      // Se source indica API/workflow, é nossa IA ou automação — ignorar
+      if (isFromApi) {
+        return NextResponse.json({ received: true, skipped: "outbound_api" });
+      }
+
       try {
         const supabaseAdmin = createAdminClient();
 
-        // 1) Tenta resolver o agente pelo conversation_state do contato
+        // Resolver o agente pelo conversation_state do contato
         const { data: existingStates } = await supabaseAdmin
           .from("conversation_state")
           .select("agent_id")
@@ -144,8 +150,7 @@ export async function POST(request: NextRequest) {
           if (picked) outboundAgent = picked as { id: string; agent_configs: unknown };
         }
 
-        // 2) Fallback: nao tem state — aplica apenas se existir exatamente UM
-        //    agente ativo na location (senao nao sabemos pra qual aplicar)
+        // Fallback: exatamente 1 agente ativo na location
         if (!outboundAgent) {
           const { data: active } = await supabaseAdmin
             .from("agents")
@@ -158,32 +163,23 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        console.log(`[Webhook:outbound] Agent found: ${outboundAgent ? outboundAgent.id : "NONE"} | stateAgentIds: ${stateAgentIds.join(",") || "none"}`);
-
         if (outboundAgent) {
           const outboundConfig = Array.isArray(outboundAgent.agent_configs)
             ? outboundAgent.agent_configs[0]
             : outboundAgent.agent_configs;
 
           const autoPauseEnabled = outboundConfig?.auto_pause_on_human_message === true;
-          console.log(`[Webhook:outbound] autoPauseEnabled=${autoPauseEnabled} | config exists=${!!outboundConfig}`);
           const handoffMessages = (outboundConfig?.handoff_messages || []) as {
-            id: string;
-            label: string;
-            text: string;
-            auto_deactivate: boolean;
+            id: string; label: string; text: string; auto_deactivate: boolean;
           }[];
 
-          const normalize = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
-          const bodyNorm = normalize(messageBody || "");
+          // Determinar se é mensagem humana:
+          // 1) source="app" com userId → definitivamente humano
+          // 2) source vazio/desconhecido → anti-eco como fallback
+          let isHumanMessage = isFromGhlApp;
 
-          // Heuristica anti-eco: a IA, ao mandar uma mensagem via GHL,
-          // tambem dispara este mesmo webhook como outbound. Para nao
-          // pausar a IA por causa da propria IA, checamos o execution_log
-          // dos ultimos 90s buscando um send_message para este contato
-          // cujo texto bate com o que chegou.
-          let isFromAi = false;
-          if (autoPauseEnabled) {
+          if (!isHumanMessage && !isFromApi) {
+            // Fallback anti-eco: checar se o texto bate com msg recente da IA
             const ninetySecondsAgo = new Date(Date.now() - 90_000).toISOString();
             const { data: aiResponses } = await supabaseAdmin
               .from("execution_log")
@@ -196,31 +192,37 @@ export async function POST(request: NextRequest) {
               .order("created_at", { ascending: false })
               .limit(10);
 
+            const normalize = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+            const bodyNorm = normalize(messageBody || "");
+            let matchedAi = false;
+
             if (aiResponses) {
               for (const row of aiResponses) {
                 const payload = (row.action_payload || {}) as { message?: unknown };
                 const msg = payload.message;
                 const candidates: string[] = Array.isArray(msg)
                   ? msg.filter((m): m is string => typeof m === "string")
-                  : typeof msg === "string"
-                  ? [msg]
-                  : [];
+                  : typeof msg === "string" ? [msg] : [];
                 if (candidates.some((c) => normalize(c) === bodyNorm)) {
-                  isFromAi = true;
+                  matchedAi = true;
                   break;
                 }
               }
             }
+
+            // Se NÃO bateu com nenhuma msg da IA → é humano
+            isHumanMessage = !matchedAi;
           }
 
-          console.log(`[Webhook:outbound] isFromAi=${isFromAi} | bodyNorm="${bodyNorm.substring(0, 40)}"`);
+          console.log(`[Webhook:outbound] isHuman=${isHumanMessage} | autoPause=${autoPauseEnabled} | agent=${outboundAgent.id}`);
 
           let pauseReason: string | null = null;
 
-          if (autoPauseEnabled && !isFromAi) {
-            pauseReason = "auto_pause:human_message";
-          } else if (!autoPauseEnabled) {
-            // Modo legado: match exato com handoff_messages
+          if (autoPauseEnabled && isHumanMessage) {
+            pauseReason = `auto_pause:human_message${webhookUserId ? `:user_${webhookUserId}` : ""}`;
+          } else if (!autoPauseEnabled && isHumanMessage) {
+            const normalize = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+            const bodyNorm = normalize(messageBody || "");
             const matched = handoffMessages.find(
               (m) => m.auto_deactivate && normalize(m.text) === bodyNorm
             );
