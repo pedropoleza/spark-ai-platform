@@ -107,6 +107,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (direction === "outbound") {
+      console.log(`[Webhook:outbound] Mensagem manual detectada | contact=${contactId} | body="${(messageBody || "").substring(0, 50)}"`);
       // Detectar handoff manual.
       // Duas formas de pausar a IA quando o humano envia mensagem:
       //   1) auto_pause_on_human_message = true  -> pausa em QUALQUER mensagem manual
@@ -157,12 +158,15 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        console.log(`[Webhook:outbound] Agent found: ${outboundAgent ? outboundAgent.id : "NONE"} | stateAgentIds: ${stateAgentIds.join(",") || "none"}`);
+
         if (outboundAgent) {
           const outboundConfig = Array.isArray(outboundAgent.agent_configs)
             ? outboundAgent.agent_configs[0]
             : outboundAgent.agent_configs;
 
           const autoPauseEnabled = outboundConfig?.auto_pause_on_human_message === true;
+          console.log(`[Webhook:outbound] autoPauseEnabled=${autoPauseEnabled} | config exists=${!!outboundConfig}`);
           const handoffMessages = (outboundConfig?.handoff_messages || []) as {
             id: string;
             label: string;
@@ -209,6 +213,8 @@ export async function POST(request: NextRequest) {
             }
           }
 
+          console.log(`[Webhook:outbound] isFromAi=${isFromAi} | bodyNorm="${bodyNorm.substring(0, 40)}"`);
+
           let pauseReason: string | null = null;
 
           if (autoPauseEnabled && !isFromAi) {
@@ -222,6 +228,7 @@ export async function POST(request: NextRequest) {
           }
 
           if (pauseReason) {
+            console.log(`[Webhook:outbound] PAUSANDO IA: ${pauseReason} | contact=${contactId}`);
             const nowIso = new Date().toISOString();
             await supabaseAdmin
               .from("conversation_state")
