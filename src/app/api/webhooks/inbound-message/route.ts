@@ -3,6 +3,22 @@ import { waitUntil } from "@vercel/functions";
 
 export const maxDuration = 60;
 import { createAdminClient } from "@/lib/supabase/admin";
+
+// ===== In-memory rate limiter =====
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_WINDOW = 60_000; // 1 minute
+const RATE_LIMIT_MAX = 30; // max 30 messages per contact per minute
+
+function checkRateLimit(contactId: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(contactId);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(contactId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= RATE_LIMIT_MAX;
+}
 import { GHLClient } from "@/lib/ghl/client";
 import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
@@ -104,6 +120,33 @@ export async function POST(request: NextRequest) {
     if (!/^[\w-]{2,100}$/.test(locationId) || !/^[\w-]{2,100}$/.test(contactId)) {
       console.log(`[Webhook] Skipped: invalid_ids (loc=${locationId}, contact=${contactId})`);
       return NextResponse.json({ received: true, skipped: "invalid_ids" });
+    }
+
+    // ===== RATE LIMIT: Inbound messages per contact =====
+    if (direction === "inbound" && !checkRateLimit(contactId)) {
+      console.warn(`[Webhook] Rate limited: contact ${contactId}`);
+      return NextResponse.json({ received: true, skipped: "rate_limited" });
+    }
+
+    // ===== STOP/opt-out compliance — intercept before any processing =====
+    if (direction === "inbound" && messageBody) {
+      const stopKeywords = ["stop", "parar", "cancelar", "sair", "unsubscribe", "opt out", "nao me procure", "não me procure"];
+      const bodyLower = (messageBody || "").toLowerCase().trim();
+      if (stopKeywords.includes(bodyLower)) {
+        const supabaseStop = createAdminClient();
+        // Pause AI for ALL agents on this contact
+        await supabaseStop
+          .from("conversation_state")
+          .update({
+            ai_paused_at: new Date().toISOString(),
+            ai_paused_reason: "opt_out:" + bodyLower,
+            status: "disqualified"
+          })
+          .eq("location_id", locationId)
+          .eq("contact_id", contactId);
+        console.log(`[Webhook] Opt-out: contact ${contactId} sent "${bodyLower}"`);
+        return NextResponse.json({ received: true, skipped: "opt_out" });
+      }
     }
 
     if (direction === "outbound") {

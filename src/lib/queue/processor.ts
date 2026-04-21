@@ -209,16 +209,16 @@ async function processGroup(
     return;
   }
 
-  // Gate de handoff manual
-  const { data: pauseCheck } = await supabase
+  // Gate de handoff manual + fetch full convState for later use (conversationId cache, collected_data)
+  const { data: convState } = await supabase
     .from("conversation_state")
-    .select("ai_paused_at, ai_paused_reason")
+    .select("*")
     .eq("agent_id", agent.id)
     .eq("contact_id", group.contactId)
     .maybeSingle();
 
-  if (pauseCheck?.ai_paused_at) {
-    console.log(`[Processor] IA pausada para ${group.contactId} (${pauseCheck.ai_paused_reason || "manual"}), skipping`);
+  if (convState?.ai_paused_at) {
+    console.log(`[Processor] IA pausada para ${group.contactId} (${convState.ai_paused_reason || "manual"}), skipping`);
     return;
   }
 
@@ -288,15 +288,19 @@ async function processGroup(
   let conversationHistory = "";
 
   try {
-    // Buscar conversa
-    const searchResult = await ghlClient.get<{ conversations: { id: string }[] }>(
-      "/conversations/search",
-      { locationId: group.locationId, contactId: group.contactId }
-    );
+    // Use cached conversationId from conversation_state if available
+    let convId = convState?.conversation_id || group.conversationId || "";
 
-    if (searchResult.conversations?.[0]?.id) {
-      const convId = searchResult.conversations[0].id;
+    // Only search GHL if we don't have a conversationId cached
+    if (!convId) {
+      const searchResult = await ghlClient.get<{ conversations: { id: string }[] }>(
+        "/conversations/search",
+        { locationId: group.locationId, contactId: group.contactId }
+      );
+      convId = searchResult.conversations?.[0]?.id || "";
+    }
 
+    if (convId) {
       // Buscar mensagens
       const messagesResult = await ghlClient.get<{ messages: { messages: GHLMessage[] } }>(
         `/conversations/${convId}/messages`,
@@ -320,6 +324,14 @@ async function processGroup(
       // Atualizar conversationId se nao tinhamos
       if (!group.conversationId) {
         group.conversationId = convId;
+      }
+
+      // Cache conversationId for future messages
+      if (convId && convState && !convState.conversation_id) {
+        await supabase.from("conversation_state")
+          .update({ conversation_id: convId })
+          .eq("agent_id", agent.id)
+          .eq("contact_id", group.contactId);
       }
     }
   } catch (error) {
@@ -381,12 +393,7 @@ async function processGroup(
   }
 
   // 5. Mesclar com conversation_state (dados ja coletados pela IA)
-  const { data: convState } = await supabase
-    .from("conversation_state")
-    .select("*")
-    .eq("agent_id", agent.id)
-    .eq("contact_id", group.contactId)
-    .single();
+  // convState already fetched earlier (handoff gate + conversationId cache)
 
   const previousCollectedData = (convState?.collected_data as Record<string, string>) || {};
 
@@ -474,20 +481,20 @@ async function processGroup(
     timeZone: locationTz,
   });
 
-  // Buscar feedback para incluir no prompt
-  const { data: feedbackData } = await supabase
-    .from("agent_feedback")
-    .select("rating, ai_message, suggestion")
-    .eq("agent_id", agent.id)
-    .order("created_at", { ascending: false })
-    .limit(20);
-
-  // Buscar knowledge base
-  const { data: kbData } = await supabase
-    .from("knowledge_base")
-    .select("title, type, content, file_name, file_url")
-    .eq("agent_id", agent.id)
-    .order("created_at", { ascending: true });
+  // Buscar feedback + knowledge base em paralelo (queries independentes)
+  const [{ data: feedbackData }, { data: kbData }] = await Promise.all([
+    supabase
+      .from("agent_feedback")
+      .select("rating, ai_message, suggestion")
+      .eq("agent_id", agent.id)
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supabase
+      .from("knowledge_base")
+      .select("title, type, content, file_name, file_url")
+      .eq("agent_id", agent.id)
+      .order("created_at", { ascending: true }),
+  ]);
 
   const knowledgeBase = (kbData || []) as import("@/lib/ai/prompt-builder").KnowledgeBaseItem[];
 

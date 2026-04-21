@@ -34,6 +34,14 @@ export class GHLClient {
       }
     }
 
+    // Rate limit - wait and retry once
+    if (response.status === 429) {
+      const retryAfter = parseInt(response.headers.get("retry-after") || "5") * 1000;
+      console.warn(`[GHL] 429 rate limited, waiting ${retryAfter}ms...`);
+      await new Promise(r => setTimeout(r, retryAfter));
+      response = await request();
+    }
+
     if (!response.ok) {
       const errorBody = await response.text();
       throw new Error(`GHL API ${response.status}: ${errorBody.substring(0, 200)}`);
