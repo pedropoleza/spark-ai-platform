@@ -28,7 +28,7 @@ export async function validateGHLUser(
   companyId: string,
   locationId: string,
   userId: string
-): Promise<{ user: GHLUser; isAdmin: boolean }> {
+): Promise<{ user: GHLUser; isAdmin: boolean } | null> {
   const client = new GHLClient(companyId, locationId);
 
   // Tentar buscar lista de usuarios
@@ -59,22 +59,9 @@ export async function validateGHLUser(
     console.log("[SSO] Direct user fetch failed:", err instanceof Error ? err.message : err);
   }
 
-  // GHL API não validou o usuario. Aceitar com cautela pois o Custom Menu Link
-  // do GHL já garante autenticação. Mas logar o evento para monitoramento.
-  console.warn("[SSO] GHL API validation failed — accepting via Custom Menu Link trust. userId:", userId);
-  return {
-    user: {
-      id: userId,
-      name: "",
-      firstName: "",
-      lastName: "",
-      email: "",
-      role: "unknown",
-      type: "unknown",
-      permissions: {},
-    },
-    isAdmin: true,
-  };
+  // GHL API não validou o usuario — rejeitamos (fail-closed).
+  console.warn("[SSO] GHL API validation failed — rejecting (fail-closed). userId:", userId);
+  return null;
 }
 
 function isUserAdmin(user: GHLUser): boolean {

@@ -158,12 +158,22 @@ function parseAIResponse(text: string): AIResponse | null {
       message = "Pode me contar mais?";
     }
 
+    // Filter out garbage values from collected_data
+    const rawCollected = parsed.collected_data || parsed.extracted_data || {};
+    const collected_data: Record<string, string> = {};
+    for (const [k, v] of Object.entries(rawCollected)) {
+      const val = String(v || "").trim();
+      if (val && !val.toLowerCase().includes("nao coletado") && !val.toLowerCase().includes("not collected") && val !== "(pendente)" && val !== "null" && val !== "undefined") {
+        collected_data[k] = val;
+      }
+    }
+
     return {
       message,
       should_send_message: true,
       actions: Array.isArray(parsed.actions) ? parsed.actions : [],
       internal_notes: parsed.internal_notes || "",
-      collected_data: parsed.collected_data || parsed.extracted_data || {},
+      collected_data,
       conversation_status: parsed.conversation_status || "active",
     };
   } catch {

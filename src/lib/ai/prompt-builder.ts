@@ -84,7 +84,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     buildToneSection(ctx),
     buildDataCollectionSection(ctx),
     buildConversationRulesSection(ctx),
-    buildMediaInstructionsSection(),
+    buildMediaInstructionsSection(ctx.config),
     buildBookingSection(ctx),
     buildFeedbackSection(ctx),
     buildKnowledgeBaseSection(ctx),
@@ -276,7 +276,7 @@ function buildDataCollectionSection(ctx: PromptContext): string {
   // Gerar mapa de field keys para a IA usar
   const fieldKeyMap = ctx.config.data_fields.map((field: DataField) => {
     const value = findFieldValue(field, ctx.collectedData);
-    const status = value ? `"${value}"` : "NAO COLETADO";
+    const status = value ? `"${value}"` : "(pendente)";
     const req = field.required ? "OBRIGATORIO" : "opcional";
     const skip = (field.skip_if_filled !== false) && value ? " [PULAR - JA PREENCHIDO]" : "";
     return `- key: "${field.key}" | label: "${field.label}" | ${req} | valor: ${status}${skip}`;
@@ -306,25 +306,46 @@ REGRAS CRITICAS DE COLETA:
 7. Se o lead enviar apenas emoji ou "ok", responda de forma natural e continue o atendimento
 8. Se o lead disser "depois", "to ocupado", encerre educadamente e defina conversation_status = "stale"
 
+LIMITE DE INSISTENCIA (OBRIGATORIO):
+- Se voce ja perguntou por um campo 2 vezes e o lead nao respondeu diretamente, NAO pergunte pela 3a vez
+- Mova-se para o proximo campo pendente ou proponha agendamento
+- Se o lead deu QUALQUER sinal de aceite ("sim", "topo", "pode marcar", "quero"), PARE de coletar dados e AGENDE IMEDIATAMENTE
+- Campos faltantes podem ser coletados na ligacao/reuniao — nao trave a conversa por causa deles
+- NUNCA repita a mesma pergunta mais de 2 vezes na conversa inteira
+
 REGRA DE KEYS NO collected_data (OBRIGATORIO):
 Use EXATAMENTE estas keys: ${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}
 Exemplo correto: { ${ctx.config.data_fields.map((f) => `"${f.key}": "valor extraido"`).join(", ")} }
 NAO invente keys diferentes. NAO use portugues nas keys. Use EXATAMENTE as keys acima.`;
 }
 
-function buildMediaInstructionsSection(): string {
-  return `## MIDIA RECEBIDA
-Quando o lead enviar uma IMAGEM:
+function buildMediaInstructionsSection(config: AgentConfig): string {
+  const parts: string[] = [];
+
+  if (config.enable_audio_transcription) {
+    parts.push(`Quando o lead enviar um AUDIO:
+- A transcricao aparece na mensagem automaticamente
+- Use o conteudo para dar continuidade a conversa de forma natural
+- NAO diga "recebi seu audio" de forma robotica — reaja como humano`);
+  }
+
+  if (config.enable_image_analysis) {
+    parts.push(`Quando o lead enviar uma IMAGEM:
 - Descreva brevemente o que voce ve, de forma natural e contextual
 - Use a imagem para dar continuidade a conversa (ex: se e um curriculo, documento, produto, localizacao)
-- NAO diga "recebi sua imagem" de forma robotica — reaja como humano
+- NAO diga "recebi sua imagem" de forma robotica — reaja como humano`);
+  }
 
-Quando o lead enviar um DOCUMENTO (PDF, DOC):
+  if (config.enable_pdf_reading) {
+    parts.push(`Quando o lead enviar um DOCUMENTO (PDF, DOC):
 - O conteudo extraido aparece na mensagem como [Documento "nome"]: texto...
 - Use o conteudo para responder perguntas — NAO repita o texto inteiro
-- Se o documento for relevante para a qualificacao, extraia dados e salve no collected_data
+- Se o documento for relevante para a qualificacao, extraia dados e salve no collected_data`);
+  }
 
-Se receber midia que nao pode ser processada, diga de forma natural: "Nao consegui abrir esse arquivo. Pode mandar como PDF ou foto?"`;
+  if (parts.length === 0) return "";
+
+  return `## MIDIA RECEBIDA\n${parts.join("\n\n")}\n\nSe receber midia que nao pode ser processada, diga de forma natural: "Nao consegui abrir esse arquivo. Pode mandar como PDF ou foto?"`;
 }
 
 function buildConversationRulesSection(ctx: PromptContext): string {

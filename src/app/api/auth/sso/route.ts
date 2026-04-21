@@ -12,11 +12,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error || "Dados invalidos" }, { status: 400 });
     }
 
-    const { user } = await validateGHLUser(
+    const validationResult = await validateGHLUser(
       data.company_id,
       data.location_id,
       data.user_id
     );
+
+    if (!validationResult) {
+      return NextResponse.json({ error: "Falha na validacao do usuario" }, { status: 403 });
+    }
+
+    const { user } = validationResult;
 
     // Buscar timezone da location via GHL API
     let locationTimezone = "America/New_York";

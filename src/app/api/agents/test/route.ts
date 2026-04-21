@@ -177,6 +177,7 @@ export async function POST(request: NextRequest) {
         conversationId: `test-${Date.now()}`,
         calendarId: config.calendar_id || undefined,
         skipSendMessage: true,
+        testMode: true,
       });
       actionsExecuted = true;
     } catch (error) {

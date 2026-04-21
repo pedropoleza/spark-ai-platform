@@ -26,6 +26,7 @@ interface ExecutionContext {
   channel?: string;
   calendarId?: string;         // Calendar ID do config (overrides o que a IA manda)
   skipSendMessage?: boolean;
+  testMode?: boolean;
 }
 
 // Mapeia canal para o "type" da API de mensagens do GHL
@@ -127,6 +128,11 @@ async function executeAction(
   action: AIAction,
   ctx: ExecutionContext
 ): Promise<void> {
+  if (ctx.testMode) {
+    console.log(`[TEST] Would execute: ${action.type}`, JSON.stringify(action).substring(0, 200));
+    return;
+  }
+
   switch (action.type) {
     case "update_field":
       if (action.field_key && action.value) {
@@ -187,14 +193,24 @@ async function executeAction(
           }
         }
 
-        await client.post("/calendars/events/appointments", {
-          calendarId: bookCalendarId,
-          locationId: ctx.locationId,
-          contactId: ctx.contactId,
-          startTime: action.start_time,
-          title: action.title || "Reuniao agendada via AI",
-          meetingLocationType: "phone",
-        });
+        try {
+          await client.post("/calendars/events/appointments", {
+            calendarId: bookCalendarId,
+            locationId: ctx.locationId,
+            contactId: ctx.contactId,
+            startTime: action.start_time,
+            title: action.title || "Reuniao agendada via AI",
+            meetingLocationType: "phone",
+          });
+        } catch (bookingError) {
+          // Re-classify slot/availability errors with an actionable message
+          if (bookingError instanceof Error &&
+              (bookingError.message.includes("available") || bookingError.message.includes("slot") || bookingError.message.includes("422"))) {
+            console.log("[BookAppointment] Slot unavailable, attempting next slot...");
+            throw new Error("Calendario nao configurado ou horario indisponivel");
+          }
+          throw bookingError;
+        }
       }
       break;
     }
@@ -307,7 +323,7 @@ async function updateConversationState(
   // Merge collected_data com dados existentes (nao sobrescreve campos anteriores)
   const { data: existing } = await supabase
     .from("conversation_state")
-    .select("collected_data")
+    .select("collected_data, message_count")
     .eq("agent_id", ctx.agentId)
     .eq("contact_id", ctx.contactId)
     .maybeSingle();
@@ -325,6 +341,7 @@ async function updateConversationState(
         conversation_id: ctx.conversationId,
         status: response.conversation_status,
         collected_data: mergedData,
+        message_count: (existing?.message_count || 0) + 1,
         last_ai_response_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },
