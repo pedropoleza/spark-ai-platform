@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Falha na validacao do usuario" }, { status: 403 });
     }
 
-    const { user } = validationResult;
+    const { user, isAdmin } = validationResult;
 
     // Buscar timezone da location via GHL API
     let locationTimezone = "America/New_York";
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
       companyId: data.company_id,
       locationId: data.location_id,
       locationName,
-      isAdmin: true,
+      isAdmin,
     });
 
     return NextResponse.json({ success: true });

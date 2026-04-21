@@ -59,9 +59,15 @@ export async function validateGHLUser(
     console.log("[SSO] Direct user fetch failed:", err instanceof Error ? err.message : err);
   }
 
-  // GHL API não validou o usuario — rejeitamos (fail-closed).
-  console.warn("[SSO] GHL API validation failed — rejecting (fail-closed). userId:", userId);
-  return null;
+  // GHL API não validou — aceitar com permissão limitada.
+  // O Custom Menu Link do GHL já autentica o usuário. Se a API falhar
+  // (GHL instável, rate limit, etc), permitimos acesso mas sem admin.
+  console.warn("[SSO] GHL API validation failed — accepting with limited access. userId:", userId);
+  return {
+    user: { id: userId, name: "", firstName: "", lastName: "", email: "",
+            role: "user", type: "user", permissions: {} },
+    isAdmin: false,
+  };
 }
 
 function isUserAdmin(user: GHLUser): boolean {
