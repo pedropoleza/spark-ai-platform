@@ -580,7 +580,7 @@ export function SalesConfigContent() {
               <CardHeader>
                 <CardTitle>Modelo de IA</CardTitle>
                 <CardDescription>
-                  Selecione qual modelo de IA o agente vai usar
+                  Escolha o modelo que melhor se adapta ao seu agente. Claude oferece melhor qualidade conversacional.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -588,15 +588,18 @@ export function SalesConfigContent() {
                   value={config.ai_model}
                   onValueChange={(v) => updateConfig("ai_model", v)}
                 >
-                  <SelectTrigger className="w-64">
+                  <SelectTrigger className="w-full max-w-md">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {AI_MODELS.map((model) => (
                       <SelectItem key={model.value} value={model.value}>
-                        <div className="flex items-center justify-between w-full gap-3">
-                          <span>{model.label}</span>
-                          <span className="text-[10px] text-gray-500">{model.description}</span>
+                        <div className="flex items-center gap-3 w-full">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${model.provider === "anthropic" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
+                            {model.provider === "anthropic" ? "Claude" : "GPT"}
+                          </span>
+                          <span className="text-sm">{model.label}</span>
+                          <span className="text-[10px] text-gray-400 ml-auto">{model.description}</span>
                         </div>
                       </SelectItem>
                     ))}

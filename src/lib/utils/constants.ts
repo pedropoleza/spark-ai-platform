@@ -3,17 +3,14 @@ export const GHL_API_BASE = process.env.GHL_API_BASE || "https://services.leadco
 export const GHL_API_VERSION = "2021-07-28";
 
 export const AI_MODELS = [
-  // GPT-5.4 series (mais recente — flagship)
-  { value: "gpt-5.4-nano", label: "GPT-5.4 Nano (mais barato)", description: "$0.20/$1.25 por 1M tokens" },
-  { value: "gpt-5.4-mini", label: "GPT-5.4 Mini", description: "$0.75/$4.50 por 1M tokens" },
-  { value: "gpt-5.4", label: "GPT-5.4 (flagship)", description: "$2.50/$15.00 por 1M tokens" },
-  // GPT-4.1 series (melhor custo-beneficio)
-  { value: "gpt-4.1-mini", label: "GPT-4.1 Mini (recomendado)", description: "$0.40/$1.60 por 1M tokens" },
-  { value: "gpt-4.1", label: "GPT-4.1", description: "$2.00/$8.00 por 1M tokens" },
-  // o-series (raciocinio)
-  { value: "o4-mini", label: "o4-mini (raciocinio)", description: "$1.10/$4.40 por 1M tokens" },
-  // Legado
-  { value: "gpt-4o-mini", label: "GPT-4o Mini (legado)", description: "$0.15/$0.60 por 1M tokens" },
+  // === Claude (Anthropic) ===
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (melhor qualidade)", description: "$3/$15 por 1M tokens", provider: "anthropic" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (rápido e barato)", description: "$0.80/$4 por 1M tokens", provider: "anthropic" },
+  // === OpenAI GPT ===
+  { value: "gpt-4.1-mini", label: "GPT-4.1 Mini (recomendado)", description: "$0.40/$1.60 por 1M tokens", provider: "openai" },
+  { value: "gpt-4.1", label: "GPT-4.1", description: "$2.00/$8.00 por 1M tokens", provider: "openai" },
+  { value: "gpt-4o-mini", label: "GPT-4o Mini (legado)", description: "$0.15/$0.60 por 1M tokens", provider: "openai" },
+  { value: "o4-mini", label: "o4-mini (raciocínio)", description: "$1.10/$4.40 por 1M tokens", provider: "openai" },
 ] as const;
 
 export const AGENT_TYPES = {
