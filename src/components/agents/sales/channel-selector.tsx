@@ -28,7 +28,7 @@ const CHANNELS: {
   description: string;
   color: string;
 }[] = [
-  { value: "SMS", label: "SMS", icon: Phone, description: "SMS via numero do Spark", color: "text-gray-600" },
+  { value: "SMS", label: "SMS", icon: Phone, description: "SMS via número do Spark", color: "text-gray-600" },
   { value: "WhatsApp", label: "WhatsApp API", icon: WhatsAppIcon, description: "WhatsApp Business API", color: "text-[#25D366]" },
   { value: "Instagram", label: "Instagram", icon: InstagramIcon, description: "Direct Messages", color: "text-[#E4405F]" },
   { value: "Email", label: "Email", icon: Mail, description: "Email", color: "text-gray-600" },
@@ -52,7 +52,7 @@ export function ChannelSelector({ selected, onChange }: ChannelSelectorProps) {
   return (
     <div className="space-y-3">
       <div>
-        <Label>Canais de comunicacao</Label>
+        <Label>Canais de comunicação</Label>
         <p className="text-xs text-gray-500 mt-0.5">
           O agente responde pelo mesmo canal que o lead usou para enviar a mensagem
         </p>

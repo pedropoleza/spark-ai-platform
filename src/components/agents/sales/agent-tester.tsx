@@ -380,18 +380,19 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     const userMessage = input.trim();
     setInput("");
 
-    // Montar label visual para o usuario
-    let displayContent = userMessage;
+    // Montar label visual para o usuário
     const isAudioFile = hasFile && attachedFile!.type.startsWith("audio/");
+    let displayContent = userMessage;
     if (isAudioFile) {
-      displayContent = `🎤 [Audio gravado — transcrevendo...]`;
+      displayContent = "🎤 Transcrevendo áudio...";
     } else if (hasFile && !hasText) {
-      displayContent = `[${attachedFile!.type.startsWith("image/") ? "Imagem" : "Arquivo"}: ${attachedFile!.name}]`;
+      displayContent = `📎 ${attachedFile!.name}`;
     } else if (hasFile && hasText) {
-      const fileLabel = attachedFile!.type.startsWith("image/") ? "Imagem" : "Arquivo";
-      displayContent = `${userMessage}\n[${fileLabel}: ${attachedFile!.name}]`;
+      displayContent = `${userMessage}\n📎 ${attachedFile!.name}`;
     }
 
+    // Adicionar mensagem do usuário (será atualizada se for áudio)
+    const msgIndex = messages.length;
     setMessages((prev) => [
       ...prev,
       { role: "user", content: displayContent, timestamp: new Date() },
@@ -399,13 +400,13 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
     setLoading(true);
 
-    // Se tem arquivo, processar e incluir conteudo na mensagem
+    // Se tem arquivo, processar e incluir conteúdo na mensagem
     let finalMessage = userMessage || "[media]";
     if (hasFile) {
       try {
         const file = attachedFile!;
         if (file.type.startsWith("audio/")) {
-          // Transcrever audio via Whisper antes de enviar para a IA
+          // Transcrever áudio via Whisper
           const formData = new FormData();
           formData.append("audio", file);
           const transcribeRes = await fetch("/api/agents/test/transcribe", {
@@ -414,9 +415,16 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           });
           if (transcribeRes.ok) {
             const { text } = await transcribeRes.json();
-            finalMessage = text || userMessage || "[audio sem conteudo]";
+            finalMessage = text || userMessage || "[áudio sem conteúdo]";
+            // Atualizar a mensagem do usuário com o texto transcrito
+            setMessages((prev) => prev.map((m, i) =>
+              i === msgIndex ? { ...m, content: `🎤 "${finalMessage}"` } : m
+            ));
           } else {
-            finalMessage = userMessage || "[Nao foi possivel transcrever o audio]";
+            finalMessage = userMessage || "[Não foi possível transcrever o áudio]";
+            setMessages((prev) => prev.map((m, i) =>
+              i === msgIndex ? { ...m, content: "🎤 Erro na transcrição" } : m
+            ));
           }
         } else if (file.type.startsWith("image/")) {
           const reader = new FileReader();
@@ -495,7 +503,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     } catch {
       setMessages((prev) => [
         ...prev,
-        { role: "agent", content: "Erro de conexao com o servidor", timestamp: new Date() },
+        { role: "agent", content: "Erro de conexão com o servidor.", timestamp: new Date() },
       ]);
     } finally {
       setLoading(false);
@@ -520,7 +528,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
       <Card>
         <CardContent className="p-8 text-center">
           <p className="text-sm text-gray-400">
-            Salve a configuracao do agente primeiro para poder testa-lo.
+            Salve a configuração do agente primeiro para poder testá-lo.
           </p>
         </CardContent>
       </Card>
@@ -541,7 +549,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
               />
               <div>
                 <Label htmlFor="execute-actions" className="font-medium">
-                  Executar acoes reais
+                  Executar ações reais
                 </Label>
                 <p className="text-xs text-gray-500 mt-0.5">
                   {executeActions
@@ -568,8 +576,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             <div className="mt-3 flex items-center gap-2 text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
               <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
               <span>
-                Atencao: com acoes reais ativadas, o agente vai enviar mensagens,
-                agendar reunioes e atualizar dados do contato no Spark.
+                Atenção: com ações reais ativadas, o agente vai enviar mensagens,
+                agendar reuniões e atualizar dados do contato no Spark.
               </span>
             </div>
           )}
@@ -584,7 +592,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
               <div>
                 <CardTitle className="text-base">Conversa de teste</CardTitle>
                 <CardDescription>
-                  Simule uma conversa para testar o comportamento do agente
+                  Simule uma conversa para testar o comportamento do agente.
                 </CardDescription>
               </div>
               <Button variant="outline" size="sm" onClick={handleReset}>
@@ -598,7 +606,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
               {messages.length === 0 && (
                 <div className="flex items-center justify-center h-full">
                   <p className="text-sm text-gray-500">
-                    Envie uma mensagem para iniciar o teste
+                    Envie uma mensagem para iniciar o teste.
                   </p>
                 </div>
               )}
@@ -649,7 +657,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                           {msg.actionsExecuted && (
                             <span className="text-[10px] text-emerald-600 flex items-center gap-0.5">
                               <CheckCircle2 className="w-2.5 h-2.5" />
-                              Acoes executadas
+                              Ações executadas
                             </span>
                           )}
                           {msg.actionsError && (
@@ -760,7 +768,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             <div className="p-3 border-t border-gray-200">
               {executeActions && !contactId && (
                 <p className="text-xs text-amber-500 mb-2">
-                  Informe o Contact ID acima para executar acoes reais
+                  Informe o Contact ID acima para executar ações reais.
                 </p>
               )}
               {attachedFile && !isRecording && (
@@ -779,7 +787,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                 <div className="flex items-center gap-3 px-3 py-2 bg-red-50 border border-red-200 rounded-xl">
                   <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
                   <span className="text-sm font-medium text-red-700 font-mono">{formatRecordingTime(recordingTime)}</span>
-                  <span className="text-xs text-red-500 flex-1">Gravando audio...</span>
+                  <span className="text-xs text-red-500 flex-1">Gravando áudio...</span>
                   <Button variant="ghost" size="sm" className="h-7 text-xs text-gray-600" onClick={cancelRecording}>
                     Cancelar
                   </Button>
@@ -868,10 +876,10 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     });
                   }}
                   className="flex-1 min-h-[140px] text-[11px] font-mono text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-brand-300"
-                  placeholder="Deixe vazio para prompt automatico. Edite aqui ou clique 'Expandir' para tela cheia."
+                  placeholder="Deixe vazio para prompt automático. Edite aqui ou clique em Expandir para tela cheia."
                 />
                 <p className="text-[9px] text-gray-400 mt-1.5">
-                  {systemPromptPreview ? `~${Math.ceil(systemPromptPreview.length / 4)} tokens · Salva ao sair do campo` : "Usando prompt gerado automaticamente"}
+                  {systemPromptPreview ? `~${Math.ceil(systemPromptPreview.length / 4)} tokens · Salva ao sair do campo` : "Usando prompt gerado automaticamente."}
                 </p>
               </CardContent>
             </Card>
@@ -885,7 +893,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                 </div>
                 <div className="flex-1 min-h-[140px] overflow-y-auto space-y-1.5 bg-gray-50 border border-gray-200 rounded-lg p-2.5">
                   {kbItems.length === 0 ? (
-                    <p className="text-[11px] text-gray-400 text-center mt-8">Nenhum item. Adicione na aba Contexto.</p>
+                    <p className="text-[11px] text-gray-400 text-center mt-8">Nenhum item na base. Adicione na aba Contexto.</p>
                   ) : kbItems.map((item) => (
                     <div key={item.id} className="flex items-center gap-2 py-1.5 px-2 rounded bg-white border border-gray-100 group hover:border-gray-200 transition-colors">
                       <FileText className="w-3 h-3 text-gray-400 flex-shrink-0" />
@@ -914,13 +922,13 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           {/* Media Toggles - Interativos */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Recursos de midia</CardTitle>
+              <CardTitle className="text-base">Recursos de Mídia</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2.5">
               {([
-                { key: "audio" as const, icon: Mic, label: "Transcricao de audio" },
-                { key: "image" as const, icon: Eye, label: "Analise de imagens" },
-                { key: "pdf" as const, icon: FileText, label: "Leitura de PDFs" },
+                { key: "audio" as const, icon: Mic, label: "Transcrição de áudio" },
+                { key: "image" as const, icon: Eye, label: "Análise de imagens" },
+                { key: "pdf" as const, icon: FileText, label: "Leitura de documentos" },
               ]).map(({ key, icon: Icon, label }) => (
                 <div key={key} className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -937,17 +945,17 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             </CardContent>
           </Card>
 
-          {/* Dados coletados */}
+          {/* Dados Coletados */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">Dados coletados</CardTitle>
+              <CardTitle className="text-base">Dados Coletados</CardTitle>
               <CardDescription>
-                Informacoes extraidas pela IA durante a conversa
+                Informações extraídas pela IA durante a conversa.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 max-h-[220px] overflow-y-auto">
               {Object.keys(collectedData).length === 0 ? (
-                <p className="text-sm text-gray-500">Nenhum dado coletado ainda</p>
+                <p className="text-sm text-gray-500">Nenhum dado coletado ainda.</p>
               ) : (
                 Object.entries(collectedData).map(([key, value]) => (
                   <div key={key} className="flex flex-col gap-0.5">
@@ -964,7 +972,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           <Card>
             <CardHeader className="pb-3 flex-row items-start justify-between gap-2">
               <div>
-                <CardTitle className="text-base">Perfil comportamental</CardTitle>
+                <CardTitle className="text-base">Perfil Comportamental</CardTitle>
                 <CardDescription>
                   {editingProfile
                     ? "Ajuste os percentuais. Ao salvar, o proximo teste ja usa o novo perfil."
@@ -1076,13 +1084,13 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         </div>
       </div>
 
-      {/* Feedbacks registrados — abaixo do grid, full width */}
+      {/* Feedbacks Registrados — abaixo do grid, full width */}
       <Card className="mt-0">
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Feedbacks registrados</CardTitle>
+          <CardTitle className="text-base">Feedbacks Registrados</CardTitle>
           <CardDescription>
-            Positivos reforcam o estilo que a IA deve repetir. Negativos incluem como
-            deveria ter respondido e a IA aprende com eles. Vc pode editar ou apagar.
+            Positivos reforçam o estilo que a IA deve repetir. Negativos incluem como
+            deveria ter respondido e a IA aprende com eles. Você pode editar ou apagar.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -1092,7 +1100,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             </div>
           ) : savedFeedbacks.length === 0 ? (
             <p className="text-sm text-gray-500">
-              Nenhum feedback registrado. Use os botoes de curtir/descurtir nas respostas do agente acima.
+              Nenhum feedback registrado. Use os botões de curtir/descurtir nas respostas do agente.
             </p>
           ) : (
             <div className="space-y-2">

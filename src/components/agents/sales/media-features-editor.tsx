@@ -18,16 +18,16 @@ const features = [
   {
     key: "audio" as const,
     icon: Mic,
-    label: "Transcricao de audio",
-    description: "A IA ouve e transcreve audios enviados pelo contato, respondendo com base no conteudo falado.",
+    label: "Transcrição de áudio",
+    description: "A IA ouve e transcreve áudios enviados pelo contato, respondendo com base no conteúdo falado.",
     cost: "~$0.006/min",
     model: "Whisper",
   },
   {
     key: "image" as const,
     icon: Eye,
-    label: "Analise de imagens",
-    description: "A IA analisa fotos e imagens enviadas, descrevendo o conteudo e respondendo contextualmente.",
+    label: "Análise de imagens",
+    description: "A IA analisa fotos e imagens enviadas, descrevendo o conteúdo e respondendo contextualmente.",
     cost: "~$0.001-0.003/img",
     model: "GPT-4 Vision",
   },
@@ -35,9 +35,9 @@ const features = [
     key: "pdf" as const,
     icon: FileText,
     label: "Leitura de documentos",
-    description: "A IA extrai texto de PDFs e documentos Word enviados, usando o conteudo para responder perguntas.",
+    description: "A IA extrai texto de PDFs e documentos Word enviados, usando o conteúdo para responder perguntas.",
     cost: "~$0.002-0.01/doc",
-    model: "Extracao + GPT",
+    model: "Extração + GPT",
   },
 ];
 
