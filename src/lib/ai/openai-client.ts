@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
 import type { AIResponse, AIProcessingResult } from "@/types/ai";
 
 const OPENAI_VISION_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"];
@@ -9,8 +8,11 @@ function getOpenAIClient() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 30000, maxRetries: 1 });
 }
 
-function getAnthropicClient() {
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 30000, maxRetries: 1 });
+async function getAnthropicClient() {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new Error("ANTHROPIC_API_KEY não configurada. Adicione no Vercel para usar modelos Claude.");
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  return new Anthropic({ apiKey: key, timeout: 30000, maxRetries: 1 });
 }
 
 export interface ImageInput {
@@ -119,12 +121,12 @@ async function processWithOpenAI(
 async function processWithClaude(
   input: ProcessMessageInput, textContent: string, startTime: number
 ): Promise<AIProcessingResult> {
+  const client = await getAnthropicClient();
   const hasImages = input.images && input.images.length > 0;
 
-  // Montar content blocks para Claude
-  const contentBlocks: Anthropic.ContentBlockParam[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const contentBlocks: any[] = [];
 
-  // Imagens primeiro (Claude aceita base64 inline)
   if (hasImages) {
     for (const img of input.images!.slice(0, 4)) {
       if (img.base64DataUri) {
@@ -132,7 +134,7 @@ async function processWithClaude(
         if (match) {
           contentBlocks.push({
             type: "image",
-            source: { type: "base64", media_type: match[1] as "image/jpeg" | "image/png" | "image/gif" | "image/webp", data: match[2] },
+            source: { type: "base64", media_type: match[1], data: match[2] },
           });
         }
       }
@@ -141,7 +143,7 @@ async function processWithClaude(
 
   contentBlocks.push({ type: "text", text: textContent });
 
-  const response = await getAnthropicClient().messages.create({
+  const response = await client.messages.create({
     model: input.model,
     max_tokens: 2500,
     system: input.systemPrompt,
