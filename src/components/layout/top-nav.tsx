@@ -10,7 +10,7 @@ const navItems = [
   { label: "Hub de Agentes", href: "/dashboard", icon: LayoutDashboard },
   { label: "Atividade", href: "/dashboard/activity", icon: Activity },
   { label: "Billing", href: "/dashboard/billing", icon: DollarSign },
-  { label: "Configuracoes", href: "/dashboard/settings", icon: Settings },
+  { label: "Configurações", href: "/dashboard/settings", icon: Settings },
 ];
 
 export function TopNav() {
@@ -63,7 +63,9 @@ export function TopNav() {
       <nav className="-mb-px overflow-x-auto bg-gray-50/70 border-t border-gray-100">
         <div className="mx-auto w-full max-w-[1600px] px-6 lg:px-10 xl:px-14 flex items-center gap-1 min-w-min">
           {navItems.map((item) => {
-            const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+            const isActive = item.href === "/dashboard"
+              ? pathname === "/dashboard"
+              : pathname === item.href || pathname.startsWith(item.href + "/");
             const Icon = item.icon;
             return (
               <Link

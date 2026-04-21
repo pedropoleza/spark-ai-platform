@@ -98,7 +98,7 @@ export default function DashboardPage() {
 
       if (active) {
         toast.success(`${agentLabel(agentType)} ativado`, {
-          description: "O agente esta recebendo e processando mensagens.",
+          description: "O agente está recebendo e processando mensagens.",
         });
 
         // Activation Safety Gate: check config for missing rules/calendar
@@ -112,14 +112,14 @@ export default function DashboardPage() {
               const agentConfig = configData.config;
               if (agentConfig) {
                 if (!agentConfig.targeting_rules || agentConfig.targeting_rules.length === 0) {
-                  toast.warning("Agente ativado SEM regras de segmentacao — vai responder a TODOS os contatos. Configure as regras em Segmentacao.", { duration: 8000 });
+                  toast.warning("Agente ativado SEM regras de segmentação — vai responder a TODOS os contatos. Configure as regras em Segmentação.", { duration: 8000 });
                 }
                 if (
                   agentConfig.objective &&
                   agentConfig.objective.includes("booking") &&
                   !agentConfig.calendar_id
                 ) {
-                  toast.warning("Agente ativado SEM calendario configurado — agendamentos nao vao funcionar.", { duration: 8000 });
+                  toast.warning("Agente ativado SEM calendário configurado — agendamentos não vão funcionar.", { duration: 8000 });
                 }
               }
             }
@@ -129,12 +129,12 @@ export default function DashboardPage() {
         }
       } else {
         toast.info(`${agentLabel(agentType)} desativado`, {
-          description: "O agente nao ira processar novas mensagens.",
+          description: "O agente não irá processar novas mensagens.",
         });
       }
     } catch (error) {
       console.error("Erro ao atualizar agente:", error);
-      toast.error("Erro de conexao", { description: "Nao foi possivel atualizar o agente." });
+      toast.error("Erro de conexão", { description: "Não foi possível atualizar o agente." });
     } finally {
       setTogglingType(null);
     }

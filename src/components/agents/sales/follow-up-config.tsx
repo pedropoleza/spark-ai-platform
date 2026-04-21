@@ -283,12 +283,12 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
             <Textarea
               value={config.custom_prompt || ""}
               onChange={(e) => update("custom_prompt", e.target.value)}
-              placeholder={`Instrucoes especificas para os follow-ups. Ex:\n- Seja mais direto nos follow-ups\n- No ultimo follow-up, ofrececa um opt-out educado\n- Mencione beneficios do seguro de vida`}
+              placeholder={`Instruções específicas para os follow-ups. Ex:\n- Seja mais direto nos follow-ups\n- No último follow-up, ofereça um opt-out educado\n- Mencione benefícios do seguro de vida`}
               rows={4}
               className="mt-1.5"
             />
             <p className="text-xs text-gray-500 mt-1">
-              Instrucoes adicionais para a IA usar nos follow-ups
+              Instruções adicionais para a IA usar nos follow-ups
             </p>
           </div>
         </>

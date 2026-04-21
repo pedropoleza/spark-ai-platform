@@ -183,22 +183,22 @@ export function SalesConfigContent() {
       if (response.ok) {
         setSaved(true);
         setSavedConfig(config);
-        toast.success("Configuracoes salvas com sucesso!", {
+        toast.success("Configurações salvas com sucesso!", {
           description: "Todas as regras foram atualizadas.",
           duration: 4000,
         });
         setTimeout(() => setSaved(false), 3000);
       } else {
         const data = await response.json().catch(() => ({}));
-        toast.error("Erro ao salvar configuracoes", {
+        toast.error("Erro ao salvar configurações", {
           description: data.error || `Erro ${response.status}`,
           duration: 6000,
         });
       }
     } catch (error) {
       console.error("Erro ao salvar config:", error);
-      toast.error("Erro de conexao", {
-        description: "Nao foi possivel salvar. Verifique sua conexao.",
+      toast.error("Erro de conexão", {
+        description: "Não foi possível salvar. Verifique sua conexão.",
         duration: 6000,
       });
     } finally {
@@ -244,24 +244,24 @@ export function SalesConfigContent() {
     >
       <Tabs defaultValue="targeting" className="animate-fade-in">
         <TabsList>
-          <TabsTrigger value="targeting">Segmentacao</TabsTrigger>
+          <TabsTrigger value="targeting">Segmentação</TabsTrigger>
           <TabsTrigger value="behavior">Comportamento</TabsTrigger>
           <TabsTrigger value="prompt">Prompt</TabsTrigger>
           <TabsTrigger value="context">Contexto</TabsTrigger>
           <TabsTrigger value="test">Teste</TabsTrigger>
-          <TabsTrigger value="advanced">Avancado</TabsTrigger>
+          <TabsTrigger value="advanced">Avançado</TabsTrigger>
         </TabsList>
 
         {/* ==================== SEGMENTACAO ==================== */}
         <TabsContent value="targeting">
           <div className="grid gap-6">
-            {/* Regras de ativacao */}
+            {/* Regras de ativação */}
             <Card>
               <CardHeader>
-                <CardTitle>Regras de ativacao</CardTitle>
+                <CardTitle>Regras de ativação</CardTitle>
                 <CardDescription>
                   Defina quando o agente deve ser ativado para um lead.
-                  Voce pode combinar multiplas regras — o agente ativa quando qualquer uma delas for atendida.
+                  Você pode combinar múltiplas regras — o agente ativa quando qualquer uma delas for atendida.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -276,16 +276,16 @@ export function SalesConfigContent() {
               </CardContent>
             </Card>
 
-            {/* Calendario */}
+            {/* Calendário */}
             <Card>
               <CardHeader>
-                <CardTitle>Calendario</CardTitle>
+                <CardTitle>Calendário</CardTitle>
                 <CardDescription>
-                  Calendario para agendamento de reunioes
+                  Calendário para agendamento de reuniões
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Label>Calendario</Label>
+                <Label>Calendário</Label>
                 {ghl.loading ? (
                   <Skeleton className="h-10 mt-1.5" />
                 ) : (
@@ -294,7 +294,7 @@ export function SalesConfigContent() {
                     onValueChange={(v) => updateConfig("calendar_id", v || null)}
                   >
                     <SelectTrigger className="mt-1.5">
-                      <SelectValue placeholder="Selecione um calendario..." />
+                      <SelectValue placeholder="Selecione um calendário..." />
                     </SelectTrigger>
                     <SelectContent>
                       {ghl.calendars.map((c) => (
@@ -367,7 +367,7 @@ export function SalesConfigContent() {
                 <CardHeader>
                   <CardTitle>Apos o agendamento</CardTitle>
                   <CardDescription>
-                    Defina o que acontece depois que o lead agenda uma reuniao
+                    Defina o que acontece depois que o lead agenda uma reunião
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -383,7 +383,7 @@ export function SalesConfigContent() {
               <CardHeader>
                 <CardTitle>Dados para coletar</CardTitle>
                 <CardDescription>
-                  Configure quais informacoes o agente deve coletar. Campos vinculados
+                  Configure quais informações o agente deve coletar. Campos vinculados
                   a Custom Fields sao atualizados automaticamente no Spark.
                 </CardDescription>
               </CardHeader>
@@ -417,7 +417,7 @@ export function SalesConfigContent() {
             {/* Follow-up */}
             <Card>
               <CardHeader>
-                <CardTitle>Follow-up automatico</CardTitle>
+                <CardTitle>Follow-up automático</CardTitle>
                 <CardDescription>
                   Configure como o agente reentra em contato quando o lead para de responder
                 </CardDescription>
@@ -435,7 +435,7 @@ export function SalesConfigContent() {
               <CardHeader>
                 <CardTitle>Pausa manual da IA</CardTitle>
                 <CardDescription>
-                  Controle como a IA deve parar de responder quando voce assumir a conversa.
+                  Controle como a IA deve parar de responder quando você assumir a conversa.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -449,7 +449,7 @@ export function SalesConfigContent() {
                       <Badge variant="default" className="text-[10px]">Recomendado</Badge>
                     </div>
                     <p className="text-xs text-gray-600 leading-relaxed">
-                      Quando ativo, a IA pausa automaticamente em qualquer contato no momento em que voce (ou outro humano) enviar uma mensagem manual pelo GHL. Sem precisar cadastrar texto fixo. As respostas da propria IA sao ignoradas pela deteccao.
+                      Quando ativo, a IA pausa automaticamente em qualquer contato no momento em que você (ou outro humano) enviar uma mensagem manual pelo GHL. Sem precisar cadastrar texto fixo. As respostas da própria IA são ignoradas pela detecção.
                     </p>
                   </div>
                   <Switch
@@ -468,17 +468,17 @@ export function SalesConfigContent() {
           <div className="grid gap-6">
             <Card>
               <CardHeader>
-                <CardTitle>Instrucoes personalizadas</CardTitle>
+                <CardTitle>Instruções personalizadas</CardTitle>
                 <CardDescription>
-                  Adicione instrucoes especificas para o agente. Estas instrucoes
-                  sao adicionadas ao prompt do sistema.
+                  Adicione instruções específicas para o agente. Estas instruções
+                  são adicionadas ao prompt do sistema.
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <Textarea
                   value={config.custom_instructions}
                   onChange={(e) => updateConfig("custom_instructions", e.target.value)}
-                  placeholder={`Exemplos:\n- Sempre mencione que somos especializados em seguro de vida\n- Nao fale sobre precos, diga que sera discutido na reuniao\n- Se o lead perguntar sobre cobertura, explique de forma geral`}
+                  placeholder={`Exemplos:\n- Sempre mencione que somos especializados em seguro de vida\n- Não fale sobre preços, diga que será discutido na reunião\n- Se o lead perguntar sobre cobertura, explique de forma geral`}
                   rows={8}
                 />
                 <p className="text-xs text-gray-500 mt-2">
@@ -489,7 +489,7 @@ export function SalesConfigContent() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Override completo do prompt (avancado)</CardTitle>
+                <CardTitle>Override completo do prompt (avançado)</CardTitle>
                 <CardDescription>
                   Substitua completamente o prompt gerado automaticamente. Use com cautela.
                 </CardDescription>
@@ -529,18 +529,18 @@ export function SalesConfigContent() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div>
-                <Label className="text-sm font-medium">Instrucoes gerais da base de conhecimento</Label>
+                <Label className="text-sm font-medium">Instruções gerais da base de conhecimento</Label>
                 <p className="text-xs text-gray-400 mb-2">
-                  Descreva os processos e como a IA deve usar TODO o material abaixo. Ex: prioridades, o que nunca dizer, ordem de consulta, termos proibidos, tom ao citar informacoes do material.
+                  Descreva os processos e como a IA deve usar TODO o material abaixo. Ex: prioridades, o que nunca dizer, ordem de consulta, termos proibidos, tom ao citar informações do material.
                 </p>
                 <Textarea
                   value={config.knowledge_base_instructions || ""}
                   onChange={(e) => updateConfig("knowledge_base_instructions", e.target.value)}
                   rows={8}
-                  placeholder={`Exemplo:\n- Sempre que o lead perguntar sobre precos, consulte primeiro o PDF "Tabela 2026" e cite o valor exato.\n- Processo de venda: qualificar necessidade -> apresentar planos do documento oficial -> agendar reuniao.\n- NUNCA ofereca desconto. Nao esta previsto em nenhum material.\n- Se o lead pedir algo tecnico nao coberto, diga que vai confirmar com a equipe.\n- Ao citar numeros (prazos, valores, SKUs), use exatamente o que esta no material.`}
+                  placeholder={`Exemplo:\n- Sempre que o lead perguntar sobre preços, consulte primeiro o PDF "Tabela 2026" e cite o valor exato.\n- Processo de venda: qualificar necessidade -> apresentar planos do documento oficial -> agendar reunião.\n- NUNCA ofereça desconto. Não está previsto em nenhum material.\n- Se o lead pedir algo técnico não coberto, diga que vai confirmar com a equipe.\n- Ao citar números (prazos, valores, SKUs), use exatamente o que está no material.`}
                 />
                 <p className="text-[10px] text-gray-500 mt-1">
-                  Este texto eh injetado no prompt junto com todos os itens da base. Para instrucoes especificas de UM item (um PDF em particular), use o botao de editar no item individual abaixo.
+                  Este texto é injetado no prompt junto com todos os itens da base. Para instruções específicas de UM item (um PDF em particular), use o botão de editar no item individual abaixo.
                 </p>
               </div>
               <div className="border-t border-gray-100 pt-6">
@@ -611,9 +611,9 @@ export function SalesConfigContent() {
             {/* Automacoes */}
             <Card>
               <CardHeader>
-                <CardTitle>Automacoes</CardTitle>
+                <CardTitle>Automações</CardTitle>
                 <CardDescription>
-                  Configure acoes automaticas que sao executadas quando um evento acontece
+                  Configure ações automáticas que são executadas quando um evento acontece
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -634,8 +634,8 @@ export function SalesConfigContent() {
               <CardHeader>
                 <CardTitle>Desligamento da IA</CardTitle>
                 <CardDescription>
-                  Defina condicoes que desligam a IA para um contato. A IA tambem para
-                  automaticamente se o contato perder o criterio de ativacao.
+                  Defina condições que desligam a IA para um contato. A IA também para
+                  automaticamente se o contato perder o critério de ativação.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -653,7 +653,7 @@ export function SalesConfigContent() {
               <CardHeader>
                 <CardTitle>Timezone</CardTitle>
                 <CardDescription>
-                  Configure o fuso horario para agendamentos
+                  Configure o fuso horário para agendamentos
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -667,7 +667,7 @@ export function SalesConfigContent() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Configuracoes de processamento</CardTitle>
+                <CardTitle>Configurações de processamento</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
@@ -686,7 +686,7 @@ export function SalesConfigContent() {
                 </div>
 
                 <div>
-                  <Label>Maximo de mensagens por conversa</Label>
+                  <Label>Máximo de mensagens por conversa</Label>
                   <Input
                     type="number"
                     min={10}
@@ -709,7 +709,7 @@ export function SalesConfigContent() {
             {/* Notificacoes */}
             <Card>
               <CardHeader>
-                <CardTitle>Notificacoes</CardTitle>
+                <CardTitle>Notificações</CardTitle>
                 <CardDescription>
                   Receba alertas quando eventos importantes acontecerem
                 </CardDescription>

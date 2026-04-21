@@ -38,8 +38,8 @@ export function DeactivationRulesEditor({ rules, tags, customFields, onChange }:
           Regras de desligamento
         </Label>
         <p className="text-xs text-gray-500 mt-1">
-          A IA para de responder quando qualquer uma dessas condicoes for atendida.
-          Tambem para se o contato perder o criterio de ativacao (targeting rules).
+          A IA para de responder quando qualquer uma dessas condições for atendida.
+          Também para se o contato perder o critério de ativação (targeting rules).
         </p>
       </div>
 

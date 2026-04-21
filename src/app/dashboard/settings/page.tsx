@@ -99,7 +99,7 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <PageWrapper title="Configuracoes">
+      <PageWrapper title="Configurações">
         <div className="space-y-4">
           <Skeleton className="h-32" />
           <Skeleton className="h-32" />
@@ -110,8 +110,8 @@ export default function SettingsPage() {
 
   return (
     <PageWrapper
-      title="Configuracoes"
-      subtitle="Gerencie as configuracoes da sua conta"
+      title="Configurações"
+      subtitle="Gerencie as configurações da sua conta"
       actions={
         <Button onClick={handleSave} disabled={saving}>
           {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
@@ -169,7 +169,7 @@ export default function SettingsPage() {
               Chave de API (OpenAI)
             </CardTitle>
             <CardDescription>
-              Use sua propria chave de API da OpenAI. Se vazio, usa a chave padrao da plataforma.
+              Use sua própria chave de API da OpenAI. Se vazio, usa a chave padrão da plataforma.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -195,7 +195,7 @@ export default function SettingsPage() {
         {/* Timezone */}
         <Card>
           <CardHeader>
-            <CardTitle>Fuso horario</CardTitle>
+            <CardTitle>Fuso horário</CardTitle>
           </CardHeader>
           <CardContent>
             <Select
@@ -224,7 +224,7 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <Label>Limite diario de mensagens</Label>
+              <Label>Limite diário de mensagens</Label>
               <Input
                 type="number"
                 min={10}
@@ -248,7 +248,7 @@ export default function SettingsPage() {
                 className="mt-1.5 w-32"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Voce sera notificado quando os gastos com tokens atingirem este valor
+                Você será notificado quando os gastos com tokens atingirem este valor
               </p>
             </div>
           </CardContent>

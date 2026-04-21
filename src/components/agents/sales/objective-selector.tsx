@@ -12,20 +12,20 @@ const objectives: {
 }[] = [
   {
     value: "qualification_only",
-    label: "Apenas Qualificacao",
-    description: "O agente coleta informacoes do lead sem agendar reuniao",
+    label: "Apenas Qualificação",
+    description: "O agente coleta informações do lead sem agendar reunião",
     icon: Target,
   },
   {
     value: "qualification_and_booking",
-    label: "Qualificacao + Agendamento",
-    description: "O agente qualifica o lead e agenda uma reuniao",
+    label: "Qualificação + Agendamento",
+    description: "O agente qualifica o lead e agenda uma reunião",
     icon: CalendarCheck,
   },
   {
     value: "booking_only",
     label: "Apenas Agendamento",
-    description: "O agente agenda reuniao direto, sem qualificacao",
+    description: "O agente agenda reunião direto, sem qualificação",
     icon: Calendar,
   },
 ];

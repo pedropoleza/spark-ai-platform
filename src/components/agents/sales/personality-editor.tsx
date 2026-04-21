@@ -41,9 +41,9 @@ export function PersonalityEditor({ personality, onChange }: PersonalityEditorPr
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="pt-BR">Portugues (Brasil)</SelectItem>
+              <SelectItem value="pt-BR">Português (Brasil)</SelectItem>
               <SelectItem value="en-US">English (US)</SelectItem>
-              <SelectItem value="es">Espanol</SelectItem>
+              <SelectItem value="es">Español</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -99,16 +99,16 @@ export function PersonalityEditor({ personality, onChange }: PersonalityEditorPr
 
       {/* Descricao da personalidade */}
       <div>
-        <Label>Descricao da personalidade</Label>
+        <Label>Descrição da personalidade</Label>
         <Textarea
           value={personality.persona_description}
           onChange={(e) => update("persona_description", e.target.value)}
-          placeholder={`Descreva a personalidade da IA. Ex:\n- Simpatica e acolhedora\n- Profissional mas descontraida\n- Especialista em seguros de vida\n- Sempre positiva, nunca pressiona o cliente`}
+          placeholder={`Descreva a personalidade da IA. Ex:\n- Simpática e acolhedora\n- Profissional mas descontraída\n- Especialista em seguros de vida\n- Sempre positiva, nunca pressiona o cliente`}
           rows={4}
           className="mt-1.5"
         />
         <p className="text-xs text-gray-500 mt-1">
-          Quanto mais detalhada a descricao, mais consistente sera o comportamento
+          Quanto mais detalhada a descrição, mais consistente será o comportamento
         </p>
       </div>
     </div>

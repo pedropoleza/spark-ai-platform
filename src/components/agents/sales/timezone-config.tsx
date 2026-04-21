@@ -30,7 +30,7 @@ export function TimezoneConfigEditor({ config, locationTimezone, onChange }: Tim
 
   return (
     <div className="space-y-4">
-      {/* Timezone padrao */}
+      {/* Timezone padrão */}
       <div className="flex items-center gap-3">
         <Switch
           checked={config.use_location_default}

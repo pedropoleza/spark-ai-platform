@@ -8,11 +8,11 @@ import type { WorkingHoursConfig, WorkingHoursDay } from "@/types/agent";
 
 const DAYS = [
   { key: "monday", label: "Segunda" },
-  { key: "tuesday", label: "Terca" },
+  { key: "tuesday", label: "Terça" },
   { key: "wednesday", label: "Quarta" },
   { key: "thursday", label: "Quinta" },
   { key: "friday", label: "Sexta" },
-  { key: "saturday", label: "Sabado" },
+  { key: "saturday", label: "Sábado" },
   { key: "sunday", label: "Domingo" },
 ];
 
@@ -56,10 +56,10 @@ export function WorkingHoursEditor({ config, onChange }: WorkingHoursEditorProps
         />
         <div>
           <Label htmlFor="wh-enabled" className="font-medium">
-            Horario de funcionamento
+            Horário de funcionamento
           </Label>
           <p className="text-xs text-gray-500">
-            Controle em quais horarios o agente esta ativo
+            Controle em quais horários o agente está ativo
           </p>
         </div>
       </div>
@@ -78,18 +78,18 @@ export function WorkingHoursEditor({ config, onChange }: WorkingHoursEditorProps
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="only_during">Ativar APENAS durante estes horarios</SelectItem>
-                  <SelectItem value="only_outside">Ativar APENAS fora destes horarios</SelectItem>
+                  <SelectItem value="only_during">Ativar APENAS durante estes horários</SelectItem>
+                  <SelectItem value="only_outside">Ativar APENAS fora destes horários</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-gray-500 mt-1">
                 {config.mode === "only_during"
-                  ? "O agente so responde nos horarios configurados"
-                  : "O agente so responde fora dos horarios configurados (ex: apenas fora do expediente)"}
+                  ? "O agente só responde nos horários configurados"
+                  : "O agente só responde fora dos horários configurados (ex: apenas fora do expediente)"}
               </p>
             </div>
             <div>
-              <Label className="text-xs">Fuso horario</Label>
+              <Label className="text-xs">Fuso horário</Label>
               <Select
                 value={config.timezone}
                 onValueChange={(v) => update("timezone", v)}
@@ -135,7 +135,7 @@ export function WorkingHoursEditor({ config, onChange }: WorkingHoursEditorProps
                           onChange={(e) => updateDay(key, { start: e.target.value })}
                           className="w-28 h-8 text-sm"
                         />
-                        <span className="text-xs text-gray-500">ate</span>
+                        <span className="text-xs text-gray-500">até</span>
                         <Input
                           type="time"
                           value={day.end}

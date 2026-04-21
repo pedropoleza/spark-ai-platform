@@ -38,9 +38,9 @@ interface TargetingRulesEditorProps {
 }
 
 const RULE_TYPES: { value: TargetingRuleType; label: string; icon: typeof Tag; description: string }[] = [
-  { value: "tag", label: "Por Tag", icon: Tag, description: "Ativar quando o contato tiver uma tag especifica" },
-  { value: "custom_field", label: "Por Custom Field", icon: Database, description: "Ativar quando um campo tiver um valor especifico" },
-  { value: "pipeline_stage", label: "Por Estagio no Pipeline", icon: GitBranch, description: "Ativar quando o lead entrar em um estagio" },
+  { value: "tag", label: "Por Tag", icon: Tag, description: "Ativar quando o contato tiver uma tag específica" },
+  { value: "custom_field", label: "Por Custom Field", icon: Database, description: "Ativar quando um campo tiver um valor específico" },
+  { value: "pipeline_stage", label: "Por Estágio no Pipeline", icon: GitBranch, description: "Ativar quando o lead entrar em um estágio" },
 ];
 
 export function TargetingRulesEditor({
@@ -199,7 +199,7 @@ export function TargetingRulesEditor({
                     )}
                   </div>
                   <div>
-                    <Label className="text-xs">Estagio</Label>
+                    <Label className="text-xs">Estágio</Label>
                     <Select
                       value={rule.pipeline_stage_id || ""}
                       onValueChange={(v) => updateRule(rule.id, { pipeline_stage_id: v })}

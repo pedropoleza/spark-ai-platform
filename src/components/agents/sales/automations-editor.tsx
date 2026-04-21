@@ -33,7 +33,7 @@ const DEFAULT_EVENTS = [
 const OPERATORS = [
   { value: "any_value", label: "For preenchido com qualquer valor" },
   { value: "equals", label: "For igual a" },
-  { value: "contains", label: "Contem" },
+  { value: "contains", label: "Contém" },
   { value: "matches_regex", label: "Bater com regex" },
 ];
 
@@ -42,7 +42,7 @@ const ACTION_TYPES = [
   { value: "remove_tag", label: "Remover tag", icon: Tag },
   { value: "move_pipeline", label: "Mover no pipeline", icon: GitBranch },
   { value: "update_field", label: "Atualizar campo", icon: Database },
-  { value: "send_media", label: "Enviar midia", icon: ImageIcon },
+  { value: "send_media", label: "Enviar mídia", icon: ImageIcon },
   { value: "send_text_fixed", label: "Enviar texto fixo", icon: MessageSquare },
   { value: "pause_ai", label: "Pausar IA", icon: PauseCircle },
   { value: "webhook", label: "Chamar webhook", icon: Webhook },
@@ -183,7 +183,7 @@ export function AutomationsEditor({
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-500">
-        Configure acoes automaticas disparadas por eventos (qualified, booked...) ou por campos coletados (ex: quando &quot;estado&quot; virar &quot;brasil&quot;, envia uma imagem e adiciona uma tag).
+        Configure ações automáticas disparadas por eventos (qualified, booked...) ou por campos coletados (ex: quando &quot;estado&quot; virar &quot;brasil&quot;, envia uma imagem e adiciona uma tag).
       </p>
 
       {/* Lista de regras */}
@@ -202,7 +202,7 @@ export function AutomationsEditor({
 
           <div className="p-3 space-y-2">
             {rule.actions.length === 0 && (
-              <p className="text-xs text-gray-500">Nenhuma acao configurada</p>
+              <p className="text-xs text-gray-500">Nenhuma ação configurada</p>
             )}
 
             {rule.actions.map((action, actionIdx) => {
@@ -261,7 +261,7 @@ export function AutomationsEditor({
                             onValueChange={(v) => updateAction(rule.id, actionIdx, { stage_id: v })}
                           >
                             <SelectTrigger className="flex-1 h-8 text-xs">
-                              <SelectValue placeholder="Estagio..." />
+                              <SelectValue placeholder="Estágio..." />
                             </SelectTrigger>
                             <SelectContent>
                               {selectedPipeline.stages.sort((a, b) => a.position - b.position).map((s) => (
@@ -304,7 +304,7 @@ export function AutomationsEditor({
                           onValueChange={(v) => updateAction(rule.id, actionIdx, { media_id: v })}
                         >
                           <SelectTrigger className="h-8 text-xs">
-                            <SelectValue placeholder={media.length === 0 ? "Biblioteca vazia — faca upload abaixo" : "Selecione midia..."} />
+                            <SelectValue placeholder={media.length === 0 ? "Biblioteca vazia — faça upload abaixo" : "Selecione mídia..."} />
                           </SelectTrigger>
                           <SelectContent>
                             {media.map((m) => (
@@ -363,7 +363,7 @@ export function AutomationsEditor({
 
             <Button variant="outline" size="sm" className="text-xs h-7" onClick={() => addAction(rule.id)}>
               <Plus className="w-3 h-3 mr-1" />
-              Adicionar acao
+              Adicionar ação
             </Button>
           </div>
         </div>
@@ -420,7 +420,7 @@ export function AutomationsEditor({
                   ))}
                 </SelectContent>
               </Select>
-              <Label className="text-xs">Condicao</Label>
+              <Label className="text-xs">Condição</Label>
               <Select value={newOperator} onValueChange={(v) => setNewOperator(v as typeof newOperator)}>
                 <SelectTrigger>
                   <SelectValue />
@@ -461,7 +461,7 @@ export function AutomationsEditor({
       ) : (
         <Button variant="outline" size="sm" onClick={() => setShowAdd(true)} className="w-full">
           <Plus className="w-3.5 h-3.5 mr-2" />
-          Adicionar automacao
+          Adicionar automação
         </Button>
       )}
 
@@ -470,8 +470,8 @@ export function AutomationsEditor({
         <div className="pt-4 border-t border-gray-200">
           <div className="flex items-center justify-between mb-2">
             <div>
-              <Label className="text-sm font-semibold text-gray-900">Biblioteca de midia</Label>
-              <p className="text-xs text-gray-500">Arquivos disponiveis para acoes &quot;Enviar midia&quot;. Imagens, audios, videos ou PDFs ate 25 MB.</p>
+              <Label className="text-sm font-semibold text-gray-900">Biblioteca de mídia</Label>
+              <p className="text-xs text-gray-500">Arquivos disponíveis para ações &quot;Enviar mídia&quot;. Imagens, áudios, vídeos ou PDFs até 25 MB.</p>
             </div>
             <label className="cursor-pointer">
               <input
@@ -498,7 +498,7 @@ export function AutomationsEditor({
             </label>
           </div>
           {media.length === 0 ? (
-            <p className="text-xs text-gray-400 italic py-3">Nenhum arquivo ainda. Faca upload para usar nas acoes.</p>
+            <p className="text-xs text-gray-400 italic py-3">Nenhum arquivo ainda. Faça upload para usar nas ações.</p>
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {media.map((m) => (

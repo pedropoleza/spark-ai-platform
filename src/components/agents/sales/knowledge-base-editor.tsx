@@ -236,7 +236,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
       if (res.ok) {
         await fetchItems();
         cancelEdit();
-        toast.success("Instrucoes atualizadas");
+        toast.success("Instruções atualizadas");
       } else {
         const data = await res.json().catch(() => ({}));
         toast.error("Erro ao salvar", { description: data.error });
@@ -293,7 +293,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                     <span className="text-xs text-gray-400">
                       {item.type === "file" ? item.file_name : item.type === "url" ? "URL" : "Texto"}
                       {" · ~"}{item.token_count.toLocaleString()} tokens
-                      {hasMeta && <span className="ml-1 text-brand-500">· com instrucoes</span>}
+                      {hasMeta && <span className="ml-1 text-brand-500">· com instruções</span>}
                     </span>
                   </button>
                   <button
@@ -306,7 +306,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                   <button
                     onClick={() => startEdit(item)}
                     className="text-gray-400 hover:text-brand-600 opacity-0 group-hover:opacity-100 transition-all"
-                    title="Editar descricao e instrucoes"
+                    title="Editar descrição e instruções"
                   >
                     <Pencil className="w-4 h-4" />
                   </button>
@@ -324,11 +324,11 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                     {isEditing ? (
                       <>
                         <div>
-                          <Label className="text-xs">Titulo</Label>
+                          <Label className="text-xs">Título</Label>
                           <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
                         </div>
                         <div>
-                          <Label className="text-xs">Descricao (o que este material contem)</Label>
+                          <Label className="text-xs">Descrição (o que este material contém)</Label>
                           <Textarea
                             value={editDescription}
                             onChange={(e) => setEditDescription(e.target.value)}
@@ -337,7 +337,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                           />
                         </div>
                         <div>
-                          <Label className="text-xs">Instrucoes para a IA (como usar este material)</Label>
+                          <Label className="text-xs">Instruções para a IA (como usar este material)</Label>
                           <Textarea
                             value={editUsage}
                             onChange={(e) => setEditUsage(e.target.value)}
@@ -345,7 +345,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                             placeholder={INSTRUCTION_PLACEHOLDER}
                           />
                           <p className="text-[10px] text-gray-500 mt-1">
-                            Estas instrucoes sao enviadas junto com o conteudo para a IA e orientam como ela deve aplicar este item especifico.
+                            Estas instruções são enviadas junto com o conteúdo para a IA e orientam como ela deve aplicar este item específico.
                           </p>
                         </div>
                         <div className="flex gap-2">
@@ -360,19 +360,19 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                       <>
                         {item.description ? (
                           <div>
-                            <p className="text-[10px] uppercase tracking-wider text-brand-500/80 font-semibold mb-1">Descricao</p>
+                            <p className="text-[10px] uppercase tracking-wider text-brand-500/80 font-semibold mb-1">Descrição</p>
                             <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{item.description}</p>
                           </div>
                         ) : null}
                         {item.usage_instructions ? (
                           <div>
-                            <p className="text-[10px] uppercase tracking-wider text-brand-500/80 font-semibold mb-1">Instrucoes para a IA</p>
+                            <p className="text-[10px] uppercase tracking-wider text-brand-500/80 font-semibold mb-1">Instruções para a IA</p>
                             <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed">{item.usage_instructions}</p>
                           </div>
                         ) : null}
                         {!hasMeta && (
                           <p className="text-xs text-gray-400 italic">
-                            Nenhuma instrucao definida. Clique no lapis para orientar a IA sobre como usar este material.
+                            Nenhuma instrução definida. Clique no lápis para orientar a IA sobre como usar este material.
                           </p>
                         )}
                         {item.type === "url" && item.file_url && (
@@ -400,7 +400,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                 >
                   <Type className="w-5 h-5 text-gray-500 group-hover:text-brand-600 transition-colors" />
                   <span className="text-sm font-medium text-gray-900">Texto</span>
-                  <span className="text-[10px] text-gray-400">Cole conteudo diretamente</span>
+                  <span className="text-[10px] text-gray-400">Cole conteúdo diretamente</span>
                 </button>
                 <button
                   onClick={() => setAddType("file")}
@@ -425,11 +425,11 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                   <>
                     <div>
                       <Label className="text-xs">Titulo</Label>
-                      <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Informacoes sobre produtos" />
+                      <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Informações sobre produtos" />
                     </div>
                     <div>
-                      <Label className="text-xs">Conteudo</Label>
-                      <Textarea value={content} onChange={(e) => setContent(e.target.value)} rows={6} placeholder="Cole aqui o texto que a IA deve usar como referencia..." />
+                      <Label className="text-xs">Conteúdo</Label>
+                      <Textarea value={content} onChange={(e) => setContent(e.target.value)} rows={6} placeholder="Cole aqui o texto que a IA deve usar como referência..." />
                     </div>
                   </>
                 )}
@@ -437,7 +437,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                 {addType === "file" && (
                   <>
                     <div>
-                      <Label className="text-xs">Titulo (opcional)</Label>
+                      <Label className="text-xs">Título (opcional)</Label>
                       <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Nome do documento" />
                     </div>
                   </>
@@ -446,7 +446,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                 {addType === "url" && (
                   <>
                     <div>
-                      <Label className="text-xs">Titulo</Label>
+                      <Label className="text-xs">Título</Label>
                       <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ex: Site da empresa" />
                     </div>
                     <div>
@@ -457,10 +457,10 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                   </>
                 )}
 
-                {/* Campos comuns: descricao + instrucoes */}
+                {/* Campos comuns: descrição + instruções */}
                 <div className="pt-2 border-t border-neutral-100 space-y-3">
                   <div>
-                    <Label className="text-xs">Descricao (o que este material contem)</Label>
+                    <Label className="text-xs">Descrição (o que este material contém)</Label>
                     <Textarea
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
@@ -468,11 +468,11 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                       placeholder={DESCRIPTION_PLACEHOLDER}
                     />
                     <p className="text-[10px] text-gray-500 mt-1">
-                      Ajuda voce a identificar o item depois. Tambem eh enviada para a IA como contexto.
+                      Ajuda você a identificar o item depois. Também é enviada para a IA como contexto.
                     </p>
                   </div>
                   <div>
-                    <Label className="text-xs">Instrucoes para a IA (como usar este material)</Label>
+                    <Label className="text-xs">Instruções para a IA (como usar este material)</Label>
                     <Textarea
                       value={usageInstructions}
                       onChange={(e) => setUsageInstructions(e.target.value)}
@@ -480,7 +480,7 @@ export function KnowledgeBaseEditor({ agentId }: KnowledgeBaseEditorProps) {
                       placeholder={INSTRUCTION_PLACEHOLDER}
                     />
                     <p className="text-[10px] text-gray-500 mt-1">
-                      Seja especifico: diga quando usar, o que extrair e o que evitar. Ex: &ldquo;Quando o lead perguntar sobre prazos, cite exatamente os valores da tabela. Nao fale em desconto — nao eh oferecido.&rdquo;
+                      Seja específico: diga quando usar, o que extrair e o que evitar. Ex: &ldquo;Quando o lead perguntar sobre prazos, cite exatamente os valores da tabela. Não fale em desconto — não é oferecido.&rdquo;
                     </p>
                   </div>
                 </div>

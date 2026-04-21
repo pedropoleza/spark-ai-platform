@@ -44,7 +44,7 @@ const defaultConfig: ConfigForm = {
     greeting_style: "Oii {name}, tudo bem?",
     farewell_style: "Se em outro momento fizer sentido, pode me chamar por aqui!",
     language: "pt-BR",
-    persona_description: "Brasileiro, mora na Florida. Tom casual e amigavel. Conversa como se fosse pelo WhatsApp. Cria conexao humana antes de tudo.",
+    persona_description: "Brasileiro, mora na Florida. Tom casual e amigável. Conversa como se fosse pelo WhatsApp. Cria conexão humana antes de tudo.",
   },
   targeting_rules: [],
   enabled_channels: ["SMS", "WhatsApp"],
@@ -56,13 +56,13 @@ const defaultConfig: ConfigForm = {
   objective: "qualification_and_booking",
   post_booking: {
     behavior: "stop_and_handoff",
-    handoff_message: "Perfeito! Voce vai receber a confirmacao.",
+    handoff_message: "Perfeito! Você vai receber a confirmação.",
     allow_reschedule: true,
   },
   data_fields: [
     { key: "full_name", label: "Nome completo", required: true, type: "text", skip_if_filled: true },
     { key: "state", label: "Estado", required: true, type: "text", skip_if_filled: true },
-    { key: "work_permit", label: "Social Security / Permissao de trabalho", required: true, type: "boolean", skip_if_filled: false },
+    { key: "work_permit", label: "Social Security / Permissão de trabalho", required: true, type: "boolean", skip_if_filled: false },
   ],
   ai_model: "gpt-4.1-mini",
   custom_instructions: "",
@@ -177,22 +177,22 @@ export function RecruitmentConfigContent() {
       if (res.ok) {
         setSaved(true);
         setSavedConfig(config);
-        toast.success("Configuracoes salvas com sucesso!", {
+        toast.success("Configurações salvas com sucesso!", {
           description: "Todas as regras foram atualizadas.",
           duration: 4000,
         });
         setTimeout(() => setSaved(false), 3000);
       } else {
         const data = await res.json().catch(() => ({}));
-        toast.error("Erro ao salvar configuracoes", {
+        toast.error("Erro ao salvar configurações", {
           description: data.error || `Erro ${res.status}`,
           duration: 6000,
         });
       }
     } catch (error) {
       console.error("Erro ao salvar config:", error);
-      toast.error("Erro de conexao", {
-        description: "Nao foi possivel salvar. Verifique sua conexao.",
+      toast.error("Erro de conexão", {
+        description: "Não foi possível salvar. Verifique sua conexão.",
         duration: 6000,
       });
     }
@@ -228,12 +228,12 @@ export function RecruitmentConfigContent() {
     >
       <Tabs defaultValue="targeting" className="animate-fade-in">
         <TabsList>
-          <TabsTrigger value="targeting">Segmentacao</TabsTrigger>
+          <TabsTrigger value="targeting">Segmentação</TabsTrigger>
           <TabsTrigger value="behavior">Comportamento</TabsTrigger>
           <TabsTrigger value="prompt">Prompt</TabsTrigger>
           <TabsTrigger value="context">Contexto</TabsTrigger>
           <TabsTrigger value="test">Teste</TabsTrigger>
-          <TabsTrigger value="advanced">Avancado</TabsTrigger>
+          <TabsTrigger value="advanced">Avançado</TabsTrigger>
         </TabsList>
 
         {/* SEGMENTACAO */}
@@ -241,7 +241,7 @@ export function RecruitmentConfigContent() {
           <div className="grid gap-6">
             <Card>
               <CardHeader>
-                <CardTitle>Regras de ativacao</CardTitle>
+                <CardTitle>Regras de ativação</CardTitle>
                 <CardDescription>Defina quando o agente de recrutamento deve ser ativado</CardDescription>
               </CardHeader>
               <CardContent>
@@ -249,9 +249,9 @@ export function RecruitmentConfigContent() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle>Calendario</CardTitle><CardDescription>Calendario para agendamento de entrevistas</CardDescription></CardHeader>
+              <CardHeader><CardTitle>Calendário</CardTitle><CardDescription>Calendário para agendamento de entrevistas</CardDescription></CardHeader>
               <CardContent>
-                <Label>Calendario</Label>
+                <Label>Calendário</Label>
                 {ghl.loading ? <Skeleton className="h-10 mt-1.5" /> : (
                   <Select value={config.calendar_id || ""} onValueChange={(v) => updateConfig("calendar_id", v || null)}>
                     <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione..." /></SelectTrigger>
@@ -294,7 +294,7 @@ export function RecruitmentConfigContent() {
               </Card>
             )}
             <Card>
-              <CardHeader><CardTitle>Dados para coletar</CardTitle><CardDescription>Informacoes do candidato</CardDescription></CardHeader>
+              <CardHeader><CardTitle>Dados para coletar</CardTitle><CardDescription>Informações do candidato</CardDescription></CardHeader>
               <CardContent>
                 <DataFieldsEditor fields={config.data_fields} customFields={ghl.customFields} onChange={(fields: DataField[]) => updateConfig("data_fields", fields)} />
               </CardContent>
@@ -306,7 +306,7 @@ export function RecruitmentConfigContent() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle>Follow-up automatico</CardTitle></CardHeader>
+              <CardHeader><CardTitle>Follow-up automático</CardTitle></CardHeader>
               <CardContent>
                 <FollowUpConfigEditor config={config.follow_up_config} onChange={(v: FollowUpConfig) => updateConfig("follow_up_config", v)} />
               </CardContent>
@@ -315,7 +315,7 @@ export function RecruitmentConfigContent() {
               <CardHeader>
                 <CardTitle>Pausa manual da IA</CardTitle>
                 <CardDescription>
-                  Controle como a IA deve parar de responder quando voce assumir a conversa.
+                  Controle como a IA deve parar de responder quando você assumir a conversa.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
@@ -328,7 +328,7 @@ export function RecruitmentConfigContent() {
                       <Badge variant="default" className="text-[10px]">Recomendado</Badge>
                     </div>
                     <p className="text-xs text-gray-600 leading-relaxed">
-                      Quando ativo, a IA pausa automaticamente em qualquer contato no momento em que voce (ou outro humano) enviar uma mensagem manual pelo GHL. Sem precisar cadastrar texto fixo. As respostas da propria IA sao ignoradas pela deteccao.
+                      Quando ativo, a IA pausa automaticamente em qualquer contato no momento em que você (ou outro humano) enviar uma mensagem manual pelo GHL. Sem precisar cadastrar texto fixo. As respostas da própria IA são ignoradas pela detecção.
                     </p>
                   </div>
                   <Switch
@@ -346,9 +346,9 @@ export function RecruitmentConfigContent() {
         <TabsContent value="prompt">
           <div className="grid gap-6">
             <Card>
-              <CardHeader><CardTitle>Instrucoes personalizadas</CardTitle></CardHeader>
+              <CardHeader><CardTitle>Instruções personalizadas</CardTitle></CardHeader>
               <CardContent>
-                <Textarea value={config.custom_instructions} onChange={(e) => updateConfig("custom_instructions", e.target.value)} placeholder={`Exemplos:\n- A oportunidade e para agente financeiro\n- Nao mencione valores de comissao\n- Foque em criar curiosidade sobre a oportunidade`} rows={8} />
+                <Textarea value={config.custom_instructions} onChange={(e) => updateConfig("custom_instructions", e.target.value)} placeholder={`Exemplos:\n- A oportunidade é para agente financeiro\n- Não mencione valores de comissão\n- Foque em criar curiosidade sobre a oportunidade`} rows={8} />
               </CardContent>
             </Card>
             <Card>
@@ -369,21 +369,21 @@ export function RecruitmentConfigContent() {
         {/* CONTEXTO */}
         <TabsContent value="context">
           <Card>
-            <CardHeader><CardTitle>Knowledge Base</CardTitle><CardDescription>Documentos e informacoes sobre a oportunidade, empresa, etc.</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Knowledge Base</CardTitle><CardDescription>Documentos e informações sobre a oportunidade, empresa, etc.</CardDescription></CardHeader>
             <CardContent className="space-y-6">
               <div>
-                <Label className="text-sm font-medium">Instrucoes gerais da base de conhecimento</Label>
+                <Label className="text-sm font-medium">Instruções gerais da base de conhecimento</Label>
                 <p className="text-xs text-gray-400 mb-2">
-                  Descreva os processos e como a IA deve usar TODO o material abaixo. Ex: prioridades, o que nunca dizer, ordem de consulta, tom ao citar informacoes do material.
+                  Descreva os processos e como a IA deve usar TODO o material abaixo. Ex: prioridades, o que nunca dizer, ordem de consulta, tom ao citar informações do material.
                 </p>
                 <Textarea
                   value={config.knowledge_base_instructions || ""}
                   onChange={(e) => updateConfig("knowledge_base_instructions", e.target.value)}
                   rows={8}
-                  placeholder={`Exemplo:\n- Use o PDF "Descricao da vaga" como fonte unica de verdade sobre responsabilidades.\n- Nunca cite valores de salario que nao estejam no material.\n- Se o lead pedir detalhes tecnicos, cite exatamente o que esta no documento.`}
+                  placeholder={`Exemplo:\n- Use o PDF "Descrição da vaga" como fonte única de verdade sobre responsabilidades.\n- Nunca cite valores de salário que não estejam no material.\n- Se o lead pedir detalhes técnicos, cite exatamente o que está no documento.`}
                 />
                 <p className="text-[10px] text-gray-500 mt-1">
-                  Este texto eh injetado no prompt junto com todos os itens da base. Para instrucoes de UM item especifico, use o botao de editar no item individual abaixo.
+                  Este texto é injetado no prompt junto com todos os itens da base. Para instruções de UM item específico, use o botão de editar no item individual abaixo.
                 </p>
               </div>
               <div className="border-t border-gray-100 pt-6">
@@ -445,7 +445,7 @@ export function RecruitmentConfigContent() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle>Automacoes</CardTitle></CardHeader>
+              <CardHeader><CardTitle>Automações</CardTitle></CardHeader>
               <CardContent>
                 <AutomationsEditor rules={config.automations} pipelines={ghl.pipelines} tags={ghl.tags} customFields={ghl.customFields} dataFields={config.data_fields || []} agentId={agentId} onChange={(rules: AutomationRule[]) => updateConfig("automations", rules)} />
               </CardContent>
@@ -463,7 +463,7 @@ export function RecruitmentConfigContent() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle>Configuracoes de processamento</CardTitle></CardHeader>
+              <CardHeader><CardTitle>Configurações de processamento</CardTitle></CardHeader>
               <CardContent className="space-y-4">
                 <div>
                   <Label>Tempo de debounce (segundos)</Label>
@@ -473,7 +473,7 @@ export function RecruitmentConfigContent() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle>Notificacoes</CardTitle></CardHeader>
+              <CardHeader><CardTitle>Notificações</CardTitle></CardHeader>
               <CardContent>
                 <NotificationsConfigEditor config={config.notifications} onChange={(v: NotificationsConfig) => updateConfig("notifications", v)} />
               </CardContent>

@@ -17,7 +17,7 @@ export function NotificationsConfigEditor({ config, onChange }: NotificationsCon
 
   const events = [
     { key: "on_qualified" as const, label: "Lead qualificado", description: "Quando o agente coleta todos os dados do lead" },
-    { key: "on_booked" as const, label: "Agendamento realizado", description: "Quando uma reuniao e agendada com sucesso" },
+    { key: "on_booked" as const, label: "Agendamento realizado", description: "Quando uma reunião é agendada com sucesso" },
     { key: "on_handed_off" as const, label: "Transferido para humano", description: "Quando o lead pede para falar com uma pessoa" },
     { key: "on_error" as const, label: "Erro no processamento", description: "Quando o agente encontra um erro" },
   ];
@@ -25,7 +25,7 @@ export function NotificationsConfigEditor({ config, onChange }: NotificationsCon
   return (
     <div className="space-y-5">
       <div>
-        <Label>Email para notificacoes</Label>
+        <Label>Email para notificações</Label>
         <Input
           type="email"
           value={config.notification_email}
@@ -34,7 +34,7 @@ export function NotificationsConfigEditor({ config, onChange }: NotificationsCon
           className="mt-1.5 max-w-sm"
         />
         <p className="text-xs text-gray-500 mt-1">
-          Deixe vazio para desativar todas as notificacoes
+          Deixe vazio para desativar todas as notificações
         </p>
       </div>
 

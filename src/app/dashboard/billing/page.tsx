@@ -91,9 +91,9 @@ export default function BillingPage() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="7d">Ultimos 7 dias</SelectItem>
-              <SelectItem value="30d">Ultimos 30 dias</SelectItem>
-              <SelectItem value="all">Todo periodo</SelectItem>
+              <SelectItem value="7d">Últimos 7 dias</SelectItem>
+              <SelectItem value="30d">Últimos 30 dias</SelectItem>
+              <SelectItem value="all">Todo período</SelectItem>
             </SelectContent>
           </Select>
           <Button variant="outline" size="sm" onClick={fetchData}>
@@ -124,7 +124,7 @@ export default function BillingPage() {
             />
             <MetricCard
               icon={MessageSquare}
-              label="Interacoes"
+              label="Interações"
               value={String(summary.total_interactions)}
               sub={`${summary.using_platform_key} cobradas | ${summary.using_custom_key} chave propria`}
             />
@@ -132,7 +132,7 @@ export default function BillingPage() {
               icon={Key}
               label="Cobranças pendentes"
               value={String(summary.pending_charges)}
-              sub={summary.pending_charges > 0 ? "Serao cobradas no proximo ciclo" : "Tudo em dia"}
+              sub={summary.pending_charges > 0 ? "Serão cobradas no próximo ciclo" : "Tudo em dia"}
             />
           </div>
 
@@ -141,7 +141,7 @@ export default function BillingPage() {
             <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 px-4 py-3 rounded-lg">
               <Key className="w-4 h-4" />
               <span>
-                {summary.using_custom_key} interacoes usaram chave OpenAI propria (sem cobranca de markup)
+                {summary.using_custom_key} interações usaram chave OpenAI própria (sem cobrança de markup)
               </span>
             </div>
           )}
@@ -174,12 +174,12 @@ export default function BillingPage() {
               </CardContent>
             </Card>
 
-            {/* Uso diario */}
+            {/* Uso diário */}
             <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
                   <TrendingUp className="w-4 h-4" />
-                  Uso diario
+                  Uso diário
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -205,7 +205,7 @@ export default function BillingPage() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Registros recentes</CardTitle>
-              <CardDescription>Ultimas interacoes e custos</CardDescription>
+              <CardDescription>Últimas interações e custos</CardDescription>
             </CardHeader>
             <CardContent>
               {recent.length === 0 ? (
@@ -217,12 +217,12 @@ export default function BillingPage() {
                       <div className="flex items-center gap-2">
                         <span className="text-gray-800">{formatAction(r.action_type)}</span>
                         <Badge variant="secondary" className="text-[10px]">{r.model}</Badge>
-                        {r.custom_key && <Badge variant="outline" className="text-[10px]">Chave propria</Badge>}
+                        {r.custom_key && <Badge variant="outline" className="text-[10px]">Chave própria</Badge>}
                       </div>
                       <div className="flex items-center gap-3 text-xs">
                         <span className="text-gray-500">{formatTokens(r.tokens)} tokens</span>
                         <span className={r.custom_key ? "text-emerald-600" : "font-medium text-gray-900"}>
-                          {r.custom_key ? "Gratis" : formatUsd(r.cost)}
+                          {r.custom_key ? "Grátis" : formatUsd(r.cost)}
                         </span>
                         {!r.custom_key && (
                           <Badge variant={r.charged ? "success" : "warning"} className="text-[10px]">

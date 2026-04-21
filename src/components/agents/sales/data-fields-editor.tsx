@@ -173,7 +173,7 @@ export function DataFieldsEditor({
               {field.type}
             </span>
 
-            <div className="flex items-center gap-1.5" title="Campo obrigatorio">
+            <div className="flex items-center gap-1.5" title="Campo obrigatório">
               <span className="text-xs text-gray-500">Obrig.</span>
               <Switch
                 checked={field.required}
@@ -226,7 +226,7 @@ export function DataFieldsEditor({
                 <FileText className="w-5 h-5 text-gray-700" />
                 <span className="text-sm font-medium">Campo simples</span>
                 <span className="text-xs text-gray-500 text-center">
-                  Coleta a informacao mas nao atualiza no sistema
+                  Coleta a informação mas não atualiza no sistema
                 </span>
               </button>
             </div>
@@ -242,7 +242,7 @@ export function DataFieldsEditor({
                     {customFields.filter((f) => f.isStandard).length > 0 && (
                       <>
                         <div className="px-2 py-1.5 text-xs font-semibold text-gray-500">
-                          Campos padrao
+                          Campos padrão
                         </div>
                         {customFields
                           .filter((f) => f.isStandard)
@@ -324,8 +324,8 @@ export function DataFieldsEditor({
                     <SelectContent>
                       <SelectItem value="text">Texto</SelectItem>
                       <SelectItem value="date">Data</SelectItem>
-                      <SelectItem value="boolean">Sim/Nao</SelectItem>
-                      <SelectItem value="select">Selecao</SelectItem>
+                      <SelectItem value="boolean">Sim/Não</SelectItem>
+                      <SelectItem value="select">Seleção</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

@@ -26,14 +26,14 @@ export function PostBookingConfigEditor({ config, onChange }: PostBookingConfigE
           <BehaviorCard
             icon={UserCheck}
             label="Parar e passar para humano"
-            description="Encerra a conversa e avisa que um membro da equipe dara continuidade"
+            description="Encerra a conversa e avisa que um membro da equipe dará continuidade"
             selected={config.behavior === "stop_and_handoff"}
             onClick={() => update("behavior", "stop_and_handoff")}
           />
           <BehaviorCard
             icon={MessageCircle}
             label="Continuar conversando"
-            description="Mantém a conversa ativa ate o horario do agendamento, respondendo duvidas"
+            description="Mantém a conversa ativa até o horário do agendamento, respondendo dúvidas"
             selected={config.behavior === "continue_until_appointment"}
             onClick={() => update("behavior", "continue_until_appointment")}
           />
@@ -66,7 +66,7 @@ export function PostBookingConfigEditor({ config, onChange }: PostBookingConfigE
         <div>
           <Label htmlFor="allow-reschedule">Permitir reagendamento</Label>
           <p className="text-xs text-gray-500">
-            Se o lead pedir para mudar o horario, a IA atualiza o agendamento existente em vez de criar um novo
+            Se o lead pedir para mudar o horário, a IA atualiza o agendamento existente em vez de criar um novo
           </p>
         </div>
       </div>
