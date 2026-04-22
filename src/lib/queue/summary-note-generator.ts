@@ -3,7 +3,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 
 const INACTIVITY_MINUTES = 30;
-const MIN_MESSAGES_FOR_NOTE = 3;
 
 interface SummaryParams {
   agentId: string;
@@ -15,263 +14,224 @@ interface SummaryParams {
   aiModel: string;
 }
 
+/**
+ * Gera uma nota de resumo no contato do GHL ao fim de um segmento de conversa.
+ */
 export async function generateSummaryNote(params: SummaryParams): Promise<void> {
   const supabase = createAdminClient();
+  const tag = `[SummaryNote:${params.contactId.substring(0, 8)}]`;
 
-  console.log(`[SummaryNote] Starting for contact=${params.contactId} trigger=${params.triggerReason}`);
+  console.log(`${tag} === STARTING === trigger=${params.triggerReason}`);
 
-  // 1. Buscar estado atual da conversa
-  const { data: currentState } = await supabase
+  // 1. Verificar conversation_state
+  const { data: convState } = await supabase
     .from("conversation_state")
-    .select("message_count, collected_data, segment_number, status, summary_note_id")
+    .select("*")
     .eq("agent_id", params.agentId)
     .eq("contact_id", params.contactId)
     .maybeSingle();
 
-  console.log(`[SummaryNote] State: msgs=${currentState?.message_count} status=${currentState?.status} note_id=${currentState?.summary_note_id}`);
-
-  // Dedup: já tem nota ou está gerando
-  if (currentState?.summary_note_id) {
-    console.log(`[SummaryNote] Skipped: note already exists (${currentState.summary_note_id})`);
+  if (!convState) {
+    console.log(`${tag} SKIP: no conversation_state`);
     return;
   }
 
-  // Sem conversation_state = nada a resumir
-  if (!currentState) {
-    console.log(`[SummaryNote] Skipped: no conversation_state for ${params.contactId}`);
+  if (convState.summary_note_id && convState.summary_note_id !== "generating") {
+    console.log(`${tag} SKIP: note already exists (${convState.summary_note_id})`);
     return;
   }
 
-  // Marcar como generating (lock)
+  // 2. Verificar toggle do agente
+  const { data: agent } = await supabase
+    .from("agents")
+    .select("name, type, agent_configs(enable_summary_notes, personality, data_fields, ai_model)")
+    .eq("id", params.agentId)
+    .maybeSingle();
+
+  const agentConfig = Array.isArray(agent?.agent_configs) ? agent.agent_configs[0] : agent?.agent_configs;
+
+  if (!agentConfig) {
+    console.log(`${tag} SKIP: no agent config`);
+    return;
+  }
+
+  const cfg = agentConfig as Record<string, unknown>;
+  if (!cfg.enable_summary_notes) {
+    console.log(`${tag} SKIP: toggle OFF (enable_summary_notes=${cfg.enable_summary_notes})`);
+    return;
+  }
+
+  // 3. Marcar como generating (lock)
   await supabase
     .from("conversation_state")
-    .update({ summary_note_id: "generating", updated_at: new Date().toISOString() })
+    .update({ summary_note_id: "generating" })
     .eq("agent_id", params.agentId)
     .eq("contact_id", params.contactId);
 
-  const lockResult = currentState;
-
   try {
-    // 2. Buscar agent config para nome, tipo e toggle
-    const { data: agent } = await supabase
-      .from("agents")
-      .select("name, type, agent_configs(personality, data_fields, enable_summary_notes)")
-      .eq("id", params.agentId)
-      .maybeSingle();
-
-    const config = Array.isArray(agent?.agent_configs)
-      ? agent.agent_configs[0]
-      : agent?.agent_configs;
-
-    // Verificar toggle — se desabilitado, liberar lock e sair
-    const toggleValue = (config as Record<string, unknown>)?.enable_summary_notes;
-    console.log(`[SummaryNote] Toggle check: enable_summary_notes=${toggleValue} agent=${params.agentId}`);
-    if (!toggleValue) {
-      console.log(`[SummaryNote] Skipped: toggle OFF for agent ${params.agentId}`);
-      await supabase.from("conversation_state").update({ summary_note_id: null }).eq("agent_id", params.agentId).eq("contact_id", params.contactId);
-      return;
-    }
-
-    const agentName = (config?.personality as Record<string, string>)?.name || agent?.name || "Agente IA";
+    const personality = (cfg.personality || {}) as Record<string, string>;
+    const agentName = personality.name || agent?.name || "Agente IA";
     const agentType = agent?.type === "recruitment_agent" ? "recrutamento" : "vendas";
+    const dataFields = (cfg.data_fields || []) as { key: string; label: string }[];
+    const collectedData = (convState.collected_data || {}) as Record<string, string>;
 
-    // 3. Buscar histórico de conversa do GHL
+    // 4. Buscar histórico do GHL
     const ghlClient = new GHLClient(params.companyId, params.locationId);
-    let conversationHistory = "";
+    let history = "";
     let contactName = params.contactId.substring(0, 12);
 
     try {
-      const searchResult = await ghlClient.get<{ conversations: { id: string }[] }>(
+      const search = await ghlClient.get<{ conversations: { id: string }[] }>(
         "/conversations/search",
         { locationId: params.locationId, contactId: params.contactId }
       );
-
-      if (searchResult.conversations?.[0]?.id) {
-        const convId = searchResult.conversations[0].id;
-        const messagesResult = await ghlClient.get<{ messages: { messages: { body: string; direction: string; dateAdded: string }[] } }>(
-          `/conversations/${convId}/messages`,
-          { locationId: params.locationId }
+      const convId = search.conversations?.[0]?.id;
+      if (convId) {
+        const msgs = await ghlClient.get<{ messages: { messages: { body: string; direction: string; dateAdded: string }[] } }>(
+          `/conversations/${convId}/messages`, { locationId: params.locationId }
         );
-
-        const messages = messagesResult.messages?.messages || [];
-        conversationHistory = messages
+        history = (msgs.messages?.messages || [])
           .filter((m) => m.body)
           .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
-          .slice(-40)
-          .map((m) => `${m.direction === "inbound" ? "CONTATO" : "AGENTE"}: ${m.body.substring(0, 500)}`)
+          .slice(-30)
+          .map((m) => `${m.direction === "inbound" ? "CONTATO" : "AGENTE"}: ${m.body.substring(0, 400)}`)
           .join("\n");
       }
 
-      // Buscar nome do contato
-      const contactResult = await ghlClient.get<{ contact: { name?: string; firstName?: string } }>(`/contacts/${params.contactId}`);
-      contactName = contactResult.contact?.name || contactResult.contact?.firstName || contactName;
-    } catch (err) {
-      console.error("[SummaryNote] Error fetching GHL data:", err instanceof Error ? err.message : err);
+      const contact = await ghlClient.get<{ contact: { name?: string; firstName?: string } }>(`/contacts/${params.contactId}`);
+      contactName = contact.contact?.name || contact.contact?.firstName || contactName;
+    } catch (e) {
+      console.warn(`${tag} GHL fetch partial fail:`, e instanceof Error ? e.message : e);
     }
 
-    const collectedData = (lockResult.collected_data || {}) as Record<string, string>;
-
-    // 4. Montar dados coletados dinâmicos a partir do config
-    const dataFields = (config?.data_fields || []) as { key: string; label: string }[];
-    const collectedDisplay = dataFields
+    // 5. Montar dados coletados (dinâmico)
+    const collectedLines = dataFields
       .filter((f) => collectedData[f.key])
-      .map((f) => `- ${f.label}: ${collectedData[f.key]}`);
-
-    // Adicionar campos que não estão no config mas foram coletados
+      .map((f) => `• ${f.label}: ${collectedData[f.key]}`);
     for (const [k, v] of Object.entries(collectedData)) {
       if (!dataFields.some((f) => f.key === k) && v && !k.startsWith("contact.")) {
-        collectedDisplay.push(`- ${k}: ${v}`);
+        collectedLines.push(`• ${k}: ${v}`);
       }
     }
 
-    // 5. Mapear razão do trigger
-    const triggerLabels: Record<string, string> = {
-      inactivity: "Inatividade (30 minutos sem interação)",
-      booked: "Agendamento realizado com sucesso",
-      qualified: "Lead qualificado (todos os dados coletados)",
+    // 6. Trigger label
+    const triggers: Record<string, string> = {
+      inactivity: "Inatividade (30 min sem interação)",
+      booked: "Agendamento realizado",
+      qualified: "Lead qualificado",
       disqualified: "Lead desqualificado",
-      handed_off: "Conversa transferida para humano",
-      "auto_pause:human_message": "Humano assumiu o atendimento",
-      opt_out: "Contato solicitou parar de receber mensagens",
+      handed_off: "Transferido para humano",
+      manual: "Geração manual",
     };
-    const triggerDisplay = triggerLabels[params.triggerReason] || params.triggerReason;
 
-    // 6. Gerar resumo via IA
-    const summaryPrompt = `Você é um escritor profissional de notas de CRM. Gere um resumo estruturado da conversa abaixo entre o agente de ${agentType} "${agentName}" e o contato "${contactName}".
-
-A conversa foi encerrada por: ${triggerDisplay}
-
-HISTÓRICO DA CONVERSA:
-${conversationHistory || "(sem histórico disponível)"}
-
-DADOS COLETADOS:
-${collectedDisplay.length > 0 ? collectedDisplay.join("\n") : "(nenhum dado coletado)"}
-
-STATUS FINAL: ${lockResult.status || "active"}
-
-Gere um JSON com o campo "note_html" contendo HTML formatado com estas 4 seções:
-1. 💬 Resumo da Conversa — 2-3 frases sobre o que foi discutido
-2. 📊 Dados Coletados — lista com os dados obtidos (use os que foram fornecidos acima)
-3. 🏁 Conclusão — como e por que a conversa encerrou
-4. 👉 Próximos Passos — 1-2 recomendações acionáveis para a equipe humana
-
-Regras:
-- Escreva de forma profissional e concisa
-- Use HTML: h4, p, ul, li, strong (sem CSS/style)
-- Máximo 400 palavras
-- Escreva no idioma da conversa (português se pt-BR)
-- Retorne APENAS JSON válido: { "note_html": "<conteúdo>" }`;
-
-    // 6b. Chamar OpenAI diretamente (não usa processWithAI porque o parser
-    //     desse módulo extrai "message" e descarta "note_html")
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 30000 });
-    console.log(`[SummaryNote] Calling AI for summary (model: ${params.aiModel})`);
+    // 7. Chamar OpenAI diretamente
+    console.log(`${tag} Calling OpenAI for summary...`);
+    const model = params.aiModel.startsWith("claude") ? "gpt-4.1-mini" : params.aiModel;
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 25000 });
 
     const completion = await openai.chat.completions.create({
-      model: params.aiModel.startsWith("claude") ? "gpt-4.1-mini" : params.aiModel,
+      model,
       messages: [
-        { role: "system", content: summaryPrompt },
-        { role: "user", content: "Gere o resumo agora." },
+        {
+          role: "system",
+          content: `Gere um resumo profissional de atendimento. Responda APENAS com JSON: { "note_html": "<html>" }
+O HTML deve ter 4 seções com h4: Resumo, Dados Coletados, Conclusão, Próximos Passos.
+Use tags: h4, p, ul, li, strong. Sem CSS. Máximo 300 palavras. Idioma: português.`,
+        },
+        {
+          role: "user",
+          content: `Agente: ${agentName} (${agentType})
+Contato: ${contactName}
+Motivo do encerramento: ${triggers[params.triggerReason] || params.triggerReason}
+Status: ${convState.status}
+
+Dados coletados:
+${collectedLines.length > 0 ? collectedLines.join("\n") : "(nenhum)"}
+
+Histórico:
+${history || "(sem histórico disponível)"}
+
+Gere o resumo agora.`,
+        },
       ],
-      temperature: 0.5,
-      max_tokens: 1500,
+      temperature: 0.4,
+      max_tokens: 1200,
       response_format: { type: "json_object" },
     });
 
-    const rawResponse = completion.choices[0]?.message?.content || "";
-    console.log(`[SummaryNote] AI response (${rawResponse.length} chars): "${rawResponse.substring(0, 100)}..."`);
+    const raw = completion.choices[0]?.message?.content || "";
+    console.log(`${tag} OpenAI response: ${raw.length} chars`);
 
-    // 7. Extrair HTML da resposta
+    // 8. Extrair HTML
     let noteHtml = "";
     try {
-      const parsed = JSON.parse(rawResponse);
-      noteHtml = parsed.note_html || parsed.html || parsed.note || parsed.content || "";
+      const parsed = JSON.parse(raw);
+      noteHtml = parsed.note_html || parsed.html || parsed.note || "";
     } catch {
-      // Se não parseou JSON, tentar extrair HTML direto
-      const htmlMatch = rawResponse.match(/<(?:div|h[1-6]|p|ul)[\s\S]*<\/(?:div|h[1-6]|p|ul)>/i);
-      noteHtml = htmlMatch ? htmlMatch[0] : rawResponse.replace(/```html?/g, "").replace(/```/g, "").trim();
+      noteHtml = raw.replace(/```html?/g, "").replace(/```/g, "").trim();
     }
 
-    if (!noteHtml) {
-      console.error(`[SummaryNote] Empty note from AI. Raw: "${rawResponse.substring(0, 300)}"`);
-      throw new Error("IA retornou nota vazia");
+    if (!noteHtml || noteHtml.length < 20) {
+      console.error(`${tag} Note too short or empty. Raw: ${raw.substring(0, 200)}`);
+      throw new Error("Nota gerada vazia");
     }
 
-    console.log(`[SummaryNote] Note HTML extracted (${noteHtml.length} chars)`);
+    // 9. Montar nota final
+    const dateStr = new Date().toLocaleString("pt-BR", { timeZone: "America/New_York" });
+    const segment = convState.segment_number || 1;
 
-    // 8. Montar nota completa com header de metadata
-    const now = new Date();
-    const dateStr = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
-    const segmentNum = lockResult.segment_number || 1;
+    const fullNote = [
+      `<h3>📋 Resumo de Atendimento — Spark AI</h3>`,
+      `<p><strong>Agente:</strong> ${agentName} | <strong>Data:</strong> ${dateStr} | <strong>Motivo:</strong> ${triggers[params.triggerReason] || params.triggerReason}</p>`,
+      `<hr>`,
+      noteHtml,
+      `<br><p><em>Gerado por Spark AI • Segmento #${segment}</em></p>`,
+    ].join("\n");
 
-    const fullNote = `<div>
-<h3>📋 Resumo de Atendimento por IA</h3>
-<p><strong>Agente:</strong> ${agentName} | <strong>Data:</strong> ${dateStr} | <strong>Mensagens:</strong> ${lockResult.message_count || 0} | <strong>Motivo:</strong> ${triggerDisplay}</p>
-<hr>
-${noteHtml}
-<br>
-<p><em>Gerado automaticamente por Spark AI • Segmento #${segmentNum}</em></p>
-</div>`;
-
-    // 9. Criar nota no GHL
-    console.log(`[SummaryNote] Posting note to GHL: /contacts/${params.contactId}/notes (${fullNote.length} chars)`);
-    let noteId = `note_${Date.now()}`;
+    // 10. Postar no GHL
+    console.log(`${tag} Posting to GHL Notes API...`);
+    let noteId = `local_${Date.now()}`;
     try {
-      const noteResult = await ghlClient.post<{ note?: { id: string }; id?: string }>(`/contacts/${params.contactId}/notes`, {
+      const result = await ghlClient.post<Record<string, unknown>>(`/contacts/${params.contactId}/notes`, {
         body: fullNote,
-        userId: undefined,
       });
-      noteId = noteResult.note?.id || noteResult.id || noteId;
-      console.log(`[SummaryNote] GHL note created: ${noteId}`);
+      noteId = String((result as Record<string, unknown>).id || (result as Record<string, { id: string }>).note?.id || noteId);
+      console.log(`${tag} GHL note created: ${noteId}`);
     } catch (ghlErr) {
-      console.error(`[SummaryNote] GHL Notes API error:`, ghlErr instanceof Error ? ghlErr.message : ghlErr);
-      // Tentar sem HTML (plain text fallback)
+      console.error(`${tag} GHL Notes error:`, ghlErr instanceof Error ? ghlErr.message : ghlErr);
+      // Tentar plain text
+      const plain = fullNote.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
       try {
-        const plainNote = fullNote.replace(/<[^>]+>/g, "").replace(/&[a-z]+;/g, "").trim();
-        console.log(`[SummaryNote] Retrying with plain text (${plainNote.length} chars)`);
-        const retryResult = await ghlClient.post<{ note?: { id: string }; id?: string }>(`/contacts/${params.contactId}/notes`, {
-          body: plainNote,
-        });
-        noteId = retryResult.note?.id || retryResult.id || noteId;
-        console.log(`[SummaryNote] GHL note created (plain text): ${noteId}`);
-      } catch (retryErr) {
-        console.error(`[SummaryNote] GHL Notes API retry failed:`, retryErr instanceof Error ? retryErr.message : retryErr);
-        throw retryErr;
+        const r2 = await ghlClient.post<Record<string, unknown>>(`/contacts/${params.contactId}/notes`, { body: plain });
+        noteId = String((r2 as Record<string, unknown>).id || noteId);
+        console.log(`${tag} GHL note created (plain): ${noteId}`);
+      } catch (e2) {
+        console.error(`${tag} GHL Notes plain text also failed:`, e2 instanceof Error ? e2.message : e2);
+        throw e2;
       }
     }
 
-    // 10. Atualizar conversation_state com o ID da nota
+    // 11. Salvar e logar
     await supabase
       .from("conversation_state")
-      .update({
-        summary_note_id: noteId,
-        summary_note_created_at: now.toISOString(),
-        updated_at: now.toISOString(),
-      })
+      .update({ summary_note_id: noteId, summary_note_created_at: new Date().toISOString() })
       .eq("agent_id", params.agentId)
       .eq("contact_id", params.contactId);
 
-    // 11. Log
     await supabase.from("execution_log").insert({
       agent_id: params.agentId,
       location_id: params.locationId,
       contact_id: params.contactId,
-      conversation_id: params.conversationId,
       action_type: "summary_note_created",
-      action_payload: {
-        trigger: params.triggerReason,
-        segment: segmentNum,
-        note_id: noteId,
-        tokens: (completion.usage?.prompt_tokens || 0) + (completion.usage?.completion_tokens || 0),
-      },
+      action_payload: { trigger: params.triggerReason, segment, note_id: noteId },
       success: true,
     });
 
-    console.log(`[SummaryNote] Created for ${params.contactId} (trigger: ${params.triggerReason}, segment: ${segmentNum})`);
+    console.log(`${tag} === DONE === note=${noteId}`);
   } catch (error) {
-    console.error("[SummaryNote] Error:", error instanceof Error ? error.message : error);
+    console.error(`${tag} === FAILED ===`, error instanceof Error ? error.message : error);
 
-    // Reset lock para permitir retry
+    // Reset lock
     await supabase
       .from("conversation_state")
       .update({ summary_note_id: null })
@@ -292,8 +252,7 @@ ${noteHtml}
 }
 
 /**
- * Scanner de inatividade — chamado pelo cron a cada 5 minutos.
- * Busca conversas ativas sem nota que estão paradas há 30+ minutos.
+ * Scanner de inatividade — chamado pelo cron.
  */
 export async function processInactivitySummaries(): Promise<{ generated: number; errors: number }> {
   const supabase = createAdminClient();
@@ -302,7 +261,13 @@ export async function processInactivitySummaries(): Promise<{ generated: number;
 
   const cutoff = new Date(Date.now() - INACTIVITY_MINUTES * 60 * 1000).toISOString();
 
-  // Buscar conversas inativas
+  // Limpar locks órfãos
+  await supabase
+    .from("conversation_state")
+    .update({ summary_note_id: null })
+    .eq("summary_note_id", "generating")
+    .lt("updated_at", new Date(Date.now() - 10 * 60 * 1000).toISOString());
+
   const { data: inactive } = await supabase
     .from("conversation_state")
     .select("agent_id, location_id, contact_id, conversation_id")
@@ -310,63 +275,42 @@ export async function processInactivitySummaries(): Promise<{ generated: number;
     .is("summary_note_id", null)
     .lt("last_ai_response_at", cutoff)
     .not("last_ai_response_at", "is", null)
-    .gte("message_count", MIN_MESSAGES_FOR_NOTE)
     .limit(10);
 
   if (!inactive || inactive.length === 0) return { generated: 0, errors: 0 };
 
-  // Limpar locks órfãos (generating há mais de 10 min)
-  const lockCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  await supabase
-    .from("conversation_state")
-    .update({ summary_note_id: null })
-    .eq("summary_note_id", "generating")
-    .lt("updated_at", lockCutoff);
-
   for (const conv of inactive) {
     try {
-      // Buscar agent para model config
-      const { data: agent } = await supabase
+      const { data: ag } = await supabase
         .from("agents")
         .select("id, agent_configs(ai_model)")
         .eq("id", conv.agent_id)
         .eq("status", "active")
         .maybeSingle();
+      if (!ag) continue;
 
-      if (!agent) continue;
-
-      const agentConfig = Array.isArray(agent.agent_configs)
-        ? agent.agent_configs[0]
-        : agent.agent_configs;
-
-      // Buscar location para company_id
-      const { data: location } = await supabase
+      const { data: loc } = await supabase
         .from("locations")
         .select("company_id")
         .eq("location_id", conv.location_id)
         .single();
+      if (!loc) continue;
 
-      if (!location) continue;
+      const acfg = Array.isArray(ag.agent_configs) ? ag.agent_configs[0] : ag.agent_configs;
 
       await generateSummaryNote({
         agentId: conv.agent_id,
         locationId: conv.location_id,
         contactId: conv.contact_id,
         conversationId: conv.conversation_id || "",
-        companyId: location.company_id,
+        companyId: loc.company_id,
         triggerReason: "inactivity",
-        aiModel: (agentConfig as Record<string, string>)?.ai_model || "gpt-4.1-mini",
+        aiModel: (acfg as Record<string, string>)?.ai_model || "gpt-4.1-mini",
       });
-
       generated++;
-    } catch (err) {
-      console.error(`[SummaryNote:cron] Error for ${conv.contact_id}:`, err instanceof Error ? err.message : err);
+    } catch {
       errors++;
     }
-  }
-
-  if (generated > 0 || errors > 0) {
-    console.log(`[SummaryNote:cron] Generated: ${generated}, Errors: ${errors}`);
   }
 
   return { generated, errors };
