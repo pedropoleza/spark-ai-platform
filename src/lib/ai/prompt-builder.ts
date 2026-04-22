@@ -54,6 +54,7 @@ export interface KnowledgeBaseItem {
 
 interface PromptContext {
   config: AgentConfig;
+  agentType?: "sales_agent" | "recruitment_agent";
   contactName: string;
   collectedData: Record<string, string>;
   locationName: string;
@@ -148,7 +149,7 @@ Timezone: ${ctx.timezone}${persona}${greeting}${farewell}${langInst}`;
 }
 
 function buildObjectiveSection(ctx: PromptContext): string {
-  const isRecruitment = !!ctx.config.specialist_name;
+  const isRecruitment = ctx.agentType === "recruitment_agent";
 
   // Regra de ouro para recrutamento
   const goldenRule = isRecruitment ? `
@@ -184,7 +185,7 @@ Ao agendar com sucesso, defina conversation_status = "booked".${goldenRule}`;
 }
 
 function buildRecruitmentSection(ctx: PromptContext): string {
-  if (!ctx.config.specialist_name) return "";
+  if (ctx.agentType !== "recruitment_agent" || !ctx.config.specialist_name) return "";
 
   const specialist = sanitize(ctx.config.specialist_name, 50);
   const role = sanitize(ctx.config.specialist_role || "especialista", 50);
@@ -603,6 +604,7 @@ NUNCA retorne texto fora do JSON.`;
 
 interface FollowUpPromptContext {
   config: AgentConfig;
+  agentType?: "sales_agent" | "recruitment_agent";
   attemptNumber: number;
   locationName: string;
   currentDate: string;
@@ -615,7 +617,7 @@ export function buildFollowUpPrompt(ctx: FollowUpPromptContext): string {
     ? `\n\nInstrucoes adicionais:\n${followUpConfig.custom_prompt}`
     : "";
 
-  const isRecruitment = !!ctx.config.specialist_name;
+  const isRecruitment = ctx.agentType === "recruitment_agent";
   const p = ctx.config.personality;
   const name = p?.name || "Assistente";
   const isHuman = p?.identity_mode === "human";

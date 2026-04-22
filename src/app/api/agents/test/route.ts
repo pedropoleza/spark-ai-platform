@@ -139,7 +139,8 @@ export async function POST(request: NextRequest) {
 
   const systemPrompt = buildSystemPrompt({
     config,
-    contactName: contact_id ? "Lead" : "Usuario Teste",
+    agentType: agent.type as "sales_agent" | "recruitment_agent",
+    contactName: contact_id ? "Lead" : "Usuário Teste",
     collectedData: collected_data || {},
     locationName: location?.location_name || "Minha Empresa",
     currentDate: `${currentDateInTz}, ${currentTimeInTz}`,

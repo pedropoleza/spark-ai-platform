@@ -501,6 +501,7 @@ async function processGroup(
 
   const systemPrompt = buildSystemPrompt({
     config,
+    agentType: agent.type as "sales_agent" | "recruitment_agent",
     contactName,
     collectedData,
     locationName: location.location_name || "Nossa empresa",
