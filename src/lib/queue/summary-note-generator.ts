@@ -44,16 +44,24 @@ export async function generateSummaryNote(params: SummaryParams): Promise<void> 
   }
 
   try {
-    // 2. Buscar agent config para nome e tipo
+    // 2. Buscar agent config para nome, tipo e toggle
     const { data: agent } = await supabase
       .from("agents")
-      .select("name, type, agent_configs(personality, data_fields)")
+      .select("name, type, agent_configs(personality, data_fields, enable_summary_notes)")
       .eq("id", params.agentId)
       .maybeSingle();
 
     const config = Array.isArray(agent?.agent_configs)
       ? agent.agent_configs[0]
       : agent?.agent_configs;
+
+    // Verificar toggle — se desabilitado, liberar lock e sair
+    if (!(config as Record<string, unknown>)?.enable_summary_notes) {
+      console.log(`[SummaryNote] Skipped: toggle OFF for agent ${params.agentId}`);
+      await supabase.from("conversation_state").update({ summary_note_id: null }).eq("agent_id", params.agentId).eq("contact_id", params.contactId);
+      return;
+    }
+
     const agentName = (config?.personality as Record<string, string>)?.name || agent?.name || "Agente IA";
     const agentType = agent?.type === "recruitment_agent" ? "recrutamento" : "vendas";
 

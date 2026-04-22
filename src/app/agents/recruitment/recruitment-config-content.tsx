@@ -115,6 +115,7 @@ const defaultConfig: ConfigForm = {
   enable_audio_transcription: false,
   enable_image_analysis: false,
   enable_pdf_reading: false,
+  enable_summary_notes: false,
   // Recruitment-specific
   specialist_name: "",
   specialist_role: "especialista",
@@ -411,9 +412,11 @@ export function RecruitmentConfigContent() {
                   enableAudio={config.enable_audio_transcription ?? false}
                   enableImage={config.enable_image_analysis ?? false}
                   enablePdf={config.enable_pdf_reading ?? false}
+                  enableSummaryNotes={config.enable_summary_notes ?? false}
                   onChangeAudio={(v) => updateConfig("enable_audio_transcription", v)}
                   onChangeImage={(v) => updateConfig("enable_image_analysis", v)}
                   onChangePdf={(v) => updateConfig("enable_pdf_reading", v)}
+                  onChangeSummaryNotes={(v) => updateConfig("enable_summary_notes", v)}
                 />
               </CardContent>
             </Card>

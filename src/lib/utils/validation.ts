@@ -179,6 +179,7 @@ export const updateAgentConfigSchema = z.object({
   enable_audio_transcription: z.boolean().nullable().optional(),
   enable_image_analysis: z.boolean().nullable().optional(),
   enable_pdf_reading: z.boolean().nullable().optional(),
+  enable_summary_notes: z.boolean().nullable().optional(),
   notifications: z.object({
     on_qualified: z.boolean(),
     on_booked: z.boolean(),

@@ -1,6 +1,6 @@
 "use client";
 
-import { Mic, Eye, FileText } from "lucide-react";
+import { Mic, Eye, FileText, StickyNote } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -9,9 +9,11 @@ interface MediaFeaturesEditorProps {
   enableAudio: boolean;
   enableImage: boolean;
   enablePdf: boolean;
+  enableSummaryNotes: boolean;
   onChangeAudio: (v: boolean) => void;
   onChangeImage: (v: boolean) => void;
   onChangePdf: (v: boolean) => void;
+  onChangeSummaryNotes: (v: boolean) => void;
 }
 
 const features = [
@@ -39,18 +41,28 @@ const features = [
     cost: "~$0.002-0.01/doc",
     model: "Extração + GPT",
   },
+  {
+    key: "summary" as const,
+    icon: StickyNote,
+    label: "Notas de resumo automáticas",
+    description: "Ao encerrar um atendimento, a IA gera uma nota profissional no contato do GHL com resumo, dados coletados e próximos passos.",
+    cost: "~$0.001/nota",
+    model: "GPT/Claude",
+  },
 ];
 
 export function MediaFeaturesEditor({
   enableAudio,
   enableImage,
   enablePdf,
+  enableSummaryNotes,
   onChangeAudio,
   onChangeImage,
   onChangePdf,
+  onChangeSummaryNotes,
 }: MediaFeaturesEditorProps) {
-  const values = { audio: enableAudio, image: enableImage, pdf: enablePdf };
-  const handlers = { audio: onChangeAudio, image: onChangeImage, pdf: onChangePdf };
+  const values = { audio: enableAudio, image: enableImage, pdf: enablePdf, summary: enableSummaryNotes };
+  const handlers = { audio: onChangeAudio, image: onChangeImage, pdf: onChangePdf, summary: onChangeSummaryNotes };
 
   return (
     <div className="space-y-3">

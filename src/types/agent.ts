@@ -108,6 +108,8 @@ export interface AgentConfig {
   enable_audio_transcription?: boolean;
   enable_image_analysis?: boolean;
   enable_pdf_reading?: boolean;
+  // Summary notes
+  enable_summary_notes?: boolean;
   // Recruitment-specific
   specialist_name?: string;        // Nome do especialista que faz o Zoom
   specialist_role?: string;        // Descrição do papel ("especialista", "recrutadora")
