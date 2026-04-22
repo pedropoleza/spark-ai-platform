@@ -1,6 +1,6 @@
+import OpenAI from "openai";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
-import { processWithAI } from "@/lib/ai/openai-client";
 
 const INACTIVITY_MINUTES = 30;
 const MIN_MESSAGES_FOR_NOTE = 3;
@@ -162,36 +162,42 @@ Regras:
 - Escreva no idioma da conversa (português se pt-BR)
 - Retorne APENAS JSON válido: { "note_html": "<conteúdo>" }`;
 
-    const aiResult = await processWithAI({
-      systemPrompt: summaryPrompt,
-      conversationHistory: "",
-      newMessages: "Gere o resumo agora.",
-      model: params.aiModel,
+    // 6b. Chamar OpenAI diretamente (não usa processWithAI porque o parser
+    //     desse módulo extrai "message" e descarta "note_html")
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 30000 });
+    console.log(`[SummaryNote] Calling AI for summary (model: ${params.aiModel})`);
+
+    const completion = await openai.chat.completions.create({
+      model: params.aiModel.startsWith("claude") ? "gpt-4.1-mini" : params.aiModel,
+      messages: [
+        { role: "system", content: summaryPrompt },
+        { role: "user", content: "Gere o resumo agora." },
+      ],
+      temperature: 0.5,
+      max_tokens: 1500,
+      response_format: { type: "json_object" },
     });
 
-    if (!aiResult.success || !aiResult.response) {
-      throw new Error(aiResult.error || "Falha ao gerar resumo");
-    }
+    const rawResponse = completion.choices[0]?.message?.content || "";
+    console.log(`[SummaryNote] AI response (${rawResponse.length} chars): "${rawResponse.substring(0, 100)}..."`);
 
     // 7. Extrair HTML da resposta
     let noteHtml = "";
-    const rawMessage = aiResult.response.message;
-    const rawText = Array.isArray(rawMessage) ? rawMessage.join("") : rawMessage;
-
     try {
-      const jsonMatch = rawText.match(/\{[\s\S]*"note_html"[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        noteHtml = parsed.note_html || "";
-      }
+      const parsed = JSON.parse(rawResponse);
+      noteHtml = parsed.note_html || parsed.html || parsed.note || parsed.content || "";
     } catch {
-      // Se não parseou JSON, usar o texto direto
-      noteHtml = rawText;
+      // Se não parseou JSON, tentar extrair HTML direto
+      const htmlMatch = rawResponse.match(/<(?:div|h[1-6]|p|ul)[\s\S]*<\/(?:div|h[1-6]|p|ul)>/i);
+      noteHtml = htmlMatch ? htmlMatch[0] : rawResponse.replace(/```html?/g, "").replace(/```/g, "").trim();
     }
 
     if (!noteHtml) {
+      console.error(`[SummaryNote] Empty note from AI. Raw: "${rawResponse.substring(0, 300)}"`);
       throw new Error("IA retornou nota vazia");
     }
+
+    console.log(`[SummaryNote] Note HTML extracted (${noteHtml.length} chars)`);
 
     // 8. Montar nota completa com header de metadata
     const now = new Date();
@@ -256,7 +262,7 @@ ${noteHtml}
         trigger: params.triggerReason,
         segment: segmentNum,
         note_id: noteId,
-        tokens: (aiResult.prompt_tokens || 0) + (aiResult.completion_tokens || 0),
+        tokens: (completion.usage?.prompt_tokens || 0) + (completion.usage?.completion_tokens || 0),
       },
       success: true,
     });
