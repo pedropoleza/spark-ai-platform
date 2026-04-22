@@ -16,7 +16,7 @@ export const AI_MODELS = [
 export const AGENT_TYPES = {
   sales_agent: {
     name: "Agente de Vendas",
-    description: "Qualifica leads e agenda reunioes com corretores",
+    description: "Qualifica leads e agenda reuniões com corretores",
     icon: "Headphones",
   },
   recruitment_agent: {
@@ -26,7 +26,7 @@ export const AGENT_TYPES = {
   },
   account_assistant: {
     name: "Assistente de Conta",
-    description: "Auxilia clientes com duvidas sobre suas contas",
+    description: "Auxilia clientes com dúvidas sobre suas contas",
     icon: "UserCog",
     comingSoon: true,
   },
@@ -34,15 +34,15 @@ export const AGENT_TYPES = {
 
 export const OBJECTIVES = {
   qualification_only: {
-    label: "Apenas Qualificacao",
-    description: "O agente coleta informacoes sem agendar reuniao",
+    label: "Apenas Qualificação",
+    description: "O agente coleta informações sem agendar reunião",
   },
   qualification_and_booking: {
-    label: "Qualificacao + Agendamento",
-    description: "O agente qualifica o lead e agenda uma reuniao",
+    label: "Qualificação + Agendamento",
+    description: "O agente qualifica o lead e agenda uma reunião",
   },
   booking_only: {
     label: "Apenas Agendamento",
-    description: "O agente agenda reuniao sem perguntas de qualificacao",
+    description: "O agente agenda reunião sem perguntas de qualificação",
   },
 } as const;

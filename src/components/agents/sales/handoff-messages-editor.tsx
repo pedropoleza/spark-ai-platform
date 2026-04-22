@@ -78,10 +78,10 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-400">
-        Cadastre mensagens prontas que voce envia manualmente ao cliente (pelo Spark
+        Cadastre mensagens prontas que você envia manualmente ao cliente (pelo Spark
         ou pelo GHL) para encerrar o atendimento da IA. Quando a mensagem cadastrada
         aqui for detectada no envio saindo, a IA pausa automaticamente para aquele
-        contato especifico — outros contatos continuam sendo atendidos normalmente.
+        contato específico — outros contatos continuam sendo atendidos normalmente.
       </p>
 
       {/* Lista */}
@@ -94,11 +94,11 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
               return (
                 <div key={msg.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50 space-y-3">
                   <div>
-                    <Label className="text-xs">Identificacao</Label>
+                    <Label className="text-xs">Identificação</Label>
                     <Input
                       value={draftLabel}
                       onChange={(e) => setDraftLabel(e.target.value)}
-                      placeholder="Ex: Encerramento padrao"
+                      placeholder="Ex: Encerramento padrão"
                       className="mt-1"
                     />
                   </div>
@@ -107,12 +107,12 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
                     <Textarea
                       value={draftText}
                       onChange={(e) => setDraftText(e.target.value)}
-                      placeholder="Ex: Obrigada! A partir de agora eu sigo daqui com voce pessoalmente."
+                      placeholder="Ex: Obrigada! A partir de agora eu sigo daqui com você pessoalmente."
                       rows={3}
                       className="mt-1"
                     />
                     <p className="text-[10px] text-gray-500 mt-1">
-                      O sistema compara o texto enviado com este exato (ignorando espacos extras). Mantenha a mensagem curta e consistente.
+                      O sistema compara o texto enviado com este exato (ignorando espaços extras). Mantenha a mensagem curta e consistente.
                     </p>
                   </div>
                   <div className="flex items-center justify-between p-2 bg-gray-50 rounded border border-gray-200">
@@ -182,11 +182,11 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
       {adding ? (
         <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 space-y-3">
           <div>
-            <Label className="text-xs">Identificacao</Label>
+            <Label className="text-xs">Identificação</Label>
             <Input
               value={draftLabel}
               onChange={(e) => setDraftLabel(e.target.value)}
-              placeholder="Ex: Encerramento padrao"
+              placeholder="Ex: Encerramento padrão"
               className="mt-1"
             />
           </div>
@@ -195,12 +195,12 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
             <Textarea
               value={draftText}
               onChange={(e) => setDraftText(e.target.value)}
-              placeholder="Ex: Obrigada! A partir de agora eu sigo daqui com voce pessoalmente."
+              placeholder="Ex: Obrigada! A partir de agora eu sigo daqui com você pessoalmente."
               rows={3}
               className="mt-1"
             />
             <p className="text-[10px] text-gray-500 mt-1">
-              O sistema compara o texto enviado com este exato (ignorando espacos extras). Mantenha a mensagem curta e consistente.
+              O sistema compara o texto enviado com este exato (ignorando espaços extras). Mantenha a mensagem curta e consistente.
             </p>
           </div>
           <div className="flex items-center justify-between p-2 bg-gray-50 rounded border border-gray-200">

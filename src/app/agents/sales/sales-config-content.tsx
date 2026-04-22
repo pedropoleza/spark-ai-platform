@@ -42,7 +42,7 @@ const defaultConfig: ConfigForm = {
     name: "Assistente",
     identity_mode: "assistant",
     greeting_style: "Oi {name}!",
-    farewell_style: "Qualquer duvida, estou por aqui!",
+    farewell_style: "Qualquer dúvida, estou por aqui!",
     language: "pt-BR",
     persona_description: "",
   },
@@ -56,7 +56,7 @@ const defaultConfig: ConfigForm = {
   objective: "qualification_and_booking",
   post_booking: {
     behavior: "stop_and_handoff",
-    handoff_message: "Obrigado! Um membro da nossa equipe entrara em contato em breve.",
+    handoff_message: "Obrigado! Um membro da nossa equipe entrará em contato em breve.",
     allow_reschedule: true,
   },
   data_fields: [
@@ -361,11 +361,11 @@ export function SalesConfigContent() {
               </CardContent>
             </Card>
 
-            {/* Pos-agendamento */}
+            {/* Pós-agendamento */}
             {config.objective !== "qualification_only" && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Apos o agendamento</CardTitle>
+                  <CardTitle>Após o agendamento</CardTitle>
                   <CardDescription>
                     Defina o que acontece depois que o lead agenda uma reunião
                   </CardDescription>
@@ -384,7 +384,7 @@ export function SalesConfigContent() {
                 <CardTitle>Dados para coletar</CardTitle>
                 <CardDescription>
                   Configure quais informações o agente deve coletar. Campos vinculados
-                  a Custom Fields sao atualizados automaticamente no Spark.
+                  a Custom Fields são atualizados automaticamente no Spark.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -482,7 +482,7 @@ export function SalesConfigContent() {
                   rows={8}
                 />
                 <p className="text-xs text-gray-500 mt-2">
-                  Dica: Seja claro e especifico sobre o que o agente deve ou nao deve fazer
+                  Dica: Seja claro e específico sobre o que o agente deve ou não deve fazer
                 </p>
               </CardContent>
             </Card>
@@ -523,8 +523,8 @@ export function SalesConfigContent() {
             <CardHeader>
               <CardTitle>Knowledge Base</CardTitle>
               <CardDescription>
-                Adicione documentos, textos ou URLs para que a IA use como referencia nas conversas.
-                O conteudo sera incluido no contexto do prompt automaticamente.
+                Adicione documentos, textos ou URLs para que a IA use como referência nas conversas.
+                O conteúdo será incluído no contexto do prompt automaticamente.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -560,7 +560,7 @@ export function SalesConfigContent() {
           <div className="grid gap-6">
             <Card>
               <CardHeader>
-                <CardTitle>Recursos de midia</CardTitle>
+                <CardTitle>Recursos de mídia</CardTitle>
                 <CardDescription>
                   Habilite capacidades extras de processamento. Cada recurso tem custo adicional por uso.
                 </CardDescription>
@@ -608,7 +608,7 @@ export function SalesConfigContent() {
               </CardContent>
             </Card>
 
-            {/* Automacoes */}
+            {/* Automações */}
             <Card>
               <CardHeader>
                 <CardTitle>Automações</CardTitle>
@@ -681,7 +681,7 @@ export function SalesConfigContent() {
                     className="mt-1.5 w-32"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Tempo de espera para agrupar mensagens rapidas antes de processar
+                    Tempo de espera para agrupar mensagens rápidas antes de processar
                   </p>
                 </div>
 
@@ -706,7 +706,7 @@ export function SalesConfigContent() {
               </CardContent>
             </Card>
 
-            {/* Notificacoes */}
+            {/* Notificações */}
             <Card>
               <CardHeader>
                 <CardTitle>Notificações</CardTitle>

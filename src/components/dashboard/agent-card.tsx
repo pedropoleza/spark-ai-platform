@@ -18,7 +18,7 @@ const iconMap = {
 const typeLabels: Record<AgentType, { name: string; description: string }> = {
   sales_agent: {
     name: "Agente de Vendas",
-    description: "Qualifica leads e agenda reunioes com corretores",
+    description: "Qualifica leads e agenda reuniões com corretores",
   },
   recruitment_agent: {
     name: "Agente de Recrutamento",
@@ -26,7 +26,7 @@ const typeLabels: Record<AgentType, { name: string; description: string }> = {
   },
   account_assistant: {
     name: "Assistente de Conta",
-    description: "Auxilia clientes com duvidas sobre suas contas",
+    description: "Auxilia clientes com dúvidas sobre suas contas",
   },
 };
 
@@ -44,11 +44,11 @@ function formatTimeAgo(isoDate: string): string {
   const diff = Date.now() - new Date(isoDate).getTime();
   const minutes = Math.floor(diff / 60000);
   if (minutes < 1) return "agora";
-  if (minutes < 60) return `ha ${minutes}min`;
+  if (minutes < 60) return `há ${minutes}min`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `ha ${hours}h`;
+  if (hours < 24) return `há ${hours}h`;
   const days = Math.floor(hours / 24);
-  return `ha ${days}d`;
+  return `há ${days}d`;
 }
 
 export function AgentCard({
@@ -104,7 +104,7 @@ export function AgentCard({
         {!comingSoon && (
           <p className="text-xs text-gray-400 mb-4">
             {lastActivity
-              ? `Ultima atividade: ${formatTimeAgo(lastActivity)}${messagesProcessed24h ? ` · ${messagesProcessed24h} mensagens hoje` : ""}`
+              ? `Última atividade: ${formatTimeAgo(lastActivity)}${messagesProcessed24h ? ` · ${messagesProcessed24h} mensagens hoje` : ""}`
               : "Sem atividade"}
           </p>
         )}

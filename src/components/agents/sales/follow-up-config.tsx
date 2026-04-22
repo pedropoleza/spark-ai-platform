@@ -25,10 +25,10 @@ const INTENSITY_LABELS: Record<number, string> = {
   4: "Moderado — 1 tentativa por dia",
   5: "Equilibrado — 1-2 tentativas por dia",
   6: "Ativo — 2-3 tentativas por dia",
-  7: "Intenso — ate 3 tentativas por dia",
-  8: "Muito intenso — ate 4 tentativas por dia",
+  7: "Intenso — até 3 tentativas por dia",
+  8: "Muito intenso — até 4 tentativas por dia",
   9: "Agressivo — 4-5 tentativas por dia",
-  10: "Maximo — segue ate o limite de tentativas",
+  10: "Máximo — segue até o limite de tentativas",
 };
 
 function formatDelay(minutes: number): string {
@@ -80,7 +80,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
         />
         <div>
           <Label htmlFor="followup-enabled" className="font-medium">
-            Follow-up automatico
+            Follow-up automático
           </Label>
           <p className="text-xs text-gray-500">
             A IA reentra em contato com o lead caso ele pare de responder
@@ -105,7 +105,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                 )}
               >
                 <Brain className={cn("w-5 h-5", config.mode === "ai_auto" ? "text-gray-900" : "text-gray-500")} />
-                <span className="text-sm font-medium">IA automatica</span>
+                <span className="text-sm font-medium">IA automática</span>
                 <span className="text-xs text-gray-400">
                   A IA decide quando e o que enviar com base na intensidade
                 </span>
@@ -123,7 +123,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                 <Clock className={cn("w-5 h-5", config.mode === "manual" ? "text-gray-900" : "text-gray-500")} />
                 <span className="text-sm font-medium">Manual</span>
                 <span className="text-xs text-gray-400">
-                  Voce define os horarios e mensagens de cada follow-up
+                  Você define os horários e mensagens de cada follow-up
                 </span>
               </button>
             </div>
@@ -152,7 +152,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
               {/* Limites de tempo */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>Primeiro follow-up apos</Label>
+                  <Label>Primeiro follow-up após</Label>
                   <div className="flex items-center gap-2 mt-1.5">
                     <Input
                       type="number"
@@ -164,11 +164,11 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                     <span className="text-sm text-gray-400">minutos</span>
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    Tempo minimo ate o 1o follow-up
+                    Tempo mínimo até o 1o follow-up
                   </p>
                 </div>
                 <div>
-                  <Label>Ultimo follow-up ate</Label>
+                  <Label>Último follow-up até</Label>
                   <div className="flex items-center gap-2 mt-1.5">
                     <Input
                       type="number"
@@ -180,13 +180,13 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                     <span className="text-sm text-gray-400">dias</span>
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    Tempo maximo para o ultimo follow-up
+                    Tempo máximo para o último follow-up
                   </p>
                 </div>
               </div>
 
               <div>
-                <Label>Maximo de tentativas</Label>
+                <Label>Máximo de tentativas</Label>
                 <Input
                   type="number"
                   min={1}
@@ -196,7 +196,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                   className="mt-1.5 w-32"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Numero maximo de follow-ups antes de parar
+                  Número máximo de follow-ups antes de parar
                 </p>
               </div>
             </div>
@@ -219,7 +219,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
                             #{index + 1}
                           </Badge>
                           <span className="text-sm text-gray-800">
-                            Apos {formatDelay(step.delay_minutes)}
+                            Após {formatDelay(step.delay_minutes)}
                           </span>
                         </div>
                         <button
@@ -248,7 +248,7 @@ export function FollowUpConfigEditor({ config, onChange }: FollowUpConfigEditorP
               {/* Adicionar etapa */}
               <div className="flex items-end gap-2">
                 <div className="flex-1">
-                  <Label className="text-xs">Tempo ate o proximo follow-up</Label>
+                  <Label className="text-xs">Tempo até o próximo follow-up</Label>
                   <div className="flex gap-2 mt-1">
                     <Input
                       type="number"

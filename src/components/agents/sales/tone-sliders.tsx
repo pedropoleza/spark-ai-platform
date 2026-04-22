@@ -21,7 +21,7 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
           <span className="text-xs text-gray-500">{naturalness}%</span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-500 w-16">Robotico</span>
+          <span className="text-xs text-gray-500 w-16">Robótico</span>
           <Slider
             value={[naturalness]}
             onValueChange={([v]) => onChange("tone_naturalness", v)}
@@ -33,23 +33,23 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
         </div>
         <p className="text-xs text-gray-500 mt-1.5">
           {naturalness < 20
-            ? "Formal e estruturado. Mensagem unica com pontuacao completa."
+            ? "Formal e estruturado. Mensagem única com pontuação completa."
             : naturalness < 40
-            ? "Profissional. Mensagens bem escritas com pontuacao."
+            ? "Profissional. Mensagens bem escritas com pontuação."
             : naturalness < 60
             ? "Equilibrado. Natural mas ainda polido."
             : naturalness < 80
-            ? "Casual e humano. Pode dividir mensagens, usar abreviacoes (vc, tb, pfv)."
-            : "Muito humano. Divide mensagens, sem ponto final, abreviacoes, digitacao espontanea."}
+            ? "Casual e humano. Pode dividir mensagens, usar abreviações (vc, tb, pfv)."
+            : "Muito humano. Divide mensagens, sem ponto final, abreviações, digitação espontânea."}
         </p>
         {naturalness >= 60 && (
           <div className="mt-2 text-[10px] text-gray-500 bg-gray-50 rounded-lg p-2.5 space-y-1">
             <p className="font-medium text-gray-400">Com naturalidade alta, a IA vai:</p>
             <ul className="list-disc list-inside space-y-0.5">
               <li>Dividir respostas em 2-3 mensagens separadas</li>
-              <li>Usar abreviacoes: vc, tb, pfv, ta, blz</li>
+              <li>Usar abreviações: vc, tb, pfv, ta, blz</li>
               <li>Omitir ponto final nas frases</li>
-              <li>Escrever de forma mais espontanea</li>
+              <li>Escrever de forma mais espontânea</li>
             </ul>
           </div>
         )}
@@ -100,9 +100,9 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
         </div>
         <p className="text-xs text-gray-500 mt-1.5">
           {formality < 30
-            ? "Tom casual, usa girias leves"
+            ? "Tom casual, usa gírias leves"
             : formality < 70
-            ? "Tom profissional mas acessivel"
+            ? "Tom profissional mas acessível"
             : "Tom corporativo e formal"}
         </p>
       </div>
@@ -126,14 +126,14 @@ export function ToneSliders({ creativity, formality, naturalness, aggressiveness
         </div>
         <p className="text-xs text-gray-500 mt-1.5">
           {aggressiveness < 20
-            ? "Passivo: so responde, nunca propoe agendamento proativamente"
+            ? "Passivo: só responde, nunca propõe agendamento proativamente"
             : aggressiveness < 40
             ? "Suave: sugere agendamento educadamente, aceita recusa sem insistir"
             : aggressiveness < 60
-            ? "Equilibrado: propoe agendamento apos qualificacao, insiste uma vez"
+            ? "Equilibrado: propõe agendamento após qualificação, insiste uma vez"
             : aggressiveness < 80
-            ? "Proativo: insiste 2x, cria senso de urgencia, destaca beneficios"
-            : "Agressivo: insiste 3x, usa escassez, FOMO, rebate objecoes ativamente"}
+            ? "Proativo: insiste 2x, cria senso de urgência, destaca benefícios"
+            : "Agressivo: insiste 3x, usa escassez, FOMO, rebate objeções ativamente"}
         </p>
       </div>
     </div>

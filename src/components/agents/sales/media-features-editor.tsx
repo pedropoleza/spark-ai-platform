@@ -79,7 +79,7 @@ export function MediaFeaturesEditor({
                     {f.cost}
                   </Badge>
                 </div>
-                <p className="text-xs text-gray-600 leading-relaxed">{f.description}</p>
+                <p className="text-sm text-gray-600 leading-relaxed">{f.description}</p>
                 <p className="text-[10px] text-gray-400 mt-1">Modelo: {f.model}</p>
               </div>
             </div>

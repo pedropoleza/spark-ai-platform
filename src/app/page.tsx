@@ -40,7 +40,7 @@ function SSOHandler() {
         setStatus("Redirecionando...");
         router.replace("/dashboard");
       } catch {
-        setError("Erro de conexao. Tente novamente.");
+        setError("Erro de conexão. Tente novamente.");
         authenticatedRef.current = false;
       }
     },
@@ -80,14 +80,14 @@ function SSOHandler() {
     const pathMatch = window.location.href.match(/location\/([a-zA-Z0-9]+)/);
     if (pathMatch) {
       // Se temos o locationId no path mas faltam outros params, aguardar postMessage
-      setStatus("Aguardando autenticacao...");
+      setStatus("Aguardando autenticação...");
     }
 
     // 4. Timeout - se nao receber dados em 5s, mostrar erro com instrucoes
     const timeout = setTimeout(() => {
       if (!authenticatedRef.current) {
         setError(
-          "Nao foi possivel obter os dados de autenticacao. Verifique se a URL do Custom Menu Link esta configurada como: " +
+          "Não foi possível obter os dados de autenticação. Verifique se a URL do Custom Menu Link está configurada como: " +
           window.location.origin +
           "/?user_id={{user.id}}&location_id={{location.id}}"
         );
@@ -108,7 +108,7 @@ function SSOHandler() {
             <span className="text-red-600 text-xl font-bold">!</span>
           </div>
           <h1 className="text-lg font-semibold text-gray-900 mb-2">
-            Erro de autenticacao
+            Erro de autenticação
           </h1>
           <p className="text-sm text-gray-500 break-words">{error}</p>
         </div>

@@ -537,7 +537,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
   return (
     <div className="space-y-3">
-      {/* Toggle de acoes reais */}
+      {/* Toggle de ações reais */}
       <Card>
         <CardContent className="p-4">
           <div className="flex items-start gap-4">
@@ -553,8 +553,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                 </Label>
                 <p className="text-xs text-gray-500 mt-0.5">
                   {executeActions
-                    ? "As acoes serao executadas de verdade no Spark (enviar mensagem, agendar, atualizar campos, tags)"
-                    : "Modo simulacao — nenhuma acao sera executada no Spark"}
+                    ? "As ações serão executadas de verdade no Spark (enviar mensagem, agendar, atualizar campos, tags)"
+                    : "Modo simulação — nenhuma ação será executada no Spark"}
                 </p>
               </div>
             </div>
@@ -638,30 +638,30 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                         {/* Meta info */}
                         <div className="flex items-center gap-2 px-1 flex-wrap">
                           {msg.duration_ms && (
-                            <span className="text-[10px] text-gray-500 flex items-center gap-0.5">
+                            <span className="text-[11px] text-gray-500 flex items-center gap-0.5">
                               <Clock className="w-2.5 h-2.5" />
                               {(msg.duration_ms / 1000).toFixed(1)}s
                             </span>
                           )}
                           {msg.tokens && (
-                            <span className="text-[10px] text-gray-500 flex items-center gap-0.5">
+                            <span className="text-[11px] text-gray-500 flex items-center gap-0.5">
                               <Zap className="w-2.5 h-2.5" />
                               {msg.tokens.prompt + msg.tokens.completion} tokens
                             </span>
                           )}
                           {msg.status && msg.status !== "active" && (
-                            <Badge variant="secondary" className="text-[10px] h-4">
+                            <Badge variant="secondary" className="text-[11px] h-4">
                               {msg.status}
                             </Badge>
                           )}
                           {msg.actionsExecuted && (
-                            <span className="text-[10px] text-emerald-600 flex items-center gap-0.5">
+                            <span className="text-[11px] text-emerald-600 flex items-center gap-0.5">
                               <CheckCircle2 className="w-2.5 h-2.5" />
                               Ações executadas
                             </span>
                           )}
                           {msg.actionsError && (
-                            <span className="text-[10px] text-red-500 flex items-center gap-0.5">
+                            <span className="text-[11px] text-red-500 flex items-center gap-0.5">
                               <AlertTriangle className="w-2.5 h-2.5" />
                               {msg.actionsError}
                             </span>
@@ -674,7 +674,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                               <Badge
                                 key={j}
                                 variant={msg.actionsExecuted ? "success" : "outline"}
-                                className="text-[10px] h-4"
+                                className="text-[11px] h-4"
                               >
                                 {action.type}
                                 {action.tag ? `: ${action.tag}` : ""}
@@ -702,7 +702,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                                 />
                                 <Button
                                   size="sm"
-                                  className="h-6 text-[10px] px-2"
+                                  className="h-6 text-[11px] px-2"
                                   onClick={() => sendFeedback(i, "negative", feedbackSuggestion)}
                                 >
                                   Enviar
@@ -710,7 +710,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                                 <Button
                                   size="sm"
                                   variant="ghost"
-                                  className="h-6 text-[10px] px-1"
+                                  className="h-6 text-[11px] px-1"
                                   onClick={() => { setFeedbackIdx(null); setFeedbackSuggestion(""); }}
                                 >
                                   Cancelar
@@ -736,7 +736,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                             )}
                           </div>
                         ) : (
-                          <span className="text-[10px] text-gray-700 px-1">Feedback salvo</span>
+                          <span className="text-[11px] text-gray-700 px-1">Feedback salvo</span>
                         )}
                       </>
                     ) : (
@@ -858,7 +858,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                   <span className="text-sm font-semibold text-gray-900">Prompt Override</span>
                   <button
                     onClick={() => { setPromptEditing(systemPromptPreview); setShowPromptModal(true); }}
-                    className="text-[10px] text-brand-600 hover:text-brand-700 font-medium flex items-center gap-1"
+                    className="text-[11px] text-brand-600 hover:text-brand-700 font-medium flex items-center gap-1"
                   >
                     <Pencil className="w-3 h-3" />
                     Expandir
@@ -875,10 +875,10 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                       body: JSON.stringify({ system_prompt_override: systemPromptPreview || null }),
                     });
                   }}
-                  className="flex-1 min-h-[140px] text-[11px] font-mono text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-brand-300"
+                  className="flex-1 min-h-[140px] text-xs font-mono text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-2.5 resize-none focus:outline-none focus:ring-1 focus:ring-brand-300"
                   placeholder="Deixe vazio para prompt automático. Edite aqui ou clique em Expandir para tela cheia."
                 />
-                <p className="text-[9px] text-gray-400 mt-1.5">
+                <p className="text-[10px] text-gray-400 mt-1.5">
                   {systemPromptPreview ? `~${Math.ceil(systemPromptPreview.length / 4)} tokens · Salva ao sair do campo` : "Usando prompt gerado automaticamente."}
                 </p>
               </CardContent>
@@ -889,16 +889,16 @@ export function AgentTester({ agentId }: AgentTesterProps) {
               <CardContent className="p-3 flex flex-col flex-1">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-semibold text-gray-900">Knowledge Base</span>
-                  <Badge variant="secondary" className="text-[9px]">{kbItems.length} itens</Badge>
+                  <Badge variant="secondary" className="text-[10px]">{kbItems.length} itens</Badge>
                 </div>
                 <div className="flex-1 min-h-[140px] overflow-y-auto space-y-1.5 bg-gray-50 border border-gray-200 rounded-lg p-2.5">
                   {kbItems.length === 0 ? (
-                    <p className="text-[11px] text-gray-400 text-center mt-8">Nenhum item na base. Adicione na aba Contexto.</p>
+                    <p className="text-xs text-gray-400 text-center mt-8">Nenhum item na base. Adicione na aba Contexto.</p>
                   ) : kbItems.map((item) => (
                     <div key={item.id} className="flex items-center gap-2 py-1.5 px-2 rounded bg-white border border-gray-100 group hover:border-gray-200 transition-colors">
                       <FileText className="w-3 h-3 text-gray-400 flex-shrink-0" />
-                      <span className="text-[11px] text-gray-700 truncate flex-1">{item.title}</span>
-                      <span className="text-[9px] text-gray-400 flex-shrink-0">~{item.token_count}</span>
+                      <span className="text-xs text-gray-700 truncate flex-1">{item.title}</span>
+                      <span className="text-[10px] text-gray-400 flex-shrink-0">~{item.token_count}</span>
                       <button
                         onClick={() => deleteKbItem(item.id)}
                         className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0"
@@ -909,7 +909,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     </div>
                   ))}
                 </div>
-                <p className="text-[9px] text-gray-400 mt-1.5">
+                <p className="text-[10px] text-gray-400 mt-1.5">
                   {kbItems.reduce((sum, i) => sum + i.token_count, 0).toLocaleString()} tokens totais no contexto
                 </p>
               </CardContent>
@@ -975,8 +975,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                 <CardTitle className="text-base">Perfil Comportamental</CardTitle>
                 <CardDescription>
                   {editingProfile
-                    ? "Ajuste os percentuais. Ao salvar, o proximo teste ja usa o novo perfil."
-                    : "Blocos selecionados a partir dos percentuais. Clique no lapis para editar."}
+                    ? "Ajuste os percentuais. Ao salvar, o próximo teste já usa o novo perfil."
+                    : "Blocos selecionados a partir dos percentuais. Clique no lápis para editar."}
                 </CardDescription>
               </div>
               {!editingProfile && profile && (
@@ -999,7 +999,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     [
                       { key: "tone_creativity", title: "Criatividade", low: "Preciso", high: "Criativo" },
                       { key: "tone_formality", title: "Formalidade", low: "Informal", high: "Formal" },
-                      { key: "tone_naturalness", title: "Naturalidade", low: "Robotico", high: "Humano" },
+                      { key: "tone_naturalness", title: "Naturalidade", low: "Robótico", high: "Humano" },
                       { key: "tone_aggressiveness", title: "Agressividade", low: "Passivo", high: "Agressivo" },
                     ] as const
                   ).map(({ key, title, low, high }) => {
@@ -1007,11 +1007,11 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     return (
                       <div key={key}>
                         <div className="flex items-center justify-between mb-1.5">
-                          <Label className="text-xs font-semibold text-gray-900">{title}</Label>
+                          <Label className="text-sm font-semibold text-gray-900">{title}</Label>
                           <span className="text-xs font-mono text-brand-600">{value}%</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-gray-400 w-14 truncate">{low}</span>
+                          <span className="text-[11px] text-gray-400 w-14 truncate">{low}</span>
                           <Slider
                             value={[value]}
                             onValueChange={([v]) => setEditValues((prev) => ({ ...prev, [key]: v }))}
@@ -1019,7 +1019,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                             step={5}
                             className="flex-1"
                           />
-                          <span className="text-[10px] text-gray-400 w-14 truncate text-right">{high}</span>
+                          <span className="text-[11px] text-gray-400 w-14 truncate text-right">{high}</span>
                         </div>
                       </div>
                     );
@@ -1059,18 +1059,18 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-gray-900">{title}</span>
-                            <span className="text-[11px] font-mono text-brand-600">{block.percent}%</span>
+                            <span className="text-sm font-semibold text-gray-900">{title}</span>
+                            <span className="text-xs font-mono text-brand-600">{block.percent}%</span>
                           </div>
-                          <span className="text-[11px] text-gray-500 block truncate">{block.label} · {block.summary}</span>
+                          <span className="text-xs text-gray-500 block truncate">{block.label} · {block.summary}</span>
                         </div>
-                        <span className="text-[10px] uppercase tracking-wider text-brand-500/80 font-medium flex-shrink-0">
+                        <span className="text-[11px] uppercase tracking-wider text-brand-500/80 font-medium flex-shrink-0">
                           {isOpen ? "Fechar" : "Ver"}
                         </span>
                       </button>
                       {isOpen && (
                         <div className="px-3 pb-3 pt-1 border-t border-gray-100 bg-gray-50/60">
-                          <pre className="text-[11px] text-gray-700 whitespace-pre-wrap leading-relaxed font-sans">
+                          <pre className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed font-sans">
                             {block.directives}
                           </pre>
                         </div>
@@ -1135,12 +1135,12 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                             </button>
                           </div>
                         ) : fb.rating === "positive" ? (
-                          <Badge variant="success" className="text-[10px]">
+                          <Badge variant="success" className="text-[11px]">
                             <ThumbsUp className="w-2.5 h-2.5 mr-1" />
                             Positivo
                           </Badge>
                         ) : (
-                          <Badge variant="destructive" className="text-[10px]">
+                          <Badge variant="destructive" className="text-[11px]">
                             <ThumbsDown className="w-2.5 h-2.5 mr-1" />
                             Negativo
                           </Badge>
@@ -1194,7 +1194,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
 
                     {fb.user_message && (
                       <div className="mb-2">
-                        <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
                           Lead disse
                         </span>
                         <p className="text-sm text-gray-800 mt-1 italic">&ldquo;{fb.user_message}&rdquo;</p>
@@ -1202,7 +1202,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     )}
 
                     <div className="mb-2">
-                      <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
                         IA respondeu
                       </span>
                       <p className="text-sm text-gray-900 mt-1">{fb.ai_message}</p>
@@ -1211,13 +1211,13 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     {isEditing ? (
                       editingRating === "negative" && (
                         <div>
-                          <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
                             Como deveria ter respondido
                           </span>
                           <Textarea
                             value={editingSuggestion}
                             onChange={(e) => setEditingSuggestion(e.target.value)}
-                            placeholder="Instrucao de correcao..."
+                            placeholder="Instrução de correção..."
                             rows={2}
                             className="mt-1 text-xs"
                           />
@@ -1226,8 +1226,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     ) : (
                       fb.suggestion && (
                         <div className="bg-gray-50 border border-gray-200 rounded p-2">
-                          <span className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">
-                            Correcao (deveria ser)
+                          <span className="text-xs font-semibold text-red-600 uppercase tracking-wide">
+                            Correção (deveria ser)
                           </span>
                           <p className="text-sm text-gray-900 mt-1">{fb.suggestion}</p>
                         </div>
@@ -1247,7 +1247,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">System Prompt Override</h2>
-                <p className="text-xs text-gray-500">Substitui o prompt gerado automaticamente. Deixe vazio para usar o padrao.</p>
+                <p className="text-xs text-gray-500">Substitui o prompt gerado automaticamente. Deixe vazio para usar o padrão.</p>
               </div>
               <button onClick={() => setShowPromptModal(false)} className="p-2 hover:bg-gray-100 rounded-lg transition-colors">
                 <X className="w-5 h-5" />
@@ -1263,7 +1263,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             </div>
             <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200">
               <p className="text-xs text-gray-400">
-                {promptEditing ? `${Math.ceil(promptEditing.length / 4)} tokens estimados` : "Vazio = prompt automatico"}
+                {promptEditing ? `${Math.ceil(promptEditing.length / 4)} tokens estimados` : "Vazio = prompt automático"}
               </p>
               <div className="flex gap-2">
                 <Button variant="outline" onClick={() => setShowPromptModal(false)}>Cancelar</Button>

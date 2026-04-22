@@ -126,7 +126,7 @@ export default function BillingPage() {
               icon={MessageSquare}
               label="Interações"
               value={String(summary.total_interactions)}
-              sub={`${summary.using_platform_key} cobradas | ${summary.using_custom_key} chave propria`}
+              sub={`${summary.using_platform_key} cobradas | ${summary.using_custom_key} chave própria`}
             />
             <MetricCard
               icon={Key}
@@ -136,7 +136,7 @@ export default function BillingPage() {
             />
           </div>
 
-          {/* Info sobre chave propria */}
+          {/* Info sobre chave própria */}
           {summary.using_custom_key > 0 && (
             <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 px-4 py-3 rounded-lg">
               <Key className="w-4 h-4" />
