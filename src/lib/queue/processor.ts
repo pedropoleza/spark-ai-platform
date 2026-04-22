@@ -602,6 +602,7 @@ async function processGroup(
   // 10. Cancelar follow-ups se objetivo foi cumprido
   const finalStatus = aiResult.response.conversation_status;
   const objectiveCompleted = ["qualified", "booked", "disqualified", "handed_off"].includes(finalStatus);
+  console.log(`[Processor] Final status: ${finalStatus} | objectiveCompleted: ${objectiveCompleted} | contact: ${group.contactId}`);
 
   if (objectiveCompleted) {
     // Cancelar todos follow-ups pendentes
@@ -612,16 +613,21 @@ async function processGroup(
       .eq("contact_id", group.contactId)
       .eq("status", "pending");
 
-    // Gerar nota de resumo no GHL (non-blocking)
-    generateSummaryNote({
-      agentId: agent.id,
-      locationId: group.locationId,
-      contactId: group.contactId,
-      conversationId: group.conversationId,
-      companyId: location.company_id,
-      triggerReason: finalStatus,
-      aiModel: config.ai_model || "gpt-4.1-mini",
-    }).catch((err) => console.error("[Processor] Summary note error:", err instanceof Error ? err.message : err));
+    // Gerar nota de resumo no GHL
+    try {
+      console.log(`[Processor] Generating summary note for ${group.contactId} (trigger: ${finalStatus})`);
+      await generateSummaryNote({
+        agentId: agent.id,
+        locationId: group.locationId,
+        contactId: group.contactId,
+        conversationId: group.conversationId,
+        companyId: location.company_id,
+        triggerReason: finalStatus,
+        aiModel: config.ai_model || "gpt-4.1-mini",
+      });
+    } catch (noteErr) {
+      console.error("[Processor] Summary note error:", noteErr instanceof Error ? noteErr.message : noteErr);
+    }
   }
 
   // Agendar follow-ups APENAS se conversa ainda ativa e objetivo nao cumprido
