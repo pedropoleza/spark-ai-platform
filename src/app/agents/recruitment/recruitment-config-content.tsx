@@ -442,9 +442,6 @@ export function RecruitmentConfigContent() {
                     ))}
                   </SelectContent>
                 </Select>
-                {config.ai_model.startsWith("claude") && !process.env.NEXT_PUBLIC_HAS_ANTHROPIC_KEY && (
-                  <p className="text-xs text-amber-600 mt-2">Configure ANTHROPIC_API_KEY no Vercel para usar modelos Claude.</p>
-                )}
               </CardContent>
             </Card>
             <Card>
