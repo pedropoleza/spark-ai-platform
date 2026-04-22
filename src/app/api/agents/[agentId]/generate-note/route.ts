@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { generateSummaryNote } from "@/lib/queue/summary-note-generator";
 
 export const maxDuration = 60;
@@ -37,8 +38,9 @@ export async function POST(
 
   const config = Array.isArray(agent.agent_configs) ? agent.agent_configs[0] : agent.agent_configs;
 
-  // Limpar lock anterior se existir (forçar geração)
-  await supabase
+  // Limpar lock anterior se existir (forçar geração) — usa admin para bypass RLS
+  const adminDb = createAdminClient();
+  await adminDb
     .from("conversation_state")
     .update({ summary_note_id: null })
     .eq("agent_id", params.agentId)

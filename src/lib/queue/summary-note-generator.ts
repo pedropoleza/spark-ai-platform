@@ -41,6 +41,21 @@ export async function generateSummaryNote(params: SummaryParams): Promise<void> 
     return;
   }
 
+  // 1b. Atomic lock — só continua se conseguir setar "generating"
+  const { data: locked } = await supabase
+    .from("conversation_state")
+    .update({ summary_note_id: "generating", updated_at: new Date().toISOString() })
+    .eq("agent_id", params.agentId)
+    .eq("contact_id", params.contactId)
+    .is("summary_note_id", null)
+    .select("agent_id")
+    .maybeSingle();
+
+  if (!locked) {
+    console.log(`${tag} SKIP: lock failed (another process grabbed it)`);
+    return;
+  }
+
   // 2. Verificar toggle do agente
   const { data: agent } = await supabase
     .from("agents")
@@ -61,13 +76,6 @@ export async function generateSummaryNote(params: SummaryParams): Promise<void> 
     return;
   }
 
-  // 3. Marcar como generating (lock)
-  await supabase
-    .from("conversation_state")
-    .update({ summary_note_id: "generating" })
-    .eq("agent_id", params.agentId)
-    .eq("contact_id", params.contactId);
-
   try {
     const personality = (cfg.personality || {}) as Record<string, string>;
     const agentName = personality.name || agent?.name || "Agente IA";
@@ -87,10 +95,10 @@ export async function generateSummaryNote(params: SummaryParams): Promise<void> 
       );
       const convId = search.conversations?.[0]?.id;
       if (convId) {
-        const msgs = await ghlClient.get<{ messages: { messages: { body: string; direction: string; dateAdded: string }[] } }>(
+        const msgs = await ghlClient.get<{ messages: { body: string; direction: string; dateAdded: string }[] }>(
           `/conversations/${convId}/messages`, { locationId: params.locationId }
         );
-        history = (msgs.messages?.messages || [])
+        history = (msgs.messages || [])
           .filter((m) => m.body)
           .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
           .slice(-30)

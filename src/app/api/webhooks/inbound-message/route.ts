@@ -322,7 +322,7 @@ export async function POST(request: NextRequest) {
                     contactId: contactId,
                     conversationId: conversationId || "",
                     companyId: locData.data.company_id,
-                    triggerReason: pauseReason!,
+                    triggerReason: "handed_off",
                     aiModel: "gpt-4.1-mini",
                   });
                 } catch (err) {
