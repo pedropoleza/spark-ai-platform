@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import { Open_Sans } from "next/font/google";
+import { Inter } from "next/font/google";
 import { Toaster } from "sonner";
 import "./globals.css";
 
-const openSans = Open_Sans({
+const inter = Inter({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
   variable: "--font-sans",
@@ -12,7 +12,7 @@ const openSans = Open_Sans({
 
 export const metadata: Metadata = {
   title: "Spark AI - Hub de Agentes",
-  description: "Plataforma de configuracao de agentes de IA",
+  description: "Plataforma de configuração de agentes de IA",
 };
 
 export default function RootLayout({
@@ -22,7 +22,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
-      <body className={`${openSans.variable} font-sans antialiased bg-gray-50 text-gray-900`}>
+      <body className={`${inter.variable} font-sans antialiased bg-gray-50 text-gray-900`}>
         {children}
         <Toaster richColors position="top-center" />
       </body>
