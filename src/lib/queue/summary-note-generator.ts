@@ -208,11 +208,31 @@ ${noteHtml}
 </div>`;
 
     // 9. Criar nota no GHL
-    const noteResult = await ghlClient.post<{ note?: { id: string } }>(`/contacts/${params.contactId}/notes`, {
-      body: fullNote,
-    });
-
-    const noteId = noteResult.note?.id || `note_${Date.now()}`;
+    console.log(`[SummaryNote] Posting note to GHL: /contacts/${params.contactId}/notes (${fullNote.length} chars)`);
+    let noteId = `note_${Date.now()}`;
+    try {
+      const noteResult = await ghlClient.post<{ note?: { id: string }; id?: string }>(`/contacts/${params.contactId}/notes`, {
+        body: fullNote,
+        userId: undefined,
+      });
+      noteId = noteResult.note?.id || noteResult.id || noteId;
+      console.log(`[SummaryNote] GHL note created: ${noteId}`);
+    } catch (ghlErr) {
+      console.error(`[SummaryNote] GHL Notes API error:`, ghlErr instanceof Error ? ghlErr.message : ghlErr);
+      // Tentar sem HTML (plain text fallback)
+      try {
+        const plainNote = fullNote.replace(/<[^>]+>/g, "").replace(/&[a-z]+;/g, "").trim();
+        console.log(`[SummaryNote] Retrying with plain text (${plainNote.length} chars)`);
+        const retryResult = await ghlClient.post<{ note?: { id: string }; id?: string }>(`/contacts/${params.contactId}/notes`, {
+          body: plainNote,
+        });
+        noteId = retryResult.note?.id || retryResult.id || noteId;
+        console.log(`[SummaryNote] GHL note created (plain text): ${noteId}`);
+      } catch (retryErr) {
+        console.error(`[SummaryNote] GHL Notes API retry failed:`, retryErr instanceof Error ? retryErr.message : retryErr);
+        throw retryErr;
+      }
+    }
 
     // 10. Atualizar conversation_state com o ID da nota
     await supabase
