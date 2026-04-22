@@ -347,7 +347,16 @@ export function RecruitmentConfigContent() {
         <TabsContent value="prompt">
           <div className="grid gap-6">
             <Card>
-              <CardHeader><CardTitle>Instruções personalizadas</CardTitle></CardHeader>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Instruções personalizadas</CardTitle>
+                  {config.custom_instructions && (
+                    <Button variant="ghost" size="sm" className="text-xs text-red-500 hover:text-red-700 h-7" onClick={() => updateConfig("custom_instructions", "")}>
+                      Limpar
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
               <CardContent>
                 <Textarea value={config.custom_instructions} onChange={(e) => updateConfig("custom_instructions", e.target.value)} placeholder={`Exemplos:\n- A oportunidade é para agente financeiro\n- Não mencione valores de comissão\n- Foque em criar curiosidade sobre a oportunidade`} rows={8} />
               </CardContent>

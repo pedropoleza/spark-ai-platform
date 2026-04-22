@@ -469,11 +469,20 @@ export function SalesConfigContent() {
           <div className="grid gap-6">
             <Card>
               <CardHeader>
-                <CardTitle>Instruções personalizadas</CardTitle>
-                <CardDescription>
-                  Adicione instruções específicas para o agente. Estas instruções
-                  são adicionadas ao prompt do sistema.
-                </CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Instruções personalizadas</CardTitle>
+                    <CardDescription>
+                      Adicione instruções específicas para o agente. Estas instruções
+                      são adicionadas ao prompt do sistema.
+                    </CardDescription>
+                  </div>
+                  {config.custom_instructions && (
+                    <Button variant="ghost" size="sm" className="text-xs text-red-500 hover:text-red-700 h-7" onClick={() => updateConfig("custom_instructions", "")}>
+                      Limpar
+                    </Button>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 <Textarea
@@ -482,9 +491,6 @@ export function SalesConfigContent() {
                   placeholder={`Exemplos:\n- Sempre mencione que somos especializados em seguro de vida\n- Não fale sobre preços, diga que será discutido na reunião\n- Se o lead perguntar sobre cobertura, explique de forma geral`}
                   rows={8}
                 />
-                <p className="text-xs text-gray-500 mt-2">
-                  Dica: Seja claro e específico sobre o que o agente deve ou não deve fazer
-                </p>
               </CardContent>
             </Card>
 
