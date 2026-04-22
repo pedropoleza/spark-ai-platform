@@ -323,13 +323,24 @@ async function updateConversationState(
   // Merge collected_data com dados existentes (nao sobrescreve campos anteriores)
   const { data: existing } = await supabase
     .from("conversation_state")
-    .select("collected_data, message_count")
+    .select("collected_data, message_count, summary_note_id, segment_number")
     .eq("agent_id", ctx.agentId)
     .eq("contact_id", ctx.contactId)
     .maybeSingle();
 
   const previousData = (existing?.collected_data as Record<string, string>) || {};
   const mergedData = { ...previousData, ...response.collected_data };
+
+  // Se conversa tinha nota de resumo, iniciar novo segmento
+  const existingFull = existing as Record<string, unknown> | null;
+  const hadSummary = existingFull?.summary_note_id && existingFull.summary_note_id !== "generating";
+  const segmentReset = hadSummary ? {
+    summary_note_id: null,
+    summary_note_created_at: null,
+    segment_number: ((existingFull?.segment_number as number) || 1) + 1,
+    ai_paused_at: null,
+    ai_paused_reason: null,
+  } : {};
 
   await supabase
     .from("conversation_state")
@@ -344,6 +355,7 @@ async function updateConversationState(
         message_count: (existing?.message_count || 0) + 1,
         last_ai_response_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        ...segmentReset,
       },
       { onConflict: "agent_id,contact_id" }
     );

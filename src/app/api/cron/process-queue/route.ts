@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { processMessageQueue } from "@/lib/queue/processor";
 import { processScheduledFollowUps } from "@/lib/queue/follow-up-scheduler";
 import { chargeUnbilledRecords } from "@/lib/billing/charge";
+import { processInactivitySummaries } from "@/lib/queue/summary-note-generator";
 
 export const maxDuration = 60;
 
@@ -14,10 +15,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const [queueResult, followUpResult, billingResult] = await Promise.all([
+    const [queueResult, followUpResult, billingResult, summaryResult] = await Promise.all([
       processMessageQueue(),
       processScheduledFollowUps(),
       chargeUnbilledRecords(),
+      processInactivitySummaries(),
     ]);
 
     return NextResponse.json({
@@ -25,6 +27,7 @@ export async function GET(request: NextRequest) {
       queue: queueResult,
       followups: followUpResult,
       billing: billingResult,
+      summaries: summaryResult,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

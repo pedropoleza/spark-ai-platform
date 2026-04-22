@@ -308,6 +308,29 @@ export async function POST(request: NextRequest) {
               );
 
             console.log(`[Handoff] IA pausada para contato ${contactId} (${pauseReason})`);
+
+            // Gerar nota de resumo (non-blocking via waitUntil)
+            waitUntil(
+              (async () => {
+                try {
+                  const locData = await supabaseAdmin.from("locations").select("company_id").eq("location_id", locationId).single();
+                  if (!locData.data) return;
+                  const { generateSummaryNote } = await import("@/lib/queue/summary-note-generator");
+                  await generateSummaryNote({
+                    agentId: outboundAgent!.id,
+                    locationId: locationId,
+                    contactId: contactId,
+                    conversationId: conversationId || "",
+                    companyId: locData.data.company_id,
+                    triggerReason: pauseReason!,
+                    aiModel: "gpt-4.1-mini",
+                  });
+                } catch (err) {
+                  console.error("[Webhook] Summary note error:", err);
+                }
+              })()
+            );
+
             return NextResponse.json({
               received: true,
               skipped: "outbound_handoff_triggered",

@@ -8,6 +8,7 @@ import { transcribeAudioFromUrl } from "@/lib/ai/audio-transcriber";
 import { processMediaAttachments, type ProcessedMedia } from "@/lib/ai/media-processor";
 import type { MediaAttachment } from "@/lib/ai/media-extractor";
 import { scheduleFollowUps } from "@/lib/queue/follow-up-scheduler";
+import { generateSummaryNote } from "@/lib/queue/summary-note-generator";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
 import { notifyCriticalError } from "@/lib/utils/notify";
@@ -610,6 +611,17 @@ async function processGroup(
       .eq("agent_id", agent.id)
       .eq("contact_id", group.contactId)
       .eq("status", "pending");
+
+    // Gerar nota de resumo no GHL (non-blocking)
+    generateSummaryNote({
+      agentId: agent.id,
+      locationId: group.locationId,
+      contactId: group.contactId,
+      conversationId: group.conversationId,
+      companyId: location.company_id,
+      triggerReason: finalStatus,
+      aiModel: config.ai_model || "gpt-4.1-mini",
+    }).catch((err) => console.error("[Processor] Summary note error:", err instanceof Error ? err.message : err));
   }
 
   // Agendar follow-ups APENAS se conversa ainda ativa e objetivo nao cumprido
