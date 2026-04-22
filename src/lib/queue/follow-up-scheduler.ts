@@ -250,6 +250,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         // Gerar mensagem via IA
         const followUpPrompt = buildFollowUpPrompt({
           config,
+          agentType: agent.type as "sales_agent" | "recruitment_agent",
           attemptNumber: followUp.attempt_number,
           locationName: location.location_name || "Nossa empresa",
           currentDate: new Date().toLocaleDateString("pt-BR"),
