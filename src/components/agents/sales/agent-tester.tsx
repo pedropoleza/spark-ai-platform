@@ -924,16 +924,16 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Recursos de Mídia</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2.5">
+            <CardContent className="space-y-3">
               {([
                 { key: "audio" as const, icon: Mic, label: "Transcrição de áudio" },
                 { key: "image" as const, icon: Eye, label: "Análise de imagens" },
                 { key: "pdf" as const, icon: FileText, label: "Leitura de documentos" },
               ]).map(({ key, icon: Icon, label }) => (
                 <div key={key} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Icon className={`w-3.5 h-3.5 ${mediaToggles[key] ? "text-brand-600" : "text-gray-400"}`} />
-                    <span className="text-xs">{label}</span>
+                  <div className="flex items-center gap-2.5">
+                    <Icon className={`w-4 h-4 ${mediaToggles[key] ? "text-brand-600" : "text-gray-400"}`} />
+                    <span className="text-sm font-medium text-gray-700">{label}</span>
                   </div>
                   <Switch
                     checked={mediaToggles[key]}
