@@ -18,30 +18,38 @@ interface SummaryParams {
 export async function generateSummaryNote(params: SummaryParams): Promise<void> {
   const supabase = createAdminClient();
 
-  // 1. Atomic dedup: marcar como "generating" só se ainda não tem nota
-  const { data: lockResult } = await supabase
+  console.log(`[SummaryNote] Starting for contact=${params.contactId} trigger=${params.triggerReason}`);
+
+  // 1. Buscar estado atual da conversa
+  const { data: currentState } = await supabase
+    .from("conversation_state")
+    .select("message_count, collected_data, segment_number, status, summary_note_id")
+    .eq("agent_id", params.agentId)
+    .eq("contact_id", params.contactId)
+    .maybeSingle();
+
+  console.log(`[SummaryNote] State: msgs=${currentState?.message_count} status=${currentState?.status} note_id=${currentState?.summary_note_id}`);
+
+  // Dedup: já tem nota ou está gerando
+  if (currentState?.summary_note_id) {
+    console.log(`[SummaryNote] Skipped: note already exists (${currentState.summary_note_id})`);
+    return;
+  }
+
+  // Sem conversation_state = nada a resumir
+  if (!currentState) {
+    console.log(`[SummaryNote] Skipped: no conversation_state for ${params.contactId}`);
+    return;
+  }
+
+  // Marcar como generating (lock)
+  await supabase
     .from("conversation_state")
     .update({ summary_note_id: "generating", updated_at: new Date().toISOString() })
     .eq("agent_id", params.agentId)
-    .eq("contact_id", params.contactId)
-    .is("summary_note_id", null)
-    .select("message_count, collected_data, segment_number, status")
-    .maybeSingle();
+    .eq("contact_id", params.contactId);
 
-  if (!lockResult) {
-    console.log(`[SummaryNote] Skipped: note already exists/generating for ${params.contactId}`);
-    return;
-  }
-
-  if ((lockResult.message_count || 0) < MIN_MESSAGES_FOR_NOTE) {
-    console.log(`[SummaryNote] Skipped: only ${lockResult.message_count} messages for ${params.contactId}`);
-    await supabase
-      .from("conversation_state")
-      .update({ summary_note_id: null })
-      .eq("agent_id", params.agentId)
-      .eq("contact_id", params.contactId);
-    return;
-  }
+  const lockResult = currentState;
 
   try {
     // 2. Buscar agent config para nome, tipo e toggle
@@ -56,7 +64,9 @@ export async function generateSummaryNote(params: SummaryParams): Promise<void> 
       : agent?.agent_configs;
 
     // Verificar toggle — se desabilitado, liberar lock e sair
-    if (!(config as Record<string, unknown>)?.enable_summary_notes) {
+    const toggleValue = (config as Record<string, unknown>)?.enable_summary_notes;
+    console.log(`[SummaryNote] Toggle check: enable_summary_notes=${toggleValue} agent=${params.agentId}`);
+    if (!toggleValue) {
       console.log(`[SummaryNote] Skipped: toggle OFF for agent ${params.agentId}`);
       await supabase.from("conversation_state").update({ summary_note_id: null }).eq("agent_id", params.agentId).eq("contact_id", params.contactId);
       return;
