@@ -66,9 +66,14 @@ interface PromptContext {
 
 export function buildSystemPrompt(ctx: PromptContext): string {
   if (ctx.config.system_prompt_override) {
-    // Override substitui o conteudo mas SEMPRE inclui o formato de resposta
-    // para que o parser funcione corretamente.
-    return `${ctx.config.system_prompt_override}\n\n${buildResponseFormatSection(ctx)}`;
+    // Override substitui o conteudo. Inclui formato de resposta + dados coletados
+    // para que o parser funcione e a IA saiba o que já foi coletado.
+    const dataContext = ctx.config.data_fields.length > 0 ? buildDataCollectionSection(ctx) : "";
+    return [
+      ctx.config.system_prompt_override,
+      dataContext,
+      buildResponseFormatSection(ctx),
+    ].filter(Boolean).join("\n\n");
   }
 
   // Ordem de montagem fixa. Ao reorganizar, mantenha a separacao:
@@ -81,14 +86,14 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     buildIdentitySection(ctx),
     buildObjectiveSection(ctx),
     buildRecruitmentSection(ctx),
+    buildCustomInstructionsSection(ctx),
+    buildKnowledgeBaseSection(ctx),
     buildToneSection(ctx),
     buildDataCollectionSection(ctx),
     buildConversationRulesSection(ctx),
     buildMediaInstructionsSection(ctx.config),
     buildBookingSection(ctx),
     buildFeedbackSection(ctx),
-    buildKnowledgeBaseSection(ctx),
-    buildCustomInstructionsSection(ctx),
     buildResponseFormatSection(ctx),
   ];
 
@@ -288,35 +293,22 @@ function buildDataCollectionSection(ctx: PromptContext): string {
     return !value;
   });
 
-  return `## DADOS PARA COLETAR
+  return `## DADOS PARA COLETAR (colete de forma NATURAL, dentro da conversa)
 ${fieldKeyMap.join("\n")}
 
-Campos pendentes: ${pendingFields.length > 0 ? pendingFields.map((f: DataField) => `"${f.key}"`).join(", ") : "NENHUM - TODOS COLETADOS"}
+${pendingFields.length > 0 ? `Faltam: ${pendingFields.map((f: DataField) => f.label).join(", ")}` : "✅ TODOS COLETADOS — pode seguir para agendamento"}
 
-REGRAS CRITICAS DE COLETA:
-1. Pergunte UM campo por vez
-2. Campos marcados [PULAR - JA PREENCHIDO] NAO devem ser perguntados
-3. EXTRACAO OBRIGATORIA: Se o lead mencionar QUALQUER informacao que corresponda a um campo listado acima, EXTRAIA e SALVE no collected_data IMEDIATAMENTE. Exemplos:
-   - "trabalho como enfermeira" → salve em "${ctx.config.data_fields.find(f => f.key === "current_occupation")?.key || "current_occupation"}"
-   - "quero mudar de area" → salve em "${ctx.config.data_fields.find(f => f.key === "motivation")?.key || "motivation"}"
-   - "moro na Florida" → salve em "${ctx.config.data_fields.find(f => f.key === "state")?.key || "state"}"
-4. Se o lead responder MULTIPLOS dados de uma vez ("me chamo Ana, moro em NY, trabalho como advogada e quero mudar de carreira"), extraia TODOS de uma vez no collected_data
-5. Se a resposta for AMBIGUA, peca clarificacao
-6. NUNCA descarte informacao. Se o lead falou, GRAVE
-7. Se o lead enviar apenas emoji ou "ok", responda de forma natural e continue o atendimento
-8. Se o lead disser "depois", "to ocupado", encerre educadamente e defina conversation_status = "stale"
+COMO COLETAR:
+- Conduza a conversa de forma natural seguindo as instruções do administrador acima
+- NAO faca perguntas roboticas tipo "Qual seu nome completo?" — integre na conversa
+- Se o lead mencionar dados espontaneamente, EXTRAIA e salve no collected_data
+- Se o lead responder varios dados de uma vez, extraia TODOS
+- Campos marcados [PULAR - JA PREENCHIDO] nao devem ser perguntados
+- Se ja perguntou 2 vezes por um campo e o lead ignorou, PULE e siga em frente
+- Se o lead demonstrar aceite ("sim", "topo", "quero"), AGENDE mesmo com campos faltantes
 
-LIMITE DE INSISTENCIA (OBRIGATORIO):
-- Se voce ja perguntou por um campo 2 vezes e o lead nao respondeu diretamente, NAO pergunte pela 3a vez
-- Mova-se para o proximo campo pendente ou proponha agendamento
-- Se o lead deu QUALQUER sinal de aceite ("sim", "topo", "pode marcar", "quero"), PARE de coletar dados e AGENDE IMEDIATAMENTE
-- Campos faltantes podem ser coletados na ligacao/reuniao — nao trave a conversa por causa deles
-- NUNCA repita a mesma pergunta mais de 2 vezes na conversa inteira
-
-REGRA DE KEYS NO collected_data (OBRIGATORIO):
-Use EXATAMENTE estas keys: ${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}
-Exemplo correto: { ${ctx.config.data_fields.map((f) => `"${f.key}": "valor extraido"`).join(", ")} }
-NAO invente keys diferentes. NAO use portugues nas keys. Use EXATAMENTE as keys acima.`;
+KEYS do collected_data (usar EXATAMENTE):
+${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}`;
 }
 
 function buildMediaInstructionsSection(config: AgentConfig): string {
@@ -572,8 +564,12 @@ ${generalBlock}${itemsBlock}`;
 
 function buildCustomInstructionsSection(ctx: PromptContext): string {
   if (!ctx.config.custom_instructions) return "";
-  const instructions = ctx.config.custom_instructions.substring(0, 2000);
-  return `## INSTRUCOES ADICIONAIS DO ADMINISTRADOR\n${instructions}`;
+  const instructions = ctx.config.custom_instructions.substring(0, 3000);
+  return `## INSTRUÇÕES DO ADMINISTRADOR (PRIORIDADE ALTA — seguir ACIMA das regras padrão)
+
+As instruções abaixo foram escritas pelo administrador deste agente e definem como voce deve conduzir a conversa. Se houver conflito entre estas instruções e as regras padrão do sistema, ESTAS INSTRUÇÕES VENCEM.
+
+${instructions}`;
 }
 
 function buildResponseFormatSection(ctx: PromptContext): string {
