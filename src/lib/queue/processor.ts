@@ -403,6 +403,7 @@ async function processGroup(
 
   // 6. Buscar free slots do calendario (se tem agendamento configurado)
   let availableSlots = "";
+  console.log(`[FreeSlots] calendar_id=${config.calendar_id} objective=${config.objective}`);
   if (config.calendar_id && config.objective !== "qualification_only") {
     try {
       const tz = location.timezone || "America/New_York";
@@ -412,14 +413,14 @@ async function processGroup(
       const startDate = String(now.getTime());
       const endDate = String(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-      console.log(`[FreeSlots] Fetching for calendar ${config.calendar_id}, ${startDate} to ${endDate}`);
+      console.log(`[FreeSlots] Fetching: calendar=${config.calendar_id} start=${startDate} end=${endDate}`);
 
       const slotsResult = await ghlClient.get<Record<string, unknown>>(
         `/calendars/${config.calendar_id}/free-slots`,
         { startDate, endDate }
       );
 
-      console.log(`[FreeSlots] Response keys: ${Object.keys(slotsResult).join(", ")}`);
+      console.log(`[FreeSlots] Response keys: ${Object.keys(slotsResult).join(", ")}  Raw sample: ${JSON.stringify(slotsResult).substring(0, 300)}`);
 
       // Formatar slots para o prompt
       const slotLines: string[] = [];
@@ -460,10 +461,15 @@ async function processGroup(
       }
 
       availableSlots = slotLines.join("\n");
-      console.log(`[FreeSlots] Formatted ${slotLines.length} days of slots`);
+      console.log(`[FreeSlots] Formatted ${slotLines.length} days: ${availableSlots.substring(0, 200)}`);
+      if (slotLines.length === 0) {
+        console.warn(`[FreeSlots] No slots found — calendar may be full or misconfigured`);
+      }
     } catch (error) {
-      console.error("[FreeSlots] Erro ao buscar free slots:", error);
+      console.error("[FreeSlots] Erro:", error instanceof Error ? error.message : error);
     }
+  } else {
+    console.log(`[FreeSlots] Skipped: calendar_id=${config.calendar_id || "NONE"} objective=${config.objective}`);
   }
 
   // 7. Construir prompt (data/hora no timezone da location, NAO em UTC)
