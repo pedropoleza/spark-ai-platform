@@ -32,7 +32,7 @@ import { KnowledgeBaseEditor } from "@/components/agents/sales/knowledge-base-ed
 import { DeactivationRulesEditor } from "@/components/agents/sales/deactivation-rules-editor";
 import { MediaFeaturesEditor } from "@/components/agents/sales/media-features-editor";
 import { useGHLData } from "@/hooks/use-ghl-data";
-import { AI_MODELS } from "@/lib/utils/constants";
+import { AI_MODELS, CONVERSATION_TEMPLATES } from "@/lib/utils/constants";
 import type { AgentConfig, AgentObjective, AgentPersonality, PostBookingConfig, DataField, FollowUpConfig, TargetingRule, WorkingHoursConfig, TimezoneConfig, NotificationsConfig, AutomationRule, DeactivationRule, CommunicationChannel } from "@/types/agent";
 
 type ConfigForm = Omit<AgentConfig, "id" | "agent_id" | "created_at" | "updated_at">;
@@ -358,7 +358,42 @@ export function RecruitmentConfigContent() {
                 </div>
               </CardHeader>
               <CardContent>
+                <div className="mb-3">
+                  <Label className="text-xs text-gray-500">Modelos prontos (opcional)</Label>
+                  <Select onValueChange={(v) => {
+                    const template = CONVERSATION_TEMPLATES.find(t => t.id === v);
+                    if (template) updateConfig("custom_instructions", template.instructions);
+                  }}>
+                    <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione um modelo para começar..." /></SelectTrigger>
+                    <SelectContent>
+                      {CONVERSATION_TEMPLATES.map(t => (
+                        <SelectItem key={t.id} value={t.id}>
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium">{t.label}</span>
+                            <span className="text-xs text-gray-400">{t.description}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Textarea value={config.custom_instructions} onChange={(e) => updateConfig("custom_instructions", e.target.value)} placeholder={`Exemplos:\n- A oportunidade é para agente financeiro\n- Não mencione valores de comissão\n- Foque em criar curiosidade sobre a oportunidade`} rows={8} />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Exemplos de conversa</CardTitle>
+                    <CardDescription>Cole exemplos de como a conversa ideal deveria fluir.</CardDescription>
+                  </div>
+                  {config.conversation_examples && (
+                    <Button variant="ghost" size="sm" className="text-xs text-red-500 hover:text-red-700 h-7" onClick={() => updateConfig("conversation_examples", "")}>Limpar</Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Textarea value={config.conversation_examples || ""} onChange={(e) => updateConfig("conversation_examples", e.target.value)} placeholder={"Exemplo:\nLEAD: oi, vi a vaga\nAGENTE: Que legal! Me conta, você mora onde?\nLEAD: Florida\nAGENTE: Top! E o que você faz hoje?\n..."} rows={6} />
               </CardContent>
             </Card>
             <Card>

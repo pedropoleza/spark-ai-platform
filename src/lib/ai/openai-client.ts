@@ -103,12 +103,20 @@ async function processWithOpenAI(
     userMessage = { role: "user", content: text };
   }
 
+  // Prompt caching: OpenAI auto-caches system prompts over 1024 tokens.
+  // The system prompt is kept stable across turns (dynamic data goes in user message)
+  // so the cache hit rate is maximized. `store: true` enables prompt caching.
   const completion = await getOpenAIClient().chat.completions.create({
     model: input.model,
-    messages: [{ role: "system", content: input.systemPrompt }, userMessage],
+    messages: [
+      { role: "system", content: input.systemPrompt },
+      // Separator for prompt caching - static system prompt above, dynamic below
+      userMessage,
+    ],
     temperature: 0.8,
     max_tokens: 2500,
     response_format: { type: "json_object" },
+    store: true,
   });
 
   const responseText = completion.choices[0]?.message?.content;

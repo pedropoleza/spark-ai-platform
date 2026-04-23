@@ -87,6 +87,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     buildMetaInstruction(),
     buildIdentitySection(ctx),
     buildCustomInstructionsSection(ctx),
+    buildExamplesSection(ctx),
     buildKnowledgeBaseSection(ctx),
     buildObjectiveSection(ctx),
     buildRecruitmentSection(ctx),
@@ -153,6 +154,10 @@ Timezone: ${ctx.timezone}${persona}${greeting}${farewell}${langInst}`;
 function buildObjectiveSection(ctx: PromptContext): string {
   const isRecruitment = ctx.agentType === "recruitment_agent";
 
+  // Nota de flexibilidade para vendas
+  const flexNote = !isRecruitment ? `
+Se durante a conversa o lead demonstrar que já está pronto para agendar (mesmo antes de coletar todos os dados), adapte-se e proponha horários.` : "";
+
   // Regra de ouro para recrutamento
   const goldenRule = isRecruitment ? `
 
@@ -168,18 +173,18 @@ Esta regra tem PRIORIDADE sobre a coleta de dados. Mesmo que faltem campos, AGEN
     case "qualification_only":
       return `## OBJETIVO
 Qualificar o lead coletando as informacoes listadas abaixo.
-NAO tente agendar. Apos coletar tudo, defina conversation_status = "qualified".${goldenRule}`;
+NAO tente agendar. Apos coletar tudo, defina conversation_status = "qualified".${goldenRule}${flexNote}`;
 
     case "qualification_and_booking":
       return `## OBJETIVO
 1. Qualificar o lead coletando as informacoes listadas abaixo
 2. Apos coletar os dados OBRIGATORIOS, agendar reuniao/ligacao
-${isRecruitment ? "Voce precisa de NO MAXIMO 3 informacoes antes de convidar pro agendamento: estado, o que a pessoa faz, e um gancho/motivacao. Isso e TUDO. Nao aprofunde mais." : "Primeiro colete, depois agende."} Ao agendar com sucesso, defina conversation_status = "booked".${goldenRule}`;
+${isRecruitment ? "Voce precisa de NO MAXIMO 3 informacoes antes de convidar pro agendamento: estado, o que a pessoa faz, e um gancho/motivacao. Isso e TUDO. Nao aprofunde mais." : "Primeiro colete, depois agende."} Ao agendar com sucesso, defina conversation_status = "booked".${goldenRule}${flexNote}`;
 
     case "booking_only":
       return `## OBJETIVO
 Agendar reuniao/ligacao com o lead. Pule qualificacao.
-Ao agendar com sucesso, defina conversation_status = "booked".${goldenRule}`;
+Ao agendar com sucesso, defina conversation_status = "booked".${goldenRule}${flexNote}`;
 
     default:
       return "";
@@ -548,9 +553,23 @@ ${generalBlock}${itemsBlock}`;
 
 function buildCustomInstructionsSection(ctx: PromptContext): string {
   if (!ctx.config.custom_instructions) return "";
-  const instructions = ctx.config.custom_instructions.substring(0, 3000);
+  let instructions = ctx.config.custom_instructions.substring(0, 3000);
+  // Replace dynamic variables
+  instructions = instructions
+    .replace(/\{contact\.name\}/g, ctx.contactName)
+    .replace(/\{agent\.name\}/g, ctx.config.personality?.name || "Agente")
+    .replace(/\{location\.name\}/g, ctx.locationName)
+    .replace(/\{agent\.specialist\}/g, ctx.config.specialist_name || "especialista");
   return `## INSTRUÇÕES DO ADMINISTRADOR (seguir com PRIORIDADE)
 ${instructions}`;
+}
+
+function buildExamplesSection(ctx: PromptContext): string {
+  if (!ctx.config.conversation_examples) return "";
+  return `## EXEMPLOS DE CONVERSA IDEAL
+Os exemplos abaixo mostram o tom e fluxo desejado pelo administrador:
+
+${ctx.config.conversation_examples.substring(0, 2000)}`;
 }
 
 function buildResponseFormatSection(ctx: PromptContext): string {

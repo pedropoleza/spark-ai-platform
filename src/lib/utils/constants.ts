@@ -32,6 +32,33 @@ export const AGENT_TYPES = {
   },
 } as const;
 
+export const CONVERSATION_TEMPLATES = [
+  {
+    id: "recruitment_aggressive",
+    label: "Recrutamento Direto",
+    description: "Foca em agendar reunião rapidamente, cria urgência",
+    instructions: "Seu objetivo é agendar uma conversa rápida com o especialista. Seja direto mas amigável. Crie curiosidade sobre a oportunidade sem dar muitos detalhes — os detalhes ficam pra reunião. Se o lead demonstrar qualquer interesse, proponha horários imediatamente. Não prolongue a conversa com muitas perguntas.",
+  },
+  {
+    id: "sales_consultive",
+    label: "Vendas Consultiva",
+    description: "Entende a dor do cliente antes de propor solução",
+    instructions: "Entenda primeiro a situação e necessidade do lead. Faça perguntas sobre o momento atual, desafios e objetivos. Só depois de entender o contexto, apresente como podemos ajudar. Conecte os benefícios do produto/serviço com os problemas mencionados pelo lead. Agende quando sentir que o lead está convencido.",
+  },
+  {
+    id: "qualification_fast",
+    label: "Qualificação Rápida",
+    description: "Coleta dados essenciais e qualifica rapidamente",
+    instructions: "Colete as informações necessárias de forma natural e rápida. Não se aprofunde em conversas longas. Seja objetivo mas educado. Após coletar os dados essenciais, informe que a equipe entrará em contato com mais detalhes.",
+  },
+  {
+    id: "rapport_first",
+    label: "Rapport e Conexão",
+    description: "Prioriza criar conexão humana antes de qualquer coisa",
+    instructions: "Priorize criar uma conexão genuína com o lead. Pergunte sobre a pessoa, sua história, o que faz. Mostre interesse real. Use o nome da pessoa frequentemente. Só depois de criar rapport natural, entre nos assuntos de negócio. A conversa deve parecer entre amigos, não entre vendedor e cliente.",
+  },
+] as const;
+
 export const OBJECTIVES = {
   qualification_only: {
     label: "Apenas Qualificação",
