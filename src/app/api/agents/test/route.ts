@@ -5,6 +5,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
+import { withRetry } from "@/lib/utils/retry";
 import { executeActions } from "@/lib/ai/action-executor";
 
 export async function POST(request: NextRequest) {
@@ -55,63 +56,124 @@ export async function POST(request: NextRequest) {
     .single();
 
   const locationTz = location?.timezone || "America/New_York";
+  const ghlClient = new GHLClient(session.companyId, session.locationId);
+  const shouldFetchSlots = !!config.calendar_id && config.objective !== "qualification_only";
 
-  // Buscar free slots do calendario (igual ao processador principal)
+  // Fidelidade com prod: buscar slots (com retry) + dados do contato GHL
+  // + convState (para dados já coletados). Tudo em paralelo.
+  type SlotsResp = Record<string, unknown>;
+  type ContactResp = { contact: {
+    firstName?: string; lastName?: string; name?: string; email?: string; phone?: string;
+    address1?: string; city?: string; state?: string; postalCode?: string; country?: string;
+    dateOfBirth?: string; companyName?: string;
+    customFields?: { id: string; value: string; fieldKey?: string }[];
+  } };
+
+  const slotsNow = new Date();
+  const slotsStartDate = String(slotsNow.getTime());
+  const slotsEndDate = String(slotsNow.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  const [slotsSettled, contactSettled, convStateResult] = await Promise.allSettled([
+    shouldFetchSlots
+      ? withRetry(
+          () => ghlClient.get<SlotsResp>(
+            `/calendars/${config.calendar_id}/free-slots`,
+            { startDate: slotsStartDate, endDate: slotsEndDate },
+          ),
+          { maxRetries: 2, baseDelayMs: 200, label: "test:free-slots" },
+        )
+      : Promise.resolve<SlotsResp | null>(null),
+    contact_id
+      ? ghlClient.get<ContactResp>(`/contacts/${contact_id}`)
+      : Promise.resolve<ContactResp | null>(null),
+    contact_id
+      ? supabase
+          .from("conversation_state")
+          .select("collected_data")
+          .eq("agent_id", agent_id)
+          .eq("contact_id", contact_id)
+          .maybeSingle()
+      : Promise.resolve<{ data: { collected_data?: Record<string, string> } | null } | null>(null),
+  ]);
+
+  // Processar slots
   let availableSlots = "";
-  console.log(`[Test] calendar_id=${config.calendar_id}, objective=${config.objective}`);
-  if (config.calendar_id && config.objective !== "qualification_only") {
-    try {
-      const ghlClient = new GHLClient(session.companyId, session.locationId);
-      const now = new Date();
-      const startDate = String(now.getTime());
-      const endDate = String(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-
-      console.log(`[Test FreeSlots] Fetching: calendar=${config.calendar_id}, start=${startDate}, end=${endDate}`);
-
-      const slotsResult = await ghlClient.get<Record<string, unknown>>(
-        `/calendars/${config.calendar_id}/free-slots`,
-        { startDate, endDate }
-      );
-
-      console.log(`[Test FreeSlots] Response keys: ${Object.keys(slotsResult).join(", ")}`);
-      console.log(`[Test FreeSlots] Sample:`, JSON.stringify(slotsResult).substring(0, 500));
-
+  let slotsFetchFailed = false;
+  if (shouldFetchSlots) {
+    if (slotsSettled.status === "fulfilled" && slotsSettled.value) {
       const slotLines: string[] = [];
-      for (const [key, value] of Object.entries(slotsResult)) {
+      for (const [key, value] of Object.entries(slotsSettled.value)) {
         if (key === "traceId" || !value) continue;
-
         let slots: string[] = [];
         if (typeof value === "object" && value !== null) {
           const v = value as Record<string, unknown>;
-          if (Array.isArray(v.slots)) {
-            slots = v.slots as string[];
-          } else if (Array.isArray(value)) {
-            slots = value as string[];
-          }
+          if (Array.isArray(v.slots)) slots = v.slots as string[];
+          else if (Array.isArray(value)) slots = value as string[];
         }
-
         if (slots.length === 0) continue;
 
         const dateFormatted = new Date(key + "T12:00:00").toLocaleDateString("en-US", {
           weekday: "long", month: "long", day: "numeric", timeZone: locationTz,
         });
-
-        const slotsFormatted = slots.slice(0, 8).map((s: string) => {
-          return new Date(s).toLocaleTimeString("en-US", {
+        const slotsFormatted = slots.slice(0, 8).map((s: string) =>
+          new Date(s).toLocaleTimeString("en-US", {
             hour: "numeric", minute: "2-digit", hour12: true, timeZone: locationTz,
-          });
-        });
-
+          })
+        );
         slotLines.push(`${dateFormatted}: ${slotsFormatted.join(", ")}`);
       }
       availableSlots = slotLines.join("\n");
-      console.log(`[Test FreeSlots] Formatted ${slotLines.length} days, slots: ${availableSlots.substring(0, 200)}`);
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
-      console.error("[Test] Erro ao buscar free slots:", errMsg);
-      availableSlots = "";
+      console.log(`[Test FreeSlots] Formatted ${slotLines.length} days`);
+    } else {
+      slotsFetchFailed = true;
+      console.error(`[Test FreeSlots] All retries failed:`,
+        slotsSettled.status === "rejected"
+          ? (slotsSettled.reason instanceof Error ? slotsSettled.reason.message : slotsSettled.reason)
+          : "unknown",
+      );
     }
   }
+
+  // Processar contato GHL (mesma lógica do processor em prod)
+  const contactDataFromGhl: Record<string, string> = {};
+  let ghlContactName: string | undefined;
+  if (contactSettled.status === "fulfilled" && contactSettled.value?.contact) {
+    const c = contactSettled.value.contact;
+    ghlContactName = c.name || c.firstName;
+    if (c.firstName) contactDataFromGhl["contact.firstName"] = c.firstName;
+    if (c.lastName) contactDataFromGhl["contact.lastName"] = c.lastName;
+    if (c.name) contactDataFromGhl["contact.name"] = c.name;
+    if (c.email) contactDataFromGhl["contact.email"] = c.email;
+    if (c.phone) contactDataFromGhl["contact.phone"] = c.phone;
+    if (c.address1) contactDataFromGhl["contact.address1"] = c.address1;
+    if (c.city) contactDataFromGhl["contact.city"] = c.city;
+    if (c.state) contactDataFromGhl["contact.state"] = c.state;
+    if (c.postalCode) contactDataFromGhl["contact.postalCode"] = c.postalCode;
+    if (c.country) contactDataFromGhl["contact.country"] = c.country;
+    if (c.dateOfBirth) contactDataFromGhl["contact.dateOfBirth"] = c.dateOfBirth;
+    if (c.companyName) contactDataFromGhl["contact.companyName"] = c.companyName;
+    if (c.customFields) {
+      for (const cf of c.customFields) {
+        if (cf.value) {
+          contactDataFromGhl[cf.id] = cf.value;
+          if (cf.fieldKey) contactDataFromGhl[cf.fieldKey] = cf.value;
+        }
+      }
+    }
+  }
+
+  // Processar convState (dados já coletados de conversa anterior)
+  const previousCollectedData =
+    convStateResult.status === "fulfilled" && convStateResult.value && "data" in convStateResult.value
+      ? (convStateResult.value.data?.collected_data as Record<string, string> | undefined) || {}
+      : {};
+
+  // Merge final: GHL base → convState → o que a UI passou (prioridade máxima)
+  const mergedCollectedData = {
+    ...contactDataFromGhl,
+    ...previousCollectedData,
+    ...(collected_data || {}),
+  };
 
   // Data/hora no timezone correto
   const currentDateInTz = new Date().toLocaleDateString("en-US", {
@@ -142,15 +204,20 @@ export async function POST(request: NextRequest) {
   // Isso evita que o modelo interprete o bloco como exemplo e repita saudação.
   const conversationTurns = parseHistoryToTurns(conversation_history || "");
 
+  // contactName real do GHL (igual prod). Fallback: "Lead" se contact_id
+  // presente sem dados, "Usuário Teste" sem contact_id.
+  const resolvedContactName = ghlContactName || (contact_id ? "Lead" : "Usuário Teste");
+
   const promptCtx = {
     config,
     agentType: agent.type as "sales_agent" | "recruitment_agent",
-    contactName: contact_id ? "Lead" : "Usuário Teste",
-    collectedData: collected_data || {},
+    contactName: resolvedContactName,
+    collectedData: mergedCollectedData,
     locationName: location?.location_name || "Minha Empresa",
     currentDate: `${currentDateInTz}, ${currentTimeInTz}`,
     timezone: locationTz,
     availableSlots,
+    slotsUnavailable: slotsFetchFailed,
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     priorTurnCount: conversationTurns.length,

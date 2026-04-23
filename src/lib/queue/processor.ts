@@ -465,7 +465,7 @@ async function processGroup(
       .limit(20),
     supabase
       .from("knowledge_base")
-      .select("title, type, content, file_name, file_url")
+      .select("title, type, content, file_name, file_url, description, usage_instructions")
       .eq("agent_id", agent.id)
       .order("created_at", { ascending: true }),
   ]);
