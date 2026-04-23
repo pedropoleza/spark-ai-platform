@@ -463,20 +463,58 @@ function buildDataFieldsTemplateSection(ctx: PromptContext): string {
 
   const fieldDefs = ctx.config.data_fields.map((field: DataField) => {
     const req = field.required ? "OBRIGATORIO" : "opcional";
-    return `- key: "${field.key}" | label: "${field.label}" | ${req}`;
+    // Tipo inclui instrução inline de COMO perguntar/salvar.
+    let typeHint: string;
+    switch (field.type) {
+      case "boolean":
+        typeHint = 'tipo: SIM/NÃO (pergunta fechada — salve "sim" ou "não" no collected_data)';
+        break;
+      case "date":
+        typeHint = "tipo: DATA (pergunte naturalmente, salve no formato que o lead usar)";
+        break;
+      case "select": {
+        const opts = field.options && field.options.length > 0
+          ? ` opções: [${field.options.slice(0, 10).map((o) => `"${o}"`).join(", ")}]`
+          : "";
+        typeHint = `tipo: ESCOLHA (${opts ? "uma das opções abaixo — salve EXATAMENTE uma delas)" : "lista de opções)"}${opts}`;
+        break;
+      }
+      case "text":
+      default:
+        typeHint = "tipo: TEXTO (pergunta aberta)";
+        break;
+    }
+    return `- key: "${field.key}" | label: "${field.label}" | ${req} | ${typeHint}`;
   });
+
+  // Conta se há boolean/select pra injetar regras específicas
+  const hasBoolean = ctx.config.data_fields.some((f) => f.type === "boolean");
+  const hasSelect = ctx.config.data_fields.some((f) => f.type === "select");
+
+  const typeRules: string[] = [];
+  if (hasBoolean) {
+    typeRules.push(
+      `- Campos tipo SIM/NÃO: faça pergunta FECHADA (ex: "Você tem Social Security?" em vez de "Qual seu Social Security?"). Salve "sim" ou "não" em collected_data.`,
+    );
+  }
+  if (hasSelect) {
+    typeRules.push(
+      `- Campos tipo ESCOLHA: apresente as opções e peça pra escolher. Salve EXATAMENTE uma das opções listadas (não variações).`,
+    );
+  }
 
   return `## DADOS PARA COLETAR (colete de forma NATURAL, dentro da conversa)
 ${fieldDefs.join("\n")}
 
 COMO COLETAR:
 - Conduza a conversa de forma natural seguindo as instruções do administrador acima
-- NAO faca perguntas roboticas tipo "Qual seu nome completo?" — integre na conversa
+- NAO faca perguntas roboticas tipo "Qual seu nome completo?", integre na conversa
 - Se o lead mencionar dados espontaneamente, EXTRAIA e salve no collected_data
 - Se o lead responder varios dados de uma vez, extraia TODOS
 - Campos já preenchidos (ver CONTEXTO ATUAL na user message) nao devem ser perguntados
 - Se ja perguntou 2 vezes por um campo e o lead ignorou, PULE e siga em frente
 - Se o lead demonstrar aceite ("sim", "topo", "quero"), AGENDE mesmo com campos faltantes
+- RESPEITE o tipo de cada campo (ver "tipo:" na listagem acima).${typeRules.length > 0 ? "\n" + typeRules.join("\n") : ""}
 
 KEYS do collected_data (usar EXATAMENTE):
 ${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}`;
