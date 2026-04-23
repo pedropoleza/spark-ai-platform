@@ -234,6 +234,7 @@ export async function POST(request: NextRequest) {
     newMessages: message,
     model: config.ai_model || "gpt-4.1-mini",
     responseSchema,
+    priorTurnCount: conversationTurns.length,
   });
 
   if (!result.success || !result.response) {

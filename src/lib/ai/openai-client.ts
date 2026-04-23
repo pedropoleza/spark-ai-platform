@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { AIResponse, AIProcessingResult } from "@/types/ai";
+import { sanitizeAgentMessage } from "@/lib/ai/response-sanitizer";
 
 const OPENAI_VISION_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"];
 const CLAUDE_MODELS = ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"];
@@ -51,6 +52,12 @@ interface ProcessMessageInput {
   model: string;
   images?: ImageInput[];
   responseSchema?: JsonSchemaFormat;
+  /**
+   * Quantos turnos já aconteceram antes da mensagem atual. Quando > 0, o
+   * pós-processador remove saudação/apresentação do início da resposta,
+   * como garantia mecânica caso o modelo ignore a regra do prompt.
+   */
+  priorTurnCount?: number;
 }
 
 function isClaude(model: string): boolean {
@@ -214,6 +221,7 @@ async function processWithOpenAI(
     cachedTokens,
     startTime,
     Boolean(useStrictSchema),
+    input.priorTurnCount,
   );
 }
 
@@ -280,6 +288,7 @@ async function processWithClaude(
     cachedTokens,
     startTime,
     false,
+    input.priorTurnCount,
   );
 }
 
@@ -291,6 +300,7 @@ function buildResult(
   cachedTokens: number,
   startTime: number,
   strictSchemaUsed: boolean,
+  priorTurnCount: number | undefined,
 ): AIProcessingResult {
   let parsed = parseAIResponse(responseText);
   if (!parsed) {
@@ -303,6 +313,17 @@ function buildResult(
       collected_data: {},
       conversation_status: "active",
     };
+  }
+
+  // Pós-processamento: remove saudações residuais se não for o 1º turno.
+  // Garantia mecânica contra o modelo ignorar a regra de não-repetição.
+  if (priorTurnCount && priorTurnCount > 0) {
+    const before = Array.isArray(parsed.message) ? parsed.message[0] : parsed.message;
+    parsed.message = sanitizeAgentMessage(parsed.message, priorTurnCount);
+    const after = Array.isArray(parsed.message) ? parsed.message[0] : parsed.message;
+    if (before !== after) {
+      console.log(`[AI sanitize] stripped greeting from turn ${priorTurnCount + 1}`);
+    }
   }
 
   const duration = Date.now() - startTime;

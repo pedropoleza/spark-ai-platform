@@ -523,6 +523,7 @@ async function processGroup(
     model: config.ai_model || "gpt-4.1-mini",
     images: imageInputs.length > 0 ? imageInputs : undefined,
     responseSchema,
+    priorTurnCount: conversationTurns.length,
   });
 
   if (!aiResult.success || !aiResult.response) {
