@@ -143,8 +143,8 @@ export async function generateSummaryNote(params: SummaryParams): Promise<void> 
         {
           role: "system",
           content: `Gere um resumo profissional de atendimento. Responda APENAS com JSON: { "note_html": "<html>" }
-O HTML deve ter 4 seções com h4: Resumo, Dados Coletados, Conclusão, Próximos Passos.
-Use tags: h4, p, ul, li, strong. Sem CSS. Máximo 300 palavras. Idioma: português.`,
+O HTML deve ter 3 seções com h4: Resumo da Conversa, Dados Coletados, Próximos Passos.
+Use tags: h4, p, ul, li, strong. Sem CSS. Máximo 250 palavras. Idioma: português.`,
         },
         {
           role: "user",
