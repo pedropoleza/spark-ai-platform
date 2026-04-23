@@ -50,6 +50,10 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   // Session persistente: DB é source of truth. O sessionId é guardado em
   // localStorage por agentId para reabrir a última conversa ao retornar.
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // Buffer de rajada: usuário pode "empilhar" múltiplas mensagens antes de
+  // enviar, simulando o comportamento de lead digitando várias em sequência
+  // no WhatsApp (que o debounce do prod agrega em uma única chamada).
+  const [burstBuffer, setBurstBuffer] = useState<string[]>([]);
   const [feedbackIdx, setFeedbackIdx] = useState<number | null>(null);
   const [feedbackSuggestion, setFeedbackSuggestion] = useState("");
   const [feedbackSent, setFeedbackSent] = useState<Set<number>>(new Set());
@@ -436,13 +440,28 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   // via session_id. UI não precisa mais serializar histórico — elimina bugs
   // de closure stale / ordem errada / mensagens perdidas.
 
+  // Empilha a mensagem no buffer de rajada (simula lead digitando várias
+  // mensagens em sequência no WhatsApp). Só envia tudo quando clicar Enviar.
+  const addToBurst = () => {
+    const text = input.trim();
+    if (!text || loading) return;
+    setBurstBuffer((prev) => [...prev, text]);
+    setMessages((prev) => [...prev, { role: "user", content: text, timestamp: new Date() }]);
+    setInput("");
+  };
+
   const handleSend = async () => {
     const hasText = input.trim().length > 0;
     const hasFile = !!attachedFile;
-    if ((!hasText && !hasFile) || !agentId || loading) return;
+    const hasBurst = burstBuffer.length > 0;
+    if ((!hasText && !hasFile && !hasBurst) || !agentId || loading) return;
 
     const userMessage = input.trim();
     setInput("");
+    // Snapshot do buffer antes de limpar, pra agregar com finalMessage
+    // (que pode conter transcrição/base64 do arquivo) após o processamento.
+    const burstSnapshot = [...burstBuffer];
+    setBurstBuffer([]);
 
     // Montar label visual para o usuário
     const isAudioFile = hasFile && attachedFile!.type.startsWith("audio/");
@@ -509,13 +528,20 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     setAttachedFile(null);
 
     try {
+      // Agrega buffer de rajada + mensagem atual (já processada com arquivo).
+      // Simula o que o webhook faz em prod quando múltiplas msgs caem na
+      // mesma janela de debounce e viram um único aggregatedBody.
+      const aggregatedFinalMessage = [...burstSnapshot, finalMessage]
+        .filter((m) => m && m.trim())
+        .join("\n");
+
       const response = await fetch("/api/agents/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           agent_id: agentId,
-          message: finalMessage,
-          session_id: sessionId,  // backend lê histórico do DB por session_id
+          message: aggregatedFinalMessage,
+          session_id: sessionId,
           collected_data: collectedData,
           execute_actions: executeActions,
           contact_id: executeActions ? contactId : undefined,
@@ -546,32 +572,40 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         setCollectedData((prev) => ({ ...prev, ...aiResponse.collected_data }));
       }
 
-      let displayContent: string;
-      if (Array.isArray(aiResponse.message)) {
-        displayContent = aiResponse.message.join("\n");
-      } else {
-        displayContent = aiResponse.message;
-      }
+      // Se IA retornou array de mensagens, renderiza cada uma como balão
+      // separado com delay 500-1500ms entre elas (igual SMS separados do prod).
+      const bubbles: string[] = Array.isArray(aiResponse.message)
+        ? aiResponse.message.filter((m): m is string => typeof m === "string" && m.trim().length > 0)
+        : [aiResponse.message].filter(Boolean);
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "agent",
-          content: displayContent,
-          timestamp: new Date(),
-          actions: aiResponse.actions,
-          collected_data: aiResponse.collected_data,
-          status: aiResponse.conversation_status,
-          duration_ms: data.duration_ms,
-          tokens: {
-            prompt: data.prompt_tokens || 0,
-            completion: data.completion_tokens || 0,
+      for (let i = 0; i < bubbles.length; i++) {
+        const isLast = i === bubbles.length - 1;
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "agent",
+            content: bubbles[i],
+            timestamp: new Date(),
+            // Metadata só no ÚLTIMO balão (os anteriores não tem próprio turno)
+            ...(isLast ? {
+              actions: aiResponse.actions,
+              collected_data: aiResponse.collected_data,
+              status: aiResponse.conversation_status,
+              duration_ms: data.duration_ms,
+              tokens: {
+                prompt: data.prompt_tokens || 0,
+                completion: data.completion_tokens || 0,
+              },
+              availableSlots: data.available_slots,
+              actionsExecuted: data.actions_scheduled ?? data.actions_executed,
+            } : {}),
           },
-          availableSlots: data.available_slots,
-          actionsExecuted: data.actions_executed,
-          actionsError: data.actions_error,
-        },
-      ]);
+        ]);
+        // Delay entre balões, igual ao action-executor em prod
+        if (!isLast) {
+          await new Promise((r) => setTimeout(r, 500 + Math.random() * 1000));
+        }
+      }
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -891,11 +925,32 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder={attachedFile ? "Adicione uma mensagem (opcional)..." : "Digite uma mensagem como lead..."}
+                    placeholder={
+                      burstBuffer.length > 0
+                        ? `Rajada (${burstBuffer.length} msgs acumuladas). Digite +1 ou Enviar...`
+                        : attachedFile
+                          ? "Adicione uma mensagem (opcional)..."
+                          : "Digite uma mensagem como lead..."
+                    }
                     disabled={loading}
                     className="flex-1"
                   />
-                  {!input.trim() && !attachedFile ? (
+                  {/* Botão de rajada: empilha a msg atual e deixa digitar outra.
+                      Simula lead digitando várias mensagens seguidas no WhatsApp,
+                      que em prod o debounce agrega num único aggregatedBody. */}
+                  {input.trim() && !attachedFile && (
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-9 w-9 flex-shrink-0"
+                      onClick={addToBurst}
+                      disabled={loading}
+                      title="Adicionar à rajada (mandar várias mensagens juntas)"
+                    >
+                      <span className="text-base leading-none">+</span>
+                    </Button>
+                  )}
+                  {!input.trim() && !attachedFile && burstBuffer.length === 0 ? (
                     <Button
                       variant="ghost"
                       size="icon"
@@ -909,7 +964,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                   ) : (
                     <Button
                       onClick={handleSend}
-                      disabled={(!input.trim() && !attachedFile) || loading || (executeActions && !contactId)}
+                      disabled={(!input.trim() && !attachedFile && burstBuffer.length === 0) || loading || (executeActions && !contactId)}
                       size="icon"
                       className="h-9 w-9 flex-shrink-0"
                     >

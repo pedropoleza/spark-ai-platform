@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
 import { GHLClient } from "@/lib/ghl/client";
@@ -133,11 +134,9 @@ export async function POST(request: NextRequest) {
     .order("created_at", { ascending: true });
 
   // A user msg atual acabou de ser inserida — separa do histórico prévio.
-  // dbMessages inclui ela na última posição. Separamos:
-  //   - conversationTurns = tudo EXCETO a última (histórico prévio)
-  //   - newMessages = a última (user msg atual)
+  // Aplica cap de 30 últimas mensagens igual ao processor de prod.
   const allMessages = dbMessages || [];
-  const priorMessages = allMessages.slice(0, -1);
+  const priorMessages = allMessages.slice(0, -1).slice(-30);
   const conversationTurns: ConversationTurn[] = priorMessages.map((m) => ({
     role: m.role === "user" ? "user" : "assistant",
     content: m.content,
@@ -145,7 +144,7 @@ export async function POST(request: NextRequest) {
 
   // Se houver histórico legado (compat) e nenhuma msg prévia no DB, importar
   if (conversationTurns.length === 0 && legacyHistory && typeof legacyHistory === "string") {
-    conversationTurns.push(...parseHistoryToTurns(legacyHistory));
+    conversationTurns.push(...parseHistoryToTurns(legacyHistory).slice(-30));
   }
 
   // ==========================================================================
@@ -173,7 +172,15 @@ export async function POST(request: NextRequest) {
   const slotsStartDate = String(slotsNow.getTime());
   const slotsEndDate = String(slotsNow.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-  const [slotsSettled, contactSettled, convStateResult] = await Promise.allSettled([
+  // Se há contact_id, também buscamos o histórico real do GHL. Isso é crítico
+  // pra "modo continuação": se o lead já conversou em prod, a IA entra como
+  // continuação (sem reapresentar), não como primeira mensagem.
+  type GhlConversationSearch = { conversations: { id: string }[] };
+  type GhlMessagesResp = {
+    messages: { messages: { direction: string; body?: string; dateAdded: string; messageType?: string }[] };
+  };
+
+  const [slotsSettled, contactSettled, convStateResult, ghlMessagesCountSettled] = await Promise.allSettled([
     shouldFetchSlots
       ? withRetry(
           () => ghlClient.get<SlotsResp>(
@@ -189,11 +196,34 @@ export async function POST(request: NextRequest) {
     sessionContactId
       ? supabase
           .from("conversation_state")
-          .select("collected_data")
+          .select("collected_data, conversation_id")
           .eq("agent_id", agent_id)
           .eq("contact_id", sessionContactId)
           .maybeSingle()
-      : Promise.resolve<{ data: { collected_data?: Record<string, string> } | null } | null>(null),
+      : Promise.resolve<{ data: { collected_data?: Record<string, string>; conversation_id?: string } | null } | null>(null),
+    // Fetch histórico real do GHL só para CONTAR turnos (não entra no prompt).
+    // Só roda se tiver contact_id — pra teste sem contato real, skipa.
+    sessionContactId
+      ? (async () => {
+          try {
+            const searchResult = await ghlClient.get<GhlConversationSearch>(
+              "/conversations/search",
+              { locationId: session.locationId, contactId: sessionContactId },
+            );
+            const convId = searchResult.conversations?.[0]?.id;
+            if (!convId) return 0;
+            const msgs = await ghlClient.get<GhlMessagesResp>(
+              `/conversations/${convId}/messages`,
+              { locationId: session.locationId },
+            );
+            return (msgs.messages?.messages || [])
+              .filter((m) => m.messageType === "TYPE_CUSTOM_SMS" || m.body)
+              .length;
+          } catch {
+            return 0;
+          }
+        })()
+      : Promise.resolve(0),
   ]);
 
   // Processar slots
@@ -266,12 +296,21 @@ export async function POST(request: NextRequest) {
       ? (convStateResult.value.data?.collected_data as Record<string, string> | undefined) || {}
       : {};
 
-  // Merge: GHL → convState → sessão → override da UI (prioridade máxima)
+  // Merge alinhado com prod: GHL (base) → convState → sessão de teste.
+  // O override da UI só sobrescreve com VALORES NÃO-VAZIOS, pra não apagar
+  // dados reais com strings vazias que a UI eventualmente mande.
+  const nonEmptyOverride: Record<string, string> = {};
+  if (collectedDataOverride && typeof collectedDataOverride === "object") {
+    for (const [k, v] of Object.entries(collectedDataOverride)) {
+      const val = String(v || "").trim();
+      if (val) nonEmptyOverride[k] = val;
+    }
+  }
   const mergedCollectedData = {
     ...contactDataFromGhl,
     ...previousCollectedData,
     ...sessionCollectedData,
-    ...(collectedDataOverride || {}),
+    ...nonEmptyOverride,
   };
 
   const currentDateInTz = new Date().toLocaleDateString("en-US", {
@@ -296,7 +335,19 @@ export async function POST(request: NextRequest) {
 
   const knowledgeBase = (kbData || []) as import("@/lib/ai/prompt-builder").KnowledgeBaseItem[];
 
-  const resolvedContactName = ghlContactName || (sessionContactId ? "Lead" : "Usuário Teste");
+  // contactName: usa nome real do GHL ou do collected_data. NUNCA placeholder
+  // tipo "Usuário Teste" — isso aparecia literal em {contact.name}, estragava
+  // a personalização do prompt e induzia a IA a comportamento de "lead novo".
+  const collectedName = mergedCollectedData["contact.name"] || mergedCollectedData["full_name"];
+  const resolvedContactName = ghlContactName || collectedName || "";
+
+  // priorTurnCount alinhado com prod: conta tanto turnos da sessão de teste
+  // QUANTO histórico real do lead no GHL. Se o lead já conversou 20x no
+  // WhatsApp, a IA no teste trata como continuação (não se apresenta de novo).
+  const ghlRealTurnCount = ghlMessagesCountSettled.status === "fulfilled"
+    ? Math.min(30, ghlMessagesCountSettled.value)
+    : 0;
+  const effectivePriorTurnCount = Math.max(conversationTurns.length, ghlRealTurnCount);
 
   const promptCtx = {
     config,
@@ -310,7 +361,7 @@ export async function POST(request: NextRequest) {
     slotsUnavailable: slotsFetchFailed,
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
-    priorTurnCount: conversationTurns.length,
+    priorTurnCount: effectivePriorTurnCount,
   };
   const systemPrompt = buildSystemPrompt(promptCtx);
   const runtimeContext = buildRuntimeContext(promptCtx);
@@ -368,27 +419,30 @@ export async function POST(request: NextRequest) {
   }
 
   // ==========================================================================
-  // 7. EXECUTAR AÇÕES REAIS (se solicitado)
+  // 7. EXECUTAR AÇÕES REAIS (fire-and-forget via waitUntil, igual webhook de prod).
+  //    Evita que a UI do teste fique bloqueada esperando calls ao GHL.
   // ==========================================================================
-  let actionsExecuted = false;
-  let actionsError: string | null = null;
+  const actionsScheduled = !!(execActions && sessionContactId && result.response);
 
-  if (execActions && sessionContactId && result.response) {
-    try {
-      await executeActions(result.response, {
-        companyId: session.companyId,
-        locationId: session.locationId,
-        contactId: sessionContactId,
-        agentId: agent_id,
-        conversationId: `test-${sessionId}`,
-        calendarId: config.calendar_id || undefined,
-        skipSendMessage: true,
-        testMode: true,
-      });
-      actionsExecuted = true;
-    } catch (error) {
-      actionsError = error instanceof Error ? error.message : "Erro ao executar acoes";
-    }
+  if (actionsScheduled) {
+    waitUntil(
+      (async () => {
+        try {
+          await executeActions(result.response!, {
+            companyId: session.companyId,
+            locationId: session.locationId,
+            contactId: sessionContactId!,
+            agentId: agent_id,
+            conversationId: `test-${sessionId}`,
+            calendarId: config.calendar_id || undefined,
+            skipSendMessage: true,
+            testMode: true,
+          });
+        } catch (error) {
+          console.error("[Test ExecuteActions] Falha em background:", error instanceof Error ? error.message : error);
+        }
+      })(),
+    );
   }
 
   return NextResponse.json({
@@ -397,8 +451,7 @@ export async function POST(request: NextRequest) {
     prompt_tokens: result.prompt_tokens,
     completion_tokens: result.completion_tokens,
     duration_ms: result.duration_ms,
-    actions_executed: actionsExecuted,
-    actions_error: actionsError,
+    actions_scheduled: actionsScheduled,
     available_slots: availableSlots || null,
   });
 }

@@ -704,8 +704,12 @@ ${generalBlock}${itemsBlock}`;
 function buildCustomInstructionsSection(ctx: PromptContext): string {
   if (!ctx.config.custom_instructions) return "";
   let instructions = ctx.config.custom_instructions.substring(0, 3000);
+  // Se contactName estiver vazio, substitui {contact.name} por "o lead" em
+  // vez de deixar "Olá , vamos conversar?" (vírgula solta) ou pior, o placeholder
+  // literal "{contact.name}" aparecer no output.
+  const contactNameSafe = ctx.contactName?.trim() || "o lead";
   instructions = instructions
-    .replace(/\{contact\.name\}/g, ctx.contactName)
+    .replace(/\{contact\.name\}/g, contactNameSafe)
     .replace(/\{agent\.name\}/g, ctx.config.personality?.name || "Agente")
     .replace(/\{location\.name\}/g, ctx.locationName)
     .replace(/\{agent\.specialist\}/g, ctx.config.specialist_name || "especialista");
