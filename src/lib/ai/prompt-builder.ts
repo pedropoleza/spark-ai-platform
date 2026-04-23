@@ -124,14 +124,30 @@ export function buildRuntimeContext(ctx: PromptContext): string {
 
   const turnCount = ctx.priorTurnCount ?? 0;
   const isFirstTurn = turnCount === 0;
+  const configuredGreeting = ctx.config.personality?.greeting_style?.trim();
+  const agentName = ctx.config.personality?.name?.trim() || "";
 
-  // Sinal explícito sobre o estado da conversa. Evita que o modelo repita
-  // saudação em turnos posteriores (bug comum na aba de testes onde histórico
-  // em string é interpretado como exemplo e não como contexto real).
-  const turnStateBlock = isFirstTurn
-    ? `ESTADO: PRIMEIRA mensagem da conversa. Use a saudação inicial configurada.`
-    : `ESTADO: TURNO ${turnCount + 1} da conversa (já houve ${turnCount} troca${turnCount > 1 ? "s" : ""}).
-REGRA ABSOLUTA: VOCÊ JÁ SE APRESENTOU. NÃO repita saudação, nome próprio, nem "oi/olá/meu nome é". Vá direto ao ponto da mensagem do lead.`;
+  // Estado do turno é o ÚNICO lugar que controla saudação/apresentação.
+  // System prompt não menciona greeting — evita que o modelo reproduza mesmo
+  // quando a regra diz pra não repetir.
+  let turnStateBlock: string;
+  if (isFirstTurn) {
+    turnStateBlock = configuredGreeting
+      ? `ESTADO: PRIMEIRA mensagem da conversa.
+Comece sua resposta com esta saudação (adaptando se o lead já tiver dito o nome dele): "${configuredGreeting}"
+Esta saudação é USADA APENAS AGORA. Em turnos futuros NUNCA repita.`
+      : `ESTADO: PRIMEIRA mensagem da conversa. Use uma saudação natural e breve.`;
+  } else {
+    const nameBan = agentName
+      ? `, nem "${agentName}"`
+      : "";
+    turnStateBlock = `ESTADO: TURNO ${turnCount + 1} da conversa (já houve ${turnCount} troca${turnCount > 1 ? "s" : ""}).
+REGRA ABSOLUTA DE NÃO-REPETIÇÃO:
+- VOCÊ JÁ SE APRESENTOU em turno anterior. NÃO se apresente de novo.
+- NÃO comece com "oi", "olá", "ei", "e aí", "tudo bem", "bom dia", "boa tarde", "boa noite"${nameBan}.
+- NÃO repita seu nome próprio nem o da empresa.
+- Comece a resposta DIRETO no assunto da mensagem do lead. Primeira palavra deve ser parte da resposta, não saudação.`;
+  }
 
   parts.push(`## CONTEXTO ATUAL
 Data/hora agora: ${ctx.currentDate}
@@ -261,11 +277,10 @@ Nunca use: "assistente", "assistente virtual", "IA", "bot", "robô", "automatiza
   }
 
   const persona = p?.persona_description ? `\nPersonalidade: ${p.persona_description}` : "";
-  // Greeting só é usado quando CONTEXTO ATUAL indica "PRIMEIRA mensagem".
-  // Em qualquer outro turno, o runtime context impede a saudação explicitamente.
-  const greeting = p?.greeting_style
-    ? `\nSaudação inicial (USAR APENAS se CONTEXTO ATUAL indicar "PRIMEIRA mensagem"): "${p.greeting_style}"`
-    : "";
+  // Greeting e farewell SAEM do system prompt. Eles são controlados EXCLUSIVAMENTE
+  // pelo runtime context (buildRuntimeContext), que conhece o turnNumber e decide
+  // se deve ou não injetar a saudação. Manter greeting aqui causava a IA a
+  // reproduzi-lo em turnos posteriores mesmo com regra de "não repetir".
   const farewell = p?.farewell_style ? `\nAo encerrar conversa: "${p.farewell_style}"` : "";
 
   let langInst: string;
@@ -279,7 +294,7 @@ Nunca use: "assistente", "assistente virtual", "IA", "bot", "robô", "automatiza
 
   return `## IDENTIDADE
 ${identity}
-Canal: mensagem de texto (SMS/WhatsApp). Mensagens curtas.${persona}${greeting}${farewell}${langInst}`;
+Canal: mensagem de texto (SMS/WhatsApp). Mensagens curtas.${persona}${farewell}${langInst}`;
 }
 
 function buildObjectiveSection(ctx: PromptContext): string {

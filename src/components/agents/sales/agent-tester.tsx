@@ -361,10 +361,12 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   }, [messages]);
 
   const buildHistory = () => {
-    // Excluir a ultima mensagem (a do usuario que esta sendo enviada agora)
-    // para evitar duplicacao — ela ja vai como `message` no request.
+    // IMPORTANTE: React state closure dentro do handler ainda aponta para o
+    // state ANTES do setMessages queued para a nova user msg. Logo, `messages`
+    // aqui contém exatamente o histórico anterior, SEM a nova mensagem.
+    // NÃO usar slice(0, -1): isso derrubava a última resposta do agente, fazendo
+    // a IA não ver que já tinha se apresentado e repetir a saudação a cada turno.
     return messages
-      .slice(0, -1)
       .map((m) => {
         const role = m.role === "user" ? "LEAD" : "AGENTE";
         return `${role}: ${m.content}`;
