@@ -1,6 +1,6 @@
 import type { AgentConfig, DataField } from "@/types/agent";
 import { getTimezoneFromState, getCurrentTimeInTimezone } from "@/lib/utils/timezone";
-import { composePersonalityProfile, type PersonalityProfile } from "@/lib/ai/behavior-blocks";
+import { composePersonalityProfile } from "@/lib/ai/behavior-blocks";
 
 /**
  * Sanitiza texto para prevenir prompt injection.
@@ -246,9 +246,6 @@ ${legalCheck}`;
 }
 
 function buildToneSection(ctx: PromptContext): string {
-  // Composicao a partir do registry de blocos comportamentais.
-  // Cada percentual escolhe uma das 5 bandas pre-definidas em behavior-blocks.ts.
-  // O prompt-builder NAO improvisa textos aqui — apenas reorganiza blocos.
   const profile = composePersonalityProfile({
     tone_creativity: ctx.config.tone_creativity,
     tone_formality: ctx.config.tone_formality,
@@ -256,25 +253,29 @@ function buildToneSection(ctx: PromptContext): string {
     tone_aggressiveness: ctx.config.tone_aggressiveness,
   });
 
-  const renderBlock = (
-    title: string,
-    block: PersonalityProfile["creativity"]
-  ) => `### ${title} — ${block.percent}% [${block.label}]
-${block.directives}`;
+  // Só incluir dimensões que diferem significativamente do default (40-60%)
+  const isNonDefault = (pct: number) => pct < 35 || pct > 65;
+  const blocks: string[] = [];
 
-  return `## PERFIL COMPORTAMENTAL
-Os blocos abaixo foram selecionados a partir dos percentuais configurados pelo administrador. Aplique-os de forma combinada e consistente em TODAS as mensagens.
+  if (isNonDefault(ctx.config.tone_creativity)) {
+    blocks.push(`Criatividade ${profile.creativity.percent}%: ${profile.creativity.directives}`);
+  }
+  if (isNonDefault(ctx.config.tone_formality)) {
+    blocks.push(`Formalidade ${profile.formality.percent}%: ${profile.formality.directives}`);
+  }
+  if (isNonDefault(ctx.config.tone_naturalness)) {
+    blocks.push(`Naturalidade ${profile.naturalness.percent}%: ${profile.naturalness.directives}`);
+  }
+  if (isNonDefault(ctx.config.tone_aggressiveness)) {
+    blocks.push(`Agressividade ${profile.aggressiveness.percent}%: ${profile.aggressiveness.directives}`);
+  }
 
-${renderBlock("Criatividade", profile.creativity)}
+  if (blocks.length === 0) return "";
 
-${renderBlock("Formalidade", profile.formality)}
+  return `## TOM DE VOZ
+${blocks.join("\n\n")}
 
-${renderBlock("Naturalidade", profile.naturalness)}
-
-${renderBlock("Agressividade na venda", profile.aggressiveness)}
-
-### Regras gerais
-- Maximo 1 pergunta por mensagem
+Regra: máximo 1 pergunta por mensagem
 - Nao repita perguntas ja respondidas`;
 }
 
@@ -459,18 +460,18 @@ function buildFeedbackSection(ctx: PromptContext): string {
   let section = "## APRENDIZADOS DO FEEDBACK\n";
 
   if (positives.length > 0) {
-    section += "\nRESPOSTAS APROVADAS (repita este estilo):\n";
-    for (const f of positives.slice(0, 10)) {
-      section += `- BOM: "${sanitize(f.ai_message, 150)}"\n`;
+    section += "\nEstilo aprovado:\n";
+    for (const f of positives.slice(0, 3)) {
+      section += `- ✓ "${sanitize(f.ai_message, 120)}"\n`;
     }
   }
 
   if (negatives.length > 0) {
-    section += "\nRESPOSTAS REPROVADAS (NAO repita):\n";
-    for (const f of negatives.slice(0, 10)) {
-      section += `- RUIM: "${sanitize(f.ai_message, 150)}"`;
+    section += "\nEvitar:\n";
+    for (const f of negatives.slice(0, 5)) {
+      section += `- ✗ "${sanitize(f.ai_message, 120)}"`;
       if (f.suggestion) {
-        section += ` → DEVERIA SER: "${sanitize(f.suggestion, 150)}"`;
+        section += ` → melhor: "${sanitize(f.suggestion, 120)}"`;
       }
       section += "\n";
     }
@@ -483,9 +484,8 @@ function buildKnowledgeBaseSection(ctx: PromptContext): string {
   const generalInstructions = (ctx.config.knowledge_base_instructions || "").trim();
   if ((!ctx.knowledgeBase || ctx.knowledgeBase.length === 0) && !generalInstructions) return "";
 
-  // Budget: 20000 chars totais, 5000 por item no maximo
-  const GLOBAL_CAP = 20000;
-  const PER_ITEM_CAP = 5000;
+  const GLOBAL_CAP = 12000;
+  const PER_ITEM_CAP = 4000;
 
   let remaining = GLOBAL_CAP;
   const renderedItems: string[] = [];
@@ -540,28 +540,16 @@ function buildKnowledgeBaseSection(ctx: PromptContext): string {
     ? `\n### ITENS DA BASE\n\n${renderedItems.join("\n\n")}`
     : "\n(Nenhum item cadastrado — siga as instrucoes gerais acima)";
 
-  return `## BASE DE CONHECIMENTO (FONTE PRIMARIA DE VERDADE)
+  return `## BASE DE CONHECIMENTO
 
-As informacoes abaixo foram fornecidas pelo administrador deste agente e representam a VERDADE oficial sobre a empresa, produtos, servicos, processos e politicas. Elas tem PRIORIDADE ABSOLUTA sobre qualquer conhecimento geral que voce possa ter.
-
-REGRAS OBRIGATORIAS DA BASE:
-1. SEMPRE consulte mentalmente esta base ANTES de responder qualquer pergunta do lead sobre empresa, produtos, precos, servicos, processos, politicas, horarios ou qualquer assunto coberto aqui
-2. Se a resposta estiver na base, use EXATAMENTE a informacao daqui. Nao invente, nao parafraseie adicionando suposicoes, nao complemente com "conhecimento geral"
-3. Se o lead perguntar algo NAO coberto pela base, NUNCA invente — responda "deixa eu confirmar essa informacao com a equipe e te retorno" (ou equivalente natural ao tom configurado)
-4. Se seu conhecimento geral parece contradizer a base, a BASE SEMPRE VENCE. Ignore o conhecimento externo
-5. NUNCA mencione ao lead que voce "tem uma base de conhecimento", "documento", "arquivo de referencia" ou similar — use a informacao de forma natural, como quem sabe do assunto
-6. Se a base tiver multiplos itens sobre o mesmo topico, combine as informacoes coerentemente. Se houver conflito entre itens, use o item mais recente (ITEM de numero maior) como fonte
-7. Se o lead pedir detalhes especificos (valores, datas, numeros) que estao na base, repita-os com precisao — nao arredonde, nao aproxime
+Use estas informações como referência. Se o lead perguntar algo coberto aqui, responda com base neste conteúdo. Se não souber, diga que vai confirmar com a equipe. Nunca mencione que tem uma "base" ou "documento" — use naturalmente.
 ${generalBlock}${itemsBlock}`;
 }
 
 function buildCustomInstructionsSection(ctx: PromptContext): string {
   if (!ctx.config.custom_instructions) return "";
   const instructions = ctx.config.custom_instructions.substring(0, 3000);
-  return `## INSTRUÇÕES DO ADMINISTRADOR (PRIORIDADE ALTA — seguir ACIMA das regras padrão)
-
-As instruções abaixo foram escritas pelo administrador deste agente e definem como voce deve conduzir a conversa. Se houver conflito entre estas instruções e as regras padrão do sistema, ESTAS INSTRUÇÕES VENCEM.
-
+  return `## INSTRUÇÕES DO ADMINISTRADOR (seguir com PRIORIDADE)
 ${instructions}`;
 }
 
