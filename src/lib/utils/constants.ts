@@ -32,30 +32,57 @@ export const AGENT_TYPES = {
   },
 } as const;
 
+/**
+ * Templates de custom_instructions. Cada um tem `agentType` que limita em qual
+ * aba de configuração aparece no dropdown. Evita o admin selecionar "Vendas
+ * Consultiva" num agente de recrutamento (ou vice-versa) e contaminar o prompt.
+ * "both" = aparece nos dois tipos (templates genéricos).
+ */
 export const CONVERSATION_TEMPLATES = [
+  // ============== RECRUTAMENTO ==============
   {
     id: "recruitment_aggressive",
     label: "Recrutamento Direto",
     description: "Foca em agendar reunião rapidamente, cria urgência",
-    instructions: "Seu objetivo é agendar uma conversa rápida com o especialista. Seja direto mas amigável. Crie curiosidade sobre a oportunidade sem dar muitos detalhes — os detalhes ficam pra reunião. Se o lead demonstrar qualquer interesse, proponha horários imediatamente. Não prolongue a conversa com muitas perguntas.",
+    agentType: "recruitment_agent" as const,
+    instructions: "Seu objetivo é agendar uma conversa rápida com o especialista. Seja direto mas amigável. Crie curiosidade sobre a oportunidade de carreira sem dar muitos detalhes, os detalhes ficam pra reunião. Se o candidato demonstrar qualquer interesse, proponha horários imediatamente. Não prolongue a conversa com muitas perguntas. Trate como CANDIDATO, nunca como comprador. Essa é uma oportunidade de carreira, não uma venda.",
   },
+  {
+    id: "recruitment_curious",
+    label: "Recrutamento por Curiosidade",
+    description: "Desperta curiosidade sobre a oportunidade antes de agendar",
+    agentType: "recruitment_agent" as const,
+    instructions: "Trate o contato como candidato a uma oportunidade profissional. Desperte curiosidade sobre a área e o potencial de carreira. Valorize o candidato como profissional, pergunte sobre a trajetória dele de forma genuína. Quando mencionar a oportunidade, enquadre como desenvolvimento profissional e não como venda. O agendamento é para ele conhecer o processo, não para comprar algo.",
+  },
+  // ============== VENDAS ==============
   {
     id: "sales_consultive",
     label: "Vendas Consultiva",
     description: "Entende a dor do cliente antes de propor solução",
-    instructions: "Entenda primeiro a situação e necessidade do lead. Faça perguntas sobre o momento atual, desafios e objetivos. Só depois de entender o contexto, apresente como podemos ajudar. Conecte os benefícios do produto/serviço com os problemas mencionados pelo lead. Agende quando sentir que o lead está convencido.",
+    agentType: "sales_agent" as const,
+    instructions: "Entenda primeiro a situação e necessidade do lead. Faça perguntas sobre o momento atual, desafios e objetivos. Só depois de entender o contexto, apresente como podemos ajudar. Conecte os benefícios do produto/serviço com os problemas mencionados pelo lead. Agende quando sentir que o lead está convencido. Trate como CLIENTE potencial interessado em contratar um produto/serviço.",
   },
+  {
+    id: "sales_direct",
+    label: "Vendas Direta",
+    description: "Foca em agendar reunião com corretor/consultor rapidamente",
+    agentType: "sales_agent" as const,
+    instructions: "Seu objetivo é agendar uma conversa do lead com o corretor/consultor. Seja claro que estamos falando sobre contratação de um produto/serviço. Colete os dados essenciais para o orçamento e proponha horários assim que possível. Não trate o lead como candidato a emprego, ele é um CLIENTE interessado em contratar.",
+  },
+  // ============== GENÉRICOS (ambos os tipos) ==============
   {
     id: "qualification_fast",
     label: "Qualificação Rápida",
     description: "Coleta dados essenciais e qualifica rapidamente",
+    agentType: "both" as const,
     instructions: "Colete as informações necessárias de forma natural e rápida. Não se aprofunde em conversas longas. Seja objetivo mas educado. Após coletar os dados essenciais, informe que a equipe entrará em contato com mais detalhes.",
   },
   {
     id: "rapport_first",
     label: "Rapport e Conexão",
     description: "Prioriza criar conexão humana antes de qualquer coisa",
-    instructions: "Priorize criar uma conexão genuína com o lead. Pergunte sobre a pessoa, sua história, o que faz. Mostre interesse real. Use o nome da pessoa frequentemente. Só depois de criar rapport natural, entre nos assuntos de negócio. A conversa deve parecer entre amigos, não entre vendedor e cliente.",
+    agentType: "both" as const,
+    instructions: "Priorize criar uma conexão genuína com o contato. Pergunte sobre a pessoa, sua história, o que faz. Mostre interesse real. Use o nome da pessoa frequentemente. Só depois de criar rapport natural, entre nos assuntos de negócio. A conversa deve parecer entre amigos, não transacional.",
   },
 ] as const;
 

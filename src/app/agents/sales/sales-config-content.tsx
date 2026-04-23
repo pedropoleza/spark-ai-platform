@@ -493,14 +493,16 @@ export function SalesConfigContent() {
                   }}>
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione um modelo para começar..." /></SelectTrigger>
                     <SelectContent>
-                      {CONVERSATION_TEMPLATES.map(t => (
-                        <SelectItem key={t.id} value={t.id}>
-                          <div className="flex flex-col">
-                            <span className="text-sm font-medium">{t.label}</span>
-                            <span className="text-xs text-gray-400">{t.description}</span>
-                          </div>
-                        </SelectItem>
-                      ))}
+                      {CONVERSATION_TEMPLATES
+                        .filter(t => t.agentType === "sales_agent" || t.agentType === "both")
+                        .map(t => (
+                          <SelectItem key={t.id} value={t.id}>
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium">{t.label}</span>
+                              <span className="text-xs text-gray-400">{t.description}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>

@@ -95,6 +95,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 
   const sections = [
     buildMetaInstruction(),
+    buildTypeFramingSection(ctx),
     buildIdentitySection(ctx),
     buildCustomInstructionsSection(ctx),
     buildExamplesSection(ctx),
@@ -205,6 +206,45 @@ REGRAS DE PONTUAÇÃO (OBRIGATÓRIO):
 - Também evite reticências longas ("..."). Prefira frases curtas.`;
 }
 
+/**
+ * Enquadramento fundamental do tipo de agente. Aparece SEMPRE, logo após a
+ * diretriz principal. Sem isso, se custom_instructions/personality estiverem
+ * vazios, sales e recruitment geram conversas praticamente idênticas — foi
+ * exatamente o sintoma reportado ("os 2 atendimentos iguais no teste").
+ *
+ * Diferença crítica: sales trata o contato como CLIENTE potencial (compra);
+ * recruitment trata como CANDIDATO a oportunidade de carreira (não é venda).
+ */
+function buildTypeFramingSection(ctx: PromptContext): string {
+  if (ctx.agentType === "recruitment_agent") {
+    return `## NATUREZA DO ATENDIMENTO: RECRUTAMENTO
+Você é um agente de RECRUTAMENTO. Sua função é qualificar CANDIDATOS interessados em uma OPORTUNIDADE DE CARREIRA e agendar uma conversa com o especialista responsável.
+
+REGRAS INVIOLÁVEIS DE RECRUTAMENTO:
+- Trate o contato como CANDIDATO, nunca como cliente/comprador.
+- Isto NÃO é venda. Você NÃO está oferecendo produto, serviço ou contratação de seguro.
+- Você está apresentando uma OPORTUNIDADE PROFISSIONAL/CARREIRA.
+- NUNCA use linguagem comercial: "contratar", "adquirir", "cotação", "orçamento", "proteção", "cobertura", "apólice", "prêmio", "plano".
+- Se o candidato perguntar "voces vendem seguro?" ou similar: reframe para "oportunidade profissional" e deixe que o especialista explique na conversa.
+- O agendamento é para o candidato CONHECER a oportunidade, não para fechar nada.
+- Nunca fale em valores, comissões, custos de licença ou estrutura de remuneração — isso é com o especialista.`;
+  }
+
+  if (ctx.agentType === "sales_agent") {
+    return `## NATUREZA DO ATENDIMENTO: VENDAS
+Você é um agente de VENDAS/QUALIFICAÇÃO. Sua função é qualificar LEADS interessados em um produto/serviço e agendar uma conversa com o corretor/consultor responsável.
+
+REGRAS INVIOLÁVEIS DE VENDAS:
+- Trate o contato como LEAD/CLIENTE potencial, pessoa interessada em contratar algo.
+- Isto NÃO é recrutamento. Você NÃO está oferecendo vaga de emprego, oportunidade de carreira, ou profissionalização.
+- NUNCA use linguagem de recrutamento: "candidato", "vaga", "oportunidade de carreira", "trabalhar conosco", "fazer parte do time", "desenvolvimento profissional".
+- Se o lead perguntar "é oportunidade de trabalho?" ou similar: esclareça gentilmente que é sobre o produto/serviço e direcione para o que o corretor pode apresentar.
+- O agendamento é para o lead conversar com um especialista sobre contratação/cotação.`;
+  }
+
+  return "";
+}
+
 function buildIdentitySection(ctx: PromptContext): string {
   const p = ctx.config.personality;
   const name = sanitize(p?.name || "Assistente", 50);
@@ -281,17 +321,30 @@ Ao agendar com sucesso, defina conversation_status = "booked".${goldenRule}${fle
 }
 
 function buildRecruitmentSection(ctx: PromptContext): string {
-  if (ctx.agentType !== "recruitment_agent" || !ctx.config.specialist_name) return "";
+  if (ctx.agentType !== "recruitment_agent") return "";
 
-  const specialist = sanitize(ctx.config.specialist_name, 50);
+  const hasSpecialist = !!ctx.config.specialist_name;
+  const specialist = hasSpecialist ? sanitize(ctx.config.specialist_name!, 50) : "";
   const role = sanitize(ctx.config.specialist_role || "especialista", 50);
 
+  // Inferência de gênero (quando há nome). Se não houver, usa termos neutros.
   const nameLower = specialist.toLowerCase();
-  const isFemale = nameLower.endsWith("a") || nameLower.endsWith("ane") || nameLower.endsWith("ene") ||
-    ["taciana", "juliana", "ana", "maria", "fernanda", "patricia", "camila", "larissa", "beatriz", "carol"].some(n => nameLower.includes(n));
-  const pronoun = isFemale ? "ela" : "ele";
-  const article = isFemale ? "a" : "o";
-  const articleCap = isFemale ? "A" : "O";
+  const isFemale = hasSpecialist && (
+    nameLower.endsWith("a") || nameLower.endsWith("ane") || nameLower.endsWith("ene") ||
+    ["taciana", "juliana", "ana", "maria", "fernanda", "patricia", "camila", "larissa", "beatriz", "carol"].some(n => nameLower.includes(n))
+  );
+  const pronoun = hasSpecialist ? (isFemale ? "ela" : "ele") : "o especialista";
+  const article = hasSpecialist ? (isFemale ? "a" : "o") : "o";
+  const articleCap = hasSpecialist ? (isFemale ? "A" : "O") : "O";
+  const specialistRef = hasSpecialist ? `${article} ${specialist}` : `o ${role}`;
+  const specialistRefCap = hasSpecialist ? `${articleCap} ${specialist}` : `O ${role}`;
+
+  const specialistBlock = hasSpecialist
+    ? `ESPECIALISTA: ${specialist} (${role}) — genero: ${isFemale ? "feminino" : "masculino"}
+Quando agendar, diga: "Deixa eu ver aqui na agenda d${article} ${specialist} quais horarios ${pronoun} tem disponivel..."
+Sempre use "${article} ${specialist}" e "${pronoun}" (NUNCA "o(a)" ou "ele(a)").`
+    : `ESPECIALISTA: (não configurado pelo admin) — use "o ${role}" de forma neutra.
+Quando agendar, diga: "Deixa eu ver aqui na agenda do ${role} quais horarios ele tem disponivel..."`;
 
   const timeSlotRule = ctx.config.preferred_time_slot === "afternoon_evening"
     ? `- Ofereça APENAS horarios de TARDE ou NOITE por padrao
@@ -311,18 +364,16 @@ VERIFICACAO LEGAL (APENAS para candidatos nos EUA):
 
   return `## REGRAS DE RECRUTAMENTO
 
-ESPECIALISTA: ${specialist} (${role}) — genero: ${isFemale ? "feminino" : "masculino"}
-Quando agendar, diga: "Deixa eu ver aqui na agenda d${article} ${specialist} quais horarios ${pronoun} tem disponivel..."
-Sempre use "${article} ${specialist}" e "${pronoun}" (NUNCA "o(a)" ou "ele(a)").
+${specialistBlock}
 
 COMO DESCREVER A OPORTUNIDADE (quando perguntarem):
-- "Basicamente, a gente ajuda familias brasileiras aqui nos EUA na parte de protecao financeira. E tambem desenvolve pessoas que querem crescer profissionalmente nessa area."
-- Se perguntarem "voces vendem seguro?": reframe como "protecao financeira" e oportunidade de carreira
-- Se pedirem mais detalhes: "${articleCap} ${specialist} consegue te explicar muito melhor numa conversa rapida"
-- Nunca transforme a conversa em apresentacao
-- Nunca fale valores de comissao, custos de licenca ou estrutura de remuneracao
-- "Quanto vou ganhar?" → "Essa parte ${article} ${specialist} vai te explicar, depende de alguns fatores"
-- "Quanto custa?" → "Existe um processo inicial com licencas, mas ${article} ${specialist} te explica direitinho"
+- Enquadre sempre como OPORTUNIDADE PROFISSIONAL / desenvolvimento de carreira, nunca como venda.
+- Se perguntarem "voces vendem seguro?": reframe como oportunidade profissional na area de protecao financeira.
+- Se pedirem mais detalhes: "${specialistRefCap} consegue te explicar muito melhor numa conversa rapida"
+- Nunca transforme a conversa em apresentacao do produto.
+- Nunca fale valores de comissao, custos de licenca ou estrutura de remuneracao.
+- "Quanto vou ganhar?" → "Essa parte ${specialistRef} vai te explicar, depende de alguns fatores"
+- "Quanto custa?" → "Existe um processo inicial com licencas, mas ${specialistRef} te explica direitinho"
 
 PREFERENCIA DE HORARIO:
 ${timeSlotRule}
@@ -331,10 +382,10 @@ ${timeSlotRule}
 
 OBJECOES DE RECRUTAMENTO:
 - "Nao tenho experiencia" → "E nem precisa ter. Muita gente comeca do zero"
-- "Nao tenho tempo" → "Entendo. E rapido, uns 20 minutos. ${articleCap} ${specialist} vai direto pro que faz sentido pro seu caso"
+- "Nao tenho tempo" → "Entendo. E rapido, uns 20 minutos. ${specialistRefCap} vai direto pro que faz sentido pro seu caso"
 - "Preciso pensar" → "Claro. Mas a conversa serve exatamente pra vc ter informacao suficiente pra pensar com clareza"
 - "Tenho medo" → "Por isso a conversa ajuda. Vc entende o suporte e o processo antes de decidir qualquer coisa"
-- "E golpe/piramide?" → "Entendo sua preocupacao. A [empresa] e uma empresa registrada e regulamentada. ${articleCap} ${specialist} pode te mostrar tudo na conversa"
+- "E golpe/piramide?" → "Entendo sua preocupacao. ${specialistRefCap} pode te mostrar tudo na conversa"
 ${legalCheck}`;
 }
 

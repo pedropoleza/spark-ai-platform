@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
-import { DEFAULT_SALES_DATA_FIELDS } from "@/types/agent";
+import { DEFAULT_SALES_DATA_FIELDS, DEFAULT_RECRUITMENT_DATA_FIELDS } from "@/types/agent";
 
 // GET /api/agents - Listar agentes da location
 export async function GET() {
@@ -62,11 +62,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: agentError.message }, { status: 500 });
   }
 
-  // Criar config padrao
-  const { error: configError } = await supabase.from("agent_configs").insert({
+  // Criar config padrao — data_fields ESPECÍFICOS do tipo.
+  // Bug histórico: todos agentes herdavam DEFAULT_SALES (incluindo smoker_status)
+  // mesmo sendo de recrutamento.
+  const defaultDataFields = type === "recruitment_agent"
+    ? DEFAULT_RECRUITMENT_DATA_FIELDS
+    : DEFAULT_SALES_DATA_FIELDS;
+
+  const defaultConfigPayload: Record<string, unknown> = {
     agent_id: agent.id,
-    data_fields: DEFAULT_SALES_DATA_FIELDS,
-  });
+    data_fields: defaultDataFields,
+  };
+
+  // Recrutamento: preferência de horário tarde/noite (padrão do tipo)
+  if (type === "recruitment_agent") {
+    defaultConfigPayload.preferred_time_slot = "afternoon_evening";
+    defaultConfigPayload.specialist_role = "especialista";
+  }
+
+  const { error: configError } = await supabase
+    .from("agent_configs")
+    .insert(defaultConfigPayload);
 
   if (configError) {
     console.error("Erro ao criar config padrao:", configError);

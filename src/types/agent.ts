@@ -286,3 +286,13 @@ export const DEFAULT_SALES_DATA_FIELDS: DataField[] = [
   { key: "state", label: "Estado onde mora", required: true, type: "text" },
   { key: "smoker_status", label: "Fumante", required: true, type: "boolean" },
 ];
+
+// Default data fields for recruitment agent — totalmente distinto de vendas.
+// Recrutamento foca em: localização, perfil profissional e motivação/gancho.
+// Máximo 3 campos obrigatórios, alinhado ao limite de "3 infos antes do agendamento".
+export const DEFAULT_RECRUITMENT_DATA_FIELDS: DataField[] = [
+  { key: "full_name", label: "Nome completo", required: true, type: "text" },
+  { key: "state", label: "Estado onde mora", required: true, type: "text" },
+  { key: "current_occupation", label: "O que a pessoa faz hoje", required: true, type: "text" },
+  { key: "motivation", label: "Motivação / gancho de interesse", required: false, type: "text" },
+];
