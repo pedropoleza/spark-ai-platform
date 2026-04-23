@@ -47,6 +47,9 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   const [collectedData, setCollectedData] = useState<Record<string, string>>({});
   const [executeActions, setExecuteActions] = useState(false);
   const [contactId, setContactId] = useState("");
+  // Session persistente: DB é source of truth. O sessionId é guardado em
+  // localStorage por agentId para reabrir a última conversa ao retornar.
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [feedbackIdx, setFeedbackIdx] = useState<number | null>(null);
   const [feedbackSuggestion, setFeedbackSuggestion] = useState("");
   const [feedbackSent, setFeedbackSent] = useState<Set<number>>(new Set());
@@ -121,12 +124,81 @@ export function AgentTester({ agentId }: AgentTesterProps) {
       .catch(() => {});
   }, [agentId]);
 
-  // Reset conversa ao trocar de agente
+  // Ao trocar de agente: recupera a última sessão (do localStorage) ou mostra vazio.
+  // DB é source of truth — messages é apenas um cache pra render.
   useEffect(() => {
+    if (!agentId) return;
     setMessages([]);
     setCollectedData({});
     setInput("");
+
+    // Tenta reabrir a última sessão desse agente
+    const storageKey = `test-session:${agentId}`;
+    const cachedSessionId = typeof window !== "undefined" ? localStorage.getItem(storageKey) : null;
+    if (cachedSessionId) {
+      loadSession(cachedSessionId);
+    } else {
+      setSessionId(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId]);
+
+  const loadSession = async (id: string) => {
+    if (!agentId) return;
+    try {
+      const res = await fetch(`/api/agents/test/sessions/${id}`);
+      if (!res.ok) {
+        // Sessão inválida/apagada: limpa o localStorage e começa do zero
+        localStorage.removeItem(`test-session:${agentId}`);
+        setSessionId(null);
+        setMessages([]);
+        return;
+      }
+      const data = await res.json();
+      setSessionId(data.session.id);
+      setCollectedData((data.session.collected_data as Record<string, string>) || {});
+      if (data.session.contact_id) {
+        setContactId(data.session.contact_id);
+      }
+      interface DbMsg { id: string; role: "user" | "agent"; content: string; created_at: string; metadata?: { prompt_tokens?: number; completion_tokens?: number; duration_ms?: number; actions?: AIResponse["actions"]; conversation_status?: string } }
+      const loaded: ChatMessage[] = (data.messages || []).map((m: DbMsg) => ({
+        role: m.role,
+        content: m.content,
+        timestamp: new Date(m.created_at),
+        tokens: m.metadata?.prompt_tokens
+          ? { prompt: m.metadata.prompt_tokens, completion: m.metadata.completion_tokens || 0 }
+          : undefined,
+        duration_ms: m.metadata?.duration_ms,
+        actions: m.metadata?.actions,
+        status: m.metadata?.conversation_status,
+      }));
+      setMessages(loaded);
+    } catch {
+      setSessionId(null);
+    }
+  };
+
+  const startNewSession = async () => {
+    if (!agentId) return;
+    setMessages([]);
+    setCollectedData({});
+    setInput("");
+    setSessionId(null);
+    localStorage.removeItem(`test-session:${agentId}`);
+  };
+
+  const clearCurrentSession = async () => {
+    if (!agentId || !sessionId) {
+      await startNewSession();
+      return;
+    }
+    try {
+      await fetch(`/api/agents/test/sessions/${sessionId}`, { method: "DELETE" });
+    } catch {
+      // se falhar, segue mesmo assim pra não travar a UI
+    }
+    await startNewSession();
+  };
 
   // Salvar toggles de midia via API
   const saveMediaToggle = async (key: "audio" | "image" | "pdf", value: boolean) => {
@@ -299,7 +371,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         ai_message: msg.content,
         user_message: userMsg?.content || "",
         suggestion: suggestion || null,
-        context: buildHistory(),
+        context: messages.map(m => `${m.role === "user" ? "LEAD" : "AGENTE"}: ${m.content}`).join("\n"),
       }),
     });
 
@@ -360,19 +432,9 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     }
   }, [messages]);
 
-  const buildHistory = () => {
-    // IMPORTANTE: React state closure dentro do handler ainda aponta para o
-    // state ANTES do setMessages queued para a nova user msg. Logo, `messages`
-    // aqui contém exatamente o histórico anterior, SEM a nova mensagem.
-    // NÃO usar slice(0, -1): isso derrubava a última resposta do agente, fazendo
-    // a IA não ver que já tinha se apresentado e repetir a saudação a cada turno.
-    return messages
-      .map((m) => {
-        const role = m.role === "user" ? "LEAD" : "AGENTE";
-        return `${role}: ${m.content}`;
-      })
-      .join("\n");
-  };
+  // buildHistory foi removido: o backend agora lê TODAS as mensagens da DB
+  // via session_id. UI não precisa mais serializar histórico — elimina bugs
+  // de closure stale / ordem errada / mensagens perdidas.
 
   const handleSend = async () => {
     const hasText = input.trim().length > 0;
@@ -453,7 +515,7 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         body: JSON.stringify({
           agent_id: agentId,
           message: finalMessage,
-          conversation_history: buildHistory(),
+          session_id: sessionId,  // backend lê histórico do DB por session_id
           collected_data: collectedData,
           execute_actions: executeActions,
           contact_id: executeActions ? contactId : undefined,
@@ -461,6 +523,14 @@ export function AgentTester({ agentId }: AgentTesterProps) {
       });
 
       const data = await response.json();
+
+      // Persistir o session_id retornado (primeiro turno sempre cria sessão nova)
+      if (data.session_id && data.session_id !== sessionId) {
+        setSessionId(data.session_id);
+        if (agentId) {
+          localStorage.setItem(`test-session:${agentId}`, data.session_id);
+        }
+      }
 
       if (!response.ok) {
         setMessages((prev) => [
@@ -512,10 +582,10 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     }
   };
 
-  const handleReset = () => {
-    setMessages([]);
-    setCollectedData({});
-    setInput("");
+  // Reset = apagar a sessão atual do DB e começar uma nova.
+  // Como DB é source of truth, limpar só o state local deixaria lixo no banco.
+  const handleReset = async () => {
+    await clearCurrentSession();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

@@ -8,6 +8,26 @@ import type { ConversationTurn } from "@/lib/ai/openai-client";
 import { withRetry } from "@/lib/utils/retry";
 import { executeActions } from "@/lib/ai/action-executor";
 
+/**
+ * POST /api/agents/test
+ *
+ * Fluxo novo (v2): source of truth é o DB (tabelas agent_test_sessions /
+ * agent_test_messages). A UI manda apenas `session_id` + `message`. O backend:
+ *
+ *   1. Salva a user msg na DB
+ *   2. Lê TODO o histórico da sessão do DB (garantido ordenado e completo)
+ *   3. Monta prompt igual ao processor de produção
+ *   4. Chama IA
+ *   5. Salva a agent msg na DB
+ *   6. Retorna a agent msg para a UI renderizar
+ *
+ * Isso elimina os bugs de closure stale / serialização da UI que causavam
+ * perda de contexto (histórico incompleto → IA repetia apresentação).
+ *
+ * Compat legada: se `session_id` não for fornecido, cria uma sessão ad-hoc
+ * efêmera (salva no DB mas não lista na UI). Mantém fallback para clients
+ * antigos que ainda mandam conversation_history como string.
+ */
 export async function POST(request: NextRequest) {
   const session = await getSession();
   if (!session) {
@@ -18,10 +38,12 @@ export async function POST(request: NextRequest) {
   const {
     agent_id,
     message,
-    conversation_history,
-    collected_data,
+    session_id: providedSessionId,
+    collected_data: collectedDataOverride,
     execute_actions: execActions = false,
     contact_id,
+    // Legado: alguns clients ainda mandam isso. Se houver session_id, ignora.
+    conversation_history: legacyHistory,
   } = body;
 
   if (!agent_id || !message) {
@@ -49,6 +71,86 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Agente sem configuracao" }, { status: 400 });
   }
 
+  // ==========================================================================
+  // 1. RESOLVER SESSÃO: usar a fornecida ou criar uma nova.
+  // ==========================================================================
+  let sessionId: string;
+  let sessionCollectedData: Record<string, string> = {};
+  let sessionContactId: string | null = contact_id || null;
+
+  if (providedSessionId) {
+    const { data: existingSession } = await supabase
+      .from("agent_test_sessions")
+      .select("id, collected_data, contact_id")
+      .eq("id", providedSessionId)
+      .eq("location_id", session.locationId)
+      .eq("agent_id", agent_id)
+      .maybeSingle();
+
+    if (!existingSession) {
+      return NextResponse.json({ error: "Sessao nao encontrada" }, { status: 404 });
+    }
+    sessionId = existingSession.id;
+    sessionCollectedData = (existingSession.collected_data as Record<string, string>) || {};
+    sessionContactId = existingSession.contact_id || sessionContactId;
+  } else {
+    // Cria sessão ad-hoc — mantém tudo persistido mesmo sem a UI gerenciar
+    const { data: newSession, error: newSessionErr } = await supabase
+      .from("agent_test_sessions")
+      .insert({
+        agent_id,
+        location_id: session.locationId,
+        created_by: session.userId || "unknown",
+        contact_id: sessionContactId,
+        session_name: null,
+      })
+      .select("id")
+      .single();
+
+    if (newSessionErr || !newSession) {
+      return NextResponse.json({ error: newSessionErr?.message || "Falha ao criar sessao" }, { status: 500 });
+    }
+    sessionId = newSession.id;
+  }
+
+  // ==========================================================================
+  // 2. SALVAR A USER MSG (antes de qualquer coisa). Fonte da verdade começa aqui.
+  // ==========================================================================
+  await supabase.from("agent_test_messages").insert({
+    session_id: sessionId,
+    role: "user",
+    content: message,
+  });
+
+  // ==========================================================================
+  // 3. LER TODO O HISTÓRICO DO DB. Esta é a source of truth — nunca mais
+  //    confiar no que a UI enviou como string.
+  // ==========================================================================
+  const { data: dbMessages } = await supabase
+    .from("agent_test_messages")
+    .select("role, content")
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: true });
+
+  // A user msg atual acabou de ser inserida — separa do histórico prévio.
+  // dbMessages inclui ela na última posição. Separamos:
+  //   - conversationTurns = tudo EXCETO a última (histórico prévio)
+  //   - newMessages = a última (user msg atual)
+  const allMessages = dbMessages || [];
+  const priorMessages = allMessages.slice(0, -1);
+  const conversationTurns: ConversationTurn[] = priorMessages.map((m) => ({
+    role: m.role === "user" ? "user" : "assistant",
+    content: m.content,
+  }));
+
+  // Se houver histórico legado (compat) e nenhuma msg prévia no DB, importar
+  if (conversationTurns.length === 0 && legacyHistory && typeof legacyHistory === "string") {
+    conversationTurns.push(...parseHistoryToTurns(legacyHistory));
+  }
+
+  // ==========================================================================
+  // 4. BUSCAR LOCATION + SLOTS + CONTATO GHL + CONVSTATE (igual prod)
+  // ==========================================================================
   const { data: location } = await supabase
     .from("locations")
     .select("*")
@@ -59,8 +161,6 @@ export async function POST(request: NextRequest) {
   const ghlClient = new GHLClient(session.companyId, session.locationId);
   const shouldFetchSlots = !!config.calendar_id && config.objective !== "qualification_only";
 
-  // Fidelidade com prod: buscar slots (com retry) + dados do contato GHL
-  // + convState (para dados já coletados). Tudo em paralelo.
   type SlotsResp = Record<string, unknown>;
   type ContactResp = { contact: {
     firstName?: string; lastName?: string; name?: string; email?: string; phone?: string;
@@ -83,15 +183,15 @@ export async function POST(request: NextRequest) {
           { maxRetries: 2, baseDelayMs: 200, label: "test:free-slots" },
         )
       : Promise.resolve<SlotsResp | null>(null),
-    contact_id
-      ? ghlClient.get<ContactResp>(`/contacts/${contact_id}`)
+    sessionContactId
+      ? ghlClient.get<ContactResp>(`/contacts/${sessionContactId}`)
       : Promise.resolve<ContactResp | null>(null),
-    contact_id
+    sessionContactId
       ? supabase
           .from("conversation_state")
           .select("collected_data")
           .eq("agent_id", agent_id)
-          .eq("contact_id", contact_id)
+          .eq("contact_id", sessionContactId)
           .maybeSingle()
       : Promise.resolve<{ data: { collected_data?: Record<string, string> } | null } | null>(null),
   ]);
@@ -123,7 +223,6 @@ export async function POST(request: NextRequest) {
         slotLines.push(`${dateFormatted}: ${slotsFormatted.join(", ")}`);
       }
       availableSlots = slotLines.join("\n");
-      console.log(`[Test FreeSlots] Formatted ${slotLines.length} days`);
     } else {
       slotsFetchFailed = true;
       console.error(`[Test FreeSlots] All retries failed:`,
@@ -134,7 +233,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Processar contato GHL (mesma lógica do processor em prod)
+  // Processar contato GHL
   const contactDataFromGhl: Record<string, string> = {};
   let ghlContactName: string | undefined;
   if (contactSettled.status === "fulfilled" && contactSettled.value?.contact) {
@@ -162,20 +261,19 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Processar convState (dados já coletados de conversa anterior)
   const previousCollectedData =
     convStateResult.status === "fulfilled" && convStateResult.value && "data" in convStateResult.value
       ? (convStateResult.value.data?.collected_data as Record<string, string> | undefined) || {}
       : {};
 
-  // Merge final: GHL base → convState → o que a UI passou (prioridade máxima)
+  // Merge: GHL → convState → sessão → override da UI (prioridade máxima)
   const mergedCollectedData = {
     ...contactDataFromGhl,
     ...previousCollectedData,
-    ...(collected_data || {}),
+    ...sessionCollectedData,
+    ...(collectedDataOverride || {}),
   };
 
-  // Data/hora no timezone correto
   const currentDateInTz = new Date().toLocaleDateString("en-US", {
     weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: locationTz,
   });
@@ -183,7 +281,6 @@ export async function POST(request: NextRequest) {
     hour: "numeric", minute: "2-digit", hour12: true, timeZone: locationTz,
   });
 
-  // Buscar feedback
   const { data: feedbackData } = await supabase
     .from("agent_feedback")
     .select("rating, ai_message, suggestion")
@@ -191,7 +288,6 @@ export async function POST(request: NextRequest) {
     .order("created_at", { ascending: false })
     .limit(20);
 
-  // Buscar knowledge base
   const { data: kbData } = await supabase
     .from("knowledge_base")
     .select("title, type, content, file_name, file_url, description, usage_instructions")
@@ -200,13 +296,7 @@ export async function POST(request: NextRequest) {
 
   const knowledgeBase = (kbData || []) as import("@/lib/ai/prompt-builder").KnowledgeBaseItem[];
 
-  // Converter history string "LEAD: x\nAGENTE: y" em turns estruturados.
-  // Isso evita que o modelo interprete o bloco como exemplo e repita saudação.
-  const conversationTurns = parseHistoryToTurns(conversation_history || "");
-
-  // contactName real do GHL (igual prod). Fallback: "Lead" se contact_id
-  // presente sem dados, "Usuário Teste" sem contact_id.
-  const resolvedContactName = ghlContactName || (contact_id ? "Lead" : "Usuário Teste");
+  const resolvedContactName = ghlContactName || (sessionContactId ? "Lead" : "Usuário Teste");
 
   const promptCtx = {
     config,
@@ -226,6 +316,9 @@ export async function POST(request: NextRequest) {
   const runtimeContext = buildRuntimeContext(promptCtx);
   const responseSchema = buildResponseJsonSchema(promptCtx);
 
+  // ==========================================================================
+  // 5. CHAMAR A IA
+  // ==========================================================================
   const result = await processWithAI({
     systemPrompt,
     runtimeContext,
@@ -239,23 +332,55 @@ export async function POST(request: NextRequest) {
 
   if (!result.success || !result.response) {
     return NextResponse.json(
-      { error: result.error || "Falha no processamento" },
+      { error: result.error || "Falha no processamento", session_id: sessionId },
       { status: 500 }
     );
   }
 
-  // Executar acoes reais se solicitado
+  // ==========================================================================
+  // 6. SALVAR A AGENT MSG NO DB. Próximo turno vai vê-la automaticamente.
+  // ==========================================================================
+  const agentContent = Array.isArray(result.response.message)
+    ? result.response.message.join("\n")
+    : result.response.message;
+
+  await supabase.from("agent_test_messages").insert({
+    session_id: sessionId,
+    role: "agent",
+    content: agentContent,
+    metadata: {
+      prompt_tokens: result.prompt_tokens,
+      completion_tokens: result.completion_tokens,
+      cached_tokens: result.cached_tokens,
+      duration_ms: result.duration_ms,
+      actions: result.response.actions || [],
+      conversation_status: result.response.conversation_status,
+    },
+  });
+
+  // Atualizar collected_data da sessão (acumulativo)
+  if (result.response.collected_data && Object.keys(result.response.collected_data).length > 0) {
+    const mergedSessionData = { ...sessionCollectedData, ...result.response.collected_data };
+    await supabase
+      .from("agent_test_sessions")
+      .update({ collected_data: mergedSessionData })
+      .eq("id", sessionId);
+  }
+
+  // ==========================================================================
+  // 7. EXECUTAR AÇÕES REAIS (se solicitado)
+  // ==========================================================================
   let actionsExecuted = false;
   let actionsError: string | null = null;
 
-  if (execActions && contact_id && result.response) {
+  if (execActions && sessionContactId && result.response) {
     try {
       await executeActions(result.response, {
         companyId: session.companyId,
         locationId: session.locationId,
-        contactId: contact_id,
+        contactId: sessionContactId,
         agentId: agent_id,
-        conversationId: `test-${Date.now()}`,
+        conversationId: `test-${sessionId}`,
         calendarId: config.calendar_id || undefined,
         skipSendMessage: true,
         testMode: true,
@@ -267,6 +392,7 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({
+    session_id: sessionId,
     response: result.response,
     prompt_tokens: result.prompt_tokens,
     completion_tokens: result.completion_tokens,
@@ -279,8 +405,7 @@ export async function POST(request: NextRequest) {
 
 /**
  * Converte o formato legado "LEAD: x\nAGENTE: y" em turns estruturados.
- * Linhas que não começam com LEAD:/AGENTE: são anexadas à mensagem anterior
- * (mensagens multi-linha). Mensagens vazias são descartadas.
+ * Mantido apenas para compat com clients que ainda enviem conversation_history.
  */
 function parseHistoryToTurns(history: string): ConversationTurn[] {
   if (!history || !history.trim()) return [];
@@ -294,7 +419,6 @@ function parseHistoryToTurns(history: string): ConversationTurn[] {
     } else if (agentMatch) {
       turns.push({ role: "assistant", content: agentMatch[1] });
     } else if (turns.length > 0) {
-      // Linha de continuação — anexa na última
       turns[turns.length - 1].content += "\n" + line;
     }
   }
