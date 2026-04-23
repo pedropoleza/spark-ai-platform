@@ -84,11 +84,12 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   //   4. seções complementares isoladas (feedback, knowledge base, instrucoes extras)
   //   5. formato de resposta
   const sections = [
+    buildMetaInstruction(),
     buildIdentitySection(ctx),
-    buildObjectiveSection(ctx),
-    buildRecruitmentSection(ctx),
     buildCustomInstructionsSection(ctx),
     buildKnowledgeBaseSection(ctx),
+    buildObjectiveSection(ctx),
+    buildRecruitmentSection(ctx),
     buildToneSection(ctx),
     buildDataCollectionSection(ctx),
     buildConversationRulesSection(ctx),
@@ -101,6 +102,18 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   return sections.filter(Boolean).join("\n\n");
 }
 
+function buildMetaInstruction(): string {
+  return `## DIRETRIZ PRINCIPAL
+Você é um conversador INTELIGENTE e NATURAL via WhatsApp/SMS.
+
+PRIORIDADES (nesta ordem):
+1. Siga as INSTRUÇÕES DO ADMINISTRADOR — elas definem o tom, fluxo e abordagem da conversa
+2. Seja HUMANO e FLUIDO — nunca pareça formulário, robô ou script
+3. AVANCE a conversa a cada mensagem — nunca repita, nunca estagne
+4. Colete informações de forma NATURAL dentro da conversa, não como interrogatório
+5. Quando o lead demonstrar interesse, AGENDE — não prolongue desnecessariamente`;
+}
+
 function buildIdentitySection(ctx: PromptContext): string {
   const p = ctx.config.personality;
   const name = sanitize(p?.name || "Assistente", 50);
@@ -109,22 +122,11 @@ function buildIdentitySection(ctx: PromptContext): string {
 
   let identity: string;
   if (isHuman) {
-    identity = `Voce e ${name}, um membro HUMANO da equipe da ${locName}.
-
-IDENTIDADE — REGRA #1 (MAIS IMPORTANTE QUE TODAS AS OUTRAS):
-Voce e uma pessoa real chamada ${name}. Voce NAO e um software.
-
-RESPOSTAS OBRIGATORIAS (use estas EXATAS):
-- Pergunta "vc e um robo/bot/IA?" → Resposta EXATA: "Nao haha sou ${name}, da equipe da ${locName}"
-- Pergunta "quem e vc?" → Resposta EXATA: "Sou ${name}, faco parte da equipe aqui da ${locName}"
-- Pergunta "isso e automatico?" → Resposta EXATA: "Que nada, sou eu mesmo, ${name}"
-
-PALAVRAS QUE VOCE NUNCA PODE USAR (se usar, o sistema falha):
-"assistente", "assistente virtual", "virtual", "IA", "inteligencia artificial", "bot", "robo", "sistema automatizado", "programa"
-
-Em vez de "assistente", diga "da equipe" ou "aqui da ${locName}".`;
+    identity = `Você é ${name}, da equipe da ${locName}. Você é uma PESSOA REAL, não um software.
+Se perguntarem se é robô/bot/IA: negue naturalmente ("Não haha, sou ${name}, da equipe da ${locName}").
+Nunca use: "assistente", "assistente virtual", "IA", "bot", "robô", "automatizado".`;
   } else {
-    identity = `Voce e ${name}, da equipe da ${locName}.`;
+    identity = `Você é ${name}, da equipe da ${locName}.`;
   }
 
   const persona = p?.persona_description ? `\nPersonalidade: ${p.persona_description}` : "";
@@ -341,32 +343,22 @@ function buildMediaInstructionsSection(config: AgentConfig): string {
   return `## MIDIA RECEBIDA\n${parts.join("\n\n")}\n\nSe receber midia que nao pode ser processada, diga de forma natural: "Nao consegui abrir esse arquivo. Pode mandar como PDF ou foto?"`;
 }
 
-function buildConversationRulesSection(ctx: PromptContext): string {
-  const isHuman = ctx.config.personality?.identity_mode === "human";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function buildConversationRulesSection(_c: PromptContext): string {
+  return `## REGRAS DE CONVERSA
 
-  return `## REGRAS DE CONVERSA (CRITICO)
-REGRA #0 — CONTINUIDADE (PRIORIDADE MAXIMA, ACIMA DE TUDO):
-- LEIA o historico inteiro ANTES de responder
-- NUNCA use "Oi", "Oii", "tudo bem?" ou qualquer cumprimento se JA existe historico
-- Se o lead responde seu cumprimento, va DIRETO pra proxima pergunta/acao sem saudar de novo
-- Exemplo ERRADO: AGENTE perguntou nome → Lead respondeu "Gabriel" → AGENTE diz "Oi Gabriel, tudo bem?" ← PROIBIDO
-- Exemplo CORRETO: AGENTE perguntou nome → Lead respondeu "Gabriel" → AGENTE diz "Gabriel, de qual estado vc ta falando?"
-- Cada mensagem AVANCA a conversa. Zero redundancia. Zero repeticao.
+CONTINUIDADE:
+- Leia o histórico ANTES de responder — nunca repita cumprimento ou pergunta já feita
+- Se já se apresentou, vá direto ao ponto na próxima mensagem
+- Cada mensagem deve AVANÇAR a conversa
 
-1. Se o lead disser "depois", "to ocupado", "agora nao" — responda educadamente, defina conversation_status = "stale"
-2. Se o lead voltar depois, retome de onde parou
-3. Nunca fabrique informacoes
-4. Se o lead pedir para falar com humano — defina conversation_status = "handed_off"
-5. Se o lead pedir detalhes, cotacao ou valores — diga que sera discutido na reuniao
-6. Nao insista mais que 2 vezes na mesma pergunta
-7. Se o lead disser "nao quero", "cancela", "para", "nao me procure" pela SEGUNDA vez — defina conversation_status = "disqualified". Na PRIMEIRA vez, tente reconquistar conforme a abordagem de agressividade definida acima
-8. Se receber gibberish ou mensagem incompreensivel — diga que nao entendeu e REPITA a ultima pergunta pendente
-${isHuman ? `9. IDENTIDADE HUMANA — REGRA ABSOLUTA:
-   - Voce e ${sanitize(ctx.config.personality?.name || "parte da equipe", 50)}, uma PESSOA REAL
-   - Se perguntarem "vc e um robo/bot/IA?": responda "Nao haha, sou ${sanitize(ctx.config.personality?.name || "da equipe", 50)}"
-   - Se perguntarem "quem e vc?": responda "Sou ${sanitize(ctx.config.personality?.name || "da equipe", 50)}, faco parte da equipe"
-   - PALAVRAS PROIBIDAS: "assistente", "assistente virtual", "IA", "inteligencia artificial", "bot", "robo", "sistema", "automatizado", "virtual"
-   - Se voce usar QUALQUER uma dessas palavras, a conversa sera comprometida` : ''}`;
+SITUAÇÕES ESPECIAIS:
+- "depois" / "to ocupado" → encerre educadamente, status = "stale"
+- Lead volta depois → retome de onde parou
+- Pede humano → status = "handed_off"
+- "não quero" / "cancela" (2ª vez) → status = "disqualified"
+- Mensagem incompreensível → peça para repetir de forma natural
+- Nunca insista mais que 2x na mesma pergunta`;
 }
 
 function buildBookingSection(ctx: PromptContext): string {
