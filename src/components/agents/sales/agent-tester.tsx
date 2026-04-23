@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, AlertTriangle, CheckCircle2, ThumbsUp, ThumbsDown, Pencil, Trash2, X, Check, Mic, Eye, FileText, Paperclip, Image } from "lucide-react";
+import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, AlertTriangle, CheckCircle2, ThumbsUp, ThumbsDown, Pencil, Trash2, X, Check, Mic, Eye, FileText, Paperclip, Image, Bell, Clipboard } from "lucide-react";
+import { FollowUpPreviewModal } from "./follow-up-preview-modal";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,6 +55,14 @@ export function AgentTester({ agentId }: AgentTesterProps) {
   // enviar, simulando o comportamento de lead digitando várias em sequência
   // no WhatsApp (que o debounce do prod agrega em uma única chamada).
   const [burstBuffer, setBurstBuffer] = useState<string[]>([]);
+  // Modal de prévia de follow-up + config do agente pra saber se é manual/ai_auto
+  const [showFollowUpModal, setShowFollowUpModal] = useState(false);
+  const [agentFollowUpConfig, setAgentFollowUpConfig] = useState<{
+    enabled?: boolean;
+    mode?: "ai_auto" | "manual";
+    manual_steps?: { delay_minutes: number; custom_message?: string }[];
+  } | undefined>(undefined);
+  const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [feedbackIdx, setFeedbackIdx] = useState<number | null>(null);
   const [feedbackSuggestion, setFeedbackSuggestion] = useState("");
   const [feedbackSent, setFeedbackSent] = useState<Set<number>>(new Set());
@@ -110,6 +119,8 @@ export function AgentTester({ agentId }: AgentTesterProps) {
           image: data.config.enable_image_analysis ?? false,
           pdf: data.config.enable_pdf_reading ?? false,
         });
+        // Follow-up config (pra modal de preview saber se é manual/ai_auto)
+        setAgentFollowUpConfig(data.config.follow_up_config);
         // System prompt preview
         if (data.config.system_prompt_override) {
           setSystemPromptPreview(data.config.system_prompt_override);
@@ -622,6 +633,29 @@ export function AgentTester({ agentId }: AgentTesterProps) {
     await clearCurrentSession();
   };
 
+  // Copia a conversa inteira como texto formatado pro clipboard.
+  const handleCopyTranscript = async () => {
+    if (messages.length === 0) return;
+    const transcript = messages
+      .map((m) => `${m.role === "user" ? "LEAD" : "AGENTE"}: ${m.content}`)
+      .join("\n\n");
+    await navigator.clipboard.writeText(transcript);
+    setCopiedTranscript(true);
+    setTimeout(() => setCopiedTranscript(false), 1500);
+  };
+
+  // Adicionado pelo modal: refaz o fetch da sessão pra pegar a msg do follow-up
+  // que acabou de ser inserida na DB.
+  const handleFollowUpAdded = async () => {
+    if (sessionId) {
+      await loadSession(sessionId);
+    }
+  };
+
+  // Só mostra o botão de follow-up se já houve pelo menos 1 interação (senão
+  // não faz sentido — follow-up precisa de contexto).
+  const hasInteraction = messages.some((m) => m.role === "user");
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -701,10 +735,24 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                   Simule uma conversa para testar o comportamento do agente.
                 </CardDescription>
               </div>
-              <Button variant="outline" size="sm" onClick={handleReset}>
-                <RotateCcw className="w-3.5 h-3.5 mr-2" />
-                Resetar
-              </Button>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCopyTranscript}
+                  disabled={messages.length === 0}
+                  title="Copiar conversa inteira como texto"
+                >
+                  {copiedTranscript
+                    ? <Check className="w-3.5 h-3.5 mr-1.5 text-green-600" />
+                    : <Clipboard className="w-3.5 h-3.5 mr-1.5" />}
+                  {copiedTranscript ? "Copiado" : "Copiar"}
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleReset}>
+                  <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                  Resetar
+                </Button>
+              </div>
             </CardHeader>
 
             {/* Messages */}
@@ -865,6 +913,22 @@ export function AgentTester({ agentId }: AgentTesterProps) {
                   <div className="bg-gray-50 rounded-2xl rounded-bl-md px-4 py-2.5">
                     <Loader2 className="w-4 h-4 animate-spin text-gray-500" />
                   </div>
+                </div>
+              )}
+              {/* Botão contextual de prévia de follow-up: aparece depois que
+                  há pelo menos uma interação real, discreto abaixo da última
+                  mensagem. Abre o modal pra gerar/ajustar/inserir a msg. */}
+              {hasInteraction && !loading && (
+                <div className="flex justify-center pt-2 pb-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowFollowUpModal(true)}
+                    className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-brand-600 hover:bg-gray-100 px-3 py-1.5 rounded-full border border-dashed border-gray-300 hover:border-brand-400 transition-colors"
+                    title="Veja qual seria a mensagem de follow-up depois dessa conversa"
+                  >
+                    <Bell className="w-3 h-3" />
+                    Prévia de follow-up
+                  </button>
                 </div>
               )}
               <div ref={messagesEndRef} />
@@ -1402,6 +1466,18 @@ export function AgentTester({ agentId }: AgentTesterProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Modal de prévia de follow-up */}
+      {showFollowUpModal && agentId && (
+        <FollowUpPreviewModal
+          agentId={agentId}
+          sessionId={sessionId}
+          contactId={contactId}
+          followUpConfig={agentFollowUpConfig}
+          onClose={() => setShowFollowUpModal(false)}
+          onAdded={handleFollowUpAdded}
+        />
       )}
     </div>
   );
