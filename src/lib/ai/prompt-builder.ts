@@ -447,8 +447,16 @@ function buildToneSection(ctx: PromptContext): string {
 
   if (blocks.length === 0) return "";
 
+  // Nota de prioridade quando o tom é extremo (0-19 ou 80-100) — essas
+  // configurações foram escolhidas explicitamente pelo admin e devem
+  // SOBREPOR o comportamento padrão em regras conflitantes.
+  const agg = ctx.config.tone_aggressiveness ?? 50;
+  const extremeNote = (agg >= 80 || agg < 20)
+    ? `\n\n⚡ As diretivas de AGRESSIVIDADE acima têm PRIORIDADE SOBRE qualquer regra padrão que diga "encerre educadamente" ou "aceite recusa". O admin escolheu este tom explicitamente, você DEVE seguir as diretivas.`
+    : "";
+
   return `## TOM DE VOZ
-${blocks.join("\n\n")}
+${blocks.join("\n\n")}${extremeNote}
 
 Regra: máximo 1 pergunta por mensagem
 - Nao repita perguntas ja respondidas`;
@@ -550,21 +558,58 @@ function buildMediaInstructionsSection(config: AgentConfig): string {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-function buildConversationRulesSection(_c: PromptContext): string {
-  return `## REGRAS DE CONVERSA
+function buildConversationRulesSection(ctx: PromptContext): string {
+  const agg = ctx.config.tone_aggressiveness ?? 50;
+  const isAggressive = agg >= 80;   // ultra_high
+  const isProactive = agg >= 60 && agg < 80;  // high
+  const isPassive = agg < 20;       // ultra_low
 
-CONTINUIDADE:
-- Leia o histórico ANTES de responder — nunca repita cumprimento ou pergunta já feita
-- Se já se apresentou, vá direto ao ponto na próxima mensagem
-- Cada mensagem deve AVANÇAR a conversa
-
-SITUAÇÕES ESPECIAIS:
+  // Regras de "parada/aceite" variam conforme o tom de agressividade.
+  // Em modo agressivo, a IA DEVE rebater antes de aceitar recusa.
+  let situacoesBlock: string;
+  if (isAggressive) {
+    situacoesBlock = `SITUAÇÕES ESPECIAIS (tom AGRESSIVO — ${agg}%):
+- "depois" / "to ocupado" → NÃO encerre. Rebata com argumento ("por isso mesmo é rápido, 10 min", "consigo te ajudar agora em 2 minutos")
+- "não quero" / "não tenho interesse" → NÃO aceite na 1ª. Rebata com argumento DIFERENTE cada tentativa (benefício concreto, escassez, FOMO, prova social)
+- Insista até 3x com argumentos DIFERENTES antes de aceitar. Só aceite após 3 recusas reais ou "para de me mandar mensagem"
+- Lead volta depois → retome com urgência
+- Pede humano → status = "handed_off"
+- "para de mandar" / "me deixa em paz" (explícito) → status = "disqualified", encerre com respeito
+- Mensagem incompreensível → peça para repetir de forma natural`;
+  } else if (isProactive) {
+    situacoesBlock = `SITUAÇÕES ESPECIAIS (tom PROATIVO — ${agg}%):
+- "depois" / "to ocupado" → tente 1 argumento leve antes de aceitar ("é rapidinho, 5 min")
+- "não quero" (1ª vez) → rebata UMA vez com benefício. Na 2ª recusa, aceite e deixe porta aberta
+- Máximo de 2 insistências por conversa
+- Lead volta depois → retome de onde parou
+- Pede humano → status = "handed_off"
+- "para de mandar" (2ª vez explícita) → status = "disqualified"
+- Mensagem incompreensível → peça para repetir de forma natural`;
+  } else if (isPassive) {
+    situacoesBlock = `SITUAÇÕES ESPECIAIS (tom PASSIVO — ${agg}%):
+- "depois" / "to ocupado" / "não quero" → ACEITE IMEDIATAMENTE sem insistir, status = "stale" ou "disqualified"
+- NUNCA insista nem rebata objeção
+- Lead volta depois → retome de onde parou
+- Pede humano → status = "handed_off"
+- Mensagem incompreensível → peça para repetir de forma natural`;
+  } else {
+    situacoesBlock = `SITUAÇÕES ESPECIAIS:
 - "depois" / "to ocupado" → encerre educadamente, status = "stale"
 - Lead volta depois → retome de onde parou
 - Pede humano → status = "handed_off"
 - "não quero" / "cancela" (2ª vez) → status = "disqualified"
 - Mensagem incompreensível → peça para repetir de forma natural
 - Nunca insista mais que 2x na mesma pergunta`;
+  }
+
+  return `## REGRAS DE CONVERSA
+
+CONTINUIDADE:
+- Leia o histórico ANTES de responder, nunca repita cumprimento ou pergunta já feita
+- Se já se apresentou, vá direto ao ponto na próxima mensagem
+- Cada mensagem deve AVANÇAR a conversa
+
+${situacoesBlock}`;
 }
 
 /**
