@@ -1,38 +1,57 @@
 /**
  * Pós-processamento mecânico da resposta da IA.
  *
- * Motivo: mesmo com regras explícitas no prompt ("NÃO comece com oi/olá/sou X"),
- * modelos menores (gpt-4.1-mini, gpt-4o-mini) ocasionalmente ignoram e repetem
- * saudação a cada turno. Garantia prompt-only é insuficiente. Este módulo
- * aplica remoções mecânicas antes da mensagem sair pra IRL.
+ * Remove saudação/apresentação/reciprocidade quando NÃO é o primeiro turno.
+ * Garantia mecânica contra modelo que ignora a regra do prompt.
  *
- * Escopo:
- * - Só atua quando priorTurnCount > 0 (turno não é o primeiro)
- * - Remove saudações, emojis de cumprimento e apresentações pessoais no INÍCIO
- * - Se restar só a apresentação (caso patológico), retorna original pra não
- *   enviar vazio
+ * Design conservador: cada pattern é específico e exige ancoragem explícita
+ * (ex: empresa SÓ casa se começar com vírgula/espaço + "da/do/de"). Evita
+ * recortar conteúdo legítimo (ex: "Então, me fala..." NÃO deve virar "Me fala...").
  */
 
-// Emojis típicos de cumprimento/entusiasmo (literais para evitar flag /u).
-// Inclui range smileys (U+1F600-U+1F64F), 👋, 🙌, ✨, 🎉, corações, etc.
+// Emojis de cumprimento/entusiasmo listados literalmente (sem flag /u que quebra em ES5).
 const GREETING_EMOJI_CHARSET = "😀😁😂😃😄😅😆😇😈😉😊😋😌😍😎😏😐😑😒😓😔😕😖😗😘😙😚😛😜😝😞😟😠😡😢😣😤😥😦😧😨😩😪😫😬😭😮😯😰😱😲😳😴😵😶😷🙂🙃🙄🙅🙆🙇🙈🙉🙊🙋🙌🙍🙎🙏👋✨🎉❤💙💚💛💜🧡🤍🤎🖤";
 
+// Cada pattern tem comentário explicando o QUE casa e o QUE não casa.
 const GREETING_PATTERNS: RegExp[] = [
-  // Saudações clássicas
-  /^[\s]*(oi+|olá+|ola+|hei+|ei+|eae+|e\s*aí+|e\s*ai+|opa+)[\s!.,]*/i,
-  /^[\s]*(bom\s+dia+|boa\s+tarde+|boa\s+noite+|bom\s+dia\s*!|boa\s+tarde\s*!|boa\s+noite\s*!)[\s!.,]*/i,
-  /^[\s]*(tudo\s+bem\??|td\s+bem\??|tudo\s+j[oó]ia\??|tudo\s+certo\??|como\s+vai\??|como\s+voc[eê]\s+est[aá]\??|beleza\??)[\s!.,?]*/i,
-  // Emojis de cumprimento no início
+  // [P1] Saudações clássicas PT: "Oi", "Olá", "Hei", "Ei", "Opa", "E aí"
+  //   MATCH: "Oi!", "Olá, ", "E aí "
+  //   NÃO MATCH: "Oiça" (porque requer pontuação/espaço depois)
+  /^[\s]*(oi+|olá+|ola+|hei+|ei+|eae+|e\s*aí+|e\s*ai+|opa+|alo+|aloha+)(?=[\s!.,?]|$)[\s!.,?]*/i,
+
+  // [P2] Saudações por período do dia
+  /^[\s]*(bom\s+dia+|boa\s+tarde+|boa\s+noite+)(?=[\s!.,?]|$)[\s!.,?]*/i,
+
+  // [P3] "Tudo bem?" e variações — pega versão solta OU com reciprocidade
+  // ("Tudo bem?", "Tudo bem sim", "Tudo bem por aqui também", "Td bem obrigado")
+  /^[\s]*(tudo\s+bem|td\s+bem|tudo\s+j[oó]ia|tudo\s+certo|como\s+vai|como\s+voc[eê]\s+est[aá]|beleza)(\s+(sim|certo|claro|também|tb|tbm|obrigad[oa]|por\s+aqui(\s+também)?))*[?!,. ]*/i,
+
+  // [P4a] Reciprocidade "por aqui também", "tudo ótimo por aqui"
+  /^[\s]*(por\s+aqui(\s+(também|tb|tbm))?|tudo\s+ótimo\s+por\s+aqui|tudo\s+joia\s+por\s+aqui)[?!,. ]*/i,
+
+  // [P4b] Agradecimentos de abertura
+  /^[\s]*(obrigad[oa]\s+por\s+(entrar\s+em\s+contato|escrever|mandar\s+mensagem|(a\s+)?mensagem|sua\s+mensagem))[?!,. ]*/i,
+  /^[\s]*(que\s+bom\s+(te\s+(ver|conhecer|ouvir)|falar\s+com\s+voc[eê]))[?!,. ]*/i,
+
+  // [P5] Emojis isolados no começo (não se tiverem texto antes)
   new RegExp("^[\\s]*[" + GREETING_EMOJI_CHARSET + "]+[\\s!.,]*"),
-  // Apresentações pessoais: "sou X", "aqui é o X", "meu nome é X"
-  /^[\s]*(aqui\s+é\s+(o\s+|a\s+)?|sou\s+(o\s+|a\s+)?|eu\s+sou\s+(o\s+|a\s+)?|meu\s+nome\s+é\s+)[A-Za-zÀ-ÿ\s]{2,40}([\s,!.]+|$)/i,
-  // Empresa/equipe: "da Spark Leads", ", da equipe da X", "do time da X"
-  /^[\s]*[,.]?\s*(da\s+|do\s+|de\s+)?(equipe\s+|time\s+|pessoal\s+)?(da\s+|do\s+|de\s+|das\s+|dos\s+)?[A-ZÀ-Ý][A-Za-zÀ-ÿ\s]{1,40}([\s,!.]+|$)/,
+
+  // [P6] Apresentação pessoal: "Sou X", "Aqui é o X", "Meu nome é X"
+  //   Aceita 1-2 palavras capitalizadas depois (nome + sobrenome)
+  //   Requer verbo explícito no começo (não casa "Então," nem palavras soltas)
+  /^[\s]*(aqui\s+é\s+(o\s+|a\s+)?|sou\s+(o\s+|a\s+)?|eu\s+sou\s+(o\s+|a\s+)?|meu\s+nome\s+é\s+|me\s+chamo\s+)[A-ZÀ-Ý][a-záéíóúâêîôûãõç]{1,20}(\s+[A-ZÀ-Ý][a-záéíóúâêîôûãõç]{1,20})?[?!,. ]*/i,
+
+  // [P7] Referência à empresa/equipe: ", da X", "do time da X", "da equipe da X"
+  //   PREFIXO OBRIGATÓRIO: vírgula (opcional) + espaço + "da|do|de"
+  //   Até 3 palavras capitalizadas depois (nomes compostos de empresa)
+  //   NÃO MATCH: "Então," ou qualquer coisa sem o prefixo "da|do|de"
+  /^[\s]*,?\s*(da|do|de|das|dos)\s+(equipe\s+(da|do|de)\s+|time\s+(da|do|de)\s+|pessoal\s+(da|do|de)\s+|galera\s+(da|do|de)\s+)?[A-ZÀ-Ý][A-Za-zÀ-ÿ]{1,20}(\s+[A-ZÀ-Ý][A-Za-zÀ-ÿ]{1,20}){0,2}(?=[\s,!.?]|$)[?!,. ]*/i,
 ];
 
 /**
- * Remove iterativamente os padrões de saudação do início da mensagem.
- * Loop guardado: máximo 10 iterações, nunca reduz abaixo de 3 caracteres.
+ * Remove iterativamente os padrões de saudação/apresentação do INÍCIO.
+ * Loop guardado: máx 15 iterações, nunca reduz abaixo de 3 caracteres úteis.
+ * Se sobrar menos que 3 chars úteis, retorna a mensagem original como fallback.
  */
 export function stripLeadingGreetings(msg: string): string {
   if (!msg || typeof msg !== "string") return msg;
@@ -40,7 +59,7 @@ export function stripLeadingGreetings(msg: string): string {
   let changed = true;
   let guard = 0;
 
-  while (changed && guard < 10) {
+  while (changed && guard < 15) {
     changed = false;
     guard++;
     for (const p of GREETING_PATTERNS) {
@@ -52,36 +71,68 @@ export function stripLeadingGreetings(msg: string): string {
     }
   }
 
-  result = result.trim();
+  // Cleanup: remover pontuação solta e emojis órfãos no começo após stripping
+  result = result.replace(/^[\s,.!?;:]+/, "").trim();
+  // Se depois de strip pontuação o primeiro char ainda é emoji isolado, remove
+  const emojiLeadRe = new RegExp("^[" + GREETING_EMOJI_CHARSET + "]+[\\s,.!?;:]*");
+  result = result.replace(emojiLeadRe, "").trim();
+
   // Capitalizar primeira letra se virou minúscula após stripping
-  if (result.length > 0 && result[0] !== result[0].toUpperCase()) {
+  if (result.length > 0 && /[a-záéíóúâêîôûãõç]/.test(result[0])) {
     result = result[0].toUpperCase() + result.slice(1);
   }
 
-  // Salvaguarda: se sobrou nada útil, volta ao original
+  // Salvaguarda: se sobrou pouco útil, volta ao original (não deixa a IA muda)
   return result.length >= 3 ? result : msg;
 }
 
 /**
- * Aplica sanitização condicional à resposta da IA, considerando o formato
- * (string ou array de strings). Só atua em turnos posteriores ao 1º.
+ * Remove travessão ("—", "–") substituindo por vírgula + espaço.
+ * Trim espaços duplos resultantes. SEMPRE ativo (todo turno, todo tipo de agente).
+ * WhatsApp é conversa rápida — travessão parece robô e ninguém digita.
+ */
+export function stripDashes(msg: string): string {
+  if (!msg || typeof msg !== "string") return msg;
+  return msg
+    // Após pontuação final (?/./!): só remove travessão, não adiciona vírgula
+    .replace(/([?!.])\s*[—–]\s*/g, "$1 ")
+    // Caso geral: travessão vira vírgula + espaço
+    .replace(/\s*[—–]\s*/g, ", ")
+    // Vírgula depois de pontuação final ("?," "." etc) — normaliza
+    .replace(/([?!.])\s*,\s*/g, "$1 ")
+    // Limpezas
+    .replace(/\s+,/g, ",")              // " ," vira ","
+    .replace(/,\s*,/g, ",")              // ",," vira ","
+    .replace(/\s{2,}/g, " ")              // espaços múltiplos viram 1
+    .trim();
+}
+
+/**
+ * Aplica TODAS as sanitizações na resposta:
+ * - Remoção de travessão: SEMPRE (todo turno)
+ * - Remoção de saudação/apresentação: SÓ em turnos > 1
+ *
+ * Preserva formato (string ou array).
  */
 export function sanitizeAgentMessage(
   message: string | string[],
   priorTurnCount: number | undefined,
 ): string | string[] {
-  if (!priorTurnCount || priorTurnCount === 0) return message;
+  const applyBoth = (s: string): string => {
+    let out = stripDashes(s);
+    if (priorTurnCount && priorTurnCount > 0) {
+      out = stripLeadingGreetings(out);
+    }
+    return out;
+  };
 
   if (Array.isArray(message)) {
-    // Aplica strip só no primeiro elemento do array (o único que "começa" a resposta).
-    // Se após strip o primeiro elemento ficou vazio/minúsculo, remove ele.
     if (message.length === 0) return message;
-    const first = message[0];
-    const stripped = stripLeadingGreetings(first);
-    if (stripped === first) return message;
-    if (stripped.length < 3 && message.length > 1) return message.slice(1);
-    return [stripped, ...message.slice(1)];
+    const sanitized = message.map(applyBoth);
+    // Se o 1º ficou inútil (< 3 chars) e tem outros, remove
+    if (sanitized[0].length < 3 && sanitized.length > 1) return sanitized.slice(1);
+    return sanitized;
   }
 
-  return stripLeadingGreetings(message);
+  return applyBoth(message);
 }

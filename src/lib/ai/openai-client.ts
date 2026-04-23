@@ -315,15 +315,15 @@ function buildResult(
     };
   }
 
-  // Pós-processamento: remove saudações residuais se não for o 1º turno.
-  // Garantia mecânica contra o modelo ignorar a regra de não-repetição.
-  if (priorTurnCount && priorTurnCount > 0) {
-    const before = Array.isArray(parsed.message) ? parsed.message[0] : parsed.message;
-    parsed.message = sanitizeAgentMessage(parsed.message, priorTurnCount);
-    const after = Array.isArray(parsed.message) ? parsed.message[0] : parsed.message;
-    if (before !== after) {
-      console.log(`[AI sanitize] stripped greeting from turn ${priorTurnCount + 1}`);
-    }
+  // Pós-processamento mecânico. SEMPRE roda:
+  //   - Remoção de travessão ("—"/"–"): 100% dos turnos (incluindo o 1º)
+  //   - Remoção de saudação/apresentação: só em turnos > 1
+  // Garantia mecânica contra o modelo ignorar as regras do prompt.
+  const before = Array.isArray(parsed.message) ? parsed.message[0] : parsed.message;
+  parsed.message = sanitizeAgentMessage(parsed.message, priorTurnCount);
+  const after = Array.isArray(parsed.message) ? parsed.message[0] : parsed.message;
+  if (before !== after) {
+    console.log(`[AI sanitize] turn=${(priorTurnCount ?? 0) + 1} before="${String(before).substring(0, 80)}" after="${String(after).substring(0, 80)}"`);
   }
 
   const duration = Date.now() - startTime;
