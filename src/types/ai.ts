@@ -26,5 +26,7 @@ export interface AIProcessingResult {
   error?: string;
   prompt_tokens?: number;
   completion_tokens?: number;
+  cached_tokens?: number;
   duration_ms?: number;
+  cache_hit_ratio?: number;
 }

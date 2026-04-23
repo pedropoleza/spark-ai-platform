@@ -1,8 +1,9 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
-import { buildSystemPrompt } from "@/lib/ai/prompt-builder";
+import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
-import type { ImageInput } from "@/lib/ai/openai-client";
+import type { ImageInput, ConversationTurn } from "@/lib/ai/openai-client";
+import { compressHistory } from "@/lib/ai/history-compressor";
 import { executeActions } from "@/lib/ai/action-executor";
 import { transcribeAudioFromUrl } from "@/lib/ai/audio-transcriber";
 import { processMediaAttachments, type ProcessedMedia } from "@/lib/ai/media-processor";
@@ -12,6 +13,7 @@ import { generateSummaryNote } from "@/lib/queue/summary-note-generator";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
 import { notifyCriticalError } from "@/lib/utils/notify";
+import { withRetry } from "@/lib/utils/retry";
 import type { GHLMessage } from "@/types/ghl";
 import type { AutomationRule } from "@/types/agent";
 
@@ -284,189 +286,154 @@ async function processGroup(
 
   if (!location) return;
 
-  // 3. Buscar historico de conversa do GHL
+  // 3. Buscar dados do GHL em paralelo (messages + contact + slots).
+  // Pre-step: garantir convId (sequencial, mas só executa se não tiver cache).
   const ghlClient = new GHLClient(location.company_id, group.locationId);
-  let conversationHistory = "";
-
-  try {
-    // Use cached conversationId from conversation_state if available
-    let convId = convState?.conversation_id || group.conversationId || "";
-
-    // Only search GHL if we don't have a conversationId cached
-    if (!convId) {
+  let convId = convState?.conversation_id || group.conversationId || "";
+  if (!convId) {
+    try {
       const searchResult = await ghlClient.get<{ conversations: { id: string }[] }>(
         "/conversations/search",
         { locationId: group.locationId, contactId: group.contactId }
       );
       convId = searchResult.conversations?.[0]?.id || "";
+    } catch (error) {
+      console.error("Erro buscando convId:", error);
     }
-
-    if (convId) {
-      // Buscar mensagens
-      const messagesResult = await ghlClient.get<{ messages: { messages: GHLMessage[] } }>(
-        `/conversations/${convId}/messages`,
-        { locationId: group.locationId }
-      );
-
-      const messages = messagesResult.messages?.messages || [];
-
-      // Formatar historico (limitar a ultimas 30 mensagens para controlar tokens)
-      conversationHistory = messages
-        .filter((m) => m.messageType === "TYPE_CUSTOM_SMS" || m.body)
-        .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
-        .slice(-30)
-        .map((m) => {
-          const dir = m.direction === "inbound" ? "LEAD" : "AGENTE";
-          const body = (m.body || "[sem conteudo]").substring(0, 500);
-          return `${dir}: ${body}`;
-        })
-        .join("\n");
-
-      // Atualizar conversationId se nao tinhamos
-      if (!group.conversationId) {
-        group.conversationId = convId;
-      }
-
-      // Cache conversationId for future messages
-      if (convId && convState && !convState.conversation_id) {
-        await supabase.from("conversation_state")
-          .update({ conversation_id: convId })
-          .eq("agent_id", agent.id)
-          .eq("contact_id", group.contactId);
-      }
-    }
-  } catch (error) {
-    console.error("Erro ao buscar historico:", error);
   }
 
-  // 4. Buscar dados do contato no GHL (campos preenchidos)
+  const shouldFetchSlots = !!config.calendar_id && config.objective !== "qualification_only";
+  const slotsNow = new Date();
+  const slotsStartDate = String(slotsNow.getTime());
+  const slotsEndDate = String(slotsNow.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  type MessagesResp = { messages: { messages: GHLMessage[] } };
+  type ContactResp = { contact: {
+    firstName?: string; lastName?: string; name?: string; email?: string; phone?: string;
+    address1?: string; city?: string; state?: string; postalCode?: string; country?: string;
+    dateOfBirth?: string; companyName?: string;
+    customFields?: { id: string; value: string; fieldKey?: string }[];
+  } };
+  type SlotsResp = Record<string, unknown>;
+
+  const ghlStart = Date.now();
+  const [messagesSettled, contactSettled, slotsSettled] = await Promise.allSettled([
+    convId
+      ? ghlClient.get<MessagesResp>(`/conversations/${convId}/messages`, { locationId: group.locationId })
+      : Promise.resolve<MessagesResp | null>(null),
+    ghlClient.get<ContactResp>(`/contacts/${group.contactId}`),
+    shouldFetchSlots
+      ? withRetry(
+          () => ghlClient.get<SlotsResp>(
+            `/calendars/${config.calendar_id}/free-slots`,
+            { startDate: slotsStartDate, endDate: slotsEndDate },
+          ),
+          { maxRetries: 2, baseDelayMs: 200, label: "free-slots" },
+        )
+      : Promise.resolve<SlotsResp | null>(null),
+  ]);
+  console.log(`[GHL] parallel fetch done in ${Date.now() - ghlStart}ms`);
+
+  // Processar mensagens como turns estruturados (formato nativo do LLM).
+  // Ganhos: modelo entende turn boundaries, menos tokens (sem "LEAD:/AGENTE:"),
+  // e cache hit melhor — cada turn anterior é byte-exact estável.
+  let conversationTurns: ConversationTurn[] = [];
+  if (messagesSettled.status === "fulfilled" && messagesSettled.value) {
+    const messages = messagesSettled.value.messages?.messages || [];
+    conversationTurns = messages
+      .filter((m) => m.messageType === "TYPE_CUSTOM_SMS" || m.body)
+      .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
+      .slice(-30)
+      .map((m) => ({
+        role: m.direction === "inbound" ? "user" : "assistant" as const,
+        content: (m.body || "[sem conteudo]").substring(0, 500),
+      }));
+
+    if (!group.conversationId) group.conversationId = convId;
+    if (convId && convState && !convState.conversation_id) {
+      await supabase.from("conversation_state")
+        .update({ conversation_id: convId })
+        .eq("agent_id", agent.id)
+        .eq("contact_id", group.contactId);
+    }
+  } else if (messagesSettled.status === "rejected") {
+    console.error("Erro ao buscar historico:", messagesSettled.reason);
+  }
+
+  // Processar contato
   const contactData: Record<string, string> = {};
   let contactName = group.contactId;
-  try {
-    const contactResult = await ghlClient.get<{
-      contact: {
-        firstName?: string;
-        lastName?: string;
-        name?: string;
-        email?: string;
-        phone?: string;
-        address1?: string;
-        city?: string;
-        state?: string;
-        postalCode?: string;
-        country?: string;
-        dateOfBirth?: string;
-        companyName?: string;
-        customFields?: { id: string; value: string; fieldKey?: string }[];
-      };
-    }>(`/contacts/${group.contactId}`);
-
-    const c = contactResult.contact;
-    if (c) {
-      contactName = c.name || c.firstName || group.contactId;
-
-      // Mapear campos padrao
-      if (c.firstName) contactData["contact.firstName"] = c.firstName;
-      if (c.lastName) contactData["contact.lastName"] = c.lastName;
-      if (c.name) contactData["contact.name"] = c.name;
-      if (c.email) contactData["contact.email"] = c.email;
-      if (c.phone) contactData["contact.phone"] = c.phone;
-      if (c.address1) contactData["contact.address1"] = c.address1;
-      if (c.city) contactData["contact.city"] = c.city;
-      if (c.state) contactData["contact.state"] = c.state;
-      if (c.postalCode) contactData["contact.postalCode"] = c.postalCode;
-      if (c.country) contactData["contact.country"] = c.country;
-      if (c.dateOfBirth) contactData["contact.dateOfBirth"] = c.dateOfBirth;
-      if (c.companyName) contactData["contact.companyName"] = c.companyName;
-
-      // Mapear custom fields
-      if (c.customFields) {
-        for (const cf of c.customFields) {
-          if (cf.value) {
-            contactData[cf.id] = cf.value;
-            if (cf.fieldKey) contactData[cf.fieldKey] = cf.value;
-          }
+  if (contactSettled.status === "fulfilled" && contactSettled.value?.contact) {
+    const c = contactSettled.value.contact;
+    contactName = c.name || c.firstName || group.contactId;
+    if (c.firstName) contactData["contact.firstName"] = c.firstName;
+    if (c.lastName) contactData["contact.lastName"] = c.lastName;
+    if (c.name) contactData["contact.name"] = c.name;
+    if (c.email) contactData["contact.email"] = c.email;
+    if (c.phone) contactData["contact.phone"] = c.phone;
+    if (c.address1) contactData["contact.address1"] = c.address1;
+    if (c.city) contactData["contact.city"] = c.city;
+    if (c.state) contactData["contact.state"] = c.state;
+    if (c.postalCode) contactData["contact.postalCode"] = c.postalCode;
+    if (c.country) contactData["contact.country"] = c.country;
+    if (c.dateOfBirth) contactData["contact.dateOfBirth"] = c.dateOfBirth;
+    if (c.companyName) contactData["contact.companyName"] = c.companyName;
+    if (c.customFields) {
+      for (const cf of c.customFields) {
+        if (cf.value) {
+          contactData[cf.id] = cf.value;
+          if (cf.fieldKey) contactData[cf.fieldKey] = cf.value;
         }
       }
     }
-  } catch (error) {
-    console.error("Erro ao buscar dados do contato:", error);
+  } else if (contactSettled.status === "rejected") {
+    console.error("Erro ao buscar dados do contato:", contactSettled.reason);
   }
 
-  // 5. Mesclar com conversation_state (dados ja coletados pela IA)
-  // convState already fetched earlier (handoff gate + conversationId cache)
-
+  // 4. Mesclar com conversation_state (dados coletados pela IA têm prioridade)
   const previousCollectedData = (convState?.collected_data as Record<string, string>) || {};
-
-  // Dados finais: GHL como base, conversation_state sobrescreve (dados coletados pela IA são mais recentes)
   const collectedData = { ...contactData, ...previousCollectedData };
 
-  // 6. Buscar free slots do calendario (se tem agendamento configurado)
+  // 5. Processar slots (e detectar fail irrecuperável para guardrail)
   let availableSlots = "";
-  console.log(`[FreeSlots] calendar_id=${config.calendar_id} objective=${config.objective}`);
-  if (config.calendar_id && config.objective !== "qualification_only") {
-    try {
+  let slotsFetchFailed = false;
+  if (shouldFetchSlots) {
+    if (slotsSettled.status === "fulfilled" && slotsSettled.value) {
       const tz = location.timezone || "America/New_York";
-      const now = new Date();
-
-      // GHL espera timestamp em milissegundos (numero)
-      const startDate = String(now.getTime());
-      const endDate = String(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-
-      console.log(`[FreeSlots] Fetching: calendar=${config.calendar_id} start=${startDate} end=${endDate}`);
-
-      const slotsResult = await ghlClient.get<Record<string, unknown>>(
-        `/calendars/${config.calendar_id}/free-slots`,
-        { startDate, endDate }
-      );
-
-      console.log(`[FreeSlots] Response keys: ${Object.keys(slotsResult).join(", ")}  Raw sample: ${JSON.stringify(slotsResult).substring(0, 300)}`);
-
-      // Formatar slots para o prompt
       const slotLines: string[] = [];
-      for (const [key, value] of Object.entries(slotsResult)) {
+      for (const [key, value] of Object.entries(slotsSettled.value)) {
         if (key === "traceId" || !value) continue;
-
-        // O GHL pode retornar { "2026-04-08": { slots: ["2026-04-08T14:00:00-04:00", ...] } }
-        // ou { "2026-04-08": ["2026-04-08T14:00:00-04:00", ...] }
         let slots: string[] = [];
         if (typeof value === "object" && value !== null) {
           const v = value as Record<string, unknown>;
-          if (Array.isArray(v.slots)) {
-            slots = v.slots as string[];
-          } else if (Array.isArray(value)) {
-            slots = value as string[];
-          }
+          if (Array.isArray(v.slots)) slots = v.slots as string[];
+          else if (Array.isArray(value)) slots = value as string[];
         }
-
         if (slots.length === 0) continue;
 
         const dateFormatted = new Date(key + "T12:00:00").toLocaleDateString("en-US", {
-          weekday: "long",
-          month: "long",
-          day: "numeric",
-          timeZone: tz,
+          weekday: "long", month: "long", day: "numeric", timeZone: tz,
         });
-
-        const slotsFormatted = slots.slice(0, 8).map((s: string) => {
-          return new Date(s).toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            hour12: true,
-            timeZone: tz,
-          });
-        });
-
+        const slotsFormatted = slots.slice(0, 8).map((s: string) =>
+          new Date(s).toLocaleTimeString("en-US", {
+            hour: "numeric", minute: "2-digit", hour12: true, timeZone: tz,
+          })
+        );
         slotLines.push(`${dateFormatted}: ${slotsFormatted.join(", ")}`);
       }
-
       availableSlots = slotLines.join("\n");
-      console.log(`[FreeSlots] Formatted ${slotLines.length} days: ${availableSlots.substring(0, 200)}`);
+      console.log(`[FreeSlots] Formatted ${slotLines.length} days`);
       if (slotLines.length === 0) {
         console.warn(`[FreeSlots] No slots found — calendar may be full or misconfigured`);
       }
-    } catch (error) {
-      console.error("[FreeSlots] Erro:", error instanceof Error ? error.message : error);
+    } else {
+      slotsFetchFailed = true;
+      console.error(
+        `[FreeSlots] All retries failed:`,
+        slotsSettled.status === "rejected"
+          ? (slotsSettled.reason instanceof Error ? slotsSettled.reason.message : slotsSettled.reason)
+          : "unknown",
+      );
     }
   } else {
     console.log(`[FreeSlots] Skipped: calendar_id=${config.calendar_id || "NONE"} objective=${config.objective}`);
@@ -505,7 +472,7 @@ async function processGroup(
 
   const knowledgeBase = (kbData || []) as import("@/lib/ai/prompt-builder").KnowledgeBaseItem[];
 
-  const systemPrompt = buildSystemPrompt({
+  const promptCtx = {
     config,
     agentType: agent.type as "sales_agent" | "recruitment_agent",
     contactName,
@@ -514,21 +481,48 @@ async function processGroup(
     currentDate: `${currentDateInTz}, ${currentTimeInTz}`,
     timezone: locationTz,
     availableSlots,
+    slotsUnavailable: slotsFetchFailed,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
-  });
+    priorTurnCount: conversationTurns.length,
+  };
+  const systemPrompt = buildSystemPrompt(promptCtx);
+  const runtimeContext = buildRuntimeContext(promptCtx);
+  const responseSchema = buildResponseJsonSchema(promptCtx);
 
   // 6. Chamar OpenAI (com imagens se houver)
   const imageInputs: ImageInput[] = group.processedMedia
     .filter((m) => m.type === "image" && !m.error)
     .map((m) => ({ url: m.url, base64DataUri: m.base64DataUri }));
 
+  // Rolling summarization: se histórico passou de threshold, condensar
+  // mensagens antigas num resumo reaproveitável (cacheado em conversation_state).
+  const compressed = await compressHistory({
+    turns: conversationTurns,
+    cachedSummary: (convState as { history_summary?: string } | null)?.history_summary,
+    cachedCoveredCount: (convState as { history_summary_covers_count?: number } | null)?.history_summary_covers_count,
+  });
+  if (compressed.regenerated && compressed.summary) {
+    // Persistir summary atualizado. Fire-and-forget para não atrasar a resposta.
+    void supabase
+      .from("conversation_state")
+      .update({
+        history_summary: compressed.summary,
+        history_summary_covers_count: compressed.coveredCount,
+      })
+      .eq("agent_id", agent.id)
+      .eq("contact_id", group.contactId);
+  }
+
   const aiResult = await processWithAI({
     systemPrompt,
-    conversationHistory,
+    runtimeContext,
+    conversationMessages: compressed.turns,
+    conversationHistory: "",
     newMessages: group.aggregatedBody,
     model: config.ai_model || "gpt-4.1-mini",
     images: imageInputs.length > 0 ? imageInputs : undefined,
+    responseSchema,
   });
 
   if (!aiResult.success || !aiResult.response) {
@@ -546,6 +540,8 @@ async function processGroup(
       model: config.ai_model,
       prompt_tokens: aiResult.prompt_tokens,
       completion_tokens: aiResult.completion_tokens,
+      cached_tokens: aiResult.cached_tokens,
+      cache_hit_ratio: aiResult.cache_hit_ratio,
     },
     ai_model_used: config.ai_model,
     prompt_tokens: aiResult.prompt_tokens,

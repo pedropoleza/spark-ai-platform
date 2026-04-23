@@ -126,10 +126,11 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
 
   for (const followUp of pending) {
     try {
-      // Verificar se o objetivo ja foi cumprido (cancelar se sim)
+      // Verificar se o objetivo ja foi cumprido (cancelar se sim).
+      // Buscamos também collected_data e conversation_id para personalizar o follow-up.
       const { data: convState } = await supabase
         .from("conversation_state")
-        .select("status")
+        .select("status, collected_data, conversation_id")
         .eq("agent_id", followUp.agent_id)
         .eq("contact_id", followUp.contact_id)
         .single();
@@ -247,7 +248,41 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           message: followUp.custom_message,
         });
       } else {
-        // Gerar mensagem via IA
+        // Buscar contexto recente (últimas 10 msgs + nome) para personalizar o follow-up.
+        // Dois fetches em paralelo para minimizar latência do scheduler.
+        const convId = (convState as { conversation_id?: string } | null)?.conversation_id || "";
+        const [historyResult, contactResult] = await Promise.allSettled([
+          convId
+            ? client.get<{ messages: { messages: { direction: string; body?: string; dateAdded: string; messageType?: string }[] } }>(
+                `/conversations/${convId}/messages`,
+                { locationId: followUp.location_id },
+              )
+            : Promise.resolve(null),
+          client.get<{ contact: { firstName?: string; name?: string } }>(`/contacts/${followUp.contact_id}`),
+        ]);
+
+        let recentHistory = "";
+        if (historyResult.status === "fulfilled" && historyResult.value) {
+          const msgs = historyResult.value.messages?.messages || [];
+          recentHistory = msgs
+            .filter((m) => m.messageType === "TYPE_CUSTOM_SMS" || m.body)
+            .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
+            .slice(-10)
+            .map((m) => {
+              const dir = m.direction === "inbound" ? "LEAD" : "AGENTE";
+              return `${dir}: ${(m.body || "").substring(0, 300)}`;
+            })
+            .join("\n");
+        }
+
+        let contactName: string | undefined;
+        if (contactResult.status === "fulfilled" && contactResult.value?.contact) {
+          const c = contactResult.value.contact;
+          contactName = c.name || c.firstName || undefined;
+        }
+
+        const collectedData = (convState as { collected_data?: Record<string, string> } | null)?.collected_data || {};
+
         const followUpPrompt = buildFollowUpPrompt({
           config,
           agentType: agent.type as "sales_agent" | "recruitment_agent",
@@ -255,6 +290,9 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           locationName: location.location_name || "Nossa empresa",
           currentDate: new Date().toLocaleDateString("pt-BR"),
           timezone: location.timezone || "America/New_York",
+          contactName,
+          collectedData,
+          recentHistory,
         });
 
         const result = await processWithAI({

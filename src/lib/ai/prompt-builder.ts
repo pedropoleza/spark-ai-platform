@@ -23,7 +23,6 @@ function findFieldValue(field: DataField, data: Record<string, string>): string 
   if (field.ghl_field_id && data[field.ghl_field_id]) return data[field.ghl_field_id];
   if (field.ghl_field_key && data[field.ghl_field_key]) return data[field.ghl_field_key];
 
-  // Fallback: buscar por label case-insensitive ou snake_case
   const keyLower = field.key.toLowerCase();
   const labelLower = field.label.toLowerCase();
   const labelSnake = field.label.toLowerCase().replace(/\s+/g, "_");
@@ -61,15 +60,32 @@ interface PromptContext {
   currentDate: string;
   timezone: string;
   availableSlots?: string;
+  /**
+   * true quando o fetch de slots falhou (após retries). A IA deve prometer
+   * voltar com horários em vez de inventar ou assumir disponibilidade.
+   */
+  slotsUnavailable?: boolean;
   feedback?: FeedbackItem[];
   knowledgeBase?: KnowledgeBaseItem[];
+  /**
+   * Quantidade de turns JÁ trocados antes da mensagem atual (0 = primeira
+   * mensagem do lead, sem resposta ainda). Usado para impedir que a IA
+   * repita a saudação inicial em turnos posteriores. O sinal "primeira
+   * mensagem" via texto no prompt é fraco; turnCount é inequívoco.
+   */
+  priorTurnCount?: number;
 }
 
+/**
+ * System prompt ESTÁVEL — derivado apenas de AgentConfig + dados imutáveis dentro
+ * de uma conversa (contactName, locationName). NÃO inclui data/hora, valores
+ * coletados atuais, slots disponíveis. Esses vão em buildRuntimeContext e são
+ * injetados na user message. Isso mantém o prefixo do system prompt byte-exact
+ * entre turnos, maximizando o hit rate do prompt caching (OpenAI/Anthropic).
+ */
 export function buildSystemPrompt(ctx: PromptContext): string {
   if (ctx.config.system_prompt_override) {
-    // Override substitui o conteudo. Inclui formato de resposta + dados coletados
-    // para que o parser funcione e a IA saiba o que já foi coletado.
-    const dataContext = ctx.config.data_fields.length > 0 ? buildDataCollectionSection(ctx) : "";
+    const dataContext = ctx.config.data_fields.length > 0 ? buildDataFieldsTemplateSection(ctx) : "";
     return [
       ctx.config.system_prompt_override,
       dataContext,
@@ -77,12 +93,6 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     ].filter(Boolean).join("\n\n");
   }
 
-  // Ordem de montagem fixa. Ao reorganizar, mantenha a separacao:
-  //   1. base estrutural (identidade, objetivo, recrutamento)
-  //   2. blocos comportamentais (tone) — composicao do registry de bandas
-  //   3. coleta de dados + regras de conversa + agendamento
-  //   4. seções complementares isoladas (feedback, knowledge base, instrucoes extras)
-  //   5. formato de resposta
   const sections = [
     buildMetaInstruction(),
     buildIdentitySection(ctx),
@@ -92,7 +102,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     buildObjectiveSection(ctx),
     buildRecruitmentSection(ctx),
     buildToneSection(ctx),
-    buildDataCollectionSection(ctx),
+    buildDataFieldsTemplateSection(ctx),
     buildConversationRulesSection(ctx),
     buildMediaInstructionsSection(ctx.config),
     buildBookingSection(ctx),
@@ -101,6 +111,81 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   ];
 
   return sections.filter(Boolean).join("\n\n");
+}
+
+/**
+ * Contexto VOLÁTIL — muda a cada turno. Injetado na user message, NUNCA no
+ * system prompt, para preservar cache hit. Contém: data/hora atual, estado dos
+ * dados coletados, horários disponíveis.
+ */
+export function buildRuntimeContext(ctx: PromptContext): string {
+  const parts: string[] = [];
+
+  const turnCount = ctx.priorTurnCount ?? 0;
+  const isFirstTurn = turnCount === 0;
+
+  // Sinal explícito sobre o estado da conversa. Evita que o modelo repita
+  // saudação em turnos posteriores (bug comum na aba de testes onde histórico
+  // em string é interpretado como exemplo e não como contexto real).
+  const turnStateBlock = isFirstTurn
+    ? `ESTADO: PRIMEIRA mensagem da conversa. Use a saudação inicial configurada.`
+    : `ESTADO: TURNO ${turnCount + 1} da conversa (já houve ${turnCount} troca${turnCount > 1 ? "s" : ""}).
+REGRA ABSOLUTA: VOCÊ JÁ SE APRESENTOU. NÃO repita saudação, nome próprio, nem "oi/olá/meu nome é". Vá direto ao ponto da mensagem do lead.`;
+
+  parts.push(`## CONTEXTO ATUAL
+Data/hora agora: ${ctx.currentDate}
+Timezone: ${ctx.timezone}
+${turnStateBlock}`);
+
+  if (ctx.config.data_fields.length > 0) {
+    const collected: string[] = [];
+    const pending: string[] = [];
+    for (const field of ctx.config.data_fields) {
+      const value = findFieldValue(field, ctx.collectedData);
+      if (value) {
+        const skip = field.skip_if_filled !== false ? " [NÃO PERGUNTAR — já preenchido]" : "";
+        collected.push(`- ${field.key}: "${value}"${skip}`);
+      } else if (field.required) {
+        pending.push(field.label);
+      }
+    }
+    const collectedBlock = collected.length > 0 ? collected.join("\n") : "(nenhum dado coletado ainda)";
+    const pendingLine = pending.length > 0
+      ? `\nFaltam: ${pending.join(", ")}`
+      : "\n✅ TODOS OBRIGATÓRIOS COLETADOS — pode seguir para agendamento";
+    parts.push(`### DADOS JÁ COLETADOS\n${collectedBlock}${pendingLine}`);
+  }
+
+  if (ctx.config.objective !== "qualification_only") {
+    if (ctx.slotsUnavailable) {
+      parts.push(`### AGENDA INDISPONÍVEL NO MOMENTO
+Não foi possível consultar a agenda agora (falha temporária).
+Se o lead pedir para agendar: diga naturalmente "Deixa eu confirmar a agenda aqui e te volto em instantes" e peça o intervalo preferido (dia + turno).
+NÃO invente horários. NÃO inclua action book_appointment neste turno.`);
+    } else if (ctx.availableSlots) {
+      const tzConfig = ctx.config.timezone_config;
+      let effectiveTimezone = ctx.timezone;
+
+      if (tzConfig?.auto_detect_from_state) {
+        const stateValue = ctx.collectedData["contact.state"] || ctx.collectedData["state"] ||
+          ctx.collectedData["estado_onde_mora"] || ctx.collectedData["estado"] || "";
+        if (stateValue) {
+          const detectedTz = getTimezoneFromState(stateValue);
+          if (detectedTz) effectiveTimezone = detectedTz;
+        }
+      }
+      if (tzConfig && !tzConfig.use_location_default && tzConfig.custom_timezone) {
+        effectiveTimezone = tzConfig.custom_timezone;
+      }
+
+      const currentTime = getCurrentTimeInTimezone(effectiveTimezone);
+      parts.push(`### HORÁRIOS DISPONÍVEIS (use APENAS estes — não invente)
+Agora no timezone do lead: ${currentTime}
+${ctx.availableSlots}`);
+    }
+  }
+
+  return parts.join("\n\n");
 }
 
 function buildMetaInstruction(): string {
@@ -131,10 +216,13 @@ Nunca use: "assistente", "assistente virtual", "IA", "bot", "robô", "automatiza
   }
 
   const persona = p?.persona_description ? `\nPersonalidade: ${p.persona_description}` : "";
-  const greeting = p?.greeting_style ? `\nAo iniciar conversa (SOMENTE na primeira mensagem, NUNCA repetir): "${p.greeting_style}"` : "";
+  // Greeting só é usado quando CONTEXTO ATUAL indica "PRIMEIRA mensagem".
+  // Em qualquer outro turno, o runtime context impede a saudação explicitamente.
+  const greeting = p?.greeting_style
+    ? `\nSaudação inicial (USAR APENAS se CONTEXTO ATUAL indicar "PRIMEIRA mensagem"): "${p.greeting_style}"`
+    : "";
   const farewell = p?.farewell_style ? `\nAo encerrar conversa: "${p.farewell_style}"` : "";
 
-  // Idioma com deteccao automatica
   let langInst: string;
   if (p?.language === "en-US") {
     langInst = "\nResponda sempre em ingles.";
@@ -146,19 +234,15 @@ Nunca use: "assistente", "assistente virtual", "IA", "bot", "robô", "automatiza
 
   return `## IDENTIDADE
 ${identity}
-Canal: mensagem de texto (SMS/WhatsApp). Mensagens curtas.
-Data/hora atual: ${ctx.currentDate}
-Timezone: ${ctx.timezone}${persona}${greeting}${farewell}${langInst}`;
+Canal: mensagem de texto (SMS/WhatsApp). Mensagens curtas.${persona}${greeting}${farewell}${langInst}`;
 }
 
 function buildObjectiveSection(ctx: PromptContext): string {
   const isRecruitment = ctx.agentType === "recruitment_agent";
 
-  // Nota de flexibilidade para vendas
   const flexNote = !isRecruitment ? `
 Se durante a conversa o lead demonstrar que já está pronto para agendar (mesmo antes de coletar todos os dados), adapte-se e proponha horários.` : "";
 
-  // Regra de ouro para recrutamento
   const goldenRule = isRecruitment ? `
 
 REGRA DE OURO (PRIORIDADE MAXIMA):
@@ -197,7 +281,6 @@ function buildRecruitmentSection(ctx: PromptContext): string {
   const specialist = sanitize(ctx.config.specialist_name, 50);
   const role = sanitize(ctx.config.specialist_role || "especialista", 50);
 
-  // Inferir genero pelo nome (nomes femininos comuns terminam em 'a')
   const nameLower = specialist.toLowerCase();
   const isFemale = nameLower.endsWith("a") || nameLower.endsWith("ane") || nameLower.endsWith("ene") ||
     ["taciana", "juliana", "ana", "maria", "fernanda", "patricia", "camila", "larissa", "beatriz", "carol"].some(n => nameLower.includes(n));
@@ -258,7 +341,6 @@ function buildToneSection(ctx: PromptContext): string {
     tone_aggressiveness: ctx.config.tone_aggressiveness,
   });
 
-  // Só incluir dimensões que diferem significativamente do default (40-60%)
   const isNonDefault = (pct: number) => pct < 35 || pct > 65;
   const blocks: string[] = [];
 
@@ -284,35 +366,27 @@ Regra: máximo 1 pergunta por mensagem
 - Nao repita perguntas ja respondidas`;
 }
 
-function buildDataCollectionSection(ctx: PromptContext): string {
+/**
+ * Template ESTÁVEL dos campos a coletar — apenas definições (key, label,
+ * required). Valores atuais ficam em buildRuntimeContext.
+ */
+function buildDataFieldsTemplateSection(ctx: PromptContext): string {
   if (ctx.config.data_fields.length === 0) return "";
 
-  // Gerar mapa de field keys para a IA usar
-  const fieldKeyMap = ctx.config.data_fields.map((field: DataField) => {
-    const value = findFieldValue(field, ctx.collectedData);
-    const status = value ? `"${value}"` : "(pendente)";
+  const fieldDefs = ctx.config.data_fields.map((field: DataField) => {
     const req = field.required ? "OBRIGATORIO" : "opcional";
-    const skip = (field.skip_if_filled !== false) && value ? " [PULAR - JA PREENCHIDO]" : "";
-    return `- key: "${field.key}" | label: "${field.label}" | ${req} | valor: ${status}${skip}`;
-  });
-
-  const pendingFields = ctx.config.data_fields.filter((f: DataField) => {
-    const value = findFieldValue(f, ctx.collectedData);
-    if ((f.skip_if_filled !== false) && value) return false;
-    return !value;
+    return `- key: "${field.key}" | label: "${field.label}" | ${req}`;
   });
 
   return `## DADOS PARA COLETAR (colete de forma NATURAL, dentro da conversa)
-${fieldKeyMap.join("\n")}
-
-${pendingFields.length > 0 ? `Faltam: ${pendingFields.map((f: DataField) => f.label).join(", ")}` : "✅ TODOS COLETADOS — pode seguir para agendamento"}
+${fieldDefs.join("\n")}
 
 COMO COLETAR:
 - Conduza a conversa de forma natural seguindo as instruções do administrador acima
 - NAO faca perguntas roboticas tipo "Qual seu nome completo?" — integre na conversa
 - Se o lead mencionar dados espontaneamente, EXTRAIA e salve no collected_data
 - Se o lead responder varios dados de uma vez, extraia TODOS
-- Campos marcados [PULAR - JA PREENCHIDO] nao devem ser perguntados
+- Campos já preenchidos (ver CONTEXTO ATUAL na user message) nao devem ser perguntados
 - Se ja perguntou 2 vezes por um campo e o lead ignorou, PULE e siga em frente
 - Se o lead demonstrar aceite ("sim", "topo", "quero"), AGENDE mesmo com campos faltantes
 
@@ -367,6 +441,10 @@ SITUAÇÕES ESPECIAIS:
 - Nunca insista mais que 2x na mesma pergunta`;
 }
 
+/**
+ * Template ESTÁVEL de agendamento — apenas fluxo e regras de timezone.
+ * Horários disponíveis e "agora" ficam em buildRuntimeContext.
+ */
 function buildBookingSection(ctx: PromptContext): string {
   if (ctx.config.objective === "qualification_only") return "";
 
@@ -374,26 +452,14 @@ function buildBookingSection(ctx: PromptContext): string {
   let effectiveTimezone = ctx.timezone;
   let tzLabel = "ET";
 
-  if (tzConfig?.auto_detect_from_state) {
-    const stateValue = ctx.collectedData["contact.state"] || ctx.collectedData["state"] ||
-      ctx.collectedData["estado_onde_mora"] || ctx.collectedData["estado"] || "";
-    if (stateValue) {
-      const detectedTz = getTimezoneFromState(stateValue);
-      if (detectedTz) effectiveTimezone = detectedTz;
-    }
-  }
-
   if (tzConfig && !tzConfig.use_location_default && tzConfig.custom_timezone) {
     effectiveTimezone = tzConfig.custom_timezone;
   }
 
-  // Label curto do timezone
   if (effectiveTimezone.includes("New_York")) tzLabel = "ET";
   else if (effectiveTimezone.includes("Chicago")) tzLabel = "CT";
   else if (effectiveTimezone.includes("Denver")) tzLabel = "MT";
   else if (effectiveTimezone.includes("Los_Angeles")) tzLabel = "PT";
-
-  const currentTime = getCurrentTimeInTimezone(effectiveTimezone);
 
   const tzOffsetMap: Record<string, string> = {
     ET: "-04:00", CT: "-05:00", MT: "-06:00", PT: "-07:00",
@@ -401,25 +467,21 @@ function buildBookingSection(ctx: PromptContext): string {
   const tzOffset = tzOffsetMap[tzLabel] || "-04:00";
 
   return `## AGENDAMENTO
-Timezone: ${effectiveTimezone} (${tzLabel})
-Agora: ${currentTime}
+Timezone padrão: ${tzLabel} (${effectiveTimezone})
 
 REGRA DE TIMEZONE:
 - Presuma que o lead esta no ${tzLabel}. NAO pergunte o timezone — mencione naturalmente (ex: "2 PM ${tzLabel}")
 - Se o lead corrigir o timezone, ajuste
 - start_time DEVE usar offset ${tzOffset}
 
-${ctx.availableSlots ? `HORARIOS DISPONIVEIS (OBRIGATORIO usar apenas estes):
-${ctx.availableSlots}
-
-REGRA ABSOLUTA: So proponha horarios da lista acima. Se um horario nao esta na lista, ele NAO esta disponivel. NAO invente horarios.` : "SEM LISTA DE HORARIOS: Proponha horarios em horario comercial."}
-
 FLUXO DE AGENDAMENTO (rapido e fluido):
 - Quando todos os dados estiverem coletados, proponha 2 horarios da lista NA MESMA MENSAGEM
+- Consulte "HORÁRIOS DISPONÍVEIS" no CONTEXTO ATUAL (user message) para os slots reais
 - Exemplo: "Tenho horario amanha as 11 AM ou 2 PM ${tzLabel}, qual vc prefere?"
 - NAO faca perguntas extras antes de propor (timezone, disponibilidade, etc)
 - Se o lead escolher um horario, agende IMEDIATAMENTE com a action book_appointment
 - Se o horario pedido nao esta disponivel, diga e proponha os mais proximos da lista
+- NUNCA invente horarios que nao estao na lista
 
 ${buildPostBookingInstructions(ctx)}
 
@@ -554,7 +616,6 @@ ${generalBlock}${itemsBlock}`;
 function buildCustomInstructionsSection(ctx: PromptContext): string {
   if (!ctx.config.custom_instructions) return "";
   let instructions = ctx.config.custom_instructions.substring(0, 3000);
-  // Replace dynamic variables
   instructions = instructions
     .replace(/\{contact\.name\}/g, ctx.contactName)
     .replace(/\{agent\.name\}/g, ctx.config.personality?.name || "Agente")
@@ -573,7 +634,6 @@ ${ctx.config.conversation_examples.substring(0, 2000)}`;
 }
 
 function buildResponseFormatSection(ctx: PromptContext): string {
-  // Gerar exemplo de collected_data com as keys corretas
   const exampleKeys = ctx.config.data_fields.slice(0, 3).map((f) => `"${f.key}": "valor"`).join(", ");
 
   return `## FORMATO DE RESPOSTA (OBRIGATORIO)
@@ -597,6 +657,67 @@ REGRAS DO JSON:
 NUNCA retorne texto fora do JSON.`;
 }
 
+/**
+ * Schema JSON dinâmico para Structured Outputs da OpenAI. Força o modelo a
+ * retornar exatamente a estrutura esperada — elimina fallbacks por JSON inválido.
+ * strict: true requer additionalProperties: false e required com todas as chaves.
+ */
+export function buildResponseJsonSchema(ctx: PromptContext) {
+  const fieldKeys = ctx.config.data_fields.map((f) => f.key);
+
+  const collectedDataProps: Record<string, { type: string[] }> = {};
+  for (const key of fieldKeys) {
+    collectedDataProps[key] = { type: ["string", "null"] };
+  }
+
+  return {
+    name: "agent_response",
+    strict: true,
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["message", "should_send_message", "actions", "collected_data", "conversation_status"],
+      properties: {
+        message: { type: "string", description: "Resposta ao lead. Nunca vazio." },
+        should_send_message: { type: "boolean" },
+        actions: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["type", "field_key", "value", "tag", "calendar_id", "start_time", "appointment_id", "title", "pipeline_id", "stage_id"],
+            properties: {
+              type: {
+                type: "string",
+                enum: ["send_message", "update_field", "add_tag", "remove_tag", "book_appointment", "reschedule_appointment", "move_pipeline"],
+              },
+              field_key: { type: ["string", "null"] },
+              value: { type: ["string", "null"] },
+              tag: { type: ["string", "null"] },
+              calendar_id: { type: ["string", "null"] },
+              start_time: { type: ["string", "null"] },
+              appointment_id: { type: ["string", "null"] },
+              title: { type: ["string", "null"] },
+              pipeline_id: { type: ["string", "null"] },
+              stage_id: { type: ["string", "null"] },
+            },
+          },
+        },
+        collected_data: {
+          type: "object",
+          additionalProperties: false,
+          required: fieldKeys,
+          properties: collectedDataProps,
+        },
+        conversation_status: {
+          type: "string",
+          enum: ["active", "qualified", "booked", "stale", "handed_off", "disqualified"],
+        },
+      },
+    },
+  };
+}
+
 // ============================================================
 // FOLLOW-UP PROMPT
 // ============================================================
@@ -608,6 +729,19 @@ interface FollowUpPromptContext {
   locationName: string;
   currentDate: string;
   timezone: string;
+  /**
+   * Nome do contato (do GHL). Permite personalização do follow-up.
+   */
+  contactName?: string;
+  /**
+   * Dados já coletados da conversa anterior. Follow-up não deve pedir de novo.
+   */
+  collectedData?: Record<string, string>;
+  /**
+   * Resumo das últimas mensagens trocadas. Dá contexto pro follow-up saber
+   * onde a conversa parou e referenciar de forma natural.
+   */
+  recentHistory?: string;
 }
 
 export function buildFollowUpPrompt(ctx: FollowUpPromptContext): string {
@@ -631,20 +765,37 @@ ${ctx.config.specialist_name ? `Mencione que ${ctx.config.specialist_name} pode 
     ? `Voce e ${name}. NUNCA diga que e IA, bot ou assistente virtual.`
     : `Voce e ${name}, da equipe da ${ctx.locationName}.`;
 
+  const contactBlock = ctx.contactName
+    ? `\nNome do lead: ${sanitize(ctx.contactName, 80)}`
+    : "";
+
+  const collectedBlock = (() => {
+    if (!ctx.collectedData) return "";
+    const entries = Object.entries(ctx.collectedData).filter(([, v]) => v && String(v).trim());
+    if (entries.length === 0) return "";
+    const lines = entries.slice(0, 10).map(([k, v]) => `- ${k}: "${sanitize(String(v), 120)}"`).join("\n");
+    return `\n\n## DADOS JÁ COLETADOS (NÃO pergunte de novo)\n${lines}`;
+  })();
+
+  const historyBlock = ctx.recentHistory
+    ? `\n\n## ÚLTIMAS MENSAGENS (onde a conversa parou)\n${ctx.recentHistory.substring(0, 2000)}`
+    : "";
+
   return `## IDENTIDADE
-${identityInst}
+${identityInst}${contactBlock}
 Data: ${ctx.currentDate} | Timezone: ${ctx.timezone}
 Follow-up #${ctx.attemptNumber}.
 
 ## CONTEXTO
-${contextDesc}
+${contextDesc}${collectedBlock}${historyBlock}
 
 ## REGRAS
 - 1-2 frases, humana, sem parecer robo
-- Nao repita perguntas ja feitas
+- USE o contexto acima: chame o lead pelo nome (se souber) e referencie o ponto onde pararam
+- Nao repita perguntas ja feitas nem peça dados ja coletados
 - Nao mencione automacao, IA ou follow-up
-- #1: lembrete leve
-- #2-3: direto, retome o assunto
+- #1: lembrete leve ("oi fulano, ficou pendente o X que vc mencionou")
+- #2-3: direto, retome o assunto especifico
 - #4+: ultimo toque educado com opt-out suave
 ${customInstructions}
 

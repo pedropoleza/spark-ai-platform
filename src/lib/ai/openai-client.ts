@@ -20,12 +20,37 @@ export interface ImageInput {
   base64DataUri?: string;
 }
 
+/**
+ * Turn estruturado do histórico. Formato nativo que OpenAI/Claude entendem,
+ * em vez de texto colado "LEAD: x\nAGENTE: y". Ganhos: qualidade semântica
+ * (modelo entende turn boundaries), menos tokens (prefixos somem), e melhor
+ * cache hit — turns passados são byte-exact estáveis, só o último muda.
+ */
+export interface ConversationTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type JsonSchemaFormat = { name: string; strict: boolean; schema: any };
+
 interface ProcessMessageInput {
   systemPrompt: string;
+  runtimeContext?: string;
+  /**
+   * Preferido: array estruturado de turns. Quando presente, tem precedência
+   * sobre conversationHistory.
+   */
+  conversationMessages?: ConversationTurn[];
+  /**
+   * Fallback legado: histórico como string "LEAD: x\nAGENTE: y". Mantido
+   * para follow-ups e endpoints de teste que passam string livre.
+   */
   conversationHistory: string;
   newMessages: string;
   model: string;
   images?: ImageInput[];
+  responseSchema?: JsonSchemaFormat;
 }
 
 function isClaude(model: string): boolean {
@@ -37,38 +62,82 @@ function supportsVision(model: string): boolean {
   return OPENAI_VISION_MODELS.some((m) => model.startsWith(m));
 }
 
+function supportsStructuredOutputs(model: string): boolean {
+  return model.startsWith("gpt-4o") || model.startsWith("gpt-4.1") || model.startsWith("gpt-5");
+}
+
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+/**
+ * Constrói o texto da última user message: runtimeContext + newMessages.
+ * (Sem "Histórico" porque turns anteriores vêm como messages estruturadas.)
+ */
+function buildCurrentUserText(input: ProcessMessageInput): string {
+  const runtimeBlock = input.runtimeContext ? `${input.runtimeContext}\n\n` : "";
+  return `${runtimeBlock}Nova mensagem do lead:\n${input.newMessages}`;
+}
+
+/**
+ * Truncagem de turns: se exceder budget, descarta os mais antigos. Turns
+ * estruturados permitem corte limpo em boundary de mensagem (nunca no meio).
+ */
+function trimTurns(turns: ConversationTurn[], maxChars: number): ConversationTurn[] {
+  if (turns.length === 0) return turns;
+  let total = turns.reduce((sum, t) => sum + t.content.length, 0);
+  if (total <= maxChars) return turns;
+  const result = [...turns];
+  while (result.length > 0 && total > maxChars) {
+    const removed = result.shift();
+    if (removed) total -= removed.content.length;
+  }
+  return result;
 }
 
 export async function processWithAI(input: ProcessMessageInput): Promise<AIProcessingResult> {
   const startTime = Date.now();
 
   try {
-    let conversationHistory = input.conversationHistory;
     const systemTokens = estimateTokens(input.systemPrompt);
+    const runtimeTokens = estimateTokens(input.runtimeContext || "");
     const newMsgTokens = estimateTokens(input.newMessages);
-    const historyTokens = estimateTokens(conversationHistory || "");
-    const totalEstimate = systemTokens + newMsgTokens + historyTokens;
+    const useStructured = Array.isArray(input.conversationMessages) && input.conversationMessages.length > 0;
 
-    if (totalEstimate > 100000) {
-      console.warn(`[AI] Token budget exceeded (~${totalEstimate}). Truncating history.`);
-      const available = Math.max(0, 100000 - systemTokens - newMsgTokens);
-      if (conversationHistory && conversationHistory.length > available * 4) {
-        conversationHistory = conversationHistory.slice(-(available * 4));
+    let conversationMessages: ConversationTurn[] | undefined = input.conversationMessages;
+    let conversationHistory = input.conversationHistory;
+
+    if (useStructured) {
+      const historyChars = conversationMessages!.reduce((s, t) => s + t.content.length, 0);
+      const historyTokens = estimateTokens(" ".repeat(historyChars));
+      const totalEstimate = systemTokens + runtimeTokens + newMsgTokens + historyTokens;
+      if (totalEstimate > 100000) {
+        const available = Math.max(0, 100000 - systemTokens - runtimeTokens - newMsgTokens);
+        conversationMessages = trimTurns(conversationMessages!, available * 4);
+        console.warn(`[AI] Budget exceeded (~${totalEstimate}tok). Trimmed history to ${conversationMessages.length} turns.`);
+      }
+    } else {
+      const historyTokens = estimateTokens(conversationHistory || "");
+      const totalEstimate = systemTokens + runtimeTokens + newMsgTokens + historyTokens;
+      if (totalEstimate > 100000) {
+        const available = Math.max(0, 100000 - systemTokens - runtimeTokens - newMsgTokens);
+        if (conversationHistory && conversationHistory.length > available * 4) {
+          conversationHistory = conversationHistory.slice(-(available * 4));
+          console.warn(`[AI] Budget exceeded (~${totalEstimate}tok). Truncated legacy history.`);
+        }
       }
     }
 
-    const textContent = `Histórico da conversa:
-${conversationHistory || "Nenhum histórico anterior."}
-
-Nova mensagem do lead:
-${input.newMessages}`;
+    const currentUserText = buildCurrentUserText(input);
+    // Fallback legado: histórico como string vai junto com a user message.
+    const legacyText = useStructured
+      ? currentUserText
+      : `${input.runtimeContext ? `${input.runtimeContext}\n\n` : ""}Histórico da conversa:\n${conversationHistory || "Nenhum histórico anterior."}\n\nNova mensagem do lead:\n${input.newMessages}`;
 
     if (isClaude(input.model)) {
-      return await processWithClaude(input, textContent, startTime);
+      return await processWithClaude(input, legacyText, currentUserText, conversationMessages, startTime);
     }
-    return await processWithOpenAI(input, textContent, startTime);
+    return await processWithOpenAI(input, legacyText, currentUserText, conversationMessages, startTime);
   } catch (error) {
     return {
       success: false,
@@ -81,66 +150,93 @@ ${input.newMessages}`;
 
 // ===== OpenAI =====
 async function processWithOpenAI(
-  input: ProcessMessageInput, textContent: string, startTime: number
+  input: ProcessMessageInput,
+  legacyText: string,
+  currentUserText: string,
+  conversationMessages: ConversationTurn[] | undefined,
+  startTime: number,
 ): Promise<AIProcessingResult> {
   const hasImages = input.images && input.images.length > 0;
   const modelVision = supportsVision(input.model);
+  const useStructured = Array.isArray(conversationMessages) && conversationMessages.length > 0;
 
-  let userMessage: OpenAI.ChatCompletionMessageParam;
+  // Última user message (que pode conter imagens)
+  let currentUserMessage: OpenAI.ChatCompletionMessageParam;
+  const userText = useStructured ? currentUserText : legacyText;
 
   if (hasImages && modelVision) {
-    const parts: OpenAI.ChatCompletionContentPart[] = [{ type: "text", text: textContent }];
+    const parts: OpenAI.ChatCompletionContentPart[] = [{ type: "text", text: userText }];
     for (const img of input.images!.slice(0, 4)) {
       const url = img.base64DataUri || img.url;
       if (url) parts.push({ type: "image_url", image_url: { url, detail: "auto" } });
     }
-    userMessage = { role: "user", content: parts };
+    currentUserMessage = { role: "user", content: parts };
   } else {
-    let text = textContent;
+    let text = userText;
     if (hasImages && !modelVision) {
       text += "\n\n[O contato enviou imagem(ns) mas o modelo atual não suporta análise visual.]";
     }
-    userMessage = { role: "user", content: text };
+    currentUserMessage = { role: "user", content: text };
   }
 
-  // Prompt caching: OpenAI auto-caches system prompts over 1024 tokens.
-  // The system prompt is kept stable across turns (dynamic data goes in user message)
-  // so the cache hit rate is maximized. `store: true` enables prompt caching.
+  const messages: OpenAI.ChatCompletionMessageParam[] = [
+    { role: "system", content: input.systemPrompt },
+  ];
+  if (useStructured) {
+    for (const turn of conversationMessages!) {
+      messages.push({ role: turn.role, content: turn.content });
+    }
+  }
+  messages.push(currentUserMessage);
+
+  const useStrictSchema = input.responseSchema && supportsStructuredOutputs(input.model);
+  const responseFormat: OpenAI.ChatCompletionCreateParams["response_format"] = useStrictSchema
+    ? { type: "json_schema", json_schema: input.responseSchema! }
+    : { type: "json_object" };
+
   const completion = await getOpenAIClient().chat.completions.create({
     model: input.model,
-    messages: [
-      { role: "system", content: input.systemPrompt },
-      // Separator for prompt caching - static system prompt above, dynamic below
-      userMessage,
-    ],
+    messages,
     temperature: 0.8,
     max_tokens: 2500,
-    response_format: { type: "json_object" },
+    response_format: responseFormat,
     store: true,
   });
 
   const responseText = completion.choices[0]?.message?.content;
   if (!responseText) return { success: false, response: null, error: "Resposta vazia da OpenAI" };
 
-  return buildResult(responseText, completion.usage?.prompt_tokens, completion.usage?.completion_tokens, startTime);
+  const cachedTokens = completion.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+  return buildResult(
+    responseText,
+    completion.usage?.prompt_tokens,
+    completion.usage?.completion_tokens,
+    cachedTokens,
+    startTime,
+    Boolean(useStrictSchema),
+  );
 }
 
 // ===== Claude (Anthropic) =====
 async function processWithClaude(
-  input: ProcessMessageInput, textContent: string, startTime: number
+  input: ProcessMessageInput,
+  legacyText: string,
+  currentUserText: string,
+  conversationMessages: ConversationTurn[] | undefined,
+  startTime: number,
 ): Promise<AIProcessingResult> {
   const client = await getAnthropicClient();
   const hasImages = input.images && input.images.length > 0;
+  const useStructured = Array.isArray(conversationMessages) && conversationMessages.length > 0;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const contentBlocks: any[] = [];
-
+  const currentContent: any[] = [];
   if (hasImages) {
     for (const img of input.images!.slice(0, 4)) {
       if (img.base64DataUri) {
         const match = img.base64DataUri.match(/^data:(image\/\w+);base64,(.+)$/);
         if (match) {
-          contentBlocks.push({
+          currentContent.push({
             type: "image",
             source: { type: "base64", media_type: match[1], data: match[2] },
           });
@@ -148,14 +244,25 @@ async function processWithClaude(
       }
     }
   }
+  currentContent.push({ type: "text", text: useStructured ? currentUserText : legacyText });
 
-  contentBlocks.push({ type: "text", text: textContent });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const messages: any[] = [];
+  if (useStructured) {
+    for (const turn of conversationMessages!) {
+      messages.push({ role: turn.role, content: turn.content });
+    }
+  }
+  messages.push({ role: "user", content: currentContent });
 
   const response = await client.messages.create({
     model: input.model,
     max_tokens: 2500,
-    system: input.systemPrompt,
-    messages: [{ role: "user", content: contentBlocks }],
+    system: [
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { type: "text", text: input.systemPrompt, cache_control: { type: "ephemeral" } } as any,
+    ],
+    messages,
     temperature: 0.8,
   });
 
@@ -163,7 +270,17 @@ async function processWithClaude(
   const responseText = textBlock && "text" in textBlock ? textBlock.text : "";
   if (!responseText) return { success: false, response: null, error: "Resposta vazia do Claude" };
 
-  return buildResult(responseText, response.usage?.input_tokens, response.usage?.output_tokens, startTime);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const usage = response.usage as any;
+  const cachedTokens = (usage?.cache_read_input_tokens ?? 0);
+  return buildResult(
+    responseText,
+    response.usage?.input_tokens,
+    response.usage?.output_tokens,
+    cachedTokens,
+    startTime,
+    false,
+  );
 }
 
 // ===== Parser compartilhado =====
@@ -171,11 +288,13 @@ function buildResult(
   responseText: string,
   promptTokens: number | undefined,
   completionTokens: number | undefined,
-  startTime: number
+  cachedTokens: number,
+  startTime: number,
+  strictSchemaUsed: boolean,
 ): AIProcessingResult {
   let parsed = parseAIResponse(responseText);
   if (!parsed) {
-    console.error(`[AI] JSON parse failed. Raw: "${responseText.substring(0, 500)}"`);
+    console.error(`[AI] JSON parse failed (strictSchema=${strictSchemaUsed}). Raw: "${responseText.substring(0, 500)}"`);
     parsed = {
       message: "Desculpa, tive um problema técnico. Pode repetir?",
       should_send_message: true,
@@ -186,19 +305,27 @@ function buildResult(
     };
   }
 
+  const duration = Date.now() - startTime;
+  const cacheHitRatio = promptTokens && promptTokens > 0 ? cachedTokens / promptTokens : 0;
+
+  if (promptTokens) {
+    console.log(`[AI] tokens=${promptTokens}in/${completionTokens || 0}out cached=${cachedTokens} hit=${(cacheHitRatio * 100).toFixed(1)}% dur=${duration}ms schema=${strictSchemaUsed ? "strict" : "none"}`);
+  }
+
   return {
     success: true,
     response: parsed,
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
-    duration_ms: Date.now() - startTime,
+    cached_tokens: cachedTokens,
+    cache_hit_ratio: cacheHitRatio,
+    duration_ms: duration,
   };
 }
 
 function parseAIResponse(text: string): AIResponse | null {
   try {
     let cleaned = text.trim();
-    // Extrair JSON de markdown code blocks
     const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (jsonMatch) {
       cleaned = jsonMatch[1].trim();
@@ -206,7 +333,6 @@ function parseAIResponse(text: string): AIResponse | null {
       cleaned = cleaned.replace(/^```\w*\n?/, "").replace(/\n?```$/, "").trim();
     }
 
-    // Claude às vezes retorna texto antes do JSON — encontrar o primeiro {
     const firstBrace = cleaned.indexOf("{");
     const lastBrace = cleaned.lastIndexOf("}");
     if (firstBrace !== -1 && lastBrace > firstBrace) {

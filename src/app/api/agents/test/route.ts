@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
 import { GHLClient } from "@/lib/ghl/client";
-import { buildSystemPrompt } from "@/lib/ai/prompt-builder";
+import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
+import type { ConversationTurn } from "@/lib/ai/openai-client";
 import { executeActions } from "@/lib/ai/action-executor";
 
 export async function POST(request: NextRequest) {
@@ -137,7 +138,11 @@ export async function POST(request: NextRequest) {
 
   const knowledgeBase = (kbData || []) as import("@/lib/ai/prompt-builder").KnowledgeBaseItem[];
 
-  const systemPrompt = buildSystemPrompt({
+  // Converter history string "LEAD: x\nAGENTE: y" em turns estruturados.
+  // Isso evita que o modelo interprete o bloco como exemplo e repita saudação.
+  const conversationTurns = parseHistoryToTurns(conversation_history || "");
+
+  const promptCtx = {
     config,
     agentType: agent.type as "sales_agent" | "recruitment_agent",
     contactName: contact_id ? "Lead" : "Usuário Teste",
@@ -148,13 +153,20 @@ export async function POST(request: NextRequest) {
     availableSlots,
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
-  });
+    priorTurnCount: conversationTurns.length,
+  };
+  const systemPrompt = buildSystemPrompt(promptCtx);
+  const runtimeContext = buildRuntimeContext(promptCtx);
+  const responseSchema = buildResponseJsonSchema(promptCtx);
 
   const result = await processWithAI({
     systemPrompt,
-    conversationHistory: conversation_history || "",
+    runtimeContext,
+    conversationMessages: conversationTurns,
+    conversationHistory: "",
     newMessages: message,
     model: config.ai_model || "gpt-4.1-mini",
+    responseSchema,
   });
 
   if (!result.success || !result.response) {
@@ -195,4 +207,28 @@ export async function POST(request: NextRequest) {
     actions_error: actionsError,
     available_slots: availableSlots || null,
   });
+}
+
+/**
+ * Converte o formato legado "LEAD: x\nAGENTE: y" em turns estruturados.
+ * Linhas que não começam com LEAD:/AGENTE: são anexadas à mensagem anterior
+ * (mensagens multi-linha). Mensagens vazias são descartadas.
+ */
+function parseHistoryToTurns(history: string): ConversationTurn[] {
+  if (!history || !history.trim()) return [];
+  const turns: ConversationTurn[] = [];
+  const lines = history.split("\n");
+  for (const line of lines) {
+    const leadMatch = line.match(/^LEAD:\s*(.*)$/);
+    const agentMatch = line.match(/^AGENTE:\s*(.*)$/);
+    if (leadMatch) {
+      turns.push({ role: "user", content: leadMatch[1] });
+    } else if (agentMatch) {
+      turns.push({ role: "assistant", content: agentMatch[1] });
+    } else if (turns.length > 0) {
+      // Linha de continuação — anexa na última
+      turns[turns.length - 1].content += "\n" + line;
+    }
+  }
+  return turns.filter((t) => t.content.trim().length > 0);
 }
