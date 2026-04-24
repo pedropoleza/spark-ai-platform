@@ -12,6 +12,7 @@ interface TrackUsageParams {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  cachedTokens?: number;
   usesCustomKey: boolean;
 }
 
@@ -20,7 +21,12 @@ interface TrackUsageParams {
  */
 export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
   const supabase = createAdminClient();
-  const cost = calculateCost(params.model, params.promptTokens, params.completionTokens);
+  const cost = calculateCost(
+    params.model,
+    params.promptTokens,
+    params.completionTokens,
+    params.cachedTokens || 0
+  );
 
   // Registrar uso
   const { data: record } = await supabase
@@ -147,6 +153,30 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
   const supabase = createAdminClient();
   let charged = 0;
   let failed = 0;
+
+  // Alerta: registros unbilled antigos indicam problema recorrente com o GHL wallet.
+  // Se > 100 registros OU total > $10 parados há >1h, loga ERROR para visibilidade.
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { data: staleStats } = await supabase
+    .from("usage_records")
+    .select("id, total_charge_usd")
+    .eq("charged_to_wallet", false)
+    .eq("uses_custom_key", false)
+    .gt("total_charge_usd", 0)
+    .lt("created_at", oneHourAgo);
+
+  if (staleStats && staleStats.length > 0) {
+    const totalStale = staleStats.reduce((s, r) => s + Number(r.total_charge_usd || 0), 0);
+    if (staleStats.length >= 100 || totalStale >= 10) {
+      console.error(
+        `[Billing ALERT] ${staleStats.length} unbilled records older than 1h, total $${totalStale.toFixed(4)}. Investigate wallet charge failures.`
+      );
+    } else {
+      console.warn(
+        `[Billing] ${staleStats.length} unbilled records older than 1h, total $${totalStale.toFixed(4)}`
+      );
+    }
+  }
 
   const { data: pending } = await supabase
     .from("usage_records")
