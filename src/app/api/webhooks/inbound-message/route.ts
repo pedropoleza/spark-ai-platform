@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
           .select("id")
           .eq("location_id", locationId)
           .eq("status", "active")
-          .in("type", ["sales_agent", "recruitment_agent"]);
+          .in("type", ["sales_agent", "post_sales_agent"]);
 
         for (const agent of activeAgents || []) {
           await supabaseStop
@@ -216,7 +216,7 @@ export async function POST(request: NextRequest) {
             .select("id, agent_configs(handoff_messages, auto_pause_on_human_message)")
             .eq("location_id", locationId)
             .eq("status", "active")
-            .in("type", ["sales_agent", "recruitment_agent"]);
+            .in("type", ["sales_agent", "post_sales_agent"]);
           if (active && active.length === 1) {
             outboundAgent = active[0] as { id: string; agent_configs: unknown };
           }
@@ -349,8 +349,8 @@ export async function POST(request: NextRequest) {
     const channel = detectChannel(messageType, (body.customData as Record<string, unknown>)?.channel as string | undefined);
     const supabase = createAdminClient();
 
-    // ===== BUSCAR TODOS os agentes ativos (sales + recruitment) =====
-    // Nao podemos mais pegar "o primeiro" — sales e recrutamento sao
+    // ===== BUSCAR TODOS os agentes ativos (sales + post_sales) =====
+    // Nao podemos mais pegar "o primeiro" — sales e pós-vendas sao
     // totalmente separados. Precisamos decidir explicitamente qual agente
     // recebe esta mensagem:
     //   1) Se ja existe conversation_state para este contato -> esse agente
@@ -362,7 +362,7 @@ export async function POST(request: NextRequest) {
       .select("id, type, location_id, agent_configs(debounce_seconds, targeting_rules, enabled_channels, deactivation_rules, working_hours)")
       .eq("location_id", locationId)
       .eq("status", "active")
-      .in("type", ["sales_agent", "recruitment_agent"]);
+      .in("type", ["sales_agent", "post_sales_agent"]);
 
     if (!allAgents || allAgents.length === 0) {
       console.log(`[Webhook] Skipped: no_active_agent for location ${locationId}`);

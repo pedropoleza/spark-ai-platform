@@ -67,7 +67,7 @@ export async function processMessageQueue(): Promise<{
     return { processed: 0, errors: 0 };
   }
 
-  // 3. Agrupar por (agent_id, contact_id) — crucial: sales e recrutamento
+  // 3. Agrupar por (agent_id, contact_id) — crucial: sales e pós-vendas
   // NAO podem ser agrupados juntos mesmo quando o mesmo contato mandou
   // mensagem para os dois.
   const groups = new Map<string, MessageGroup>();
@@ -176,7 +176,7 @@ async function processGroup(
 ): Promise<void> {
   // 1. Buscar o agente exato gravado na fila. Se agent_id existir,
   // carregamos diretamente por id — sem cair no fallback por location,
-  // que misturaria sales com recrutamento. Se nao existir (linha
+  // que misturaria sales com pós-vendas. Se nao existir (linha
   // legada pre-migration 00013), usamos fallback por location mas
   // APENAS quando houver 1 agente ativo.
   let agentQuery;
@@ -193,7 +193,7 @@ async function processGroup(
       .select("*, agent_configs(*)")
       .eq("location_id", group.locationId)
       .eq("status", "active")
-      .in("type", ["sales_agent", "recruitment_agent"])
+      .in("type", ["sales_agent", "post_sales_agent"])
       .limit(1)
       .maybeSingle();
   }
@@ -474,7 +474,7 @@ async function processGroup(
 
   const promptCtx = {
     config,
-    agentType: agent.type as "sales_agent" | "recruitment_agent",
+    agentType: agent.type as "sales_agent" | "post_sales_agent",
     contactName,
     collectedData,
     locationName: location.location_name || "Nossa empresa",

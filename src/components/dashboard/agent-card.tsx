@@ -11,7 +11,7 @@ import type { AgentType, AgentStatus } from "@/types/agent";
 
 const iconMap = {
   sales_agent: Headphones,
-  recruitment_agent: Users,
+  post_sales_agent: Users,
   account_assistant: UserCog,
 };
 
@@ -20,9 +20,9 @@ const typeLabels: Record<AgentType, { name: string; description: string }> = {
     name: "Agente de Vendas",
     description: "Qualifica leads e agenda reuniões com corretores",
   },
-  recruitment_agent: {
-    name: "Agente de Recrutamento",
-    description: "Qualifica candidatos e agenda entrevistas com especialistas",
+  post_sales_agent: {
+    name: "Agente de Pós-Vendas",
+    description: "Atende clientes que já compraram: onboarding, NPS, retenção e suporte",
   },
   account_assistant: {
     name: "Assistente de Conta",
@@ -115,7 +115,7 @@ export function AgentCard({
             size="sm"
             className="w-full"
             onClick={() => {
-              const route = type === "recruitment_agent" ? "/agents/recruitment" : "/agents/sales";
+              const route = type === "post_sales_agent" ? "/agents/post-sales" : "/agents/sales";
               router.push(`${route}${agentId ? `?id=${agentId}` : ""}`);
             }}
           >

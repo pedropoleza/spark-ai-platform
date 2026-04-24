@@ -9,7 +9,7 @@ export const ssoSchema = z.object({
 
 // Criar agente
 export const createAgentSchema = z.object({
-  type: z.enum(["sales_agent", "recruitment_agent", "account_assistant"]),
+  type: z.enum(["sales_agent", "post_sales_agent", "account_assistant"]),
 });
 
 // Atualizar agente

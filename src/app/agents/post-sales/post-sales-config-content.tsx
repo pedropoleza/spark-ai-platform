@@ -116,14 +116,14 @@ const defaultConfig: ConfigForm = {
   enable_image_analysis: false,
   enable_pdf_reading: false,
   enable_summary_notes: false,
-  // Recruitment-specific
+  // Post-sales specialist/CS fields
   specialist_name: "",
-  specialist_role: "especialista",
+  specialist_role: "responsável de atendimento",
   check_legal_docs: false,
   preferred_time_slot: "afternoon_evening",
 };
 
-export function RecruitmentConfigContent() {
+export function PostSalesConfigContent() {
   const searchParams = useSearchParams();
   const agentId = searchParams.get("id");
   const [config, setConfig] = useState<ConfigForm>(defaultConfig);
@@ -206,7 +206,7 @@ export function RecruitmentConfigContent() {
 
   if (loading) {
     return (
-      <PageWrapper title="Agente de Recrutamento" backHref="/dashboard">
+      <PageWrapper title="Agente de Pós-Vendas" backHref="/dashboard">
         <Skeleton className="h-64" />
       </PageWrapper>
     );
@@ -214,8 +214,8 @@ export function RecruitmentConfigContent() {
 
   return (
     <PageWrapper
-      title="Agente de Recrutamento"
-      subtitle="Configure como o agente interage com candidatos"
+      title="Agente de Pós-Vendas"
+      subtitle="Configure como o agente interage com clientes já existentes"
       backHref="/dashboard"
       actions={
         <Button onClick={handleSave} disabled={saving || !agentId} variant={saved ? "outline" : "default"} className={saved ? "border-green-500 text-green-600" : ""}>
@@ -243,7 +243,7 @@ export function RecruitmentConfigContent() {
             <Card>
               <CardHeader>
                 <CardTitle>Regras de ativação</CardTitle>
-                <CardDescription>Defina quando o agente de recrutamento deve ser ativado</CardDescription>
+                <CardDescription>Defina quando o agente de pós-vendas deve ser ativado</CardDescription>
               </CardHeader>
               <CardContent>
                 <TargetingRulesEditor rules={config.targeting_rules} pipelines={ghl.pipelines} tags={ghl.tags} customFields={ghl.customFields} loading={ghl.loading} onChange={(rules: TargetingRule[]) => updateConfig("targeting_rules", rules)} />
@@ -295,7 +295,7 @@ export function RecruitmentConfigContent() {
               </Card>
             )}
             <Card>
-              <CardHeader><CardTitle>Dados para coletar</CardTitle><CardDescription>Informações do candidato</CardDescription></CardHeader>
+              <CardHeader><CardTitle>Dados para coletar</CardTitle><CardDescription>Informações do cliente existente</CardDescription></CardHeader>
               <CardContent>
                 <DataFieldsEditor fields={config.data_fields} customFields={ghl.customFields} onChange={(fields: DataField[]) => updateConfig("data_fields", fields)} />
               </CardContent>
@@ -367,7 +367,7 @@ export function RecruitmentConfigContent() {
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione um modelo para começar..." /></SelectTrigger>
                     <SelectContent>
                       {CONVERSATION_TEMPLATES
-                        .filter(t => t.agentType === "recruitment_agent" || t.agentType === "both")
+                        .filter(t => t.agentType === "post_sales_agent" || t.agentType === "both")
                         .map(t => (
                           <SelectItem key={t.id} value={t.id}>
                             <div className="flex flex-col">

@@ -1,4 +1,4 @@
-export type AgentType = "sales_agent" | "recruitment_agent" | "account_assistant";
+export type AgentType = "sales_agent" | "post_sales_agent" | "account_assistant";
 export type AgentStatus = "active" | "inactive";
 export type AgentObjective = "qualification_only" | "qualification_and_booking" | "booking_only";
 export type ConversationStatus = "active" | "qualified" | "booked" | "disqualified" | "handed_off" | "stale";
@@ -111,10 +111,10 @@ export interface AgentConfig {
   enable_pdf_reading?: boolean;
   // Summary notes
   enable_summary_notes?: boolean;
-  // Recruitment-specific
-  specialist_name?: string;        // Nome do especialista que faz o Zoom
-  specialist_role?: string;        // Descrição do papel ("especialista", "recrutadora")
-  check_legal_docs?: boolean;      // Verificar documentação legal (SSN, work permit)
+  // Post-sales specialist/CS fields
+  specialist_name?: string;        // Nome do responsável de atendimento (CS/especialista)
+  specialist_role?: string;        // Descrição do papel ("responsável de atendimento", "CS")
+  check_legal_docs?: boolean;      // (legado) verificação de documentação — não usado em pós-vendas
   preferred_time_slot?: string;    // "afternoon_evening" | "any"
   created_at: string;
   updated_at: string;
@@ -287,12 +287,10 @@ export const DEFAULT_SALES_DATA_FIELDS: DataField[] = [
   { key: "smoker_status", label: "Fumante", required: true, type: "boolean" },
 ];
 
-// Default data fields for recruitment agent — totalmente distinto de vendas.
-// Recrutamento foca em: localização, perfil profissional e motivação/gancho.
-// Máximo 3 campos obrigatórios, alinhado ao limite de "3 infos antes do agendamento".
-export const DEFAULT_RECRUITMENT_DATA_FIELDS: DataField[] = [
+// Default data fields for post-sales agent — foca em cliente já existente.
+// Coletar minimamente: identificação, motivo do contato e satisfação.
+export const DEFAULT_POST_SALES_DATA_FIELDS: DataField[] = [
   { key: "full_name", label: "Nome completo", required: true, type: "text" },
-  { key: "state", label: "Estado onde mora", required: true, type: "text" },
-  { key: "current_occupation", label: "O que a pessoa faz hoje", required: true, type: "text" },
-  { key: "motivation", label: "Motivação / gancho de interesse", required: false, type: "text" },
+  { key: "contact_reason", label: "Motivo do contato", required: true, type: "text" },
+  { key: "satisfaction", label: "Satisfação com o produto/serviço", required: false, type: "text" },
 ];

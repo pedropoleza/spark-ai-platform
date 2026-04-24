@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
-import { DEFAULT_SALES_DATA_FIELDS, DEFAULT_RECRUITMENT_DATA_FIELDS } from "@/types/agent";
+import { DEFAULT_SALES_DATA_FIELDS, DEFAULT_POST_SALES_DATA_FIELDS } from "@/types/agent";
 
 // GET /api/agents - Listar agentes da location
 export async function GET() {
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
       location_id: session.locationId,
       type,
       status: "active",
-      name: type === "sales_agent" ? "Agente de Vendas" : type === "recruitment_agent" ? "Agente de Recrutamento" : "Assistente de Conta",
+      name: type === "sales_agent" ? "Agente de Vendas" : type === "post_sales_agent" ? "Agente de Pós-Vendas" : "Assistente de Conta",
     })
     .select()
     .single();
@@ -63,10 +63,8 @@ export async function POST(request: Request) {
   }
 
   // Criar config padrao — data_fields ESPECÍFICOS do tipo.
-  // Bug histórico: todos agentes herdavam DEFAULT_SALES (incluindo smoker_status)
-  // mesmo sendo de recrutamento.
-  const defaultDataFields = type === "recruitment_agent"
-    ? DEFAULT_RECRUITMENT_DATA_FIELDS
+  const defaultDataFields = type === "post_sales_agent"
+    ? DEFAULT_POST_SALES_DATA_FIELDS
     : DEFAULT_SALES_DATA_FIELDS;
 
   const defaultConfigPayload: Record<string, unknown> = {
@@ -74,10 +72,9 @@ export async function POST(request: Request) {
     data_fields: defaultDataFields,
   };
 
-  // Recrutamento: preferência de horário tarde/noite (padrão do tipo)
-  if (type === "recruitment_agent") {
-    defaultConfigPayload.preferred_time_slot = "afternoon_evening";
-    defaultConfigPayload.specialist_role = "especialista";
+  // Pós-Vendas: papel default do responsável de atendimento
+  if (type === "post_sales_agent") {
+    defaultConfigPayload.specialist_role = "responsável de atendimento";
   }
 
   const { error: configError } = await supabase

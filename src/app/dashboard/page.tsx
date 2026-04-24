@@ -64,7 +64,7 @@ export default function DashboardPage() {
   const [, setTogglingType] = useState<string | null>(null);
 
   const agentLabel = (type: string) =>
-    type === "sales_agent" ? "Agente de Vendas" : type === "recruitment_agent" ? "Agente de Recrutamento" : "Assistente";
+    type === "sales_agent" ? "Agente de Vendas" : type === "post_sales_agent" ? "Agente de Pós-Vendas" : "Assistente";
 
   const handleToggle = async (agentType: string, active: boolean) => {
     setTogglingType(agentType);
@@ -141,7 +141,7 @@ export default function DashboardPage() {
   };
 
   const salesAgent = agents.find((a) => a.type === "sales_agent");
-  const recruitmentAgent = agents.find((a) => a.type === "recruitment_agent");
+  const postSalesAgent = agents.find((a) => a.type === "post_sales_agent");
 
   return (
     <PageWrapper
@@ -164,12 +164,12 @@ export default function DashboardPage() {
             onToggle={(active) => handleToggle("sales_agent", active)}
           />
           <AgentCard
-            type="recruitment_agent"
-            status={recruitmentAgent?.status}
-            agentId={recruitmentAgent?.id}
-            lastActivity={recruitmentAgent?.id ? activityMap[recruitmentAgent.id]?.lastActivity : undefined}
-            messagesProcessed24h={recruitmentAgent?.id ? activityMap[recruitmentAgent.id]?.messagesProcessed24h : undefined}
-            onToggle={(active) => handleToggle("recruitment_agent", active)}
+            type="post_sales_agent"
+            status={postSalesAgent?.status}
+            agentId={postSalesAgent?.id}
+            lastActivity={postSalesAgent?.id ? activityMap[postSalesAgent.id]?.lastActivity : undefined}
+            messagesProcessed24h={postSalesAgent?.id ? activityMap[postSalesAgent.id]?.messagesProcessed24h : undefined}
+            onToggle={(active) => handleToggle("post_sales_agent", active)}
           />
           <AgentCard type="account_assistant" comingSoon />
         </div>

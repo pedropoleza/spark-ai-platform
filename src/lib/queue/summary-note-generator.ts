@@ -79,7 +79,7 @@ export async function generateSummaryNote(params: SummaryParams): Promise<void> 
   try {
     const personality = (cfg.personality || {}) as Record<string, string>;
     const agentName = personality.name || agent?.name || "Agente IA";
-    const agentType = agent?.type === "recruitment_agent" ? "recrutamento" : "vendas";
+    const agentType = agent?.type === "post_sales_agent" ? "pós-vendas" : "vendas";
     const dataFields = (cfg.data_fields || []) as { key: string; label: string }[];
     const collectedData = (convState.collected_data || {}) as Record<string, string>;
 
