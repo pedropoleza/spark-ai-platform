@@ -15,15 +15,18 @@ export async function GET(
 
   const supabase = createServerClient();
 
-  // Verificar que o agente pertence a location do usuario
+  // Sparkbot (account_assistant) é global — qualquer admin autenticado pode
+  // ler/editar. Outros agents continuam limitados à location do admin.
   const { data: agent } = await supabase
     .from("agents")
-    .select("id")
+    .select("id, type, location_id")
     .eq("id", params.agentId)
-    .eq("location_id", session.locationId)
     .single();
 
   if (!agent) {
+    return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
+  }
+  if (agent.type !== "account_assistant" && agent.location_id !== session.locationId) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
   }
 
@@ -61,12 +64,14 @@ export async function PUT(
 
   const { data: agent } = await supabase
     .from("agents")
-    .select("id")
+    .select("id, type, location_id")
     .eq("id", params.agentId)
-    .eq("location_id", session.locationId)
     .single();
 
   if (!agent) {
+    return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
+  }
+  if (agent.type !== "account_assistant" && agent.location_id !== session.locationId) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
   }
 

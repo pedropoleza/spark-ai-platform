@@ -15,11 +15,18 @@ interface AgentActivity {
 
 export default function DashboardPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [sparkbot, setSparkbot] = useState<Agent | null>(null);
   const [loading, setLoading] = useState(true);
   const [activityMap, setActivityMap] = useState<Record<string, AgentActivity>>({});
 
   const fetchAgents = useCallback(async () => {
     try {
+      // Sparkbot é global — fetch em paralelo
+      fetch("/api/agents/sparkbot")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => setSparkbot(data?.agent || null))
+        .catch(() => {});
+
       const response = await fetch("/api/agents");
       if (response.ok) {
         const data = await response.json();
@@ -171,7 +178,12 @@ export default function DashboardPage() {
             messagesProcessed24h={recruitmentAgent?.id ? activityMap[recruitmentAgent.id]?.messagesProcessed24h : undefined}
             onToggle={(active) => handleToggle("recruitment_agent", active)}
           />
-          <AgentCard type="account_assistant" comingSoon />
+          <AgentCard
+            type="account_assistant"
+            status={sparkbot?.status}
+            agentId={sparkbot?.id}
+            comingSoon={!sparkbot}
+          />
         </div>
       )}
     </PageWrapper>

@@ -115,7 +115,12 @@ export function AgentCard({
             size="sm"
             className="w-full"
             onClick={() => {
-              const route = type === "recruitment_agent" ? "/agents/recruitment" : "/agents/sales";
+              const route =
+                type === "recruitment_agent"
+                  ? "/agents/recruitment"
+                  : type === "account_assistant"
+                  ? "/agents/account-assistant"
+                  : "/agents/sales";
               router.push(`${route}${agentId ? `?id=${agentId}` : ""}`);
             }}
           >
