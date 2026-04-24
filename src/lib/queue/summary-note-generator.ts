@@ -79,7 +79,7 @@ export async function generateSummaryNote(params: SummaryParams): Promise<void> 
   try {
     const personality = (cfg.personality || {}) as Record<string, string>;
     const agentName = personality.name || agent?.name || "Agente IA";
-    const agentType = agent?.type === "post_sales_agent" ? "pós-vendas" : "vendas";
+    const agentType = agent?.type === "recruitment_agent" ? "recrutamento" : "vendas";
     const dataFields = (cfg.data_fields || []) as { key: string; label: string }[];
     const collectedData = (convState.collected_data || {}) as Record<string, string>;
 
@@ -189,11 +189,11 @@ Gere o resumo agora.`,
     const segment = convState.segment_number || 1;
 
     const fullNote = [
-      `<h3>📋 Resumo de Atendimento — Matrix AI Hub</h3>`,
+      `<h3>📋 Resumo de Atendimento — Spark AI Hub</h3>`,
       `<p><strong>Agente:</strong> ${agentName} | <strong>Data:</strong> ${dateStr} | <strong>Motivo:</strong> ${triggers[params.triggerReason] || params.triggerReason}</p>`,
       `<hr>`,
       noteHtml,
-      `<br><p><em>Gerado por Matrix AI Hub • Segmento #${segment}</em></p>`,
+      `<br><p><em>Gerado por Spark AI Hub • Segmento #${segment}</em></p>`,
     ].join("\n");
 
     // 10. Postar no GHL

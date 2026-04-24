@@ -351,7 +351,7 @@ export async function POST(request: NextRequest) {
 
   const promptCtx = {
     config,
-    agentType: agent.type as "sales_agent" | "post_sales_agent",
+    agentType: agent.type as "sales_agent" | "recruitment_agent",
     contactName: resolvedContactName,
     collectedData: mergedCollectedData,
     locationName: location?.location_name || "Minha Empresa",

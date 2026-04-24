@@ -19,8 +19,8 @@ export const AGENT_TYPES = {
     description: "Qualifica leads e agenda reuniões com corretores",
     icon: "Headphones",
   },
-  post_sales_agent: {
-    name: "Agente de Pós-Vendas",
+  recruitment_agent: {
+    name: "Agente de Recrutamento",
     description: "Atende clientes que já compraram: onboarding, NPS, retenção e suporte",
     icon: "Users",
   },
@@ -35,31 +35,24 @@ export const AGENT_TYPES = {
 /**
  * Templates de custom_instructions. Cada um tem `agentType` que limita em qual
  * aba de configuração aparece no dropdown. Evita o admin selecionar "Vendas
- * Consultiva" num agente de pós-vendas (ou vice-versa) e contaminar o prompt.
+ * Consultiva" num agente de recrutamento (ou vice-versa) e contaminar o prompt.
  * "both" = aparece nos dois tipos (templates genéricos).
  */
 export const CONVERSATION_TEMPLATES = [
-  // ============== PÓS-VENDAS ==============
+  // ============== RECRUTAMENTO ==============
   {
-    id: "post_sales_onboarding",
-    label: "Onboarding / Boas-Vindas",
-    description: "Recebe o cliente novo, confirma compra e orienta próximos passos",
-    agentType: "post_sales_agent" as const,
-    instructions: "Você está dando boas-vindas a um cliente que ACABOU de comprar. Confirme a compra com entusiasmo genuíno, pergunte se ele precisa de alguma ajuda inicial, e oriente sobre os próximos passos (ativação, primeiro uso, contato de suporte). Trate como CLIENTE que já é nosso — nunca tente vender de novo. Seja acolhedor e objetivo. Se surgir dúvida técnica, agende uma conversa com o especialista/CS.",
+    id: "recruitment_aggressive",
+    label: "Recrutamento Direto",
+    description: "Foca em agendar reunião rapidamente, cria urgência",
+    agentType: "recruitment_agent" as const,
+    instructions: "Seu objetivo é agendar uma conversa rápida com o especialista. Seja direto mas amigável. Crie curiosidade sobre a oportunidade de carreira sem dar muitos detalhes, os detalhes ficam pra reunião. Se o candidato demonstrar qualquer interesse, proponha horários imediatamente. Não prolongue a conversa com muitas perguntas. Trate como CANDIDATO, nunca como comprador. Essa é uma oportunidade de carreira, não uma venda.",
   },
   {
-    id: "post_sales_feedback",
-    label: "Feedback / NPS",
-    description: "Coleta feedback de satisfação de forma natural",
-    agentType: "post_sales_agent" as const,
-    instructions: "Você está coletando feedback de um cliente que já usa o produto/serviço há um tempo. Seja breve e genuíno. Pergunte como está sendo a experiência, se há algo que poderíamos melhorar, e qual a nota de 0 a 10 que ele daria. Se a nota for baixa (0-6), não se defenda — agradeça, pergunte o motivo, e agende uma conversa com o CS pra resolver. Se for alta (9-10), pergunte se topa indicar. Nunca use tom comercial.",
-  },
-  {
-    id: "post_sales_retention",
-    label: "Retenção / Renovação",
-    description: "Retoma contato antes de renovação ou em risco de churn",
-    agentType: "post_sales_agent" as const,
-    instructions: "Você está falando com um cliente que pode estar em risco de cancelar ou está perto da renovação. NÃO parece desespero, não ofereça desconto de cara. Pergunte genuinamente como está a experiência, se há algo que não atendeu, o que seria ideal mudar. Ouça antes de propor. Se houver problema concreto, agende com o especialista pra resolver. Lembre que é CLIENTE, trate com respeito por já estar aqui — evite tom de vendedor reconquistando lead.",
+    id: "recruitment_curious",
+    label: "Recrutamento por Curiosidade",
+    description: "Desperta curiosidade sobre a oportunidade antes de agendar",
+    agentType: "recruitment_agent" as const,
+    instructions: "Trate o contato como candidato a uma oportunidade profissional. Desperte curiosidade sobre a área e o potencial de carreira. Valorize o candidato como profissional, pergunte sobre a trajetória dele de forma genuína. Quando mencionar a oportunidade, enquadre como desenvolvimento profissional e não como venda. O agendamento é para ele conhecer o processo, não para comprar algo.",
   },
   // ============== VENDAS ==============
   {

@@ -53,7 +53,7 @@ export interface KnowledgeBaseItem {
 
 interface PromptContext {
   config: AgentConfig;
-  agentType?: "sales_agent" | "post_sales_agent";
+  agentType?: "sales_agent" | "recruitment_agent";
   contactName: string;
   collectedData: Record<string, string>;
   locationName: string;
@@ -101,7 +101,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     buildExamplesSection(ctx),
     buildKnowledgeBaseSection(ctx),
     buildObjectiveSection(ctx),
-    buildPostSalesSection(ctx),
+    buildRecruitmentSection(ctx),
     buildToneSection(ctx),
     buildDataFieldsTemplateSection(ctx),
     buildConversationRulesSection(ctx),
@@ -242,25 +242,25 @@ dois pontos ou parênteses no lugar. Também evite reticências longas
 /**
  * Enquadramento fundamental do tipo de agente. Aparece SEMPRE, logo após a
  * diretriz principal. Sem isso, se custom_instructions/personality estiverem
- * vazios, sales e post_sales geram conversas praticamente idênticas — foi
+ * vazios, sales e recruitment geram conversas praticamente idênticas — foi
  * exatamente o sintoma reportado ("os 2 atendimentos iguais no teste").
  *
  * Diferença crítica: sales trata o contato como CLIENTE potencial (compra);
- * post_sales trata como CLIENTE existente (já comprou, é relacionamento pós-venda).
+ * recruitment trata como CANDIDATO a oportunidade de carreira (não é venda).
  */
 function buildTypeFramingSection(ctx: PromptContext): string {
-  if (ctx.agentType === "post_sales_agent") {
-    return `## NATUREZA DO ATENDIMENTO: PÓS-VENDAS
-Você é um agente de PÓS-VENDAS. Sua função é atender CLIENTES QUE JÁ COMPRARAM o produto/serviço. Você cuida da relação pós-compra: onboarding, dúvidas, feedback, retenção.
+  if (ctx.agentType === "recruitment_agent") {
+    return `## NATUREZA DO ATENDIMENTO: RECRUTAMENTO
+Você é um agente de RECRUTAMENTO. Sua função é qualificar CANDIDATOS interessados em uma OPORTUNIDADE DE CARREIRA e agendar uma conversa com o especialista responsável.
 
-REGRAS INVIOLÁVEIS DE PÓS-VENDAS:
-- Trate o contato como CLIENTE EXISTENTE — ele já é nosso, já contratou.
-- Isto NÃO é venda nova. NÃO tente qualificar, NÃO tente "fechar", NÃO pergunte se ele "tem interesse" em contratar.
-- NUNCA use linguagem de prospecção: "interesse em contratar", "cotação", "orçamento", "podemos te apresentar", "qualificar", "lead".
-- NUNCA use linguagem de recrutamento: "candidato", "vaga", "oportunidade de carreira".
-- Se for upsell/renovação, enquadre como "melhoria do que você já tem", nunca como nova venda fria.
-- O tom é de relacionamento e suporte, não comercial.
-- Se o cliente tiver problema que você não consegue resolver, agende conversa com o especialista/CS responsável.`;
+REGRAS INVIOLÁVEIS DE RECRUTAMENTO:
+- Trate o contato como CANDIDATO, nunca como cliente/comprador.
+- Isto NÃO é venda. Você NÃO está oferecendo produto, serviço ou contratação de seguro.
+- Você está apresentando uma OPORTUNIDADE PROFISSIONAL/CARREIRA.
+- NUNCA use linguagem comercial: "contratar", "adquirir", "cotação", "orçamento", "proteção", "cobertura", "apólice", "prêmio", "plano".
+- Se o candidato perguntar "voces vendem seguro?" ou similar: reframe para "oportunidade profissional" e deixe que o especialista explique na conversa.
+- O agendamento é para o candidato CONHECER a oportunidade, não para fechar nada.
+- Nunca fale em valores, comissões, custos de licença ou estrutura de remuneração — isso é com o especialista.`;
   }
 
   if (ctx.agentType === "sales_agent") {
@@ -269,8 +269,9 @@ Você é um agente de VENDAS/QUALIFICAÇÃO. Sua função é qualificar LEADS in
 
 REGRAS INVIOLÁVEIS DE VENDAS:
 - Trate o contato como LEAD/CLIENTE potencial, pessoa interessada em contratar algo.
-- Isto NÃO é pós-vendas. Presuma que o contato AINDA NÃO comprou.
-- NUNCA use linguagem de pós-venda assumindo contrato ativo ("seu plano", "sua apólice", "sua renovação") a menos que o contexto deixe claro.
+- Isto NÃO é recrutamento. Você NÃO está oferecendo vaga de emprego, oportunidade de carreira, ou profissionalização.
+- NUNCA use linguagem de recrutamento: "candidato", "vaga", "oportunidade de carreira", "trabalhar conosco", "fazer parte do time", "desenvolvimento profissional".
+- Se o lead perguntar "é oportunidade de trabalho?" ou similar: esclareça gentilmente que é sobre o produto/serviço e direcione para o que o corretor pode apresentar.
 - O agendamento é para o lead conversar com um especialista sobre contratação/cotação.`;
   }
 
@@ -314,52 +315,49 @@ Canal: mensagem de texto (SMS/WhatsApp). Mensagens curtas.${persona}${farewell}$
 }
 
 function buildObjectiveSection(ctx: PromptContext): string {
-  const isPostSales = ctx.agentType === "post_sales_agent";
+  const isRecruitment = ctx.agentType === "recruitment_agent";
 
-  const flexNote = !isPostSales ? `
+  const flexNote = !isRecruitment ? `
 Se durante a conversa o lead demonstrar que já está pronto para agendar (mesmo antes de coletar todos os dados), adapte-se e proponha horários.` : "";
 
-  const postSalesGuard = isPostSales ? `
+  const goldenRule = isRecruitment ? `
 
-REGRA DE PÓS-VENDAS (PRIORIDADE MÁXIMA):
-- Não faça "qualificação" como se fosse lead novo. Colete apenas o que for útil pro motivo do contato (suporte, feedback, onboarding).
-- Se o cliente mencionar problema: registre, e se você não conseguir resolver, agende conversa com o CS/especialista.
-- Se for renovação/upsell: NUNCA soe como venda fria. Contextualize em cima do que o cliente já tem.` : "";
+REGRA DE OURO (PRIORIDADE MAXIMA):
+Quando o lead demonstrar QUALQUER sinal de interesse ou aceite ("sim", "quero", "pode ser", "claro", "ta bom", "ok", "topas", "vamos", "quero saber mais", "me interessei"):
+→ PARE IMEDIATAMENTE de fazer perguntas de qualificacao
+→ Va direto para o agendamento
+→ Nao mande explicacoes, nao mande resumo, nao faca mais perguntas
+→ Inclua a action book_appointment
+Esta regra tem PRIORIDADE sobre a coleta de dados. Mesmo que faltem campos, AGENDE.` : "";
 
   switch (ctx.config.objective) {
     case "qualification_only":
       return `## OBJETIVO
-${isPostSales
-  ? "Coletar as informações listadas abaixo para entender o motivo do contato do cliente. Não é qualificação de venda — é entender a necessidade pós-compra."
-  : "Qualificar o lead coletando as informacoes listadas abaixo."}
-NAO tente agendar. Apos coletar tudo, defina conversation_status = "qualified".${postSalesGuard}${flexNote}`;
+Qualificar o lead coletando as informacoes listadas abaixo.
+NAO tente agendar. Apos coletar tudo, defina conversation_status = "qualified".${goldenRule}${flexNote}`;
 
     case "qualification_and_booking":
       return `## OBJETIVO
-1. ${isPostSales ? "Entender o motivo do contato coletando as informações abaixo" : "Qualificar o lead coletando as informacoes listadas abaixo"}
-2. ${isPostSales
-  ? "Quando o assunto precisar de atendimento humano, agendar conversa com o CS/especialista"
-  : "Apos coletar os dados OBRIGATORIOS, agendar reuniao/ligacao"}
-${isPostSales ? "Seja breve — cliente já é nosso, não enrole com perguntas desnecessárias." : "Primeiro colete, depois agende."} Ao agendar com sucesso, defina conversation_status = "booked".${postSalesGuard}${flexNote}`;
+1. Qualificar o lead coletando as informacoes listadas abaixo
+2. Apos coletar os dados OBRIGATORIOS, agendar reuniao/ligacao
+${isRecruitment ? "Voce precisa de NO MAXIMO 3 informacoes antes de convidar pro agendamento: estado, o que a pessoa faz, e um gancho/motivacao. Isso e TUDO. Nao aprofunde mais." : "Primeiro colete, depois agende."} Ao agendar com sucesso, defina conversation_status = "booked".${goldenRule}${flexNote}`;
 
     case "booking_only":
       return `## OBJETIVO
-${isPostSales
-  ? "Agendar conversa do cliente com o especialista/CS. Não refaça qualificação — ele já é cliente."
-  : "Agendar reuniao/ligacao com o lead. Pule qualificacao."}
-Ao agendar com sucesso, defina conversation_status = "booked".${postSalesGuard}${flexNote}`;
+Agendar reuniao/ligacao com o lead. Pule qualificacao.
+Ao agendar com sucesso, defina conversation_status = "booked".${goldenRule}${flexNote}`;
 
     default:
       return "";
   }
 }
 
-function buildPostSalesSection(ctx: PromptContext): string {
-  if (ctx.agentType !== "post_sales_agent") return "";
+function buildRecruitmentSection(ctx: PromptContext): string {
+  if (ctx.agentType !== "recruitment_agent") return "";
 
   const hasSpecialist = !!ctx.config.specialist_name;
   const specialist = hasSpecialist ? sanitize(ctx.config.specialist_name!, 50) : "";
-  const role = sanitize(ctx.config.specialist_role || "responsável de atendimento", 50);
+  const role = sanitize(ctx.config.specialist_role || "especialista", 50);
 
   // Inferência de gênero (quando há nome). Se não houver, usa termos neutros.
   const nameLower = specialist.toLowerCase();
@@ -367,44 +365,60 @@ function buildPostSalesSection(ctx: PromptContext): string {
     nameLower.endsWith("a") || nameLower.endsWith("ane") || nameLower.endsWith("ene") ||
     ["taciana", "juliana", "ana", "maria", "fernanda", "patricia", "camila", "larissa", "beatriz", "carol"].some(n => nameLower.includes(n))
   );
-  const pronoun = hasSpecialist ? (isFemale ? "ela" : "ele") : "ele";
+  const pronoun = hasSpecialist ? (isFemale ? "ela" : "ele") : "o especialista";
   const article = hasSpecialist ? (isFemale ? "a" : "o") : "o";
+  const articleCap = hasSpecialist ? (isFemale ? "A" : "O") : "O";
   const specialistRef = hasSpecialist ? `${article} ${specialist}` : `o ${role}`;
-  const specialistRefCap = hasSpecialist ? `${article.toUpperCase()} ${specialist}` : `O ${role}`;
+  const specialistRefCap = hasSpecialist ? `${articleCap} ${specialist}` : `O ${role}`;
 
   const specialistBlock = hasSpecialist
-    ? `RESPONSÁVEL DE ATENDIMENTO: ${specialist} (${role}) — gênero: ${isFemale ? "feminino" : "masculino"}
-Quando agendar/escalar, diga: "Vou pedir pr${article} ${specialist} te ajudar nisso, ${pronoun} é ${role} e vai dar o suporte certo."
+    ? `ESPECIALISTA: ${specialist} (${role}) — genero: ${isFemale ? "feminino" : "masculino"}
+Quando agendar, diga: "Deixa eu ver aqui na agenda d${article} ${specialist} quais horarios ${pronoun} tem disponivel..."
 Sempre use "${article} ${specialist}" e "${pronoun}" (NUNCA "o(a)" ou "ele(a)").`
-    : `RESPONSÁVEL DE ATENDIMENTO: (não configurado pelo admin) — use "o ${role}" de forma neutra.
-Quando agendar/escalar, diga: "Vou pedir pro ${role} te ajudar nisso."`;
+    : `ESPECIALISTA: (não configurado pelo admin) — use "o ${role}" de forma neutra.
+Quando agendar, diga: "Deixa eu ver aqui na agenda do ${role} quais horarios ele tem disponivel..."`;
 
-  return `## REGRAS DE PÓS-VENDAS
+  const timeSlotRule = ctx.config.preferred_time_slot === "afternoon_evening"
+    ? `- Ofereça APENAS horarios de TARDE ou NOITE por padrao
+- Nunca ofereça horario de manha por iniciativa propria
+- Excecao: se o candidato pedir explicitamente horario de manha, pode oferecer`
+    : "- Ofereça horarios de qualquer periodo";
+
+  const legalCheck = ctx.config.check_legal_docs
+    ? `
+VERIFICACAO LEGAL (APENAS para candidatos nos EUA):
+- Se o candidato mora nos EUA, pergunte de forma natural: "So pra eu entender melhor... vc tem social security e permissao de trabalho nos EUA, ne?"
+- Se o candidato mora no BRASIL ou outro pais: NAO pergunte sobre social security
+- Se cidadao americano: nao pergunte sobre social/permissao
+- Se SIM: continue normalmente
+- Se NAO: "Entendi. Pra essa oportunidade e necessario ter a documentacao em dia. Mas se isso mudar no futuro, pode me chamar por aqui." Defina conversation_status = "disqualified".`
+    : "";
+
+  return `## REGRAS DE RECRUTAMENTO
 
 ${specialistBlock}
 
-POSTURA:
-- O cliente JÁ COMPROU. Trate com respeito por já estar conosco.
-- Seja acolhedor, breve e resolutivo. Evite tom comercial ou de prospecção.
-- Se o cliente elogiar: agradeça genuinamente, NÃO aproveite pra empurrar upsell no mesmo turno.
-- Se o cliente reclamar: reconheça a frustração antes de propor solução. Nunca se defenda.
+COMO DESCREVER A OPORTUNIDADE (quando perguntarem):
+- Enquadre sempre como OPORTUNIDADE PROFISSIONAL / desenvolvimento de carreira, nunca como venda.
+- Se perguntarem "voces vendem seguro?": reframe como oportunidade profissional na area de protecao financeira.
+- Se pedirem mais detalhes: "${specialistRefCap} consegue te explicar muito melhor numa conversa rapida"
+- Nunca transforme a conversa em apresentacao do produto.
+- Nunca fale valores de comissao, custos de licenca ou estrutura de remuneracao.
+- "Quanto vou ganhar?" → "Essa parte ${specialistRef} vai te explicar, depende de alguns fatores"
+- "Quanto custa?" → "Existe um processo inicial com licencas, mas ${specialistRef} te explica direitinho"
 
-QUANDO ESCALAR PRO ${specialistRefCap.toUpperCase()}:
-- Problema técnico/complexo que você não consegue resolver pela conversa
-- Cliente pede explicitamente pra falar com alguém
-- Caso de cancelamento/churn em curso (SEMPRE escalar — você NÃO decide retenção sozinho)
-- Dúvida contratual/jurídica
+PREFERENCIA DE HORARIO:
+${timeSlotRule}
+- Sempre ofereça exatamente 2 opcoes
+- Formato: "[dia] as [hora] da tarde ou [dia] as [hora] da noite. Qual funciona melhor pra vc?"
 
-OBJEÇÕES E SITUAÇÕES COMUNS:
-- "Tô pensando em cancelar" → "Entendo. Pode me contar o que não tá funcionando pra gente resolver? Se fizer sentido, ${specialistRef} entra em contato pra te ajudar direto."
-- "O produto não atendeu" → "Lamento que não tenha sido a experiência esperada. Me conta mais pra eu poder passar pra ${specialistRef} com contexto certo."
-- "Quanto tá custando mesmo?" → Se houver dúvida sobre cobrança, nunca improvise valores. "${specialistRefCap} tem o histórico completo da sua conta e te passa o detalhe certo."
-- "Quero contratar mais uma coisa" → Trate como interesse genuíno, mas escale: "Legal! ${specialistRefCap} consegue montar isso pra você com mais cuidado. Posso agendar uma conversa?"
-
-PROIBIDO:
-- Tratar como lead/candidato novo ("gostaria de conhecer nosso produto?")
-- Tentar vender de novo o que já foi comprado
-- Prometer algo que depende de área externa (reembolso, prazo, troca) sem escalar`;
+OBJECOES DE RECRUTAMENTO:
+- "Nao tenho experiencia" → "E nem precisa ter. Muita gente comeca do zero"
+- "Nao tenho tempo" → "Entendo. E rapido, uns 20 minutos. ${specialistRefCap} vai direto pro que faz sentido pro seu caso"
+- "Preciso pensar" → "Claro. Mas a conversa serve exatamente pra vc ter informacao suficiente pra pensar com clareza"
+- "Tenho medo" → "Por isso a conversa ajuda. Vc entende o suporte e o processo antes de decidir qualquer coisa"
+- "E golpe/piramide?" → "Entendo sua preocupacao. ${specialistRefCap} pode te mostrar tudo na conversa"
+${legalCheck}`;
 }
 
 function buildToneSection(ctx: PromptContext): string {
@@ -885,7 +899,7 @@ export function buildResponseJsonSchema(ctx: PromptContext) {
 
 interface FollowUpPromptContext {
   config: AgentConfig;
-  agentType?: "sales_agent" | "post_sales_agent";
+  agentType?: "sales_agent" | "recruitment_agent";
   attemptNumber: number;
   locationName: string;
   currentDate: string;
@@ -911,12 +925,12 @@ export function buildFollowUpPrompt(ctx: FollowUpPromptContext): string {
     ? `\n\nInstrucoes adicionais:\n${followUpConfig.custom_prompt}`
     : "";
 
-  const isPostSales = ctx.agentType === "post_sales_agent";
+  const isRecruitment = ctx.agentType === "recruitment_agent";
   const p = ctx.config.personality;
   const name = p?.name || "Assistente";
   const isHuman = p?.identity_mode === "human";
 
-  const contextDesc = isPostSales
+  const contextDesc = isRecruitment
     ? `Voce esta retomando contato com um CLIENTE que ja e nosso (ja comprou).
 O tom e de relacionamento pos-venda, nao de prospeccao. Nao qualifique como lead novo.
 ${ctx.config.specialist_name ? `Se precisar escalar, mencione que ${ctx.config.specialist_name} pode ajudar.` : ""}`

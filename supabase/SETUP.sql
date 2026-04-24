@@ -1,5 +1,5 @@
 -- =====================================================
--- Matrix AI Hub - Supabase Consolidated Migration
+-- Spark AI Hub - Supabase Consolidated Migration
 -- Rode este arquivo inteiro no SQL Editor do Supabase.
 -- Projeto: hfmocggdiyvydtxjqthp
 --

@@ -31,7 +31,7 @@ export function TopNav() {
             </div>
           </div>
           <div className="hidden sm:block">
-            <div className="font-semibold text-gray-900 leading-tight tracking-tight">Matrix AI Hub</div>
+            <div className="font-semibold text-gray-900 leading-tight tracking-tight">Spark AI Hub</div>
             <div className="text-[10px] text-gray-500 leading-tight">Hub de comando</div>
           </div>
         </Link>

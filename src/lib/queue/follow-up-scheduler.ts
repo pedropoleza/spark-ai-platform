@@ -285,7 +285,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
 
         const followUpPrompt = buildFollowUpPrompt({
           config,
-          agentType: agent.type as "sales_agent" | "post_sales_agent",
+          agentType: agent.type as "sales_agent" | "recruitment_agent",
           attemptNumber: followUp.attempt_number,
           locationName: location.location_name || "Nossa empresa",
           currentDate: new Date().toLocaleDateString("pt-BR"),

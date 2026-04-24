@@ -123,7 +123,7 @@ const defaultConfig: ConfigForm = {
   preferred_time_slot: "afternoon_evening",
 };
 
-export function PostSalesConfigContent() {
+export function RecruitmentConfigContent() {
   const searchParams = useSearchParams();
   const agentId = searchParams.get("id");
   const [config, setConfig] = useState<ConfigForm>(defaultConfig);
@@ -206,7 +206,7 @@ export function PostSalesConfigContent() {
 
   if (loading) {
     return (
-      <PageWrapper title="Agente de Pós-Vendas" backHref="/dashboard">
+      <PageWrapper title="Agente de Recrutamento" backHref="/dashboard">
         <Skeleton className="h-64" />
       </PageWrapper>
     );
@@ -214,7 +214,7 @@ export function PostSalesConfigContent() {
 
   return (
     <PageWrapper
-      title="Agente de Pós-Vendas"
+      title="Agente de Recrutamento"
       subtitle="Configure como o agente interage com clientes já existentes"
       backHref="/dashboard"
       actions={
@@ -243,7 +243,7 @@ export function PostSalesConfigContent() {
             <Card>
               <CardHeader>
                 <CardTitle>Regras de ativação</CardTitle>
-                <CardDescription>Defina quando o agente de pós-vendas deve ser ativado</CardDescription>
+                <CardDescription>Defina quando o agente de recrutamento deve ser ativado</CardDescription>
               </CardHeader>
               <CardContent>
                 <TargetingRulesEditor rules={config.targeting_rules} pipelines={ghl.pipelines} tags={ghl.tags} customFields={ghl.customFields} loading={ghl.loading} onChange={(rules: TargetingRule[]) => updateConfig("targeting_rules", rules)} />
@@ -367,7 +367,7 @@ export function PostSalesConfigContent() {
                     <SelectTrigger className="mt-1"><SelectValue placeholder="Selecione um modelo para começar..." /></SelectTrigger>
                     <SelectContent>
                       {CONVERSATION_TEMPLATES
-                        .filter(t => t.agentType === "post_sales_agent" || t.agentType === "both")
+                        .filter(t => t.agentType === "recruitment_agent" || t.agentType === "both")
                         .map(t => (
                           <SelectItem key={t.id} value={t.id}>
                             <div className="flex flex-col">

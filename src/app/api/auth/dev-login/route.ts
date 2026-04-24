@@ -4,7 +4,7 @@ import { createSession, upsertLocation } from "@/lib/auth/sso";
 const DEV_LOCATION_ID = "dWzIwfxbFny2t38NN9uG";
 const DEV_COMPANY_ID = "dev-company";
 const DEV_USER_ID = "dev-user";
-const DEV_LOCATION_NAME = "Dev Location (Matrix AI Hub)";
+const DEV_LOCATION_NAME = "Dev Location (Spark AI Hub)";
 
 export async function POST() {
   // Defesa em camadas: precisa das 3 condições simultaneamente.

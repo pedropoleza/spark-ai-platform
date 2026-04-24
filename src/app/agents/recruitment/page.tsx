@@ -2,9 +2,9 @@
 
 import { Suspense } from "react";
 import { Loader2 } from "lucide-react";
-import { PostSalesConfigContent } from "./post-sales-config-content";
+import { RecruitmentConfigContent } from "./recruitment-config-content";
 
-export default function PostSalesAgentConfigPage() {
+export default function RecruitmentAgentConfigPage() {
   return (
     <Suspense
       fallback={
@@ -13,7 +13,7 @@ export default function PostSalesAgentConfigPage() {
         </div>
       }
     >
-      <PostSalesConfigContent />
+      <RecruitmentConfigContent />
     </Suspense>
   );
 }
