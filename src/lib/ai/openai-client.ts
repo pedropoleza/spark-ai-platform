@@ -303,8 +303,10 @@ function buildResult(
   priorTurnCount: number | undefined,
 ): AIProcessingResult {
   let parsed = parseAIResponse(responseText);
+  let parseFailed = false;
   if (!parsed) {
     console.error(`[AI] JSON parse failed (strictSchema=${strictSchemaUsed}). Raw: "${responseText.substring(0, 500)}"`);
+    parseFailed = true;
     parsed = {
       message: "Desculpa, tive um problema técnico. Pode repetir?",
       should_send_message: true,
@@ -341,6 +343,7 @@ function buildResult(
     cached_tokens: cachedTokens,
     cache_hit_ratio: cacheHitRatio,
     duration_ms: duration,
+    parse_failed: parseFailed,
   };
 }
 

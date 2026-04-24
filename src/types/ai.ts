@@ -29,4 +29,9 @@ export interface AIProcessingResult {
   cached_tokens?: number;
   duration_ms?: number;
   cache_hit_ratio?: number;
+  /**
+   * True quando a IA retornou resposta não-parseável e caímos no fallback
+   * genérico. Usado pelo processor para detectar loops e pausar conversa.
+   */
+  parse_failed?: boolean;
 }

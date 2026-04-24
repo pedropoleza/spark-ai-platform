@@ -21,7 +21,23 @@ export class GHLClient {
   }
 
   private async retryOnAuth<T>(request: () => Promise<Response>): Promise<T> {
-    let response = await request();
+    let response: Response;
+    // Retry envelope: até 2 tentativas extras em erros transitórios (network, 5xx).
+    let attempt = 0;
+    const maxTransientRetries = 2;
+    while (true) {
+      try {
+        response = await request();
+        break;
+      } catch (err) {
+        // Network error (fetch rejeitou antes de receber response)
+        if (attempt >= maxTransientRetries) throw err;
+        const delay = 200 * Math.pow(2, attempt);
+        console.warn(`[GHL] Network error (attempt ${attempt + 1}), retrying in ${delay}ms: ${err instanceof Error ? err.message : err}`);
+        await new Promise(r => setTimeout(r, delay));
+        attempt++;
+      }
+    }
 
     // Se 401, invalidar cache e tentar com token novo
     if (response.status === 401) {
@@ -39,6 +55,13 @@ export class GHLClient {
       const retryAfter = parseInt(response.headers.get("retry-after") || "5") * 1000;
       console.warn(`[GHL] 429 rate limited, waiting ${retryAfter}ms...`);
       await new Promise(r => setTimeout(r, retryAfter));
+      response = await request();
+    }
+
+    // 5xx transitório — retry 1x
+    if (response.status >= 500 && response.status < 600) {
+      console.warn(`[GHL] ${response.status} received, retrying once in 500ms...`);
+      await new Promise(r => setTimeout(r, 500));
       response = await request();
     }
 
