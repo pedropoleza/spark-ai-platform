@@ -4,12 +4,34 @@ import { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 
+const IS_DEV_MODE = process.env.NEXT_PUBLIC_DEV_MODE === "true";
+
 function SSOHandler() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState("Autenticando...");
+  const [devLoading, setDevLoading] = useState(false);
   const authenticatedRef = useRef(false);
+
+  const devLogin = useCallback(async () => {
+    if (authenticatedRef.current) return;
+    setDevLoading(true);
+    try {
+      const response = await fetch("/api/auth/dev-login", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.error || "Dev login falhou");
+        setDevLoading(false);
+        return;
+      }
+      authenticatedRef.current = true;
+      router.replace("/dashboard");
+    } catch {
+      setError("Erro de conexão no dev-login.");
+      setDevLoading(false);
+    }
+  }, [router]);
 
   const authenticate = useCallback(
     async (userId: string, companyId: string, locationId: string) => {
@@ -121,6 +143,17 @@ function SSOHandler() {
       <div className="text-center">
         <Loader2 className="h-8 w-8 animate-spin text-gray-500 mx-auto mb-4" />
         <p className="text-sm text-gray-400">{status}</p>
+        {IS_DEV_MODE && (
+          <button
+            type="button"
+            onClick={devLogin}
+            disabled={devLoading}
+            className="mt-6 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-gray-900 rounded-lg hover:bg-gray-800 disabled:opacity-60"
+          >
+            {devLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+            Entrar como dev (location fixa)
+          </button>
+        )}
       </div>
     </div>
   );

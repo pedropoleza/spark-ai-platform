@@ -94,7 +94,7 @@ async function chargeWallet(
     body: JSON.stringify({
       locationId,
       amount: amountCents,
-      description: `Spark AI - ${formatDescription(description)}`,
+      description: `Matrix AI Hub - ${formatDescription(description)}`,
       currency: "USD",
     }),
   });

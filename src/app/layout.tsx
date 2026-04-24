@@ -11,7 +11,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Spark AI - Hub de Agentes",
+  title: "Matrix AI Hub - Agentes de IA",
   description: "Plataforma de configuração de agentes de IA",
 };
 
