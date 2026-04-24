@@ -125,7 +125,7 @@ export function AccountAssistantConfigContent() {
         </TabsList>
 
         <TabsContent value="test" className="space-y-3">
-          <SparkbotTester />
+          <SparkbotTester agentId={agent.id} />
         </TabsContent>
 
         <TabsContent value="rules" className="space-y-3">

@@ -20,22 +20,35 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServerClient();
 
-  // Garantir que o agente pertence à location do user
+  // Garantir que o agente pertence à location do user.
+  // Exceção: account_assistant (Sparkbot) é global — qualquer admin autenticado
+  // pode criar/listar suas próprias sessões de teste dele.
   const { data: agent } = await supabase
     .from("agents")
-    .select("id")
+    .select("id, type")
     .eq("id", agentId)
-    .eq("location_id", session.locationId)
     .maybeSingle();
 
   if (!agent) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
+  }
+  if (agent.type !== "account_assistant") {
+    const { data: scoped } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("id", agentId)
+      .eq("location_id", session.locationId)
+      .maybeSingle();
+    if (!scoped) {
+      return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
+    }
   }
 
   const { data: sessions, error } = await supabase
     .from("agent_test_sessions")
     .select("id, session_name, contact_id, collected_data, created_at, updated_at")
     .eq("agent_id", agentId)
+    .eq("location_id", session.locationId) // sessões são por admin (multi-tenant)
     .order("updated_at", { ascending: false })
     .limit(50);
 
@@ -68,13 +81,23 @@ export async function POST(request: NextRequest) {
 
   const { data: agent } = await supabase
     .from("agents")
-    .select("id")
+    .select("id, type")
     .eq("id", agent_id)
-    .eq("location_id", session.locationId)
     .maybeSingle();
 
   if (!agent) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
+  }
+  if (agent.type !== "account_assistant") {
+    const { data: scoped } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("id", agent_id)
+      .eq("location_id", session.locationId)
+      .maybeSingle();
+    if (!scoped) {
+      return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
+    }
   }
 
   const { data: newSession, error } = await supabase

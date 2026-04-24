@@ -11,6 +11,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { RepIdentity, RepInput } from "@/types/account-assistant";
+import type { ConversationTurn } from "@/lib/ai/openai-client";
 import {
   TERMS_OF_USE_TEXT,
   TERMS_ACCEPTED_TEXT,
@@ -27,6 +28,8 @@ export interface ProcessInput {
   rep: RepIdentity;
   input: RepInput;
   agentId: string; // agent_id do Sparkbot na Hub location (pra billing/logs)
+  /** Turns anteriores da conversa (da sessão de teste ou histórico real do GHL). */
+  conversationHistory?: ConversationTurn[];
   config: {
     confirmation_mode?: "always" | "medium_and_high" | "high_only";
     ai_model?: string;
@@ -145,7 +148,14 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // Constrói user message (pode ter imagem anexada)
   const userMessage: LLMMessage = buildUserMessage(input.input, runtimeContext);
 
-  // 5. LLM call com tools
+  // 5. LLM call com tools — prepend histórico da sessão (turns anteriores como
+  // user/assistant messages). Alto benefício pra cache hit: turns anteriores
+  // são byte-exact estáveis, só o último muda.
+  const history: LLMMessage[] = (input.conversationHistory || []).map((t) => ({
+    role: t.role,
+    content: t.content,
+  }));
+
   const ghlClient = new GHLClient(location.company_id, activeLocationId);
   const toolCtx: ToolContext = {
     rep,
@@ -156,7 +166,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
 
   const result = await runWithTools({
     systemPrompt,
-    messages: [userMessage],
+    messages: [...history, userMessage],
     tools: Object.values(TOOL_REGISTRY).map((t) => t.def),
     executor: (name, args) => executeTool(name, args, toolCtx),
     model: input.config.ai_model,

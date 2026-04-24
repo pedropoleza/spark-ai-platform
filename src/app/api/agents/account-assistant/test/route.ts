@@ -6,13 +6,18 @@ import { identifyRep, normalizePhone, acceptTerms } from "@/lib/account-assistan
 import { processIncoming } from "@/lib/account-assistant/processor";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
 import type { RepInput } from "@/types/account-assistant";
+import type { ConversationTurn } from "@/lib/ai/openai-client";
 
 /**
- * Teste do Sparkbot via dashboard. Permite admin validar o pipeline sem
- * precisar do número WhatsApp real. Identifica o rep pelo phone do GHL user
- * logado (ou phone explícito no body).
+ * POST /api/agents/account-assistant/test
  *
- * POST body: { message, input_kind?, base64?, filename?, auto_accept_terms? }
+ * Teste do Sparkbot via dashboard. Mesmo padrão do /api/agents/test do
+ * sales/recruitment: DB (agent_test_sessions/messages) é source of truth do
+ * histórico. UI manda session_id + message; backend lê histórico completo
+ * do DB antes de chamar o LLM.
+ *
+ * Body: { message, session_id?, input_kind?, base64?, filename?, rep_phone?,
+ *         auto_accept_terms? }
  */
 export async function POST(request: NextRequest) {
   const session = await getSession();
@@ -20,16 +25,17 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
   const message: string = body.message || "";
+  const providedSessionId: string | undefined = body.session_id;
   const inputKind: "text" | "audio" | "image" | "document" = body.input_kind || "text";
   const base64: string | undefined = body.base64;
   const filename: string | undefined = body.filename;
-  const autoAcceptTerms: boolean = body.auto_accept_terms !== false; // default true pra teste
+  const autoAcceptTerms: boolean = body.auto_accept_terms !== false;
 
   if (!message && inputKind === "text") {
     return errorResponse("message obrigatória", 400, "missing_message");
   }
 
-  // Resolver phone: do body (override) ou busca GHL user logado
+  // Resolver phone (body ou GHL user logado)
   let phone: string | null = body.rep_phone || null;
   let ghlUserRaw: unknown = null;
   if (!phone) {
@@ -43,12 +49,7 @@ export async function POST(request: NextRequest) {
     try {
       const client = new GHLClient(location.company_id, session.locationId);
       const res = await client.get<{
-        user?: {
-          phone?: string;
-          phoneNumber?: string;
-          mobile?: string;
-          phone_number?: string;
-        };
+        user?: { phone?: string; phoneNumber?: string; mobile?: string; phone_number?: string };
       }>(`/users/${session.userId}`);
       ghlUserRaw = res;
       const u = res.user || {};
@@ -62,8 +63,7 @@ export async function POST(request: NextRequest) {
   if (!phone) {
     return NextResponse.json(
       {
-        error:
-          "Não consegui achar teu phone no GHL. Passa rep_phone no body ou configura phone no teu user no GHL.",
+        error: "Não consegui achar teu phone no GHL. Passa rep_phone no body ou configura phone no teu user no GHL.",
         code: "no_phone",
         debug: {
           session_user_id: session.userId,
@@ -78,19 +78,18 @@ export async function POST(request: NextRequest) {
   const rep = await identifyRep(normalizePhone(phone));
   if (!rep) {
     return errorResponse(
-      `Nenhum user GHL com phone ${phone} em nenhuma location. Ou teu phone no GHL não bate, ou não tem nenhuma location registrada.`,
+      `Nenhum user GHL com phone ${phone} em nenhuma location.`,
       404,
       "rep_not_found",
     );
   }
 
-  // Auto-aceite termos pro teste (admin não quer passar por onboarding toda vez)
   if (autoAcceptTerms && !rep.terms_accepted_at) {
     await acceptTerms(rep.id);
     rep.terms_accepted_at = new Date().toISOString();
   }
 
-  // Buscar agent Sparkbot
+  // Sparkbot agent
   const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
   if (!hubLocationId) return errorResponse("Hub não configurado", 500, "hub_not_configured");
 
@@ -110,7 +109,68 @@ export async function POST(request: NextRequest) {
     ? hubAgent.agent_configs[0]
     : hubAgent.agent_configs;
 
-  // Montar RepInput
+  // ==========================================================================
+  // 1. RESOLVER SESSÃO: existente ou nova. DB = source of truth.
+  // ==========================================================================
+  let sessionId: string;
+  if (providedSessionId) {
+    const { data: existingSession } = await supabase
+      .from("agent_test_sessions")
+      .select("id")
+      .eq("id", providedSessionId)
+      .eq("location_id", session.locationId)
+      .eq("agent_id", hubAgent.id)
+      .maybeSingle();
+    if (!existingSession) {
+      return errorResponse("Sessão não encontrada", 404, "session_not_found");
+    }
+    sessionId = existingSession.id;
+  } else {
+    const { data: newSession, error: newSessionErr } = await supabase
+      .from("agent_test_sessions")
+      .insert({
+        agent_id: hubAgent.id,
+        location_id: session.locationId,
+        created_by: session.userId || "unknown",
+        session_name: null,
+      })
+      .select("id")
+      .single();
+    if (newSessionErr || !newSession) {
+      return errorResponse(newSessionErr?.message || "Falha ao criar sessão", 500, "session_create_failed");
+    }
+    sessionId = newSession.id;
+  }
+
+  // ==========================================================================
+  // 2. SALVAR USER MSG
+  // ==========================================================================
+  const displayContent = buildDisplayContent(inputKind, message, filename);
+  await supabase.from("agent_test_messages").insert({
+    session_id: sessionId,
+    role: "user",
+    content: displayContent,
+  });
+
+  // ==========================================================================
+  // 3. LER HISTÓRICO COMPLETO DO DB (últimas 30 msgs, menos a que acabou de ser inserida)
+  // ==========================================================================
+  const { data: dbMessages } = await supabase
+    .from("agent_test_messages")
+    .select("role, content")
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: true });
+
+  const allMessages = dbMessages || [];
+  const priorMessages = allMessages.slice(0, -1).slice(-30);
+  const conversationTurns: ConversationTurn[] = priorMessages.map((m) => ({
+    role: m.role === "user" ? "user" : "assistant",
+    content: m.content,
+  }));
+
+  // ==========================================================================
+  // 4. PROCESSAR
+  // ==========================================================================
   const repInput: RepInput = buildRepInput(inputKind, message, base64, filename);
 
   const startTs = Date.now();
@@ -118,6 +178,7 @@ export async function POST(request: NextRequest) {
     rep,
     input: repInput,
     agentId: hubAgent.id,
+    conversationHistory: conversationTurns,
     config: {
       confirmation_mode: (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") || "medium_and_high",
       ai_model: agentConfig?.ai_model,
@@ -125,7 +186,29 @@ export async function POST(request: NextRequest) {
   });
   const durationMs = Date.now() - startTs;
 
+  // ==========================================================================
+  // 5. SALVAR AGENT MSG + ATUALIZAR updated_at DA SESSÃO
+  // ==========================================================================
+  await supabase.from("agent_test_messages").insert({
+    session_id: sessionId,
+    role: "agent",
+    content: result.text || "(sem resposta)",
+    metadata: {
+      model: result.model_used,
+      tools: result.tools_executed,
+      prompt_tokens: result.tokens?.prompt,
+      completion_tokens: result.tokens?.completion,
+      cached_tokens: result.tokens?.cached,
+      duration_ms: durationMs,
+    },
+  });
+  await supabase
+    .from("agent_test_sessions")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", sessionId);
+
   return NextResponse.json({
+    session_id: sessionId,
     response: result.text,
     tokens: result.tokens,
     tools_executed: result.tools_executed,
@@ -147,14 +230,20 @@ function buildRepInput(
   base64?: string,
   filename?: string,
 ): RepInput {
-  if (kind === "audio") {
-    return { kind: "audio", transcribed_text: message };
-  }
-  if (kind === "image" && base64) {
-    return { kind: "image", base64_data_uri: base64, caption: message || undefined };
-  }
-  if (kind === "document" && base64) {
-    return { kind: "document", extracted_text: message, filename: filename || "documento" };
-  }
+  if (kind === "audio") return { kind: "audio", transcribed_text: message };
+  if (kind === "image" && base64) return { kind: "image", base64_data_uri: base64, caption: message || undefined };
+  if (kind === "document" && base64) return { kind: "document", extracted_text: message, filename: filename || "documento" };
   return { kind: "text", text: message };
+}
+
+/** Rótulo amigável pra salvar na DB (a msg do rep como aparece na UI). */
+function buildDisplayContent(
+  kind: "text" | "audio" | "image" | "document",
+  message: string,
+  filename?: string,
+): string {
+  if (kind === "audio") return `🎤 "${message}"`;
+  if (kind === "image") return message || "[imagem anexada]";
+  if (kind === "document") return `📎 ${filename || "documento"}${message ? `\n${message}` : ""}`;
+  return message;
 }

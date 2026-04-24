@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, Wrench, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -26,19 +26,88 @@ interface RepInfo {
   active_location_id: string | null;
 }
 
+interface SparkbotTesterProps {
+  agentId: string; // Sparkbot agent id — session é por (agent_id + location_id do admin)
+}
+
 /**
- * Tester do Sparkbot. Chat simplificado que chama o endpoint de teste
- * e exibe resposta + tools chamadas + metadados.
+ * Tester do Sparkbot. Mantém sessões persistentes no DB (agent_test_sessions
+ * + agent_test_messages) pra preservar histórico entre msgs. Mesmo padrão do
+ * agent-tester do sales/recruitment.
  */
-export function SparkbotTester() {
+export function SparkbotTester({ agentId }: SparkbotTesterProps) {
   const [messages, setMessages] = useState<TestMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [repInfo, setRepInfo] = useState<RepInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [debugDump, setDebugDump] = useState<unknown>(null);
   const [repPhone, setRepPhone] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const storageKey = `sparkbot-test-session:${agentId}`;
+
+  // Carrega sessão persistida (se existir) ao montar / trocar agente
+  const loadSession = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/agents/test/sessions/${id}`);
+      if (!res.ok) {
+        localStorage.removeItem(storageKey);
+        setSessionId(null);
+        setMessages([]);
+        return;
+      }
+      const data = await res.json();
+      setSessionId(data.session.id);
+      interface DbMsg {
+        id: string;
+        role: "user" | "agent";
+        content: string;
+        created_at: string;
+        metadata?: {
+          prompt_tokens?: number;
+          completion_tokens?: number;
+          cached_tokens?: number;
+          duration_ms?: number;
+          tools?: string[];
+          model?: string;
+        };
+      }
+      const loaded: TestMessage[] = (data.messages || []).map((m: DbMsg) => ({
+        role: m.role,
+        content: m.content,
+        timestamp: new Date(m.created_at),
+        tokens: m.metadata?.prompt_tokens !== undefined
+          ? {
+              prompt: m.metadata.prompt_tokens,
+              completion: m.metadata.completion_tokens || 0,
+              cached: m.metadata.cached_tokens || 0,
+            }
+          : undefined,
+        duration_ms: m.metadata?.duration_ms,
+        tools: m.metadata?.tools,
+        model: m.metadata?.model,
+      }));
+      setMessages(loaded);
+    } catch {
+      setSessionId(null);
+    }
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (!agentId) return;
+    setMessages([]);
+    setError(null);
+    setDebugDump(null);
+
+    const cached = typeof window !== "undefined" ? localStorage.getItem(storageKey) : null;
+    if (cached) {
+      loadSession(cached);
+    } else {
+      setSessionId(null);
+    }
+  }, [agentId, storageKey, loadSession]);
 
   useEffect(() => {
     const container = messagesEndRef.current?.parentElement;
@@ -53,6 +122,7 @@ export function SparkbotTester() {
     setInput("");
     setLoading(true);
     setError(null);
+    setDebugDump(null);
 
     try {
       const res = await fetch("/api/agents/account-assistant/test", {
@@ -60,6 +130,7 @@ export function SparkbotTester() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
+          session_id: sessionId,
           ...(repPhone.trim() ? { rep_phone: repPhone.trim() } : {}),
         }),
       });
@@ -74,6 +145,12 @@ export function SparkbotTester() {
         ]);
         setLoading(false);
         return;
+      }
+
+      // Persiste session_id (primeiro envio sempre cria sessão)
+      if (data.session_id && data.session_id !== sessionId) {
+        setSessionId(data.session_id);
+        localStorage.setItem(storageKey, data.session_id);
       }
 
       if (data.rep && !repInfo) setRepInfo(data.rep);
@@ -97,9 +174,18 @@ export function SparkbotTester() {
     }
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
+    // Deleta sessão do DB (cascade apaga messages) e limpa localStorage
+    if (sessionId) {
+      try {
+        await fetch(`/api/agents/test/sessions/${sessionId}`, { method: "DELETE" });
+      } catch { /* non-critical */ }
+    }
+    localStorage.removeItem(storageKey);
+    setSessionId(null);
     setMessages([]);
     setError(null);
+    setDebugDump(null);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -118,12 +204,12 @@ export function SparkbotTester() {
             <div>
               <CardTitle className="text-base">Teste o Sparkbot</CardTitle>
               <CardDescription>
-                Conversa simulando você como rep. Usa seu phone do GHL pra identificar.
+                Conversa simulando você como rep. Sessão persistida — refresh não perde contexto.
               </CardDescription>
             </div>
-            <Button variant="outline" size="sm" onClick={handleReset} disabled={messages.length === 0}>
+            <Button variant="outline" size="sm" onClick={handleReset} disabled={messages.length === 0 && !sessionId}>
               <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-              Limpar
+              Nova sessão
             </Button>
           </CardHeader>
 
@@ -171,7 +257,6 @@ export function SparkbotTester() {
                         <p className="text-sm text-gray-900">{msg.content}</p>
                       </div>
 
-                      {/* Tools chamadas */}
                       {msg.tools && msg.tools.length > 0 && (
                         <div className="flex flex-wrap gap-1 px-1">
                           {msg.tools.map((t, j) => (
@@ -183,7 +268,6 @@ export function SparkbotTester() {
                         </div>
                       )}
 
-                      {/* Metadados */}
                       <div className="flex items-center gap-3 px-1 text-[11px] text-gray-500 flex-wrap">
                         {msg.duration_ms !== undefined && (
                           <span className="flex items-center gap-0.5">
@@ -195,7 +279,7 @@ export function SparkbotTester() {
                           <span className="flex items-center gap-0.5">
                             <Zap className="w-2.5 h-2.5" />
                             {msg.tokens.prompt + msg.tokens.completion}tok
-                            {msg.tokens.cached > 0 && (
+                            {msg.tokens.cached > 0 && msg.tokens.prompt > 0 && (
                               <span className="text-emerald-600">
                                 {" "}(cache {Math.round((msg.tokens.cached / msg.tokens.prompt) * 100)}%)
                               </span>
@@ -206,7 +290,7 @@ export function SparkbotTester() {
                       </div>
                     </>
                   ) : (
-                    <p className="text-sm">{msg.content}</p>
+                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                   )}
                 </div>
                 {msg.role === "user" && (
@@ -249,6 +333,11 @@ export function SparkbotTester() {
                 <Send className="w-4 h-4" />
               </Button>
             </div>
+            {sessionId && (
+              <p className="text-[10px] text-gray-400 mt-1.5 font-mono">
+                Sessão: {sessionId.substring(0, 8)}…
+              </p>
+            )}
           </div>
         </Card>
       </div>
@@ -281,7 +370,7 @@ export function SparkbotTester() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Phone do rep (override)</CardTitle>
             <CardDescription>
-              Use isto se teu user GHL não tem phone cadastrado. E.164 ou só números.
+              Use se teu user GHL não tem phone cadastrado.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -332,13 +421,13 @@ export function SparkbotTester() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Como funciona o teste</CardTitle>
+            <CardTitle className="text-base">Como funciona</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs text-gray-600">
-            <p>Esta aba simula você como rep conversando com o Sparkbot no WhatsApp.</p>
-            <p>O fluxo real (identificação → tools → GHL → resposta) roda igualzinho, exceto que a resposta aparece aqui em vez de ir pro WhatsApp.</p>
-            <p>As ações que o bot executar <strong>são reais no GHL</strong> (cria nota, task, etc). Cuidado.</p>
-            <p>Termos de uso são aceitos automaticamente em modo teste.</p>
+            <p>Esta aba simula você como rep no WhatsApp.</p>
+            <p>A sessão é persistida: o Sparkbot lembra do contexto entre msgs. Refresh não perde nada.</p>
+            <p>Ações que o bot executar <strong>são reais no GHL</strong> (cria nota, task, etc).</p>
+            <p>Use &ldquo;Nova sessão&rdquo; pra começar do zero.</p>
           </CardContent>
         </Card>
       </div>
