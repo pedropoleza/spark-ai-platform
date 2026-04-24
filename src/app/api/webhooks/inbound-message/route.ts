@@ -36,23 +36,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "invalid_json" }, { status: 400 });
     }
 
-    // ===== SEGURANÇA: Validar origem (opcional) =====
-    // GHL nem sempre envia header de assinatura — verificamos se
-    // presente, mas nao bloqueamos se estiver ausente.
+    // ===== SEGURANÇA: Validar origem =====
+    // Se GHL_WEBHOOK_SECRET está setado, signature é OBRIGATÓRIA.
+    // Se não está setado + WEBHOOK_REQUIRE_SIGNATURE=true, bloqueia tudo (fail-closed em prod).
+    // Se nenhum dos dois, aceita sem verificar (só usar em dev).
     const webhookSecret = process.env.GHL_WEBHOOK_SECRET;
+    const requireSignature = process.env.WEBHOOK_REQUIRE_SIGNATURE === "true";
+
     if (webhookSecret) {
       const signature = request.headers.get("x-ghl-signature") ||
         request.headers.get("x-signature") ||
         request.headers.get("x-webhook-signature");
 
-      if (signature) {
-        const { createHmac } = await import("crypto");
-        const expectedSig = createHmac("sha256", webhookSecret).update(rawBody).digest("hex");
-        if (signature !== expectedSig) {
-          console.warn("[Webhook] Invalid signature — rejecting");
-          return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
-        }
+      if (!signature) {
+        console.warn("[Webhook] Missing signature header — rejecting (secret is configured)");
+        return NextResponse.json({ error: "missing_signature" }, { status: 401 });
       }
+
+      const { createHmac, timingSafeEqual } = await import("crypto");
+      const expectedSig = createHmac("sha256", webhookSecret).update(rawBody).digest("hex");
+      const sigBuf = Buffer.from(signature, "utf8");
+      const expBuf = Buffer.from(expectedSig, "utf8");
+      if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
+        console.warn("[Webhook] Invalid signature — rejecting");
+        return NextResponse.json({ error: "invalid_signature" }, { status: 401 });
+      }
+    } else if (requireSignature) {
+      console.error("[Webhook] WEBHOOK_REQUIRE_SIGNATURE=true mas GHL_WEBHOOK_SECRET não configurado — rejeitando");
+      return NextResponse.json({ error: "server_misconfigured" }, { status: 500 });
+    } else {
+      console.warn("[Webhook] ⚠️  No signature verification — GHL_WEBHOOK_SECRET not set");
     }
 
     // ===== PARSING =====

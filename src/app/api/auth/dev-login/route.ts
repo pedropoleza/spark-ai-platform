@@ -7,7 +7,14 @@ const DEV_USER_ID = "dev-user";
 const DEV_LOCATION_NAME = "Dev Location (Matrix AI Hub)";
 
 export async function POST() {
-  if (process.env.NEXT_PUBLIC_DEV_MODE !== "true") {
+  // Defesa em camadas: precisa das 3 condições simultaneamente.
+  // - DEV_MODE (server-only, não vaza no bundle)
+  // - NEXT_PUBLIC_DEV_MODE (pro botão aparecer na UI — legacy)
+  // - NODE_ENV !== "production" (Vercel seta automaticamente em prod)
+  const devModeServer = process.env.DEV_MODE === "true";
+  const devModePublic = process.env.NEXT_PUBLIC_DEV_MODE === "true";
+  const isProduction = process.env.NODE_ENV === "production";
+  if (!devModeServer || !devModePublic || isProduction) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

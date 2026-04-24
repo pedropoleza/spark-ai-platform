@@ -75,13 +75,15 @@ const workingHoursSchema = z.object({
 });
 
 // Agent config update
+// Limites de tamanho em campos free-text que vão parar no prompt da IA.
+// Objetivo: prevenir prompt injection abusivo + cortar custo de tokens.
 const personalitySchema = z.object({
-  name: z.string(),
+  name: z.string().max(100),
   identity_mode: z.enum(["assistant", "human"]),
-  greeting_style: z.string(),
-  farewell_style: z.string(),
-  language: z.string(),
-  persona_description: z.string(),
+  greeting_style: z.string().max(500),
+  farewell_style: z.string().max(500),
+  language: z.string().max(50),
+  persona_description: z.string().max(2000),
 });
 
 export const updateAgentConfigSchema = z.object({
@@ -95,11 +97,11 @@ export const updateAgentConfigSchema = z.object({
   tone_aggressiveness: z.number().min(0).max(100).nullable().optional(),
   objective: z.enum(["qualification_only", "qualification_and_booking", "booking_only"]).nullable().optional(),
   data_fields: z.array(dataFieldSchema).nullable().optional(),
-  ai_model: z.string().min(1).nullable().optional(),
-  custom_instructions: z.string().nullable().optional(),
-  conversation_examples: z.string().nullable().optional(),
-  knowledge_base_instructions: z.string().nullable().optional(),
-  system_prompt_override: z.string().nullable().optional(),
+  ai_model: z.string().min(1).max(100).nullable().optional(),
+  custom_instructions: z.string().max(10000).nullable().optional(),
+  conversation_examples: z.string().max(20000).nullable().optional(),
+  knowledge_base_instructions: z.string().max(10000).nullable().optional(),
+  system_prompt_override: z.string().max(20000).nullable().optional(),
   debounce_seconds: z.number().min(5).max(60).nullable().optional(),
   max_messages_per_conversation: z.number().min(10).max(200).nullable().optional(),
   working_hours: workingHoursSchema.nullable().optional(),
@@ -188,6 +190,23 @@ export const updateAgentConfigSchema = z.object({
     on_error: z.boolean(),
     notification_email: z.string(),
   }).nullable().optional(),
+});
+
+// Feedback
+export const createFeedbackSchema = z.object({
+  agent_id: z.string().min(1),
+  rating: z.enum(["positive", "negative"]),
+  ai_message: z.string().min(1).max(10000),
+  user_message: z.string().max(10000).nullable().optional(),
+  suggestion: z.string().max(5000).nullable().optional(),
+  context: z.string().max(20000).nullable().optional(),
+});
+
+export const updateFeedbackSchema = z.object({
+  id: z.string().min(1),
+  agent_id: z.string().min(1),
+  rating: z.enum(["positive", "negative"]).optional(),
+  suggestion: z.string().max(5000).nullable().optional(),
 });
 
 // Teste do agente
