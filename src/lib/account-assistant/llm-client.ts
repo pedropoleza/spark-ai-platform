@@ -169,9 +169,13 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const usage = response.usage as any;
-    totalPromptTokens += response.usage?.input_tokens || 0;
+    const freshInput = response.usage?.input_tokens || 0;
+    const cachedInput = usage?.cache_read_input_tokens || 0;
+    // Normalizar: prompt_tokens = total de input (fresh + cached), igual o
+    // formato da OpenAI. Evita cache % > 100% quando UI divide cached/prompt.
+    totalPromptTokens += freshInput + cachedInput;
     totalCompletionTokens += response.usage?.output_tokens || 0;
-    totalCachedTokens += usage?.cache_read_input_tokens || 0;
+    totalCachedTokens += cachedInput;
 
     // Append response como assistant message
     messages.push({ role: "assistant", content: response.content as AnthropicBlock[] });

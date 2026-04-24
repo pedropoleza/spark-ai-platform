@@ -351,14 +351,19 @@ const createNote: { def: ToolDefinition; handler: ToolHandler } = {
 const createTask: { def: ToolDefinition; handler: ToolHandler } = {
   def: {
     name: "create_task",
-    description: "Cria uma task associada ao contato, com data de vencimento.",
+    description:
+      "Cria uma task associada ao contato. due_at DEVE ser ISO 8601 com timezone (ex: '2026-04-28T10:00:00-05:00'). Converta datas naturais pro timezone da location do rep ANTES de chamar.",
     risk: "medium",
     parameters: {
       type: "object",
       properties: {
         contact_id: { type: "string" },
         title: { type: "string" },
-        due_at: { type: "string", description: "ISO timestamp ou data natural (converter pra ISO antes)." },
+        due_at: {
+          type: "string",
+          description:
+            "ISO 8601 com timezone offset. Exemplo: '2026-04-28T10:00:00-05:00' (2 de abril 10h no EST). NÃO aceite formatos como 'segunda' ou '10h' — sempre converta pra ISO.",
+        },
         body: { type: "string", description: "Descrição opcional." },
       },
       required: ["contact_id", "title", "due_at"],
@@ -372,21 +377,35 @@ const createTask: { def: ToolDefinition; handler: ToolHandler } = {
     if (!contactId || !title || !dueAt) {
       return { status: "error", message: "contact_id, title e due_at obrigatórios", retryable: false };
     }
+
+    // Valida ISO 8601 — se inválido, retorna erro estruturado pra LLM corrigir
+    const parsed = new Date(dueAt);
+    if (isNaN(parsed.getTime())) {
+      return {
+        status: "error",
+        message: `due_at não é ISO 8601 válido: "${dueAt}". Use formato '2026-04-28T10:00:00-05:00'.`,
+        retryable: false,
+      };
+    }
+    const isoDueAt = parsed.toISOString();
+
     const repGhlUserId = ctx.rep.ghl_users.find((u) => u.location_id === ctx.locationId)?.ghl_user_id;
 
     try {
       const res = await ctx.ghlClient.post<{ id?: string }>(`/contacts/${contactId}/tasks`, {
         title,
         body,
-        dueDate: dueAt,
+        dueDate: isoDueAt,
         ...(repGhlUserId ? { assignedTo: repGhlUserId } : {}),
       });
-      return { status: "ok", data: { task_id: res.id } };
+      return { status: "ok", data: { task_id: res.id, due_at: isoDueAt } };
     } catch (err) {
+      // Expõe corpo do erro GHL pra LLM entender e corrigir se possível
+      const msg = err instanceof Error ? err.message : "Erro criando task";
       return {
         status: "error",
-        message: err instanceof Error ? err.message : "Erro criando task",
-        retryable: true,
+        message: `GHL rejeitou criação de task: ${msg}`,
+        retryable: false,
       };
     }
   },

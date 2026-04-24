@@ -139,6 +139,8 @@ function buildMemorySection(profile: RepProfile): string {
 
 /**
  * Runtime context — dinâmico, vai na user message (não cacheado).
+ * Inclui timestamp ISO + offset pra LLM conseguir calcular "segunda 10h"
+ * em ISO 8601 sem errar.
  */
 export function buildSparkbotRuntimeContext(args: {
   locationTimezone: string;
@@ -150,5 +152,44 @@ export function buildSparkbotRuntimeContext(args: {
     dateStyle: "full",
     timeStyle: "short",
   });
-  return `[Agora: ${dateStr}]`;
+  // Calcula offset do timezone da location — necessário pra LLM montar ISO correto
+  const offsetMs = getTimezoneOffsetMs(args.locationTimezone, now);
+  const offsetSign = offsetMs >= 0 ? "+" : "-";
+  const absMin = Math.abs(offsetMs) / 60000;
+  const offsetHours = Math.floor(absMin / 60).toString().padStart(2, "0");
+  const offsetMins = Math.floor(absMin % 60).toString().padStart(2, "0");
+  const offsetStr = `${offsetSign}${offsetHours}:${offsetMins}`;
+
+  // ISO local = instant adjusted pro offset, formato sem Z
+  const localIso = new Date(now.getTime() + offsetMs).toISOString().replace("Z", offsetStr);
+
+  return [
+    `[Agora: ${dateStr} (${args.locationTimezone}, offset ${offsetStr})]`,
+    `[ISO agora: ${localIso}]`,
+    `[Ao criar task com due_at, use ISO 8601 com offset ${offsetStr}. Ex: segunda-feira 10h seria calculado a partir deste momento e emitido como AAAA-MM-DDT10:00:00${offsetStr}]`,
+  ].join("\n");
+}
+
+/** Calcula offset do timezone pra a data especificada (em ms, positivo = leste de UTC). */
+function getTimezoneOffsetMs(timezone: string, date: Date): number {
+  // Usa Intl.DateTimeFormat pra obter o instante "como parece" naquele tz,
+  // comparando com UTC pra deduzir o offset.
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const parts = dtf.formatToParts(date);
+  const map: Record<string, string> = {};
+  for (const p of parts) if (p.type !== "literal") map[p.type] = p.value;
+  const asUtc = Date.UTC(
+    parseInt(map.year),
+    parseInt(map.month) - 1,
+    parseInt(map.day),
+    parseInt(map.hour === "24" ? "0" : map.hour),
+    parseInt(map.minute),
+    parseInt(map.second),
+  );
+  return asUtc - date.getTime();
 }
