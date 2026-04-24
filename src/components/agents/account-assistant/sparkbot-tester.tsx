@@ -36,6 +36,8 @@ export function SparkbotTester() {
   const [loading, setLoading] = useState(false);
   const [repInfo, setRepInfo] = useState<RepInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [debugDump, setDebugDump] = useState<unknown>(null);
+  const [repPhone, setRepPhone] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -56,12 +58,16 @@ export function SparkbotTester() {
       const res = await fetch("/api/agents/account-assistant/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({
+          message: text,
+          ...(repPhone.trim() ? { rep_phone: repPhone.trim() } : {}),
+        }),
       });
       const data = await res.json();
 
       if (!res.ok) {
         setError(data.error || "Erro na chamada");
+        if (data.debug) setDebugDump(data.debug);
         setMessages((prev) => [
           ...prev,
           { role: "agent", content: `⚠️ ${data.error}`, timestamp: new Date(), error: data.error },
@@ -254,14 +260,39 @@ export function SparkbotTester() {
             <CardContent className="p-4">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
-                <div>
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-red-900">Erro</p>
                   <p className="text-xs text-red-700 mt-1 break-words">{error}</p>
+                  {debugDump !== null && (
+                    <details className="mt-2">
+                      <summary className="text-[11px] text-red-700 cursor-pointer">debug info</summary>
+                      <pre className="mt-1 text-[10px] bg-white p-2 rounded overflow-auto max-h-40">
+                        {JSON.stringify(debugDump, null, 2)}
+                      </pre>
+                    </details>
+                  )}
                 </div>
               </div>
             </CardContent>
           </Card>
         )}
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Phone do rep (override)</CardTitle>
+            <CardDescription>
+              Use isto se teu user GHL não tem phone cadastrado. E.164 ou só números.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Input
+              value={repPhone}
+              onChange={(e) => setRepPhone(e.target.value)}
+              placeholder="+5511987654321"
+              className="text-sm"
+            />
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader className="pb-3">

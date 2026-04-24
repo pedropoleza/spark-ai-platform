@@ -31,6 +31,7 @@ export async function POST(request: NextRequest) {
 
   // Resolver phone: do body (override) ou busca GHL user logado
   let phone: string | null = body.rep_phone || null;
+  let ghlUserRaw: unknown = null;
   if (!phone) {
     const { data: location } = await createAdminClient()
       .from("locations")
@@ -41,18 +42,36 @@ export async function POST(request: NextRequest) {
 
     try {
       const client = new GHLClient(location.company_id, session.locationId);
-      const res = await client.get<{ user?: { phone?: string } }>(`/users/${session.userId}`);
-      phone = res.user?.phone || null;
+      const res = await client.get<{
+        user?: {
+          phone?: string;
+          phoneNumber?: string;
+          mobile?: string;
+          phone_number?: string;
+        };
+      }>(`/users/${session.userId}`);
+      ghlUserRaw = res;
+      const u = res.user || {};
+      phone = u.phone || u.phoneNumber || u.mobile || u.phone_number || null;
     } catch (err) {
       console.error("[sparkbot test] failed to fetch GHL user:", err instanceof Error ? err.message : err);
+      ghlUserRaw = { error: err instanceof Error ? err.message : String(err) };
     }
   }
 
   if (!phone) {
-    return errorResponse(
-      "Não consegui achar teu phone no GHL. Passa rep_phone no body ou configura phone no teu user no GHL.",
-      400,
-      "no_phone",
+    return NextResponse.json(
+      {
+        error:
+          "Não consegui achar teu phone no GHL. Passa rep_phone no body ou configura phone no teu user no GHL.",
+        code: "no_phone",
+        debug: {
+          session_user_id: session.userId,
+          session_location_id: session.locationId,
+          ghl_user_response: ghlUserRaw,
+        },
+      },
+      { status: 400 },
     );
   }
 
