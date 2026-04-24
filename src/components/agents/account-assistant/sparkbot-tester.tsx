@@ -7,6 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
+interface ToolCallDetail {
+  name: string;
+  input: Record<string, unknown>;
+  result: unknown;
+}
+
 interface TestMessage {
   role: "user" | "agent";
   content: string;
@@ -14,6 +20,7 @@ interface TestMessage {
   model?: string;
   tokens?: { prompt: number; completion: number; cached: number };
   tools?: string[];
+  tool_calls?: ToolCallDetail[];
   duration_ms?: number;
   error?: string;
 }
@@ -71,6 +78,7 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
           cached_tokens?: number;
           duration_ms?: number;
           tools?: string[];
+          tool_calls?: ToolCallDetail[];
           model?: string;
         };
       }
@@ -87,6 +95,7 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
           : undefined,
         duration_ms: m.metadata?.duration_ms,
         tools: m.metadata?.tools,
+        tool_calls: m.metadata?.tool_calls,
         model: m.metadata?.model,
       }));
       setMessages(loaded);
@@ -164,6 +173,7 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
           model: data.model_used,
           tokens: data.tokens,
           tools: data.tools_executed,
+          tool_calls: data.tool_calls,
           duration_ms: data.duration_ms,
         },
       ]);
@@ -257,7 +267,50 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
                         <p className="text-sm text-gray-900">{msg.content}</p>
                       </div>
 
-                      {msg.tools && msg.tools.length > 0 && (
+                      {msg.tool_calls && msg.tool_calls.length > 0 ? (
+                        <details className="px-1">
+                          <summary className="cursor-pointer flex flex-wrap gap-1 list-none">
+                            {msg.tool_calls.map((tc, j) => {
+                              const isError =
+                                typeof tc.result === "object" &&
+                                tc.result !== null &&
+                                (tc.result as { status?: string }).status === "error";
+                              return (
+                                <Badge
+                                  key={j}
+                                  variant={isError ? "destructive" : "secondary"}
+                                  className="text-[11px] h-5"
+                                >
+                                  <Wrench className="w-2.5 h-2.5 mr-1" />
+                                  {tc.name}
+                                  {isError && " ❌"}
+                                </Badge>
+                              );
+                            })}
+                            <span className="text-[10px] text-gray-400 ml-1">(ver detalhes)</span>
+                          </summary>
+                          <div className="mt-2 space-y-2">
+                            {msg.tool_calls.map((tc, j) => (
+                              <div
+                                key={j}
+                                className="text-[10px] bg-white border border-gray-200 rounded p-2"
+                              >
+                                <div className="font-mono font-semibold text-gray-700 mb-1">
+                                  {tc.name}
+                                </div>
+                                <div className="text-gray-500 mb-0.5">input:</div>
+                                <pre className="bg-gray-50 p-1.5 rounded overflow-auto max-h-32">
+                                  {JSON.stringify(tc.input, null, 2)}
+                                </pre>
+                                <div className="text-gray-500 mt-1.5 mb-0.5">result:</div>
+                                <pre className="bg-gray-50 p-1.5 rounded overflow-auto max-h-48">
+                                  {JSON.stringify(tc.result, null, 2)}
+                                </pre>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      ) : msg.tools && msg.tools.length > 0 ? (
                         <div className="flex flex-wrap gap-1 px-1">
                           {msg.tools.map((t, j) => (
                             <Badge key={j} variant="secondary" className="text-[11px] h-5">
@@ -266,7 +319,7 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
                             </Badge>
                           ))}
                         </div>
-                      )}
+                      ) : null}
 
                       <div className="flex items-center gap-3 px-1 text-[11px] text-gray-500 flex-wrap">
                         {msg.duration_ms !== undefined && (

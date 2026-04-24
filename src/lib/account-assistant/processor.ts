@@ -42,6 +42,12 @@ export interface ProcessOutput {
   tokens?: { prompt: number; completion: number; cached: number };
   model_used?: string;
   tools_executed?: string[];
+  /** Tool calls completos (input + result) pra debug. Só populado em teste. */
+  tool_calls?: Array<{
+    name: string;
+    input: Record<string, unknown>;
+    result: unknown;
+  }>;
 }
 
 export async function processIncoming(input: ProcessInput): Promise<ProcessOutput> {
@@ -202,6 +208,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     },
     model_used: result.model_used,
     tools_executed: result.tool_calls.map((tc) => tc.name),
+    tool_calls: result.tool_calls,
   };
 }
 

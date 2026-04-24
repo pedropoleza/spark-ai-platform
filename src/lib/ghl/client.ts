@@ -67,7 +67,8 @@ export class GHLClient {
 
     if (!response.ok) {
       const errorBody = await response.text();
-      throw new Error(`GHL API ${response.status}: ${errorBody.substring(0, 200)}`);
+      // Limite maior pra debug — 422 precisa do body pra saber qual campo falhou
+      throw new Error(`GHL API ${response.status}: ${errorBody.substring(0, 800)}`);
     }
 
     return response.json();

@@ -196,6 +196,7 @@ export async function POST(request: NextRequest) {
     metadata: {
       model: result.model_used,
       tools: result.tools_executed,
+      tool_calls: result.tool_calls, // inclui input + result pra debug
       prompt_tokens: result.tokens?.prompt,
       completion_tokens: result.tokens?.completion,
       cached_tokens: result.tokens?.cached,
@@ -212,6 +213,7 @@ export async function POST(request: NextRequest) {
     response: result.text,
     tokens: result.tokens,
     tools_executed: result.tools_executed,
+    tool_calls: result.tool_calls, // detalhes completos pra debug no UI
     model_used: result.model_used,
     duration_ms: durationMs,
     rep: {
