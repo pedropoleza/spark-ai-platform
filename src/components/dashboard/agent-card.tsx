@@ -22,11 +22,11 @@ const typeLabels: Record<AgentType, { name: string; description: string }> = {
   },
   recruitment_agent: {
     name: "Agente de Recrutamento",
-    description: "Atende clientes que já compraram: onboarding, NPS, retenção e suporte",
+    description: "Qualifica candidatos e agenda entrevistas com especialistas",
   },
   account_assistant: {
-    name: "Assistente de Conta",
-    description: "Auxilia clientes com dúvidas sobre suas contas",
+    name: "Sparkbot",
+    description: "Copiloto de produtividade no WhatsApp do rep comercial",
   },
 };
 

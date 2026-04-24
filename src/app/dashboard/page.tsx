@@ -23,9 +23,20 @@ export default function DashboardPage() {
     try {
       // Sparkbot é global — fetch em paralelo
       fetch("/api/agents/sparkbot")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => setSparkbot(data?.agent || null))
-        .catch(() => {});
+        .then(async (r) => {
+          if (!r.ok) {
+            console.warn("[Dashboard] /api/agents/sparkbot failed:", r.status, await r.text().catch(() => ""));
+            return null;
+          }
+          return r.json();
+        })
+        .then((data) => {
+          console.log("[Dashboard] sparkbot fetch result:", data);
+          setSparkbot(data?.agent || null);
+        })
+        .catch((err) => {
+          console.error("[Dashboard] sparkbot fetch error:", err);
+        });
 
       const response = await fetch("/api/agents");
       if (response.ok) {
