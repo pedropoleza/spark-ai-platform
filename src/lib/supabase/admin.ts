@@ -1,4 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
+// Import com efeito colateral: valida env vars na primeira vez que admin.ts
+// é carregado — qualquer API route que toca DB vai trazer isso junto.
+import "@/lib/utils/env";
 
 // Client principal - AI Agent Hub project
 export function createAdminClient() {

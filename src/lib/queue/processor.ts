@@ -174,6 +174,14 @@ async function processGroup(
   supabase: ReturnType<typeof createAdminClient>,
   group: MessageGroup
 ): Promise<void> {
+  // Request ID único pra correlacionar todos os logs desta execução com o
+  // execution_log, facilita debug de "por que o bot não respondeu" etc.
+  const reqId = `req_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+  const log = (level: "log" | "warn" | "error", msg: string) => {
+    console[level](`[Processor req=${reqId} contact=${group.contactId.substring(0, 8)}] ${msg}`);
+  };
+  log("log", `START agent=${group.agentId || "?"} msgs=${group.messages.length}`);
+
   // 1. Buscar o agente exato gravado na fila. Se agent_id existir,
   // carregamos diretamente por id — sem cair no fallback por location,
   // que misturaria sales com pós-vendas. Se nao existir (linha
@@ -200,7 +208,7 @@ async function processGroup(
   const { data: agent } = await agentQuery;
 
   if (!agent) {
-    console.log(`[Processor] Agent not found/inactive for ${group.contactId}, skipping`);
+    log("log", "SKIP agent not found/inactive");
     return;
   }
 
@@ -208,7 +216,7 @@ async function processGroup(
     ? agent.agent_configs[0]
     : agent.agent_configs;
   if (!config) {
-    console.log(`[Processor] No config for agent ${agent.id}, skipping`);
+    log("log", `SKIP no config for agent ${agent.id}`);
     return;
   }
 
@@ -221,7 +229,7 @@ async function processGroup(
     .maybeSingle();
 
   if (convState?.ai_paused_at) {
-    console.log(`[Processor] IA pausada para ${group.contactId} (${convState.ai_paused_reason || "manual"}), skipping`);
+    log("log", `SKIP IA pausada (${convState.ai_paused_reason || "manual"})`);
     return;
   }
 
@@ -530,6 +538,53 @@ async function processGroup(
     throw new Error(aiResult.error || "Falha no processamento AI");
   }
 
+  // 6b. Detectar loop de parse failure: se a IA retornou JSON inválido duas
+  // vezes seguidas nesta conversa, pausa e alerta em vez de ficar mandando
+  // "desculpa, tive um problema técnico" repetidamente.
+  if (aiResult.parse_failed) {
+    const { data: recentFailures } = await supabase
+      .from("execution_log")
+      .select("id, action_payload")
+      .eq("agent_id", agent.id)
+      .eq("contact_id", group.contactId)
+      .eq("action_type", "ai_processing")
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    const lastWasFailure = recentFailures?.[0]?.action_payload &&
+      (recentFailures[0].action_payload as { parse_failed?: boolean }).parse_failed === true;
+
+    if (lastWasFailure) {
+      log("error", "PAUSE 2+ parse failures — pausing conversation");
+      const nowIso = new Date().toISOString();
+      await supabase
+        .from("conversation_state")
+        .upsert(
+          {
+            agent_id: agent.id,
+            location_id: group.locationId,
+            contact_id: group.contactId,
+            conversation_id: group.conversationId,
+            status: convState?.status || "active",
+            ai_paused_at: nowIso,
+            ai_paused_reason: "ai_parse_failure_loop",
+            updated_at: nowIso,
+          },
+          { onConflict: "agent_id,contact_id" }
+        );
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        conversation_id: group.conversationId,
+        contact_id: group.contactId,
+        location_id: group.locationId,
+        action_type: "ai_paused",
+        action_payload: { reason: "ai_parse_failure_loop" },
+        success: true,
+      });
+      return; // Não envia resposta genérica, não executa ações
+    }
+  }
+
   // 7. Logar uso de tokens
   await supabase.from("execution_log").insert({
     agent_id: agent.id,
@@ -538,11 +593,13 @@ async function processGroup(
     location_id: group.locationId,
     action_type: "ai_processing",
     action_payload: {
+      request_id: reqId,
       model: config.ai_model,
       prompt_tokens: aiResult.prompt_tokens,
       completion_tokens: aiResult.completion_tokens,
       cached_tokens: aiResult.cached_tokens,
       cache_hit_ratio: aiResult.cache_hit_ratio,
+      parse_failed: aiResult.parse_failed || false,
     },
     ai_model_used: config.ai_model,
     prompt_tokens: aiResult.prompt_tokens,
@@ -574,6 +631,7 @@ async function processGroup(
       model: config.ai_model || "gpt-4.1-mini",
       promptTokens: aiResult.prompt_tokens || 0,
       completionTokens: aiResult.completion_tokens || 0,
+      cachedTokens: aiResult.cached_tokens || 0,
       usesCustomKey,
     });
   } catch (billingError) {
