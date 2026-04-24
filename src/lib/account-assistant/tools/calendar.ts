@@ -1,0 +1,294 @@
+/**
+ * Tools de Calendário e Appointments.
+ *
+ * GOTCHAS:
+ * - free-slots usa startDate/endDate em milissegundos (string)
+ * - calendars/events usa startTime/endTime em milissegundos
+ * - appointments crud em /calendars/events/appointments (não em /contacts/{id})
+ */
+
+import type { ToolEntry } from "./types";
+import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult } from "./types";
+
+const listAppointments: ToolEntry = {
+  def: {
+    name: "list_appointments",
+    description: "Lista appointments do rep (default só os dele) numa janela de tempo.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        when: {
+          type: "string",
+          enum: ["today", "tomorrow", "week", "next_week"],
+          description: "Janela de tempo. Default 'today'.",
+        },
+        all_users: {
+          type: "boolean",
+          description: "Se true, lista de TODA a location (não só do rep). Default false.",
+        },
+      },
+    },
+  },
+  handler: async (ctx, args) => {
+    const when = String(args.when || "today");
+    const allUsers = args.all_users === true;
+    const now = new Date();
+    let startTs: number, endTs: number;
+    if (when === "today") {
+      const s = new Date(now); s.setHours(0, 0, 0, 0);
+      const e = new Date(now); e.setHours(23, 59, 59, 999);
+      startTs = s.getTime(); endTs = e.getTime();
+    } else if (when === "tomorrow") {
+      const s = new Date(now); s.setDate(s.getDate() + 1); s.setHours(0, 0, 0, 0);
+      const e = new Date(s); e.setHours(23, 59, 59, 999);
+      startTs = s.getTime(); endTs = e.getTime();
+    } else if (when === "next_week") {
+      const s = new Date(now); s.setDate(s.getDate() + 7); s.setHours(0, 0, 0, 0);
+      const e = new Date(s); e.setDate(e.getDate() + 7); e.setHours(23, 59, 59, 999);
+      startTs = s.getTime(); endTs = e.getTime();
+    } else {
+      startTs = now.getTime();
+      const e = new Date(now); e.setDate(e.getDate() + 7);
+      endTs = e.getTime();
+    }
+    const repUserId = getRepGhlUserId(ctx);
+
+    try {
+      const res = await ctx.ghlClient.get<{
+        events?: Array<{
+          id: string; title?: string; startTime: string; endTime: string;
+          contactId?: string; appointmentStatus?: string; assignedUserId?: string; calendarId?: string;
+        }>;
+      }>("/calendars/events", {
+        locationId: ctx.locationId,
+        startTime: String(startTs),
+        endTime: String(endTs),
+        ...(allUsers || !repUserId ? {} : { userId: repUserId }),
+      });
+      return {
+        status: "ok",
+        data: (res.events || []).map((e) => ({
+          id: e.id, title: e.title || "(sem título)",
+          start: e.startTime, end: e.endTime,
+          contact_id: e.contactId || null,
+          status: e.appointmentStatus || "scheduled",
+          assigned_to: e.assignedUserId,
+          calendar_id: e.calendarId,
+        })),
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "listagem de appointments");
+    }
+  },
+};
+
+const listCalendars: ToolEntry = {
+  def: {
+    name: "list_calendars",
+    description: "Lista calendários disponíveis na location ativa.",
+    risk: "safe",
+    parameters: { type: "object", properties: {} },
+  },
+  handler: async (ctx) => {
+    try {
+      const res = await ctx.ghlClient.get<{
+        calendars?: Array<{ id: string; name?: string; description?: string; widgetSlug?: string }>;
+      }>("/calendars/", { locationId: ctx.locationId });
+      return {
+        status: "ok",
+        data: (res.calendars || []).map((c) => ({
+          id: c.id, name: c.name, description: c.description, slug: c.widgetSlug,
+        })),
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "listagem de calendários");
+    }
+  },
+};
+
+const getFreeSlots: ToolEntry = {
+  def: {
+    name: "get_free_slots",
+    description:
+      "Lista horários disponíveis num calendário, dentro de uma janela. Use ANTES de create_appointment pra não tentar agendar horário ocupado.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        calendar_id: { type: "string", description: "ID do calendário (use list_calendars antes)." },
+        start_date: { type: "string", description: "ISO 8601 do início da janela." },
+        end_date: { type: "string", description: "ISO 8601 do fim da janela (max 7 dias depois)." },
+        timezone: { type: "string", description: "Opcional, ex: 'America/New_York'." },
+      },
+      required: ["calendar_id", "start_date", "end_date"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const calendarId = String(args.calendar_id || "");
+    const invalid = validateGhlId(calendarId, "calendar");
+    if (invalid) return invalid;
+    const startDateInvalid = validateIso8601(String(args.start_date || ""), "start_date");
+    if (startDateInvalid) return startDateInvalid;
+    const endDateInvalid = validateIso8601(String(args.end_date || ""), "end_date");
+    if (endDateInvalid) return endDateInvalid;
+    const startMs = new Date(String(args.start_date)).getTime();
+    const endMs = new Date(String(args.end_date)).getTime();
+
+    try {
+      const res = await ctx.ghlClient.get<Record<string, { slots?: string[] }>>(
+        `/calendars/${calendarId}/free-slots`,
+        {
+          startDate: String(startMs),
+          endDate: String(endMs),
+          ...(args.timezone ? { timezone: String(args.timezone) } : {}),
+        },
+      );
+      const slotsByDate: Record<string, string[]> = {};
+      for (const [key, value] of Object.entries(res)) {
+        if (key === "traceId" || !value) continue;
+        const slots = Array.isArray(value) ? (value as unknown as string[]) : value.slots || [];
+        if (slots.length > 0) slotsByDate[key] = slots;
+      }
+      return { status: "ok", data: { slots_by_date: slotsByDate } };
+    } catch (err) {
+      return ghlErrorToResult(err, "consulta de horários disponíveis");
+    }
+  },
+};
+
+const createAppointment: ToolEntry = {
+  def: {
+    name: "create_appointment",
+    description:
+      "⚠️ AGENDA reunião pra um contato no calendário. AFETA o lead — sempre confirma com o rep ANTES. Use get_free_slots pra escolher horário válido.",
+    risk: "high",
+    parameters: {
+      type: "object",
+      properties: {
+        calendar_id: { type: "string" },
+        contact_id: { type: "string" },
+        start_time: { type: "string", description: "ISO 8601" },
+        end_time: { type: "string", description: "ISO 8601" },
+        title: { type: "string" },
+        meeting_location_type: { type: "string", description: "Ex: 'custom', 'phone', 'zoom'." },
+        meeting_location: { type: "string", description: "Ex: link Zoom, telefone, endereço." },
+      },
+      required: ["calendar_id", "contact_id", "start_time", "end_time"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const calendarId = String(args.calendar_id || "");
+    const contactId = String(args.contact_id || "");
+    const invalid = validateGhlId(calendarId, "calendar") || validateGhlId(contactId, "contact");
+    if (invalid) return invalid;
+    const startInvalid = validateIso8601(String(args.start_time || ""), "start_time");
+    if (startInvalid) return startInvalid;
+    const endInvalid = validateIso8601(String(args.end_time || ""), "end_time");
+    if (endInvalid) return endInvalid;
+
+    try {
+      const body: Record<string, unknown> = {
+        calendarId,
+        contactId,
+        locationId: ctx.locationId,
+        startTime: new Date(String(args.start_time)).toISOString(),
+        endTime: new Date(String(args.end_time)).toISOString(),
+        ...(args.title ? { title: String(args.title) } : {}),
+        ...(args.meeting_location_type ? { meetingLocationType: String(args.meeting_location_type) } : {}),
+        ...(args.meeting_location ? { address: String(args.meeting_location) } : {}),
+      };
+      const repUser = getRepGhlUserId(ctx);
+      if (repUser) body.assignedUserId = repUser;
+
+      const res = await ctx.ghlClient.post<{ id?: string; appointment?: { id: string } }>(
+        "/calendars/events/appointments",
+        body,
+      );
+      const apptId = res.id || res.appointment?.id;
+      return { status: "ok", data: { appointment_id: apptId } };
+    } catch (err) {
+      return ghlErrorToResult(err, "criação de appointment");
+    }
+  },
+};
+
+const updateAppointment: ToolEntry = {
+  def: {
+    name: "update_appointment",
+    description: "⚠️ Reagendar um appointment existente (mudar horário ou status). Confirma antes.",
+    risk: "high",
+    parameters: {
+      type: "object",
+      properties: {
+        appointment_id: { type: "string" },
+        start_time: { type: "string", description: "ISO 8601 novo horário." },
+        end_time: { type: "string", description: "ISO 8601 novo fim." },
+        appointment_status: { type: "string", description: "Ex: 'confirmed', 'showed', 'noshow', 'cancelled'." },
+      },
+      required: ["appointment_id"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const appointmentId = String(args.appointment_id || "");
+    const invalid = validateGhlId(appointmentId, "appointment");
+    if (invalid) return invalid;
+
+    const body: Record<string, unknown> = {};
+    if (args.start_time) {
+      const startInvalid = validateIso8601(String(args.start_time), "start_time");
+      if (startInvalid) return startInvalid;
+      body.startTime = new Date(String(args.start_time)).toISOString();
+    }
+    if (args.end_time) {
+      const endInvalid = validateIso8601(String(args.end_time), "end_time");
+      if (endInvalid) return endInvalid;
+      body.endTime = new Date(String(args.end_time)).toISOString();
+    }
+    if (args.appointment_status) body.appointmentStatus = String(args.appointment_status);
+    if (Object.keys(body).length === 0) {
+      return { status: "error", message: "Nenhum campo pra atualizar", retryable: false };
+    }
+
+    try {
+      await ctx.ghlClient.put(`/calendars/events/appointments/${appointmentId}`, body);
+      return { status: "ok", data: { appointment_id: appointmentId, updated: Object.keys(body) } };
+    } catch (err) {
+      return ghlErrorToResult(err, "atualização de appointment");
+    }
+  },
+};
+
+const deleteAppointment: ToolEntry = {
+  def: {
+    name: "delete_appointment",
+    description: "⚠️ AÇÃO IRREVERSÍVEL: Cancela um appointment. Sempre confirma antes.",
+    risk: "high",
+    parameters: {
+      type: "object",
+      properties: { appointment_id: { type: "string" } },
+      required: ["appointment_id"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const appointmentId = String(args.appointment_id || "");
+    const invalid = validateGhlId(appointmentId, "appointment");
+    if (invalid) return invalid;
+
+    try {
+      await ctx.ghlClient.delete(`/calendars/events/appointments/${appointmentId}`);
+      return { status: "ok", data: { deleted: appointmentId } };
+    } catch (err) {
+      return ghlErrorToResult(err, "deleção de appointment");
+    }
+  },
+};
+
+export const CALENDAR_TOOLS: ToolEntry[] = [
+  listAppointments,
+  listCalendars,
+  getFreeSlots,
+  createAppointment,
+  updateAppointment,
+  deleteAppointment,
+];

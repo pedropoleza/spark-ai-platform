@@ -1,0 +1,94 @@
+/**
+ * Tools de metadata da location: custom fields, tags existentes, users.
+ * Úteis pra IA descobrir IDs/keys antes de chamar update_field, add_tag, etc.
+ */
+
+import type { ToolEntry } from "./types";
+import { ghlErrorToResult } from "./types";
+
+const listCustomFields: ToolEntry = {
+  def: {
+    name: "list_custom_fields",
+    description:
+      "Lista custom fields da location ativa. Retorna id + name + key + type. Use antes de update_contact com custom_fields pra saber qual key/id usar.",
+    risk: "safe",
+    parameters: { type: "object", properties: {} },
+  },
+  handler: async (ctx) => {
+    try {
+      const res = await ctx.ghlClient.get<{
+        customFields?: Array<{
+          id: string; name?: string; fieldKey?: string; dataType?: string;
+          placeholder?: string; position?: number;
+        }>;
+      }>(`/locations/${ctx.locationId}/customFields`);
+      return {
+        status: "ok",
+        data: (res.customFields || []).map((f) => ({
+          id: f.id,
+          name: f.name,
+          key: f.fieldKey,
+          type: f.dataType,
+        })),
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "listagem de custom fields");
+    }
+  },
+};
+
+const listTags: ToolEntry = {
+  def: {
+    name: "list_tags",
+    description: "Lista todas as tags em uso na location. Útil pra evitar criar tag duplicada/typo.",
+    risk: "safe",
+    parameters: { type: "object", properties: {} },
+  },
+  handler: async (ctx) => {
+    try {
+      const res = await ctx.ghlClient.get<{
+        tags?: Array<{ id?: string; name: string }>;
+      }>(`/locations/${ctx.locationId}/tags`);
+      return {
+        status: "ok",
+        data: (res.tags || []).map((t) => ({ name: t.name, id: t.id })),
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "listagem de tags");
+    }
+  },
+};
+
+const listUsers: ToolEntry = {
+  def: {
+    name: "list_users",
+    description: "Lista users da location ativa (incluindo o próprio rep e outros membros do time).",
+    risk: "safe",
+    parameters: { type: "object", properties: {} },
+  },
+  handler: async (ctx) => {
+    try {
+      const res = await ctx.ghlClient.get<{
+        users?: Array<{
+          id: string; firstName?: string; lastName?: string;
+          name?: string; email?: string; phone?: string;
+          roles?: { role?: string };
+        }>;
+      }>("/users/", { locationId: ctx.locationId });
+      return {
+        status: "ok",
+        data: (res.users || []).map((u) => ({
+          id: u.id,
+          name: u.name || [u.firstName, u.lastName].filter(Boolean).join(" "),
+          email: u.email,
+          phone: u.phone,
+          role: u.roles?.role,
+        })),
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "listagem de users");
+    }
+  },
+};
+
+export const METADATA_TOOLS: ToolEntry[] = [listCustomFields, listTags, listUsers];
