@@ -2,13 +2,13 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
 import { DEFAULT_SALES_DATA_FIELDS, DEFAULT_POST_SALES_DATA_FIELDS } from "@/types/agent";
+import { createAgentSchema, validateBody } from "@/lib/utils/validation";
+import { errorResponse, unauthorized } from "@/lib/utils/api";
 
 // GET /api/agents - Listar agentes da location
 export async function GET() {
   const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
-  }
+  if (!session) return unauthorized();
 
   const supabase = createServerClient();
   const { data: agents, error } = await supabase
@@ -17,9 +17,7 @@ export async function GET() {
     .eq("location_id", session.locationId)
     .order("created_at");
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  if (error) return errorResponse(error.message, 500, "db_error");
 
   return NextResponse.json({ agents });
 }
@@ -27,16 +25,14 @@ export async function GET() {
 // POST /api/agents - Criar agente
 export async function POST(request: Request) {
   const session = await getSession();
-  if (!session) {
-    return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
-  }
+  if (!session) return unauthorized();
 
   const body = await request.json();
-  const { type } = body;
-
-  if (!type) {
-    return NextResponse.json({ error: "Tipo de agente obrigatorio" }, { status: 400 });
+  const { data: validated, error: validationError } = validateBody(createAgentSchema, body);
+  if (validationError || !validated) {
+    return errorResponse(validationError || "Dados inválidos", 400, "invalid_body");
   }
+  const { type } = validated;
 
   const supabase = createServerClient();
 
@@ -54,12 +50,9 @@ export async function POST(request: Request) {
 
   if (agentError) {
     if (agentError.code === "23505") {
-      return NextResponse.json(
-        { error: "Ja existe um agente deste tipo para esta location" },
-        { status: 409 }
-      );
+      return errorResponse("Já existe um agente deste tipo para esta location", 409, "duplicate_agent");
     }
-    return NextResponse.json({ error: agentError.message }, { status: 500 });
+    return errorResponse(agentError.message, 500, "db_error");
   }
 
   // Criar config padrao — data_fields ESPECÍFICOS do tipo.
