@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Buscar agent Sparkbot
-  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID;
+  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
   if (!hubLocationId) return errorResponse("Hub não configurado", 500, "hub_not_configured");
 
   const supabase = createAdminClient();

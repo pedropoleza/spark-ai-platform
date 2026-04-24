@@ -41,7 +41,7 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   }
 
   const hubCompanyId =
-    process.env.ASSISTANT_HUB_COMPANY_ID || process.env.NEXT_PUBLIC_GHL_COMPANY_ID;
+    process.env.ASSISTANT_HUB_COMPANY_ID?.trim() || process.env.NEXT_PUBLIC_GHL_COMPANY_ID?.trim();
   if (!hubCompanyId) {
     console.error("[Sparkbot] ASSISTANT_HUB_COMPANY_ID não configurado");
     return;

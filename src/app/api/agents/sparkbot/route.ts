@@ -17,7 +17,8 @@ export async function GET(request: NextRequest) {
   if (!session) return unauthorized();
 
   const isDebug = request.nextUrl.searchParams.get("debug") === "1";
-  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID;
+  // .trim() defensivo: vercel env add via echo pode preservar \n no final
+  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
 
   const debugInfo: Record<string, unknown> = isDebug
     ? {

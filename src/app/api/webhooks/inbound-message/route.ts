@@ -145,7 +145,7 @@ export async function POST(request: NextRequest) {
     // Reusa o mesmo webhook do GHL Marketplace app — só roteia internamente.
     // Pula STOP/handoff/targeting (específicos de sales/recruitment) e delega
     // pro handler dedicado.
-    const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID;
+    const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
     if (hubLocationId && locationId === hubLocationId) {
       const { handleAssistantInbound } = await import("@/lib/account-assistant/webhook-handler");
       waitUntil(
