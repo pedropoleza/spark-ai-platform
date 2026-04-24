@@ -20,6 +20,22 @@ export interface ToolContext {
 
 export type ToolHandler = (ctx: ToolContext, args: Record<string, unknown>) => Promise<ToolResult>;
 
+/**
+ * IDs do GHL são alfanuméricos ~20 chars. Se o LLM mandar algo curto
+ * (ex: "2", "pedro"), quase certamente inventou — rejeita antes de bater
+ * na API e dá dica pra ele chamar search_contacts primeiro.
+ */
+function validateGhlId(id: string, entityName: string): ToolResult | null {
+  if (!id || typeof id !== "string" || id.length < 10 || !/^[A-Za-z0-9_-]+$/.test(id)) {
+    return {
+      status: "error",
+      message: `${entityName}_id inválido: "${id}". IDs do GHL têm ~20 chars alfanuméricos. Use search_contacts ou get_contact pra obter o ID real antes de chamar esta tool.`,
+      retryable: false,
+    };
+  }
+  return null;
+}
+
 // =====================================================
 // 1. search_contacts (safe)
 // =====================================================
@@ -101,7 +117,8 @@ const getContact: { def: ToolDefinition; handler: ToolHandler } = {
   },
   handler: async (ctx, args) => {
     const contactId = String(args.contact_id || "");
-    if (!contactId) return { status: "error", message: "contact_id obrigatório", retryable: false };
+    const invalid = validateGhlId(contactId, "contact");
+    if (invalid) return invalid;
 
     try {
       const res = await ctx.ghlClient.get<{
@@ -323,9 +340,11 @@ const createNote: { def: ToolDefinition; handler: ToolHandler } = {
   },
   handler: async (ctx, args) => {
     const contactId = String(args.contact_id || "");
+    const invalid = validateGhlId(contactId, "contact");
+    if (invalid) return invalid;
     const body = String(args.body || "").trim();
-    if (!contactId || !body) {
-      return { status: "error", message: "contact_id e body obrigatórios", retryable: false };
+    if (!body) {
+      return { status: "error", message: "body obrigatório", retryable: false };
     }
 
     try {
@@ -371,11 +390,13 @@ const createTask: { def: ToolDefinition; handler: ToolHandler } = {
   },
   handler: async (ctx, args) => {
     const contactId = String(args.contact_id || "");
+    const invalid = validateGhlId(contactId, "contact");
+    if (invalid) return invalid;
     const title = String(args.title || "").trim();
     const dueAt = String(args.due_at || "");
     const body = args.body ? String(args.body) : undefined;
-    if (!contactId || !title || !dueAt) {
-      return { status: "error", message: "contact_id, title e due_at obrigatórios", retryable: false };
+    if (!title || !dueAt) {
+      return { status: "error", message: "title e due_at obrigatórios", retryable: false };
     }
 
     // Valida ISO 8601 — se inválido, retorna erro estruturado pra LLM corrigir
@@ -396,6 +417,7 @@ const createTask: { def: ToolDefinition; handler: ToolHandler } = {
         title,
         body,
         dueDate: isoDueAt,
+        completed: false, // GHL exige esse campo explícito (422 sem)
         ...(repGhlUserId ? { assignedTo: repGhlUserId } : {}),
       });
       return { status: "ok", data: { task_id: res.id, due_at: isoDueAt } };
@@ -431,10 +453,12 @@ const modifyTag: { def: ToolDefinition; handler: ToolHandler } = {
   },
   handler: async (ctx, args) => {
     const contactId = String(args.contact_id || "");
+    const invalid = validateGhlId(contactId, "contact");
+    if (invalid) return invalid;
     const tag = String(args.tag || "").trim();
     const action = String(args.action || "");
-    if (!contactId || !tag || !["add", "remove"].includes(action)) {
-      return { status: "error", message: "params inválidos", retryable: false };
+    if (!tag || !["add", "remove"].includes(action)) {
+      return { status: "error", message: "tag e action obrigatórios (action=add|remove)", retryable: false };
     }
 
     try {
@@ -475,10 +499,12 @@ const updateField: { def: ToolDefinition; handler: ToolHandler } = {
   },
   handler: async (ctx, args) => {
     const contactId = String(args.contact_id || "");
+    const invalid = validateGhlId(contactId, "contact");
+    if (invalid) return invalid;
     const fieldKey = String(args.field_key || "").trim();
     const value = String(args.value || "");
-    if (!contactId || !fieldKey) {
-      return { status: "error", message: "contact_id e field_key obrigatórios", retryable: false };
+    if (!fieldKey) {
+      return { status: "error", message: "field_key obrigatório", retryable: false };
     }
 
     // Distingue standard vs custom: campos standard são os nativos do GHL
