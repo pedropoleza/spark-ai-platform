@@ -141,6 +141,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ received: true, skipped: "rate_limited" });
     }
 
+    // ===== SPARKBOT ROUTE: mensagens pra Hub location do Account Assistant =====
+    // Reusa o mesmo webhook do GHL Marketplace app — só roteia internamente.
+    // Pula STOP/handoff/targeting (específicos de sales/recruitment) e delega
+    // pro handler dedicado.
+    const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID;
+    if (hubLocationId && locationId === hubLocationId) {
+      const { handleAssistantInbound } = await import("@/lib/account-assistant/webhook-handler");
+      waitUntil(
+        handleAssistantInbound({
+          hubLocationId,
+          contactId,
+          conversationId: conversationId || "",
+          messageBody: messageBody || "",
+          messageType,
+          direction,
+          body,
+        }).catch((err) => {
+          console.error("[Sparkbot:bg] handler failed:", err instanceof Error ? err.message : err);
+        }),
+      );
+      return NextResponse.json({ received: true, routed: "sparkbot" });
+    }
+
     // ===== STOP/opt-out compliance — intercept before any processing =====
     if (direction === "inbound" && messageBody) {
       const stopKeywords = ["stop", "parar", "cancelar", "sair", "unsubscribe", "opt out", "nao me procure", "não me procure"];
