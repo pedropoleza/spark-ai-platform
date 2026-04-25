@@ -148,5 +148,66 @@ export interface AccountAssistantConfigExtras {
   confirmation_mode: "always" | "medium_and_high" | "high_only";
   no_response_threshold: number;
   quiet_hours: QuietHoursConfig | Record<string, never>;
-  alert_toggles: Record<string, boolean>; // placeholder V2
+  alert_toggles: Record<string, boolean>; // placeholder V2 (deprecated em favor de proactive_rules)
+}
+
+// =====================================================
+// V2 — Proactive rules
+// =====================================================
+
+/** Trigger config das regras reativas (eventos GHL). */
+export type ReactiveTrigger =
+  | { event: "appointment_upcoming"; offset_minutes: number }       // -15min antes
+  | { event: "post_meeting"; offset_minutes: number }                // +20min depois
+  | { event: "appointment_no_show" }
+  | { event: "opportunity_stale"; days_threshold: number }
+  | { event: "task_due_soon"; offset_minutes: number }              // -60min antes
+  | { event: "task_overdue"; offset_minutes: number }                // +60min depois
+  | { event: "inbound_unanswered"; hours_threshold: number }
+  | { event: "deal_won" }
+  | { event: "contact_assigned_to_rep" }
+  | { event: "contact_inactive"; days_threshold: number };
+
+export type ScheduledTrigger = {
+  cron: string;
+  timezone?: string;
+};
+
+export type ProactiveRuleType = "reactive" | "scheduled";
+export type ProactiveRuleSource = "system" | "custom";
+
+export interface ProactiveRule {
+  id: string;
+  agent_id: string;
+  rule_type: ProactiveRuleType;
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  trigger_config: ReactiveTrigger | ScheduledTrigger | Record<string, unknown>;
+  prompt_instruction: string;
+  /** null = todas as tools, array = subset por nome */
+  tools_allowed: string[] | null;
+  cooldown_minutes: number;
+  ai_model: string | null;
+  source: ProactiveRuleSource;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AlertDispatchStatus =
+  | "sent"
+  | "skipped_cooldown"
+  | "skipped_quiet_hours"
+  | "skipped_disabled"
+  | "failed";
+
+export interface AlertState {
+  id: string;
+  rep_id: string;
+  rule_id: string;
+  target_id: string | null;
+  last_fired_at: string;
+  status: AlertDispatchStatus;
+  tokens_used: number | null;
+  cost_usd: number | null;
 }
