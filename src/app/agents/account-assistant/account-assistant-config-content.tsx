@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Loader2, Save, Info } from "lucide-react";
 import { SparkbotTester } from "@/components/agents/account-assistant/sparkbot-tester";
+import { ProactiveRulesPanel } from "@/components/agents/account-assistant/proactive-rules-panel";
 
 interface SparkbotAgent {
   id: string;
@@ -120,12 +121,17 @@ export function AccountAssistantConfigContent() {
       <Tabs defaultValue="test" className="space-y-4">
         <TabsList>
           <TabsTrigger value="test">Teste</TabsTrigger>
+          <TabsTrigger value="proactivity">Proatividade</TabsTrigger>
           <TabsTrigger value="rules">Regras</TabsTrigger>
           <TabsTrigger value="about">Sobre</TabsTrigger>
         </TabsList>
 
         <TabsContent value="test" className="space-y-3">
           <SparkbotTester agentId={agent.id} />
+        </TabsContent>
+
+        <TabsContent value="proactivity" className="space-y-3">
+          <ProactivityTab agentId={agent.id} />
         </TabsContent>
 
         <TabsContent value="rules" className="space-y-3">
@@ -252,5 +258,50 @@ export function AccountAssistantConfigContent() {
         </TabsContent>
       </Tabs>
     </PageWrapper>
+  );
+}
+
+/**
+ * Tab Proatividade — lê o sessionId do localStorage (mesmo key do tester)
+ * pra integrar a simulação com a sessão de teste já aberta.
+ */
+function ProactivityTab({ agentId }: { agentId: string }) {
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [repPhone, setRepPhone] = useState<string>("");
+
+  useEffect(() => {
+    const key = `sparkbot-test-session:${agentId}`;
+    const update = () => {
+      const v = localStorage.getItem(key);
+      setSessionId(v);
+    };
+    update();
+    // Polling pra detectar mudanças (storage event não dispara na mesma aba)
+    const interval = setInterval(update, 1500);
+    window.addEventListener("storage", update);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("storage", update);
+    };
+  }, [agentId]);
+
+  return (
+    <div className="space-y-3">
+      <ProactiveRulesPanel testSessionId={sessionId} repPhone={repPhone} />
+      <Card>
+        <CardContent className="p-3">
+          <Label className="text-xs">Phone do rep (override pra simulação)</Label>
+          <Input
+            value={repPhone}
+            onChange={(e) => setRepPhone(e.target.value)}
+            placeholder="+5511987654321"
+            className="text-xs mt-1"
+          />
+          <p className="text-[10px] text-gray-400 mt-1">
+            Se teu user GHL não tiver phone cadastrado, use isso pra a simulação saber qual rep você é.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

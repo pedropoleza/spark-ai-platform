@@ -23,6 +23,9 @@ interface TestMessage {
   tool_calls?: ToolCallDetail[];
   duration_ms?: number;
   error?: string;
+  // Proativo: msg disparada por uma regra (não foi resposta a comando do rep)
+  alert_type?: string;
+  is_proactive?: boolean;
 }
 
 interface RepInfo {
@@ -80,6 +83,8 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
           tools?: string[];
           tool_calls?: ToolCallDetail[];
           model?: string;
+          alert_type?: string;
+          is_proactive?: boolean;
         };
       }
       const loaded: TestMessage[] = (data.messages || []).map((m: DbMsg) => ({
@@ -97,6 +102,8 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
         tools: m.metadata?.tools,
         tool_calls: m.metadata?.tool_calls,
         model: m.metadata?.model,
+        alert_type: m.metadata?.alert_type,
+        is_proactive: m.metadata?.is_proactive,
       }));
       setMessages(loaded);
     } catch {
@@ -259,9 +266,20 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
                 >
                   {msg.role === "agent" ? (
                     <>
+                      {msg.is_proactive && (
+                        <div className="flex items-center gap-1 px-1 mb-1">
+                          <Badge className="text-[10px] h-5 bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-100">
+                            ⚡ Proativo · {msg.alert_type || "alerta"}
+                          </Badge>
+                        </div>
+                      )}
                       <div
                         className={`rounded-2xl rounded-bl-md px-4 py-2.5 whitespace-pre-wrap ${
-                          msg.error ? "bg-red-50 border border-red-200" : "bg-gray-50"
+                          msg.error
+                            ? "bg-red-50 border border-red-200"
+                            : msg.is_proactive
+                            ? "bg-amber-50 border border-amber-200"
+                            : "bg-gray-50"
                         }`}
                       >
                         <p className="text-sm text-gray-900">{msg.content}</p>
