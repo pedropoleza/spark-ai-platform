@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { shouldFireCron } from "@/lib/account-assistant/proactive/cron-evaluator";
+import { fireScheduledReminders } from "@/lib/account-assistant/proactive/reminder-runner";
 import type { ProactiveRule, RepIdentity, ScheduledTrigger } from "@/types/account-assistant";
 
 export const maxDuration = 60;
@@ -95,12 +96,17 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  // Processa lembretes agendados (assistant_scheduled_tasks com next_run_at <= now)
+  const reminderResult = await fireScheduledReminders();
+
   const durationMs = Date.now() - startTs;
   return NextResponse.json({
     ok: true,
     processed: rules.length,
-    fired: firedCount,
-    skipped: skippedCount,
+    rules_fired: firedCount,
+    rules_skipped: skippedCount,
+    reminders_fired: reminderResult.fired,
+    reminders_failed: reminderResult.failed,
     duration_ms: durationMs,
   });
 }

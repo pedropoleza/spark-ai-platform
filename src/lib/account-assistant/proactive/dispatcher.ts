@@ -250,6 +250,7 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     locationId: activeLocationId,
     companyId: location.company_id,
     ghlClient,
+    testSessionId: testSessionId || null,
   };
 
   const toolDefs = getToolDefinitions(rule.tools_allowed);

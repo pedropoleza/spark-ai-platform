@@ -30,6 +30,9 @@ export interface ProcessInput {
   agentId: string; // agent_id do Sparkbot na Hub location (pra billing/logs)
   /** Turns anteriores da conversa (da sessão de teste ou histórico real do GHL). */
   conversationHistory?: ConversationTurn[];
+  /** Quando preenchido, rep está em modo teste — tools de scheduling marcam
+   *  o reminder pra disparar nessa session. */
+  testSessionId?: string | null;
   config: {
     confirmation_mode?: "always" | "medium_and_high" | "high_only";
     ai_model?: string;
@@ -168,6 +171,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     locationId: activeLocationId,
     companyId: location.company_id,
     ghlClient,
+    testSessionId: input.testSessionId || null,
   };
 
   const result = await runWithTools({

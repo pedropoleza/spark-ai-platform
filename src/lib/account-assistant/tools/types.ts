@@ -13,6 +13,12 @@ export interface ToolContext {
   locationId: string; // active_location_id resolvido
   companyId: string;
   ghlClient: GHLClient;
+  /**
+   * Quando setado, indica que estamos em modo de teste — tools de agendamento
+   * (schedule_reminder) salvam essa session no payload pra disparar o reminder
+   * na sessão correta. Quando undefined, é fluxo real (V3 envia via WhatsApp).
+   */
+  testSessionId?: string | null;
 }
 
 export type ToolHandler = (ctx: ToolContext, args: Record<string, unknown>) => Promise<ToolResult>;
