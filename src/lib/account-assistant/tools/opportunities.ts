@@ -29,12 +29,16 @@ const listOpportunities: ToolEntry = {
     const allUsers = args.all_users === true;
     const repUserId = getRepGhlUserId(ctx);
 
+    // GHL aceita query param `monetary_value_greater_than` em /opportunities/search.
+    // Passar pra GHL evita filtrar 100 opps mais recentes e perder grandes opps
+    // fora dessa janela (bug do ultra review).
     const params: Record<string, string> = {
       location_id: ctx.locationId,
       limit: String(limit),
       ...(status !== "all" ? { status } : {}),
       ...(pipelineId ? { pipeline_id: pipelineId } : {}),
       ...(allUsers || !repUserId ? {} : { assigned_to: repUserId }),
+      ...(minValue > 0 ? { monetary_value_greater_than: String(minValue) } : {}),
     };
 
     try {
@@ -47,6 +51,9 @@ const listOpportunities: ToolEntry = {
           contact?: { id: string; name: string; email?: string; phone?: string };
         }>;
       }>("/opportunities/search", params);
+      // Client-side filter mantido como segurança (caso GHL devolva opps fora
+      // do range por algum motivo). Mas com monetary_value_greater_than no
+      // server, essa filtragem deve ser no-op.
       const opps = (res.opportunities || []).filter((o) => (o.monetaryValue || 0) >= minValue);
       return {
         status: "ok",

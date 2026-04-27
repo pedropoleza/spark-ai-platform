@@ -1,17 +1,15 @@
 /**
- * Avaliador de cron expressions simples.
+ * Avaliador de cron expressions com 5 campos (POSIX-style):
+ *   minuto (0-59) | hora (0-23) | dia do mês (1-31) | mês (1-12) | dow (0-6)
  *
- * Suporta apenas o subset que usamos em scheduled rules:
- *   - minuto: número (0-59)
- *   - hora: número (0-23)
- *   - dia do mês: * apenas
- *   - mês: * apenas
- *   - dia da semana: número, lista (1,3,5), ou range (1-5)
+ * Suporta `*`, número, lista `1,3,5`, e range `1-5`. Não suporta steps `*\/n`.
  *
- * Exemplos válidos:
- *   "0 8 * * 1-5"  → segunda a sexta às 08:00
- *   "0 17 * * 5"   → sexta às 17:00
- *   "30 9 * * 1,3" → segunda e quarta às 09:30
+ * Exemplos:
+ *   "0 8 * * 1-5"   → segunda a sexta às 08:00
+ *   "0 17 * * 5"    → sexta às 17:00
+ *   "0 9 1 * *"     → todo dia 1 do mês às 09:00
+ *   "0 9 1 1 *"     → 1 de janeiro às 09:00
+ *   "30 9 * * 1,3"  → segunda e quarta às 09:30
  *
  * Retorna true se o cron deve disparar AGORA (no minuto atual, no timezone).
  */
@@ -19,24 +17,44 @@
 export function shouldFireCron(cron: string, timezone: string, now: Date = new Date()): boolean {
   const parts = cron.trim().split(/\s+/);
   if (parts.length !== 5) return false;
-  const [minStr, hourStr, , , dowStr] = parts;
+  const [minStr, hourStr, domStr, monStr, dowStr] = parts;
 
   const target = parseLocalParts(now, timezone);
   if (!target) return false;
 
   if (!matchField(minStr, target.minute, 0, 59)) return false;
   if (!matchField(hourStr, target.hour, 0, 23)) return false;
-  // dia do mês e mês ignorados (sempre *)
-  if (!matchField(dowStr, target.weekday, 0, 6)) return false;
+  if (!matchField(monStr, target.month, 1, 12)) return false;
 
-  return true;
+  // Cron POSIX: se dom E dow forem ambos especificados (não *), é OR (qualquer um match dispara).
+  // Se um for * e outro especificado, só o especificado importa.
+  const domIsAny = domStr === "*";
+  const dowIsAny = dowStr === "*";
+
+  if (domIsAny && dowIsAny) return true; // ambos *
+  if (domIsAny) return matchField(dowStr, target.weekday, 0, 6);
+  if (dowIsAny) return matchField(domStr, target.dayOfMonth, 1, 31);
+  // Ambos especificados: OR
+  return (
+    matchField(domStr, target.dayOfMonth, 1, 31) ||
+    matchField(dowStr, target.weekday, 0, 6)
+  );
 }
 
-function parseLocalParts(date: Date, timezone: string): { minute: number; hour: number; weekday: number } | null {
+function parseLocalParts(date: Date, timezone: string): {
+  minute: number;
+  hour: number;
+  dayOfMonth: number;
+  month: number;
+  weekday: number;
+} | null {
   try {
     const fmt = new Intl.DateTimeFormat("en-US", {
       timeZone: timezone,
       hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
       weekday: "short",
       hour: "2-digit",
       minute: "2-digit",
@@ -49,6 +67,8 @@ function parseLocalParts(date: Date, timezone: string): { minute: number; hour: 
     return {
       minute: parseInt(get("minute")) || 0,
       hour: parseInt(get("hour")) || 0,
+      dayOfMonth: parseInt(get("day")) || 1,
+      month: parseInt(get("month")) || 1,
       weekday,
     };
   } catch {

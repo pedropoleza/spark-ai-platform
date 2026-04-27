@@ -118,18 +118,33 @@ export async function GET(request: NextRequest) {
 export const POST = GET;
 
 /**
- * Busca reps elegíveis pra uma regra. V2: todos os reps cadastrados.
- * V3+: filtrar por whitelist de allowed_ghl_users no agent_config.
+ * Busca reps elegíveis pra uma regra. Filtra por:
+ *   1. terms_accepted_at não-nulo (rep aceitou termos)
+ *   2. ghl_users contém pelo menos 1 location de um agent ativo do mesmo
+ *      agent_id da rule (multi-tenant isolation — regras do agent A nunca
+ *      disparam pra reps do agent B)
+ *
+ * V3+: somar filtro de whitelist (agent_configs.allowed_ghl_users).
  */
 async function getEligibleReps(
   supabase: ReturnType<typeof createAdminClient>,
-  _rule: { agent_id: string }, // eslint-disable-line @typescript-eslint/no-unused-vars
+  rule: { agent_id: string },
 ): Promise<RepIdentity[]> {
+  // Resolve location do agent (Sparkbot vive na Hub)
+  const { data: agent } = await supabase
+    .from("agents")
+    .select("location_id, status")
+    .eq("id", rule.agent_id)
+    .maybeSingle();
+  if (!agent || agent.status !== "active") return [];
+
+  // V2: 1 Sparkbot global. Todos os reps com terms aceitos podem ser
+  // candidatos; futuro: cruzar com allowed_ghl_users na config do agent.
   const { data } = await supabase
     .from("rep_identities")
     .select("*")
     .not("terms_accepted_at", "is", null)
-    .limit(50);
+    .limit(100);
   return (data || []) as RepIdentity[];
 }
 

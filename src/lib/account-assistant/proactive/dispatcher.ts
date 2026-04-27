@@ -60,11 +60,30 @@ export interface DispatchResult {
  *   - Compara hora atual no timezone do quiet_hours.timezone com janela start-end
  *   - Verifica se dia da semana está incluso em days[]
  */
+/**
+ * Verifica se um timezone IANA é válido (existe na lib do JS). Se inválido
+ * (ex: typo "America/New_Yok"), DateTimeFormat construtor lança RangeError.
+ */
+function isValidTimezone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isInQuietHours(
   config: AccountAssistantConfigExtras["quiet_hours"] | undefined,
 ): boolean {
   if (!config || !("enabled" in config) || !config.enabled) return false;
-  const tz = config.timezone || "America/New_York";
+  let tz = config.timezone || "America/New_York";
+  if (!isValidTimezone(tz)) {
+    console.error(
+      `[dispatcher] timezone inválido em quiet_hours: "${tz}". Fallback America/New_York.`,
+    );
+    tz = "America/New_York";
+  }
   const start = config.start || "22:00";
   const end = config.end || "07:00";
   const days = config.days || [0, 1, 2, 3, 4, 5, 6];
