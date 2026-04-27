@@ -218,6 +218,19 @@ export function ProactiveRulesPanel({ testSessionId, repPhone }: ProactiveRulesP
         </p>
       )}
 
+      <Card>
+        <CardContent className="p-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-gray-900">Disparar lembretes agora</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Roda o runner de reminders manualmente. Útil pra testar &ldquo;me lembra em
+              X&rdquo; sem esperar o cron diário (que é a limitação do plano Hobby da Vercel).
+            </p>
+          </div>
+          <RunRemindersButton />
+        </CardContent>
+      </Card>
+
       {/* Edit modal */}
       {editingRule && (
         <RuleEditModal
@@ -241,6 +254,32 @@ export function ProactiveRulesPanel({ testSessionId, repPhone }: ProactiveRulesP
         />
       )}
     </div>
+  );
+}
+
+function RunRemindersButton() {
+  const [running, setRunning] = useState(false);
+  const handleRun = async () => {
+    setRunning(true);
+    try {
+      const res = await fetch("/api/agents/sparkbot/run-reminders", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || "Falhou");
+        return;
+      }
+      toast.success(
+        `Reminders: ${data.fired} disparados, ${data.failed} falhas, ${data.skipped} skipped (${data.duration_ms}ms)`,
+      );
+    } finally {
+      setRunning(false);
+    }
+  };
+  return (
+    <Button onClick={handleRun} disabled={running} size="sm">
+      {running ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
+      Disparar agora
+    </Button>
   );
 }
 
