@@ -91,9 +91,11 @@ function isInQuietHours(
   const startMin = sH * 60 + sM;
   const endMin = eH * 60 + eM;
 
-  // Janela cruza meia-noite (ex: 22:00 - 07:00) → invertida
-  if (startMin > endMin) return nowMin >= startMin || nowMin < endMin;
-  return nowMin >= startMin && nowMin < endMin;
+  // Janela cruza meia-noite (ex: 22:00 - 07:00) → invertida.
+  // Inclusive nos boundaries: se start=22:00 e end=07:00, "ainda quiet"
+  // até 07:00 inclusive — usa <= (era < e desligava 1min cedo).
+  if (startMin > endMin) return nowMin >= startMin || nowMin <= endMin;
+  return nowMin >= startMin && nowMin <= endMin;
 }
 
 /**

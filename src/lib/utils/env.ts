@@ -59,6 +59,16 @@ export function validateEnv(): void {
     if (!process.env.GHL_WEBHOOK_SECRET) {
       console.warn("[env] ⚠️  GHL_WEBHOOK_SECRET não configurado — webhook aceita requests sem assinatura. Configure + WEBHOOK_REQUIRE_SIGNATURE=true para prod.");
     }
+    if (!process.env.ASSISTANT_HUB_LOCATION_ID?.trim()) {
+      console.error(
+        "[env] 🚨 ASSISTANT_HUB_LOCATION_ID não configurado — Sparkbot fica inacessível e msgs do Hub caem em sales/recruitment routing. Configure imediatamente.",
+      );
+    }
+    if (!process.env.ASSISTANT_HUB_COMPANY_ID?.trim()) {
+      console.error(
+        "[env] 🚨 ASSISTANT_HUB_COMPANY_ID não configurado — Sparkbot não consegue chamar GHL pra Hub.",
+      );
+    }
   }
 
   // OpenAI vs Anthropic
