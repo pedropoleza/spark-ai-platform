@@ -1,5 +1,11 @@
 import { GHLClient } from "@/lib/ghl/client";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  addTagsToContact,
+  removeTagsFromContact,
+  updateContactField,
+  isBookingConflictError,
+} from "@/lib/ghl/operations";
 import type { AIAction, AIResponse } from "@/types/ai";
 
 // Delay curto entre mensagens (max 1.5s para não causar timeout no serverless)
@@ -74,16 +80,8 @@ export async function executeActions(
 
   if (!ctx.skipSendMessage && messages.length > 0) {
     try {
-      // Se agendamento falhou, avisar o lead (detecta qualquer erro de booking)
-      const isBookingError = actionsFailed && (
-        failedActionError.includes("available") ||
-        failedActionError.includes("conflict") ||
-        failedActionError.includes("calendario") ||
-        failedActionError.includes("Calendario") ||
-        failedActionError.includes("slot") ||
-        failedActionError.includes("422") ||
-        failedActionError.includes("agendamento")
-      );
+      // Se agendamento falhou, avisar o lead. Detection centralizada em lib/ghl/operations.ts.
+      const isBookingError = actionsFailed && isBookingConflictError(failedActionError);
       if (isBookingError) {
         const errorMsg = "Desculpa, nao consegui agendar nesse horario. Posso sugerir outro?";
         await client.post("/conversations/messages", {
@@ -136,34 +134,24 @@ async function executeAction(
   switch (action.type) {
     case "update_field":
       if (action.field_key && action.value) {
-        // Campos padrao do contato (contact.firstName, contact.phone, etc.)
-        if (action.field_key.startsWith("contact.")) {
-          const fieldName = action.field_key.replace("contact.", "");
-          await client.put(`/contacts/${ctx.contactId}`, {
-            [fieldName]: action.value,
-          });
-        } else {
-          // Custom field
-          await client.put(`/contacts/${ctx.contactId}`, {
-            customFields: [{ id: action.field_key, value: action.value }],
-          });
-        }
+        // Sales/recruitment legado prefixa standard fields com "contact." —
+        // ex: "contact.firstName". updateContactField espera só o key, sem prefix.
+        const key = action.field_key.startsWith("contact.")
+          ? action.field_key.slice("contact.".length)
+          : action.field_key;
+        await updateContactField(client, ctx.contactId, key, action.value);
       }
       break;
 
     case "add_tag":
       if (action.tag) {
-        await client.post(`/contacts/${ctx.contactId}/tags`, {
-          tags: [action.tag],
-        });
+        await addTagsToContact(client, ctx.contactId, [action.tag]);
       }
       break;
 
     case "remove_tag":
       if (action.tag) {
-        await client.delete(`/contacts/${ctx.contactId}/tags`, {
-          tags: [action.tag],
-        });
+        await removeTagsFromContact(client, ctx.contactId, [action.tag]);
       }
       break;
 

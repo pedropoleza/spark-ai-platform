@@ -5,6 +5,7 @@
 
 import type { ToolEntry } from "./types";
 import { validateGhlId, ghlErrorToResult } from "./types";
+import { createNoteOnContact } from "@/lib/ghl/operations";
 
 const createNote: ToolEntry = {
   def: {
@@ -28,11 +29,7 @@ const createNote: ToolEntry = {
     if (!body) return { status: "error", message: "body obrigatório", retryable: false };
 
     try {
-      const res = await ctx.ghlClient.post<{ id?: string; note?: { id: string } }>(
-        `/contacts/${contactId}/notes`,
-        { body },
-      );
-      const noteId = res.id || res.note?.id;
+      const { noteId } = await createNoteOnContact(ctx.ghlClient, contactId, body);
       return { status: "ok", data: { note_id: noteId } };
     } catch (err) {
       return ghlErrorToResult(err, "criação de nota");

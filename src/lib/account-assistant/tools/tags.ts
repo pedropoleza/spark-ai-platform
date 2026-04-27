@@ -4,6 +4,7 @@
 
 import type { ToolEntry } from "./types";
 import { validateGhlId, ghlErrorToResult } from "./types";
+import { addTagsToContact, removeTagsFromContact } from "@/lib/ghl/operations";
 
 const addTag: ToolEntry = {
   def: {
@@ -27,7 +28,7 @@ const addTag: ToolEntry = {
     if (tags.length === 0) return { status: "error", message: "tags obrigatórias (array de strings)", retryable: false };
 
     try {
-      await ctx.ghlClient.post(`/contacts/${contactId}/tags`, { tags });
+      await addTagsToContact(ctx.ghlClient, contactId, tags);
       return { status: "ok", data: { added: tags } };
     } catch (err) {
       return ghlErrorToResult(err, "adição de tag");
@@ -57,7 +58,7 @@ const removeTag: ToolEntry = {
     if (tags.length === 0) return { status: "error", message: "tags obrigatórias", retryable: false };
 
     try {
-      await ctx.ghlClient.delete(`/contacts/${contactId}/tags`, { tags });
+      await removeTagsFromContact(ctx.ghlClient, contactId, tags);
       return { status: "ok", data: { removed: tags } };
     } catch (err) {
       return ghlErrorToResult(err, "remoção de tag");
