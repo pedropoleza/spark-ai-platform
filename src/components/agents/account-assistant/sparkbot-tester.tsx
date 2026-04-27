@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, RotateCcw, Loader2, Bot, User, Clock, Zap, Wrench, AlertTriangle } from "lucide-react";
+import {
+  Send, RotateCcw, Loader2, Bot, User, Clock, Zap, Wrench, AlertTriangle,
+  Mic, Check, X, Paperclip, FileText, Image as ImageIcon,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -54,6 +57,14 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
   const [error, setError] = useState<string | null>(null);
   const [debugDump, setDebugDump] = useState<unknown>(null);
   const [repPhone, setRepPhone] = useState("");
+  // Anexos / gravação de áudio
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const storageKey = `sparkbot-test-session:${agentId}`;
@@ -185,23 +196,165 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
     if (container) container.scrollTop = container.scrollHeight;
   }, [messages]);
 
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || loading) return;
+  // ===== Gravação de áudio =====
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
 
-    setMessages((prev) => [...prev, { role: "user", content: text, timestamp: new Date() }]);
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      mediaRecorder.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const file = new File([blob], `audio_${Date.now()}.webm`, { type: "audio/webm" });
+        setAttachedFile(file);
+        setIsRecording(false);
+        setRecordingTime(0);
+        if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
+      };
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+    } catch {
+      setError("Microfone não disponível ou permissão negada.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+      mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+      mediaRecorderRef.current = null;
+    }
+    audioChunksRef.current = [];
+    setIsRecording(false);
+    setRecordingTime(0);
+    if (recordingIntervalRef.current) clearInterval(recordingIntervalRef.current);
+  };
+
+  const formatRecordingTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
+
+  const handleSend = async () => {
+    const hasText = input.trim().length > 0;
+    const hasFile = !!attachedFile;
+    if ((!hasText && !hasFile) || loading) return;
+
+    const userText = input.trim();
+    const file = attachedFile;
     setInput("");
+    setAttachedFile(null);
     setLoading(true);
     setError(null);
     setDebugDump(null);
+
+    // Display label da user msg (varia conforme tipo de anexo)
+    let displayContent = userText;
+    if (file) {
+      if (file.type.startsWith("audio/")) {
+        displayContent = "🎤 Transcrevendo áudio...";
+      } else if (file.type.startsWith("image/")) {
+        displayContent = userText ? `${userText}\n📎 ${file.name}` : `📎 ${file.name}`;
+      } else {
+        displayContent = userText ? `${userText}\n📎 ${file.name}` : `📎 ${file.name}`;
+      }
+    }
+    const msgIndex = messages.length;
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", content: displayContent, timestamp: new Date() },
+    ]);
+
+    // Resolver finalMessage (text + anexo processado)
+    let finalMessage = userText || "[media]";
+    let inputKind: "text" | "audio" | "image" | "document" = "text";
+    let base64: string | undefined;
+    let filename: string | undefined;
+
+    if (file) {
+      try {
+        if (file.type.startsWith("audio/")) {
+          // Transcrição via /api/agents/test/transcribe (Whisper)
+          const formData = new FormData();
+          formData.append("audio", file);
+          const transcribeRes = await fetch("/api/agents/test/transcribe", {
+            method: "POST",
+            body: formData,
+          });
+          if (transcribeRes.ok) {
+            const { text } = await transcribeRes.json();
+            finalMessage = text || userText || "[áudio sem conteúdo]";
+            inputKind = "audio";
+            // Atualiza display do user msg com a transcrição
+            setMessages((prev) =>
+              prev.map((m, i) =>
+                i === msgIndex ? { ...m, content: `🎤 "${finalMessage}"` } : m,
+              ),
+            );
+          } else {
+            setMessages((prev) =>
+              prev.map((m, i) =>
+                i === msgIndex ? { ...m, content: "🎤 Erro na transcrição" } : m,
+              ),
+            );
+            finalMessage = userText || "[Não foi possível transcrever o áudio]";
+          }
+        } else if (file.type.startsWith("image/")) {
+          // Imagem como base64 multimodal
+          const reader = new FileReader();
+          base64 = await new Promise<string>((resolve) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          });
+          inputKind = "image";
+          finalMessage = userText || "[imagem]";
+          filename = file.name;
+        } else {
+          // PDF/doc — V2 frontend manda como base64; backend extrai
+          const reader = new FileReader();
+          base64 = await new Promise<string>((resolve) => {
+            reader.onload = () => resolve(reader.result as string);
+            reader.readAsDataURL(file);
+          });
+          inputKind = "document";
+          finalMessage = userText || `[documento: ${file.name}]`;
+          filename = file.name;
+        }
+      } catch {
+        setMessages((prev) =>
+          prev.map((m, i) =>
+            i === msgIndex ? { ...m, content: "📎 Erro ao processar arquivo" } : m,
+          ),
+        );
+        finalMessage = userText || "[Erro ao processar anexo]";
+      }
+    }
 
     try {
       const res = await fetch("/api/agents/account-assistant/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: text,
+          message: finalMessage,
           session_id: sessionId,
+          input_kind: inputKind,
+          ...(base64 ? { base64 } : {}),
+          ...(filename ? { filename } : {}),
           ...(repPhone.trim() ? { rep_phone: repPhone.trim() } : {}),
         }),
       });
@@ -441,24 +594,95 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
           </CardContent>
 
           <div className="p-3 border-t border-gray-200">
-            <div className="flex gap-1.5">
-              <Input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Mande como se fosse um rep no WhatsApp..."
-                disabled={loading}
-                className="flex-1"
-              />
-              <Button
-                onClick={handleSend}
-                disabled={!input.trim() || loading}
-                size="icon"
-                className="h-9 w-9 flex-shrink-0"
-              >
-                <Send className="w-4 h-4" />
-              </Button>
-            </div>
+            {/* Anexo pendente */}
+            {attachedFile && !isRecording && (
+              <div className="flex items-center gap-2 mb-2 px-2 py-1.5 bg-brand-50 border border-brand-200 rounded-lg">
+                {attachedFile.type.startsWith("image/") ? (
+                  <ImageIcon className="w-3.5 h-3.5 text-brand-600" />
+                ) : attachedFile.type.startsWith("audio/") ? (
+                  <Mic className="w-3.5 h-3.5 text-brand-600" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5 text-brand-600" />
+                )}
+                <span className="text-xs text-brand-700 truncate flex-1">{attachedFile.name}</span>
+                <button
+                  onClick={() => setAttachedFile(null)}
+                  className="text-brand-400 hover:text-red-500"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {isRecording ? (
+              <div className="flex items-center gap-3 px-3 py-2 bg-red-50 border border-red-200 rounded-xl">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
+                <span className="text-sm font-medium text-red-700 font-mono">
+                  {formatRecordingTime(recordingTime)}
+                </span>
+                <span className="text-xs text-red-500 flex-1">Gravando áudio...</span>
+                <Button variant="ghost" size="sm" className="h-7 text-xs text-gray-600" onClick={cancelRecording}>
+                  Cancelar
+                </Button>
+                <Button size="sm" className="h-7 text-xs bg-red-600 hover:bg-red-700" onClick={stopRecording}>
+                  <Check className="w-3 h-3 mr-1" />
+                  Parar
+                </Button>
+              </div>
+            ) : (
+              <div className="flex gap-1.5">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,audio/*,.pdf,.doc,.docx,.txt"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files?.[0]) setAttachedFile(e.target.files[0]);
+                    e.target.value = "";
+                  }}
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 flex-shrink-0"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading}
+                  title="Anexar arquivo (imagem, PDF, documento)"
+                >
+                  <Paperclip className="w-4 h-4 text-gray-500" />
+                </Button>
+                <Input
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={attachedFile ? "Adicione uma mensagem (opcional)..." : "Mande como se fosse um rep no WhatsApp..."}
+                  disabled={loading}
+                  className="flex-1"
+                />
+                {!input.trim() && !attachedFile ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 flex-shrink-0 hover:bg-red-50 hover:text-red-600"
+                    onClick={startRecording}
+                    disabled={loading}
+                    title="Gravar áudio"
+                  >
+                    <Mic className="w-4 h-4" />
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={handleSend}
+                    disabled={(!input.trim() && !attachedFile) || loading}
+                    size="icon"
+                    className="h-9 w-9 flex-shrink-0"
+                  >
+                    <Send className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
+            )}
+
             {sessionId && (
               <p className="text-[10px] text-gray-400 mt-1.5 font-mono">
                 Sessão: {sessionId.substring(0, 8)}…
