@@ -28,11 +28,19 @@
 - ✅ 14 system rules seedadas e editáveis
 
 **O que precisa atenção urgente (top 5 críticos):**
-1. **Modo "real" totalmente desabilitado** — scheduled rules NUNCA disparam de verdade ([cron route:62-87](src/app/api/cron/sparkbot-proactive/route.ts#L62)). Reactive polling é stub vazio.
-2. **Race condition em cooldown** — upsert sem lock, dois crons paralelos podem dispatchar a mesma regra duas vezes
-3. **Tool result sem truncação** — payload grande do GHL pode exceder context window silenciosamente
-4. **Quiet hours boundary** — sai 1 minuto antes do esperado em janela cruzando meia-noite
-5. **Reminder runner com timezone hardcoded NY** — `computeNextRun` usa `America/New_York` fixo, ignora timezone da location
+1. **Modo "real" totalmente desabilitado** — scheduled rules NUNCA disparam de verdade ([cron route:62-87](src/app/api/cron/sparkbot-proactive/route.ts#L62)). Reactive polling é stub vazio. *(Batch 6 mantém como skipped_disabled por design até V3 WhatsApp.)*
+2. ✅ **~~Race condition em cooldown~~** — Resolvido em Batch 3 via `try_claim_dispatch_slot` SQL function (atomic INSERT ON CONFLICT)
+3. ✅ **~~Tool result sem truncação~~** — Resolvido em Batch 2: `MAX_TOOL_RESULT_CHARS=12000` + `truncateToolResult()` em llm-client.ts
+4. ✅ **~~Quiet hours boundary~~** — Resolvido em Batch 1: `<=` em vez de `<`
+5. ✅ **~~Reminder runner com timezone hardcoded NY~~** — Resolvido em Batch 2: `computeNextRun(cron, from, timezone)` resolve TZ por location
+
+**Batches aplicados (todos no main + deploy):**
+- Batch 1-2: critical reliability (quiet hours, parse-loop, tool truncation, reminder TZ)
+- Batch 3: race condition cooldown via atomic SQL claim
+- Batch 4: extrair lib/ghl/operations.ts (DRY entre sales/sparkbot)
+- Batch 5: validações (cron POSIX completo, timezone IANA, min_value server-side)
+- Batch 6: resilience (OpenAI fallback real + cleanup cron)
+- Batch 7: nice-to-have (validações explícitas, audit columns, get_appointment)
 
 ---
 
@@ -118,12 +126,12 @@ Análise de 41 tools, dispatcher, prompt-builder, llm-client, UI, cron.
 
 ### 🟢 Nice-to-have
 
-- Sem `get_appointment_by_id` global (só via list)
-- Tool descriptions genéricas — sem exemplos de uso
-- Sem audit log de quem editou regra (só `updated_at`)
-- Tags case-sensitive (admin pode criar "Prospect" e "prospect")
-- Sem dedup de reminders idênticos
-- Logging de "regra skippada" sem motivo legível
+- ✅ ~~Sem `get_appointment_by_id` global~~ — Adicionado em Batch 7 ([calendar.ts](src/lib/account-assistant/tools/calendar.ts))
+- Tool descriptions genéricas — sem exemplos de uso *(deixado pra próximo ciclo, baixo ROI)*
+- ✅ ~~Sem audit log de quem editou regra~~ — Migration 00035 adiciona `created_by_user_id` + `last_modified_by_user_id`, populado nos handlers POST/PUT
+- Tags case-sensitive (admin pode criar "Prospect" e "prospect") *(GHL-side, não controlamos)*
+- Sem dedup de reminders idênticos *(low frequency em prática)*
+- Logging de "regra skippada" sem motivo legível *(coluna `status` cobre os 3 motivos principais)*
 
 ---
 
@@ -324,14 +332,14 @@ Quando WhatsApp Hub for habilitado:
 
 ### 🟢 Nice-to-have — Polish (4-6h)
 
-| # | Item | Effort | Impact |
-|---|---|---|---|
-| 14 | Tool descriptions com exemplos | 1h | LLM mais eficiente |
-| 15 | Tools faltantes: get_*_by_id globais | 2h | Cobertura |
-| 16 | Audit log de mudanças de regra | 1h | Governance |
-| 17 | UI: simular regra desabilitada se sem session | 15min | UX |
-| 18 | Rule limits validados (não slice silencioso) | 30min | UX |
-| 19 | Tabela `assistant_conversations` documentada como placeholder V3 | 15min | Limpeza |
+| # | Item | Effort | Impact | Status |
+|---|---|---|---|---|
+| 14 | Tool descriptions com exemplos | 1h | LLM mais eficiente | Pendente (low ROI, próximo ciclo) |
+| 15 | Tools faltantes: get_*_by_id globais | 2h | Cobertura | ✅ Batch 7 — `get_appointment` adicionado, demais já existiam |
+| 16 | Audit log de mudanças de regra | 1h | Governance | ✅ Batch 7 — migration 00035 + handlers populam `last_modified_by_user_id` |
+| 17 | UI: simular regra desabilitada se sem session | 15min | UX | Pendente (UI work) |
+| 18 | Rule limits validados (não slice silencioso) | 30min | UX | ✅ Batch 7 — POST/PUT com 400 explícito em vez de truncar silenciosamente |
+| 19 | Tabela `assistant_conversations` documentada como placeholder V3 | 15min | Limpeza | ✅ Batch 7 — migration 00036 adiciona COMMENTS na tabela e colunas |
 
 ---
 
