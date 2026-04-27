@@ -12,6 +12,18 @@ import type { ToolDefinition } from "@/types/account-assistant";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const FALLBACK_MODEL = "gpt-4.1";
 const MAX_ITERATIONS = 6;
+// Cap defensivo no payload de tool result que vai pro LLM. Tools tipo
+// get_conversation_history podem retornar MB se conversa for longa,
+// estourando context window silenciosamente. Truncamos com aviso explícito
+// pra LLM saber que faltam dados.
+const MAX_TOOL_RESULT_CHARS = 12000;
+
+function truncateToolResult(serialized: string): string {
+  if (serialized.length <= MAX_TOOL_RESULT_CHARS) return serialized;
+  const truncated = serialized.slice(0, MAX_TOOL_RESULT_CHARS);
+  const omitted = serialized.length - MAX_TOOL_RESULT_CHARS;
+  return `${truncated}\n\n[TRUNCATED: ${omitted} chars omitidos do resultado. Considere refinar o filtro/limit pra obter dados completos.]`;
+}
 
 async function getAnthropicClient() {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -229,7 +241,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
         toolResults.push({
           type: "tool_result",
           tool_use_id: tu.id,
-          content: JSON.stringify(result),
+          content: truncateToolResult(JSON.stringify(result)),
         });
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : "tool execution failed";
@@ -241,7 +253,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
         toolResults.push({
           type: "tool_result",
           tool_use_id: tu.id,
-          content: JSON.stringify({ status: "error", message: errorMsg }),
+          content: truncateToolResult(JSON.stringify({ status: "error", message: errorMsg })),
         });
       }
     }

@@ -152,7 +152,14 @@ async function advanceTask(task: ScheduledTaskRow): Promise<void> {
   const nowIso = new Date().toISOString();
 
   if (task.task_type === "recurring_reminder" && task.cron_expr) {
-    const nextRun = computeNextRun(task.cron_expr, new Date());
+    // Resolver timezone pelo location_id da task (era NY hardcoded — bug)
+    const { data: loc } = await supabase
+      .from("locations")
+      .select("timezone")
+      .eq("location_id", task.location_id)
+      .maybeSingle();
+    const tz = loc?.timezone || "America/New_York";
+    const nextRun = computeNextRun(task.cron_expr, new Date(), tz);
     if (!nextRun) {
       // Cron inválido — fail
       await supabase
@@ -186,19 +193,17 @@ async function markTaskFailed(taskId: string): Promise<void> {
 }
 
 /**
- * Calcula próximo trigger de um cron expression. Implementação simples por
- * iteração (incrementa minuto a minuto, máx 8 dias). Suficiente pra cron de
- * 5 campos com weekday/hour/minute simples.
+ * Calcula próximo trigger de um cron expression no timezone do rep.
+ * Iteração minuto a minuto, máx 31 dias (cobre cron mensal).
  */
-function computeNextRun(cron: string, from: Date): Date | null {
+function computeNextRun(cron: string, from: Date, timezone: string): Date | null {
   const cursor = new Date(from);
   cursor.setSeconds(0, 0);
-  cursor.setMinutes(cursor.getMinutes() + 1); // próximo minuto
-  // Itera até 8 dias (cobre cron semanal)
-  const maxIter = 8 * 24 * 60;
+  cursor.setMinutes(cursor.getMinutes() + 1);
+  const maxIter = 31 * 24 * 60;
   for (let i = 0; i < maxIter; i++) {
-    if (shouldFireCron(cron, "America/New_York", cursor)) {
-      return cursor;
+    if (shouldFireCron(cron, timezone, cursor)) {
+      return new Date(cursor);
     }
     cursor.setMinutes(cursor.getMinutes() + 1);
   }

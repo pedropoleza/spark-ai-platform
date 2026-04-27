@@ -51,6 +51,10 @@ export interface ProcessOutput {
     input: Record<string, unknown>;
     result: unknown;
   }>;
+  /** True se runWithTools retornou stopped_reason='error' ou 'max_iterations'.
+   *  Test endpoint deve persistir em metadata pra próximo turno detectar
+   *  loop e responder com fallback explícito. */
+  llm_failed?: boolean;
 }
 
 export async function processIncoming(input: ProcessInput): Promise<ProcessOutput> {
@@ -182,6 +186,44 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     model: input.config.ai_model,
   });
 
+  // 5b. Detectar falhas consecutivas de LLM (parse error / max iterations).
+  // Igual o sales tem em ai_paused_reason. Pra Sparkbot, conta turns
+  // recentes em assistant_test_messages via testSessionId; se 2 falhas
+  // seguidas, sinaliza degradado e oferece fallback ao rep em vez de loop.
+  const llmFailed =
+    result.stopped_reason === "error" || result.stopped_reason === "max_iterations";
+  if (llmFailed && input.testSessionId) {
+    const supabase2 = createAdminClient();
+    const { data: lastAgentMsgs } = await supabase2
+      .from("agent_test_messages")
+      .select("metadata")
+      .eq("session_id", input.testSessionId)
+      .eq("role", "agent")
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const lastMeta = (lastAgentMsgs?.[0]?.metadata || {}) as { llm_failed?: boolean };
+    if (lastMeta.llm_failed === true) {
+      // Segunda falha consecutiva — pausa e devolve mensagem de retry explícita
+      console.error(
+        `[Sparkbot] 2 LLM failures consecutivas pra rep=${rep.id} session=${input.testSessionId} reason=${result.stopped_reason}`,
+      );
+      return {
+        text:
+          "Tô com problema técnico aqui há dois turnos seguidos. Pode tentar de novo daqui a pouco? " +
+          "Se persistir, fala com o admin pra checar o sistema.",
+        should_send: true,
+        model_used: result.model_used,
+        tokens: {
+          prompt: result.prompt_tokens,
+          completion: result.completion_tokens,
+          cached: result.cached_tokens,
+        },
+        tool_calls: result.tool_calls,
+        tools_executed: result.tool_calls.map((tc) => tc.name),
+      };
+    }
+  }
+
   // 6. Billing
   if (result.prompt_tokens > 0) {
     try {
@@ -213,6 +255,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     model_used: result.model_used,
     tools_executed: result.tool_calls.map((tc) => tc.name),
     tool_calls: result.tool_calls,
+    llm_failed: llmFailed,
   };
 }
 

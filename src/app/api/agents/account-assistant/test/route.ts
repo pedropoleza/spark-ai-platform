@@ -202,6 +202,7 @@ export async function POST(request: NextRequest) {
       completion_tokens: result.tokens?.completion,
       cached_tokens: result.tokens?.cached,
       duration_ms: durationMs,
+      llm_failed: result.llm_failed || false, // pra detection de loop no próximo turn
     },
   });
   await supabase
