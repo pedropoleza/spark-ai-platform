@@ -125,6 +125,61 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
     }
   }, [agentId, storageKey, loadSession]);
 
+  // Polling leve a cada 3s pra capturar msgs proativas que chegaram via pg_cron
+  // (reminders, alertas) sem o rep ter feito nenhuma ação na UI. Pula quando
+  // loading (não atropela o handleSend) ou aba não visível.
+  useEffect(() => {
+    if (!sessionId) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (loading) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      try {
+        const res = await fetch(`/api/agents/test/sessions/${sessionId}`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const serverMsgs = data.messages || [];
+        setMessages((prev) => {
+          // Só atualiza se server tem msgs novas que o local não viu ainda
+          if (serverMsgs.length <= prev.length) return prev;
+          interface DbMsg {
+            id: string; role: "user" | "agent"; content: string; created_at: string;
+            metadata?: {
+              prompt_tokens?: number; completion_tokens?: number; cached_tokens?: number;
+              duration_ms?: number; tools?: string[]; tool_calls?: ToolCallDetail[];
+              model?: string; alert_type?: string; is_proactive?: boolean;
+            };
+          }
+          return (serverMsgs as DbMsg[]).map((m) => ({
+            role: m.role,
+            content: m.content,
+            timestamp: new Date(m.created_at),
+            tokens: m.metadata?.prompt_tokens !== undefined
+              ? {
+                  prompt: m.metadata.prompt_tokens,
+                  completion: m.metadata.completion_tokens || 0,
+                  cached: m.metadata.cached_tokens || 0,
+                }
+              : undefined,
+            duration_ms: m.metadata?.duration_ms,
+            tools: m.metadata?.tools,
+            tool_calls: m.metadata?.tool_calls,
+            model: m.metadata?.model,
+            alert_type: m.metadata?.alert_type,
+            is_proactive: m.metadata?.is_proactive,
+          }));
+        });
+      } catch {
+        // ignore
+      }
+    };
+    const interval = setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [sessionId, loading]);
+
   useEffect(() => {
     const container = messagesEndRef.current?.parentElement;
     if (container) container.scrollTop = container.scrollHeight;
