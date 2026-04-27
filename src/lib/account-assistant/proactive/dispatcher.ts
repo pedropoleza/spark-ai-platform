@@ -99,43 +99,85 @@ function isInQuietHours(
 }
 
 /**
- * Verifica se o cooldown pra (rep, rule, target) já expirou.
- * Retorna true se pode disparar.
+ * Atomic claim do slot de dispatch via função SQL (migration 00033).
+ *
+ * INSERT ON CONFLICT DO UPDATE WHERE last_fired_at < cutoff:
+ *   - Se cooldown expirou OU primeira vez → atualiza last_fired_at, retorna id
+ *   - Se cooldown ativo → WHERE bloqueia UPDATE, RETURNING vazio, retorna null
+ *
+ * Atomic = se 2 crons rodam simultaneamente, só 1 ganha o claim. O outro
+ * fica com null.
+ *
+ * forceFire bypass o claim (botão Simular Agora). Sempre cria/atualiza,
+ * permitindo dispatch mesmo em cooldown.
  */
-async function canFireByCooldown(
+async function tryClaimDispatchSlot(
   rule: ProactiveRule,
   repId: string,
   targetId: string | null,
-): Promise<boolean> {
-  if (rule.cooldown_minutes <= 0) return true;
+  forceFire: boolean,
+): Promise<string | null> {
   const supabase = createAdminClient();
-  const cutoff = new Date(Date.now() - rule.cooldown_minutes * 60 * 1000).toISOString();
-  const query = supabase
-    .from("assistant_alert_state")
-    .select("last_fired_at")
-    .eq("rep_id", repId)
-    .eq("rule_id", rule.id)
-    .gt("last_fired_at", cutoff)
-    .limit(1);
-  // Match por target_id (NULL = global)
-  if (targetId) query.eq("target_id", targetId);
-  else query.is("target_id", null);
-
-  const { data } = await query.maybeSingle();
-  return !data; // se não achou disparo recente → pode disparar
+  if (forceFire) {
+    // Direto via upsert sem cooldown check
+    const { data } = await supabase
+      .from("assistant_alert_state")
+      .upsert(
+        {
+          rep_id: repId,
+          rule_id: rule.id,
+          target_id: targetId,
+          last_fired_at: new Date().toISOString(),
+          status: "running",
+        },
+        { onConflict: "rep_id,rule_id,target_id" },
+      )
+      .select("id")
+      .single();
+    return data?.id || null;
+  }
+  const { data, error } = await supabase.rpc("try_claim_dispatch_slot", {
+    p_rep_id: repId,
+    p_rule_id: rule.id,
+    p_target_id: targetId,
+    p_cooldown_minutes: rule.cooldown_minutes,
+  });
+  if (error) {
+    console.error("[dispatcher] try_claim_dispatch_slot RPC failed:", error.message);
+    return null;
+  }
+  return (data as string | null) || null;
 }
 
 /**
- * Registra disparo (ou skip) na assistant_alert_state.
- * Upsert por (rep_id, rule_id, target_id).
+ * Marca status final do dispatch (sent/failed). Cooldown já foi reservado
+ * pelo claim — esse update só atualiza status + métricas.
  */
-async function recordDispatch(
+async function finalizeDispatch(
+  alertStateId: string,
+  status: AlertDispatchStatus,
+  tokens?: number,
+  costUsd?: number,
+): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase.rpc("finalize_dispatch", {
+    p_alert_state_id: alertStateId,
+    p_status: status,
+    p_tokens_used: tokens || null,
+    p_cost_usd: costUsd || null,
+  });
+}
+
+/**
+ * Pra status que não chegaram a fazer claim (skipped_disabled,
+ * skipped_quiet_hours), grava direto no alert_state via upsert. Esses
+ * casos não precisam ser atomic porque não há LLM call concorrente.
+ */
+async function recordSkip(
   rule: ProactiveRule,
   repId: string,
   targetId: string | null,
   status: AlertDispatchStatus,
-  tokens?: number,
-  costUsd?: number,
 ): Promise<void> {
   const supabase = createAdminClient();
   await supabase
@@ -147,8 +189,6 @@ async function recordDispatch(
         target_id: targetId,
         last_fired_at: new Date().toISOString(),
         status,
-        tokens_used: tokens || null,
-        cost_usd: costUsd || null,
       },
       { onConflict: "rep_id,rule_id,target_id" },
     );
@@ -159,7 +199,7 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
 
   // 1. Enabled
   if (!rule.enabled && !forceFire) {
-    await recordDispatch(rule, rep.id, targetId, "skipped_disabled");
+    await recordSkip(rule, rep.id, targetId, "skipped_disabled");
     return { status: "skipped_disabled", message: "Regra desabilitada" };
   }
 
@@ -176,23 +216,21 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
 
   // 3. Quiet hours
   if (!forceFire && isInQuietHours(agentConfig?.quiet_hours)) {
-    await recordDispatch(rule, rep.id, targetId, "skipped_quiet_hours");
+    await recordSkip(rule, rep.id, targetId, "skipped_quiet_hours");
     return { status: "skipped_quiet_hours", message: "Dentro de quiet hours" };
   }
 
-  // 4. Cooldown
-  if (!forceFire) {
-    const canFire = await canFireByCooldown(rule, rep.id, targetId);
-    if (!canFire) {
-      await recordDispatch(rule, rep.id, targetId, "skipped_cooldown");
-      return { status: "skipped_cooldown", message: "Em cooldown" };
-    }
+  // 4. Atomic claim do slot (substitui cooldown check + upsert separados)
+  // Se 2 crons paralelos chegam aqui, só 1 ganha; o outro recebe null.
+  const alertStateId = await tryClaimDispatchSlot(rule, rep.id, targetId, forceFire === true);
+  if (!alertStateId) {
+    return { status: "skipped_cooldown", message: "Em cooldown (claim negado)" };
   }
 
   // 5. Resolve location ativa do rep + GHL client
   const activeLocationId = rep.active_location_id || rep.ghl_users[0]?.location_id;
   if (!activeLocationId) {
-    await recordDispatch(rule, rep.id, targetId, "failed");
+    await finalizeDispatch(alertStateId, "failed");
     return { status: "failed", message: "Rep sem active_location_id" };
   }
 
@@ -202,7 +240,7 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     .eq("location_id", activeLocationId)
     .maybeSingle();
   if (!location) {
-    await recordDispatch(rule, rep.id, targetId, "failed");
+    await finalizeDispatch(alertStateId, "failed");
     return { status: "failed", message: "Location não encontrada" };
   }
 
@@ -273,7 +311,7 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
   const durationMs = Date.now() - startTs;
 
   if (!llmResult.text || llmResult.stopped_reason === "error") {
-    await recordDispatch(rule, rep.id, targetId, "failed", llmResult.prompt_tokens);
+    await finalizeDispatch(alertStateId, "failed", llmResult.prompt_tokens);
     return { status: "failed", message: "LLM falhou", duration_ms: durationMs };
   }
 
@@ -339,11 +377,9 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     console.error("[dispatcher] billing failed (non-blocking):", err instanceof Error ? err.message : err);
   }
 
-  // 10. Registra disparo
-  await recordDispatch(
-    rule,
-    rep.id,
-    targetId,
+  // 10. Finaliza dispatch (atualiza status sent + métricas no slot já reservado)
+  await finalizeDispatch(
+    alertStateId,
     "sent",
     llmResult.prompt_tokens + llmResult.completion_tokens,
     costUsd,
