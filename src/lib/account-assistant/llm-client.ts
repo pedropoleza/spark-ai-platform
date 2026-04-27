@@ -78,32 +78,60 @@ export interface RunWithToolsOutput {
 }
 
 /**
- * Roda o loop multi-turn com Claude. Executa tools solicitadas, realimenta
- * resultado, continua até end_turn.
+ * Roda o loop multi-turn com Claude. Se falhar (rate limit, API down,
+ * timeout), tenta OpenAI tool use com o mesmo loop iterativo.
+ *
+ * Pra Claude usar fallback OpenAI: input.model deve ser claude-*. Se já
+ * é OpenAI, sem fallback (não vamos cair pro Claude — que se Claude tá
+ * fora, OpenAI deve estar OK).
  */
 export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToolsOutput> {
   const model = input.model || DEFAULT_MODEL;
+  const isClaude = model.startsWith("claude-");
+
+  if (isClaude) {
+    try {
+      return await runWithClaude({ ...input, model });
+    } catch (err) {
+      console.warn(
+        `[LLM] Claude (${model}) failed, falling back to OpenAI ${FALLBACK_MODEL}:`,
+        err instanceof Error ? err.message : err,
+      );
+      try {
+        return await runWithOpenAI({ ...input, model: FALLBACK_MODEL });
+      } catch (err2) {
+        console.error(
+          `[LLM] OpenAI fallback também falhou:`,
+          err2 instanceof Error ? err2.message : err2,
+        );
+        return llmFailureStub(model);
+      }
+    }
+  }
+
+  // Já é OpenAI — sem fallback.
   try {
-    return await runWithClaude({ ...input, model });
+    return await runWithOpenAI({ ...input, model });
   } catch (err) {
-    console.warn(
-      `[LLM] Primary model ${model} failed, falling back to ${FALLBACK_MODEL}:`,
+    console.error(
+      `[LLM] OpenAI (${model}) failed:`,
       err instanceof Error ? err.message : err,
     );
-    // Fallback pra OpenAI se Anthropic falhou (rate limit, down, etc)
-    // V1: fallback simplificado — apenas retorna erro pra UI tratar.
-    // Futuro: implementar OpenAI tool use com mesmo formato.
-    return {
-      text: "Tive um problema técnico aqui. Pode tentar de novo em alguns segundos?",
-      tool_calls: [],
-      model_used: model,
-      prompt_tokens: 0,
-      completion_tokens: 0,
-      cached_tokens: 0,
-      iterations: 0,
-      stopped_reason: "error",
-    };
+    return llmFailureStub(model);
   }
+}
+
+function llmFailureStub(model: string): RunWithToolsOutput {
+  return {
+    text: "Tive um problema técnico aqui. Pode tentar de novo em alguns segundos?",
+    tool_calls: [],
+    model_used: model,
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    cached_tokens: 0,
+    iterations: 0,
+    stopped_reason: "error",
+  };
 }
 
 // =====================================================
@@ -262,6 +290,137 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
   }
 
   // Loop excedeu maxIterations
+  return {
+    text: "Executei várias ações mas preciso parar aqui. Me pede de novo se faltou algo.",
+    tool_calls,
+    model_used: input.model,
+    prompt_tokens: totalPromptTokens,
+    completion_tokens: totalCompletionTokens,
+    cached_tokens: totalCachedTokens,
+    iterations: MAX_ITERATIONS,
+    stopped_reason: "max_iterations",
+  };
+}
+
+// =====================================================
+// OpenAI fallback (tool use API com mesmo loop multi-turn)
+// =====================================================
+
+async function runWithOpenAI(input: RunWithToolsInput & { model: string }): Promise<RunWithToolsOutput> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY não configurada (fallback indisponível).");
+  const { default: OpenAI } = await import("openai");
+  const client = new OpenAI({ apiKey, timeout: 45000, maxRetries: 1 });
+
+  // Converte messages do formato genérico pra OpenAI ChatCompletion
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const messages: any[] = [{ role: "system", content: input.systemPrompt }];
+  for (const m of input.messages) {
+    if (typeof m.content === "string") {
+      messages.push({ role: m.role, content: m.content });
+    } else {
+      // Multimodal: converte image blocks pro formato OpenAI
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const parts: any[] = [];
+      for (const block of m.content) {
+        if (block.type === "text" && block.text) {
+          parts.push({ type: "text", text: block.text });
+        } else if (block.type === "image" && block.source) {
+          parts.push({
+            type: "image_url",
+            image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
+          });
+        }
+      }
+      messages.push({ role: m.role, content: parts });
+    }
+  }
+
+  const tools = input.tools.map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    },
+  }));
+
+  const tool_calls: RunWithToolsOutput["tool_calls"] = [];
+  let totalPromptTokens = 0;
+  let totalCompletionTokens = 0;
+  let totalCachedTokens = 0;
+
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const completion = await client.chat.completions.create({
+      model: input.model,
+      messages,
+      tools,
+      temperature: 0.3,
+      max_tokens: 2500,
+      store: true, // ativa OpenAI prompt caching automático
+    });
+
+    const usage = completion.usage;
+    totalPromptTokens += usage?.prompt_tokens || 0;
+    totalCompletionTokens += usage?.completion_tokens || 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    totalCachedTokens += (usage as any)?.prompt_tokens_details?.cached_tokens || 0;
+
+    const msg = completion.choices[0]?.message;
+    if (!msg) {
+      return {
+        text: "(sem resposta)", tool_calls, model_used: input.model,
+        prompt_tokens: totalPromptTokens, completion_tokens: totalCompletionTokens,
+        cached_tokens: totalCachedTokens, iterations: i + 1, stopped_reason: "error",
+      };
+    }
+
+    messages.push(msg);
+
+    if (!msg.tool_calls || msg.tool_calls.length === 0) {
+      // Sem tool calls — fim do turno
+      return {
+        text: msg.content || "(sem resposta)",
+        tool_calls,
+        model_used: input.model,
+        prompt_tokens: totalPromptTokens,
+        completion_tokens: totalCompletionTokens,
+        cached_tokens: totalCachedTokens,
+        iterations: i + 1,
+        stopped_reason: "end_turn",
+      };
+    }
+
+    // Executa tool calls
+    for (const tc of msg.tool_calls) {
+      if (tc.type !== "function") continue;
+      const args: Record<string, unknown> = (() => {
+        try { return JSON.parse(tc.function.arguments); } catch { return {}; }
+      })();
+      try {
+        const result = await input.executor(tc.function.name, args);
+        tool_calls.push({ name: tc.function.name, input: args, result });
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: truncateToolResult(JSON.stringify(result)),
+        });
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : "tool execution failed";
+        tool_calls.push({
+          name: tc.function.name,
+          input: args,
+          result: { status: "error", message: errorMsg },
+        });
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: truncateToolResult(JSON.stringify({ status: "error", message: errorMsg })),
+        });
+      }
+    }
+  }
+
   return {
     text: "Executei várias ações mas preciso parar aqui. Me pede de novo se faltou algo.",
     tool_calls,
