@@ -28,21 +28,45 @@ export async function PUT(
     .maybeSingle();
   if (!existing) return errorResponse("Regra não encontrada", 404, "not_found");
 
-  // Campos permitidos (não muda agent_id, source, created_at)
-  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  if (typeof body.enabled === "boolean") update.enabled = body.enabled;
-  if (body.name) update.name = String(body.name).slice(0, 100);
-  if (body.description !== undefined) {
-    update.description = body.description ? String(body.description).slice(0, 500) : null;
+  // Validação explícita (igual ao POST — sem .slice silencioso que perde
+  // conteúdo). Se admin manda algo fora do range, falha rápido com
+  // mensagem clara em vez de truncar e fingir que deu certo.
+  if (body.name !== undefined && (typeof body.name !== "string" || body.name.length === 0 || body.name.length > 100)) {
+    return errorResponse("name deve ter entre 1 e 100 caracteres", 400, "name_invalid");
   }
-  if (body.prompt_instruction) update.prompt_instruction = String(body.prompt_instruction).slice(0, 3000);
+  if (body.prompt_instruction !== undefined && (typeof body.prompt_instruction !== "string" || body.prompt_instruction.length === 0 || body.prompt_instruction.length > 3000)) {
+    return errorResponse("prompt_instruction deve ter entre 1 e 3000 caracteres", 400, "prompt_invalid");
+  }
+  if (body.description !== undefined && body.description !== null && (typeof body.description !== "string" || body.description.length > 500)) {
+    return errorResponse("description deve ter no máximo 500 caracteres", 400, "description_too_long");
+  }
+  if (body.cooldown_minutes !== undefined && (typeof body.cooldown_minutes !== "number" || body.cooldown_minutes < 0 || body.cooldown_minutes > 10080)) {
+    return errorResponse("cooldown_minutes deve ser número entre 0 e 10080 (1 semana)", 400, "invalid_cooldown");
+  }
+  if (body.rule_type !== undefined && !["reactive", "scheduled"].includes(body.rule_type)) {
+    return errorResponse("rule_type inválido (reactive|scheduled)", 400, "invalid_rule_type");
+  }
+
+  // Campos permitidos (não muda agent_id, source, created_at).
+  // last_modified_by_user_id rastreia quem fez a última alteração (audit).
+  const update: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+    last_modified_by_user_id: session.userId,
+  };
+  if (typeof body.enabled === "boolean") update.enabled = body.enabled;
+  if (body.name !== undefined) update.name = body.name;
+  if (body.description !== undefined) {
+    update.description = body.description ? body.description : null;
+  }
+  if (body.prompt_instruction !== undefined) update.prompt_instruction = body.prompt_instruction;
   if (body.trigger_config) update.trigger_config = body.trigger_config;
   if (body.tools_allowed !== undefined) {
     update.tools_allowed = Array.isArray(body.tools_allowed) ? body.tools_allowed : null;
   }
   if (typeof body.cooldown_minutes === "number") update.cooldown_minutes = body.cooldown_minutes;
   if (body.ai_model) update.ai_model = body.ai_model;
-  // rule_type só editável em system source NULL ou se não tiver disparado nada
+  // rule_type só editável em source='custom'. Mudar tipo de uma system rule
+  // quebraria a semântica esperada (e.g., briefing_8am virar reactive não faz sentido).
   if (body.rule_type && existing.source === "custom") {
     update.rule_type = body.rule_type;
   }

@@ -157,6 +157,59 @@ const getFreeSlots: ToolEntry = {
   },
 };
 
+const getAppointment: ToolEntry = {
+  def: {
+    name: "get_appointment",
+    description:
+      "Detalhes completos de um appointment pelo id. Use quando uma alert/regra menciona appointment_id e você precisa saber horário, contact, status, calendar, etc.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: { appointment_id: { type: "string" } },
+      required: ["appointment_id"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const appointmentId = String(args.appointment_id || "");
+    const invalid = validateGhlId(appointmentId, "appointment");
+    if (invalid) return invalid;
+
+    try {
+      const res = await ctx.ghlClient.get<{
+        appointment?: {
+          id: string; title?: string; startTime?: string; endTime?: string;
+          contactId?: string; appointmentStatus?: string;
+          assignedUserId?: string; calendarId?: string;
+          address?: string; meetingLocationType?: string;
+          notes?: string; createdAt?: string; updatedAt?: string;
+        };
+      }>(`/calendars/events/appointments/${appointmentId}`);
+      if (!res.appointment) return { status: "not_found", message: "Appointment não encontrado" };
+      const a = res.appointment;
+      return {
+        status: "ok",
+        data: {
+          id: a.id,
+          title: a.title || null,
+          start: a.startTime || null,
+          end: a.endTime || null,
+          contact_id: a.contactId || null,
+          status: a.appointmentStatus || "scheduled",
+          assigned_to: a.assignedUserId || null,
+          calendar_id: a.calendarId || null,
+          address: a.address || null,
+          meeting_location_type: a.meetingLocationType || null,
+          notes: a.notes || null,
+          created_at: a.createdAt || null,
+          updated_at: a.updatedAt || null,
+        },
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "consulta de appointment");
+    }
+  },
+};
+
 const createAppointment: ToolEntry = {
   def: {
     name: "create_appointment",
@@ -288,6 +341,7 @@ export const CALENDAR_TOOLS: ToolEntry[] = [
   listAppointments,
   listCalendars,
   getFreeSlots,
+  getAppointment,
   createAppointment,
   updateAppointment,
   deleteAppointment,

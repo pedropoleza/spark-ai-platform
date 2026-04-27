@@ -68,6 +68,19 @@ export async function POST(request: NextRequest) {
   if (!name || !prompt_instruction || !trigger_config) {
     return errorResponse("name, prompt_instruction e trigger_config obrigatórios", 400, "missing_fields");
   }
+  // Limites explícitos (antes faziam .slice silencioso, perdendo conteúdo)
+  if (typeof name !== "string" || name.length > 100) {
+    return errorResponse("name deve ter no máximo 100 caracteres", 400, "name_too_long");
+  }
+  if (typeof prompt_instruction !== "string" || prompt_instruction.length > 3000) {
+    return errorResponse("prompt_instruction deve ter no máximo 3000 caracteres", 400, "prompt_too_long");
+  }
+  if (description && (typeof description !== "string" || description.length > 500)) {
+    return errorResponse("description deve ter no máximo 500 caracteres", 400, "description_too_long");
+  }
+  if (typeof cooldown_minutes !== "undefined" && (typeof cooldown_minutes !== "number" || cooldown_minutes < 0 || cooldown_minutes > 10080)) {
+    return errorResponse("cooldown_minutes deve ser número entre 0 e 10080 (1 semana)", 400, "invalid_cooldown");
+  }
 
   const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
   if (!hubLocationId) return errorResponse("Hub não configurado", 500, "hub_not_configured");
@@ -95,6 +108,9 @@ export async function POST(request: NextRequest) {
       ai_model: ai_model || "claude-haiku-4-5-20251001",
       source: "custom",
       enabled: true,
+      // Audit (migration 00035): rastreia quem criou pra debug e compliance.
+      created_by_user_id: session.userId,
+      last_modified_by_user_id: session.userId,
     })
     .select()
     .single();
