@@ -5,7 +5,6 @@ import { GHLClient } from "@/lib/ghl/client";
 import { identifyRep, normalizePhone, acceptTerms } from "@/lib/account-assistant/identity";
 import { processIncoming } from "@/lib/account-assistant/processor";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
-import { fireScheduledReminders } from "@/lib/account-assistant/proactive/reminder-runner";
 import type { RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 
@@ -142,16 +141,6 @@ export async function POST(request: NextRequest) {
     }
     sessionId = newSession.id;
   }
-
-  // ==========================================================================
-  // 1b. AUTO-FIRE REMINDERS DEVIDOS
-  // Antes de processar a msg do rep, dispara reminders pendentes da sessão
-  // que já passaram do horário. Garante que "me lembra em 2min" funciona
-  // mesmo no plano Hobby (cron diário). Fire-and-forget — não bloqueia.
-  // ==========================================================================
-  void fireScheduledReminders().catch((err) => {
-    console.error("[test endpoint] fireScheduledReminders failed:", err instanceof Error ? err.message : err);
-  });
 
   // ==========================================================================
   // 2. SALVAR USER MSG
