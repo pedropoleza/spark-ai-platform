@@ -112,6 +112,12 @@ export async function GET(request: NextRequest) {
 }
 
 /**
+ * POST handler — alias do GET pra suportar `net.http_post` chamado pelo
+ * pg_cron do Supabase (que sempre manda POST). Lógica idêntica.
+ */
+export const POST = GET;
+
+/**
  * Busca reps elegíveis pra uma regra. V2: todos os reps cadastrados.
  * V3+: filtrar por whitelist de allowed_ghl_users no agent_config.
  */
