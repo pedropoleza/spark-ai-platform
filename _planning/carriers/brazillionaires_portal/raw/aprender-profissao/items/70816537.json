@@ -1,0 +1,50 @@
+{
+  "type": "article",
+  "subtype": "mcms",
+  "id": 70816537,
+  "author": "Rogerio Bonfim",
+  "title": "Universidade do Produto - IUL",
+  "date": "2023-02-15T21:43:00+01:00",
+  "leadin": "",
+  "summary": "",
+  "content": " <div class=\"photo top\" style=\"text-align:center\"> <a href=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/70816537-49352641.jpg?v=1676493821\" target=\"_blank\"> <img id=\"img-70816537-49352641\" src=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/70816537-49352641.jpg?v=1676493822\" alt=\"Universidade do Produto - IUL\" title=\"Universidade do Produto - IUL\" /> </a> </div> <br class=\"clear\" /> <video controls controlsList=\"nodownload\" poster=\"https://cmsphoto.ww-cdn.com/superstatic/images/2009698/video/2697818/player/player_preview.jpg?v=1676495493\" width=\"100%\" oncontextmenu=\"return false;\" style=\"aspect-ratio: 16 / 9;\"><source src=\"https://brazillionaires.virtualnet.site/apiv3/video/getIphoneSVideo/2697818/41929846.mp4/\" type=\"video/mp4\" /></video> ",
+  "images": [
+    {
+      "id": "img-70816537-49352641",
+      "url": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/70816537-49352641.jpg?v=1676493822",
+      "otherImagesUrl": {
+        "large": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/70816537-49352641.jpg?v=1676493821"
+      }
+    }
+  ],
+  "isFeatured": "img-70816537-49352641",
+  "smallThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/f5b4318f586b1041a7bde429dc607090beae272c/157/93/",
+  "thumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/f5b4318f586b1041a7bde429dc607090beae272c/314/196/",
+  "originalThumbnail": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/70816537-49352641.jpg?v=1676493821",
+  "largeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/f5b4318f586b1041a7bde429dc607090beae272c/750/-1/",
+  "xLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/f5b4318f586b1041a7bde429dc607090beae272c/1200/-1/",
+  "xxLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/f5b4318f586b1041a7bde429dc607090beae272c/3200/-1/",
+  "latitude": "0",
+  "longitude": "0",
+  "subtitle": "",
+  "isHeadline": 0,
+  "authorAvatarUrl": "",
+  "slug": "universidade-do-produto-iul",
+  "meta": {
+    "title": "",
+    "description": ""
+  },
+  "commentsEnabled": true,
+  "commentsPostUrl": "https://brazillionaires.virtualnet.site/apiv3/submitComment/64072908/70816537/?username=[name]&comment=[content]&email=[email]",
+  "commentsUrl": "https://brazillionaires.virtualnet.site/apiv3/getCommentsByItem/64072908/70816537/1/24/",
+  "nbcomments": 0,
+  "url": "https://brazillionaires.virtualnet.site/estudos-de-caso/i/70816537/universidade-do-produto-iul",
+  "subsections": {
+    "49033607": [
+      "Categoria principal"
+    ],
+    "64072908": [
+      "Categoria principal"
+    ]
+  }
+}

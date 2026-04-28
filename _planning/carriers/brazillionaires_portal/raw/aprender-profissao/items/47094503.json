@@ -1,0 +1,50 @@
+{
+  "type": "article",
+  "subtype": "mcms",
+  "id": 47094503,
+  "author": "Marina Couto",
+  "title": "Sua Imagem na Mídia Social",
+  "date": "2020-06-10T19:49:00+02:00",
+  "leadin": "",
+  "summary": "",
+  "content": " <div class=\"photo top\" style=\"text-align:center\"> <a href=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/47094503-37387112.jpg?v=1591811468\" target=\"_blank\"> <img id=\"img-47094503-37387112\" src=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/47094503-37387112.jpg?v=1591811470\" alt=\"Sua Imagem na Mídia Social\" title=\"Sua Imagem na Mídia Social\" /> </a> </div> <br class=\"clear\" /> <iframe src=\"https://player.vimeo.com/video/414160995\" width=\"640\" height=\"360\" frameborder=\"0\" allow=\"autoplay; fullscreen\" allowfullscreen></iframe> ",
+  "images": [
+    {
+      "id": "img-47094503-37387112",
+      "url": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/47094503-37387112.jpg?v=1591811470",
+      "otherImagesUrl": {
+        "large": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/47094503-37387112.jpg?v=1591811468"
+      }
+    }
+  ],
+  "isFeatured": "img-47094503-37387112",
+  "smallThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/3a5ab596e58fe5a02c8d47435c7ab307b1db6a28/157/93/",
+  "thumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/3a5ab596e58fe5a02c8d47435c7ab307b1db6a28/314/196/",
+  "originalThumbnail": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/47094503-37387112.jpg?v=1591811468",
+  "largeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/3a5ab596e58fe5a02c8d47435c7ab307b1db6a28/750/-1/",
+  "xLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/3a5ab596e58fe5a02c8d47435c7ab307b1db6a28/1200/-1/",
+  "xxLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/3a5ab596e58fe5a02c8d47435c7ab307b1db6a28/3200/-1/",
+  "latitude": "0",
+  "longitude": "0",
+  "subtitle": "",
+  "isHeadline": 0,
+  "authorAvatarUrl": "",
+  "slug": "sua-imagem-na-midia-social",
+  "meta": {
+    "title": "",
+    "description": ""
+  },
+  "commentsEnabled": true,
+  "commentsPostUrl": "https://brazillionaires.virtualnet.site/apiv3/submitComment/64790960/47094503/?username=[name]&comment=[content]&email=[email]",
+  "commentsUrl": "https://brazillionaires.virtualnet.site/apiv3/getCommentsByItem/64790960/47094503/1/24/",
+  "nbcomments": 0,
+  "url": "https://brazillionaires.virtualnet.site/como-conhecer-pessoas-1/i/47094503/sua-imagem-na-midia-social",
+  "subsections": {
+    "49132622": [
+      "Categoria principal"
+    ],
+    "64790960": [
+      "Categoria principal"
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "type": "article",
+  "subtype": "mcms",
+  "id": 46347571,
+  "author": "Marina Couto",
+  "title": "Fazer Sua Lista",
+  "date": "2020-05-20T17:41:00+02:00",
+  "leadin": "",
+  "summary": "",
+  "content": " <div class=\"photo top\" style=\"text-align:center\"> <a href=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/46347571-37065631.jpg?v=1589993143\" target=\"_blank\"> <img id=\"img-46347571-37065631\" src=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/46347571-37065631.jpg?v=1589993143\" alt=\"Fazer Sua Lista\" title=\"Fazer Sua Lista\" /> </a> </div> <br class=\"clear\" /> <iframe src=\"https://player.vimeo.com/video/411608301\" width=\"640\" height=\"360\" frameborder=\"0\" allow=\"autoplay; fullscreen\" allowfullscreen></iframe>  <p class=\"pj\"> <img src=\"https://brazillionaires.virtualnet.site/assets/img/icon-pdf.png\" style=\"vertical-align:middle; max-height: 20px;\" alt=\"Memory Jogger\" class=\"image\" /> <a class=\"pj\" target=\"_blank\" href=\"https://brazillionaires.virtualnet.site/apiv3/attachment/download/1938422/\"> Memory Jogger </a>  <br />  </p>",
+  "images": [
+    {
+      "id": "img-46347571-37065631",
+      "url": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/46347571-37065631.jpg?v=1589993143",
+      "otherImagesUrl": {
+        "large": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/46347571-37065631.jpg?v=1589993143"
+      }
+    }
+  ],
+  "isFeatured": "img-46347571-37065631",
+  "smallThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/53e21049ac70d029d36f546e6cb720d3aaa04541/157/93/",
+  "thumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/53e21049ac70d029d36f546e6cb720d3aaa04541/314/196/",
+  "originalThumbnail": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/46347571-37065631.jpg?v=1589993143",
+  "largeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/53e21049ac70d029d36f546e6cb720d3aaa04541/750/-1/",
+  "xLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/53e21049ac70d029d36f546e6cb720d3aaa04541/1200/-1/",
+  "xxLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/53e21049ac70d029d36f546e6cb720d3aaa04541/3200/-1/",
+  "latitude": "0",
+  "longitude": "0",
+  "subtitle": "",
+  "isHeadline": 0,
+  "authorAvatarUrl": "",
+  "slug": "article-97",
+  "meta": {
+    "title": "",
+    "description": ""
+  },
+  "commentsEnabled": true,
+  "commentsPostUrl": "https://brazillionaires.virtualnet.site/apiv3/submitComment/64568456/46347571/?username=[name]&comment=[content]&email=[email]",
+  "commentsUrl": "https://brazillionaires.virtualnet.site/apiv3/getCommentsByItem/64568456/46347571/1/24/",
+  "nbcomments": 1,
+  "url": "https://brazillionaires.virtualnet.site/como-convidar-1/i/46347571/article-97",
+  "subsections": {
+    "64568456": [
+      "Categoria principal"
+    ]
+  }
+}

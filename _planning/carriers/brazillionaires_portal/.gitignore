@@ -1,0 +1,12 @@
+# PDFs binários — conteúdo proprietário do portal Brazillionaires.
+# Os .txt extraídos (via pdftotext) ficam commitados pra processor.
+raw/*/pdfs/*.pdf
+
+# Áudio/vídeo nunca commitar
+raw/*/*.mp3
+raw/*/*.mp4
+raw/*/*.m4a
+raw/*/audio.*
+
+# Output Vimeo info JSON é grande e auxiliar
+raw/*/transcripts/*.info.json

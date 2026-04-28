@@ -1,0 +1,295 @@
+                                   Dicas sobre Underwriting
+Disclaimer: Esta apresentação destina-se apenas ao agente licenciado, a
+fim de auxiliá-lo na compreensão do processo após a emissão do caso. É
+responsabilidade do agente sempre tomar suas próprias decisões em
+benefício de seu cliente e verificar as atualizações das regras do estado
+o qual está aplicando o processo. Este material é propriedade da Five
+Rings/Brazillionaires e deve ser usado exclusivamente por seu agente.          Rita de Cássia Pierotti-Madden
+Rita Pierotti é uma Brazillionaire desde de 2018, e hoje é também a
+Liaison dos Brazillionaires na Five Rings, ajuda os agentes em distress
+com relação às aplicações e às licenças.
+
+A missão é fazer a diferença na vida do agente plantando uma semente
+de conhecimento, e lembrando-o de que hoje é mais uma
+oportunidade de ser um ser humano melhor do que foi ontem.
+
+Todo dia devemos trabalhar na nossa melhor versão!
+   Utilizando o ChatGPT como
+   ferramenta para responder e
+   entender questões de Underwriting.
+
+
+
+       O Chat GPT é capaz de compreender o
+       significado das frases e desenvolver
+       conversas mais complexas
+
+
+
+           Veja no aplicativo dos Brazillionaires as
+           aulas do Gustavo Couto sobre isto.
+
+
+
+
+               Criar sua conta e começar um Prompt
+               no ChatGPT
+
+
+
+
+                   Como responder UW questions usando
+                   ChatGPT
+
+
+
+PIEROTTI-MADDEN
+Pela lei, por ser um produto nacional dos Estados Unidos,
+underwriting e assinatura de recibo devem acontecer somente
+quando o cliente estiver dentro do país, pois se houver um claim
+dentro dos dois anos de contestability e for provado que o
+cliente estava fora do país, o claim pode ser negado.
+
+Por favor, você fez uma aplicação para o seu cliente e ele(a) já
+tinha uma viagem agendada para fora do país, envie um email
+para a New Business para que eles possam avisar a seguradora
+para colocar um hold na aplicação - normalmente eles fecham o
+caso e reabrem quando o cliente retornar ao país.
+
+
+
+O cliente também deve assinar o recibo da entrega da apólice,
+mesmo que digitalmente, quando ele estiver dentro do país.
+
+
+
+
+         PIEROTTI-MADDEN
+Medical Claims é quando o consultório médico/clínica faz um claim para o seguro
+saúde.
+
+
+
+
+O médico do Bob pede um exame específico e anota o código do exame no
+referral do Bob que irá levar ao laboratório/clínica para fazer o referido exame.
+
+
+
+
+Exemplo: o Bob está roncando muito e conversa com o médico sobre isto. O
+médico pede exame de sono terapia. O Bob adia fazer este exame e resolve fazer
+um regime pois está acima do peso, e a disciplina da dieta e de não comer depois
+das 5pm o faz bem e ele conversa com o médico dizendo que parou de roncar e o
+exame fica esquecido, mas como está registrado, a seguradora vai pedir o
+resultado deste exame. Tenha em mãos uma nota do médico dizendo que o
+exame não é mais necessário.
+   Underwriter request:
+  Please clarify the details about the 2023 hospital stay noted as "folded vein,
+intestine"
+   what occurred?
+   Did the client have surgery? please provide more details
+ We do understand the concern however we are unable to proceed without full
+details as any pain and or surgical procedure can lead to higher risk depending
+on the cause.
+   We are unable to proceed until we have full notes of the doctor full details.
+   Please advise. Thank you.
+
+
+   Sugestão de como responder:
+  Ao receber um e-mail como esse, você deve pedir ao seu cliente que forneça
+os resultados dos últimos testes e anotações médicas sobre o procedimento que
+ele fez e enviá-los anexados à sua resposta ao Underwriter.
+ Será a maneira correta para agilizar o processo de underwriting, pois o
+Underwriter terá o material necessário para a avaliação da saúde desse cliente.
+Por favor, se o seu cliente aplicou para um termo e foi aprovado automaticamente
+com um rate melhor, pare e análise as opções.
+
+
+
+Se você aumentar o Face Amount de uma aprovação automática a seguradora irá
+enviar este caso para o underwriting process e fazer uma busca mais detalhada sobre
+a saúde deste cliente solicitando paramédico e até o medical reecord. E se tiver algo,
+poderá aprovar com um rate pior, ou até negar a cobertura.
+Sempre discuta com o cliente sobre esta opção e se ele quiser, por favor, pergunte ao
+underwriter se o aumento deste Face Amount é aprovado pela NLG sem retornar ao
+processo de underwriting.
+
+
+O ideal é fazer a mudança de um Termo de 20 anos para um de 30 anos. O que
+acontecerá sem underwriting e será autorizado pelo Case Manager.
+
+
+
+Se foi feito o full underwriting (paramédico & medical records) e ainda assim foi
+aprovado better, ai sim você poderá aumentar o face amount pois a seguradora já
+analisou profundamente, e com certeza enviará uma oferta para o aumento de face
+amount sem retornar para o processo de underwriting.
+O Face Amount é sempre baseado na necessidade do cliente, no salário annual, na
+idade e o net worth.
+
+
+
+
+             PIEROTTI-MADDEN
+   
+
+
+
+   
+
+
+   
+
+
+
+
+   
+
+
+
+   
+
+
+
+
+   
+
+
+   
+
+
+
+
+PIEROTTI-MADDEN
+   
+
+   
+
+   
+
+
+   
+
+
+
+   
+
+   
+
+   
+
+
+
+
+   
+
+
+   
+
+
+
+   
+
+
+
+PIEROTTI-MADDEN
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    PIEROTTI-MADDEN
+     
+
+
+
+
+PIEROTTI-MADDEN
+ 
+
+ 
+
+ 
+
+
+
+
+PIEROTTI-MADDEN
+ 
+
+
+
+
+PIEROTTI-MADDEN
+PDF é o melhor formato para a seguradora    Enviar um arquivo por email deve ser
+  aceitar documentos e/ou recibos que      sempre EM ANEXO ao email, nunca no
+        sejam enviados/uploaded.                      corpo do email.
+
+
+
+
+
+
+https://www.sendinc.com
+      https://www.virtru.com
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    PIEROTTI-MADDEN
+https://i94.cbp.dhs.gov/I94/#/home
+
+
+
+
+
+
+
+PIEROTTI-MADDEN
+PIEROTTI-MADDEN
+PIEROTTI-MADDEN
+Se o botão estiver verde o agente pode fazer o upload direto no site da NLG.
+
+    O que está em azul (como o Surrender Form) o agent poderá fazer o
+             download do formulário que precisará preencher
+
+                                 PIEROTTI-MADDEN
+
+
+
+
+
+
+PIEROTTI-MADDEN
+PIEROTTI-MADDEN
+Conhecer!
+Convidar!
+Encontrar!
+                               Gratidão!!!
+
+                               Rita Pierotti
+             PIEROTTI-MADDEN
+

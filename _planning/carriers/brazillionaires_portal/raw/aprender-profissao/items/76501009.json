@@ -1,0 +1,50 @@
+{
+  "type": "article",
+  "subtype": "mcms",
+  "id": 76501009,
+  "author": "Rita Pierotti",
+  "title": "Clube dos $10,000 - Encontro 7",
+  "date": "2023-10-30T14:52:00+01:00",
+  "leadin": "",
+  "summary": "",
+  "content": " <div class=\"photo top\" style=\"text-align:center\"> <a href=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/76501009-54780784.jpg?v=1699455195\" target=\"_blank\"> <img id=\"img-76501009-54780784\" src=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/76501009-54780784.jpg?v=1699455196\" alt=\"Clube dos $10,000 - Encontro 7\" title=\"Clube dos $10,000 - Encontro 7\" /> </a> </div> <br class=\"clear\" /> <video controls controlsList=\"nodownload\" poster=\"https://cmsphoto.ww-cdn.com/superstatic/images/2009698/video/3020114/player/player_preview.jpg?v=1699455984\" width=\"100%\" oncontextmenu=\"return false;\" style=\"aspect-ratio: 16 / 9;\"><source src=\"https://brazillionaires.virtualnet.site/apiv3/video/getIphoneSVideo/3020114/44391647.mp4/\" type=\"video/mp4\" /></video> ",
+  "images": [
+    {
+      "id": "img-76501009-54780784",
+      "url": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/76501009-54780784.jpg?v=1699455196",
+      "otherImagesUrl": {
+        "large": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/76501009-54780784.jpg?v=1699455195"
+      }
+    }
+  ],
+  "isFeatured": "img-76501009-54780784",
+  "smallThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/9656e2e7dbbedfaeb46f7a7e5d6e364810fdd5b6/157/93/",
+  "thumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/9656e2e7dbbedfaeb46f7a7e5d6e364810fdd5b6/314/196/",
+  "originalThumbnail": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/76501009-54780784.jpg?v=1699455195",
+  "largeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/9656e2e7dbbedfaeb46f7a7e5d6e364810fdd5b6/750/-1/",
+  "xLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/9656e2e7dbbedfaeb46f7a7e5d6e364810fdd5b6/1200/-1/",
+  "xxLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/9656e2e7dbbedfaeb46f7a7e5d6e364810fdd5b6/3200/-1/",
+  "latitude": "0",
+  "longitude": "0",
+  "subtitle": "",
+  "isHeadline": 0,
+  "authorAvatarUrl": "",
+  "slug": "clube-dos-10000-encontro-7",
+  "meta": {
+    "title": "",
+    "description": ""
+  },
+  "commentsEnabled": true,
+  "commentsPostUrl": "https://brazillionaires.virtualnet.site/apiv3/submitComment/65604413/76501009/?username=[name]&comment=[content]&email=[email]",
+  "commentsUrl": "https://brazillionaires.virtualnet.site/apiv3/getCommentsByItem/65604413/76501009/1/24/",
+  "nbcomments": 0,
+  "url": "https://brazillionaires.virtualnet.site/clube-dos-10001/i/76501009/clube-dos-10000-encontro-7",
+  "subsections": {
+    "59196957": [
+      "Categoria principal"
+    ],
+    "65604413": [
+      "Categoria principal"
+    ]
+  }
+}

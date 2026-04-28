@@ -1,0 +1,47 @@
+{
+  "type": "article",
+  "subtype": "mcms",
+  "id": 53980240,
+  "author": "Marina Couto",
+  "title": "SCRIPT de Agendamento",
+  "date": "2020-01-02T02:23:00+01:00",
+  "leadin": "",
+  "summary": "Veja abaixo o script de agedamento para usar assim que a pessoa acabou de assistir o webinario.",
+  "content": " <div class=\"photo top\" style=\"text-align:center\"> <a href=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/53980240-40725818.jpg?v=1613525033\" target=\"_blank\"> <img id=\"img-53980240-40725818\" src=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/53980240-40725818.jpg?v=1613525033\" alt=\"SCRIPT de Agendamento\" title=\"SCRIPT de Agendamento\" /> </a> </div> <br class=\"clear\" /> <div class=\"texte\" > <p>Veja abaixo o script de agedamento para usar assim que a pessoa acabou de assistir o webinario.</p> </div> <br class=\"clear\" />  <p class=\"pj\"> <img src=\"https://brazillionaires.virtualnet.site/assets/img/icon-pdf.png\" style=\"vertical-align:middle; max-height: 20px;\" alt=\"SCRIPT DE AGENDAMENTO\" class=\"image\" /> <a class=\"pj\" target=\"_blank\" href=\"https://brazillionaires.virtualnet.site/apiv3/attachment/download/2101979/\"> SCRIPT DE AGENDAMENTO </a>  <br />  </p>",
+  "images": [
+    {
+      "id": "img-53980240-40725818",
+      "url": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/53980240-40725818.jpg?v=1613525033",
+      "otherImagesUrl": {
+        "large": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/53980240-40725818.jpg?v=1613525033"
+      }
+    }
+  ],
+  "isFeatured": "img-53980240-40725818",
+  "smallThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/30d9489cb37a478b75efdb3b204f14bd7b880474/157/93/",
+  "thumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/30d9489cb37a478b75efdb3b204f14bd7b880474/314/196/",
+  "originalThumbnail": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/53980240-40725818.jpg?v=1613525033",
+  "largeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/30d9489cb37a478b75efdb3b204f14bd7b880474/750/-1/",
+  "xLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/30d9489cb37a478b75efdb3b204f14bd7b880474/1200/-1/",
+  "xxLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/30d9489cb37a478b75efdb3b204f14bd7b880474/3200/-1/",
+  "latitude": "0",
+  "longitude": "0",
+  "subtitle": "",
+  "isHeadline": 0,
+  "authorAvatarUrl": "",
+  "slug": "script-de-agendamento",
+  "meta": {
+    "title": "",
+    "description": ""
+  },
+  "commentsEnabled": true,
+  "commentsPostUrl": "https://brazillionaires.virtualnet.site/apiv3/submitComment/64568456/53980240/?username=[name]&comment=[content]&email=[email]",
+  "commentsUrl": "https://brazillionaires.virtualnet.site/apiv3/getCommentsByItem/64568456/53980240/1/24/",
+  "nbcomments": 0,
+  "url": "https://brazillionaires.virtualnet.site/como-convidar-1/i/53980240/script-de-agendamento",
+  "subsections": {
+    "64568456": [
+      "Categoria principal"
+    ]
+  }
+}

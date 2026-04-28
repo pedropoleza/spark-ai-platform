@@ -1,0 +1,930 @@
+Individual Policy
+Underwriting Guide –
+Ameritas FLX Living Benefits Products
+
+
+
+
+LI 2136 4-22    For financial professional use only. Not for use with clients.
+    Table of contents
+    From your underwriting team.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 3
+
+    Life underwriting requirements.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 3
+
+    Glossary. .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 4
+
+    Life underwriting classifications .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 5
+
+    Term and index universal life riders.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 9
+
+    Index universal life only riders.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 9
+
+    FLXelerate .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 10
+
+    Underwriting edge program.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 10
+
+    Financial underwriting. .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 11
+
+    Personal insurance. .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 11
+
+    Business or other types of insurance.  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 12
+
+    Juvenile coverage. .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 12
+
+    Stranger-owned/investor owned life insurance (STOLI/IOLI).  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 12
+
+    Single life automatic binding including retention .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 13
+
+    Jumbo limits .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 13
+
+    Foreign risk. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+
+    High profile occupations. .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 15
+
+    Underwriting impairments .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  .  . 17
+
+
+
+
+2
+From your underwriting team...
+As your underwriting team, our goal is to partner with you in getting your cases issued efficiently and
+competitively. This Individual Policy Underwriting Guide is designed to give you an overview of our criteria
+and other underwriting information you will find useful.
+
+
+Life underwriting requirements
+                                 Ages in the below chart are policy issue ages
+
+  Amount      Ages 0 – 17   Ages 18 – 40     Ages 41 – 50     Ages 51 – 60     Ages 61 – 70*    Ages 71 & Older*
+
+  $50,000      NM, MIB,     NM, MIB, DR,     NM, MIB, DR,     NM, MIB, DR,     NM, MIB, DR,      "NM, MIB, DR,
+    to         DR, IRIX       IRIX, LP         IRIX, LP         IRIX, LP         IRIX, LP          IRIX, APS
+  $99,999                                                                       Term Not           Term Not
+                                                                                 Available          Available
+
+ $100,000      NM, MIB,     NM, MIB, DR,     NM, MIB, DR,     NM, MIB, DR,     NM, MIB, DR,      PM, HOS, DR,
+    to         DR, IRIX       IRIX, LP         IRIX, LP         IRIX, LP         IRIX, LP        MIB, IRIX, APS,
+ $300,000                                                                                              MA
+
+ $300,001      NM, MIB,     PM, BP, HOS,     PM, BP, HOS,     PM, BP, HOS,     PM, BP, HOS,      PM, EKG, BP,
+    to         DR, IRIX     DR, MIB, IRIX,   DR, MIB, IRIX,   DR, MIB, IRIX,   DR, MIB, IRIX,    HOS, DR, MIB,
+ $500,000                        LP               LP               LP               LP           MA, IRIX, APS
+
+  $500,001      MIB, DR,    PM, BP, HOS,     PM, BP, HOS,     PM, BP, HOS,     PM, BP, HOS,      PM, EKG, BP,
+     to        IRIX, APS    DR, MIB, IRIX,   DR, MIB, IRIX,   DR, MIB, IRIX,   DR, MIB, IRIX,    HOS, DR, MIB,
+ $1,000,000                      LP               LP               LP               LP           MA, IRIX, APS
+
+$1,000,001      MIB, DR,    PM, BP, HOS,     PM, BP, HOS,     PM, BP, HOS,     PM, BP, HOS,       PM, EKG, BP,
+    to         IRIX, APS    DR, MIB, IRIX,   DR, MIB, IRIX,   DR, MIB, IRIX,   DR, MIB, IRIX,    HOS, DR, MIB,
+$2,000,000                       LP               LP               LP,              LP,          IRIX, APS, MA
+
+$2,000,001        NA        PM, BP, HOS,     PM, BP, HOS,     PM, BP, HOS,     PM, BP, HOS,       PM, EKG, BP,
+    to                      DR, MIB, IRIX,   DR, MIB, IRIX,   DR, MIB, IRIX,   DR, MIB, IRIX,     HOS, DR, MIB,
+$5,000,000                       LP               LP               LP,           APS, LP        IRIX, APS, MA, LP
+
+   Over           NA        PM, BP, HOS,     PM, EKG, BP,      PM, EKG, BP,     PM, EKG, BP,     PM, EKG, BP,
+$5,000,000                     DR, MIB,      HOS, DR MIB,     HOS, DR, MIB,    HOS, DR, MIB,     HOS, DR, MIB,
+                             IRIX, IR and     IRIX, IR, and    IRIX, IR, APS    IRIX, IR, APS    IRIX, IR, APS,
+                              Supporting       Supporting     and Supporting   and Supporting     MA, LP, and
+                            Financial Docs   Financial Docs   Financial Docs   Financial Docs      Supporting
+                                                                                                 Financial Docs
+
+
+
+
+All routine medical requirements are determined by adding the amounts issued and applied for in Ameritas
+Life Insurance Corp. within the past three years and are based on insurance age (birthday plus six months).
+Vendor database checks (criminal background, credit/e-inspection reports, prior laboratory results) are
+obtained at various ages and amounts and at underwriter discretion.
+
+FLXelerate available on issue ages 18-60, face amounts $300,001 to $1,000,000. For more information on
+this accelerated underwriting program please see page 10.
+
+
+
+
+                                                                                                                    3
+    Older age underwriting for face amounts above $300,000 (age 71 and older)
+    Medical Requirements
+        • Applicant should be seeing a primary care physician at least once a year for a complete physical.
+        • For these ages, a “Mature Assessment” will also be completed at the time of the exam.
+        • We can use physical measurements and labs completed for another company within the past
+           six months, but, if the above tests were not completed within that time frame, current ones will
+           be required.
+
+    Paramedical companies
+    Paramedical exams will be ordered automatically for you based on age and face amount. You may choose
+    between APPS (American Para Professional Systems) and ExamOne, Inc. You can follow the order by
+    registering on www.appslive.com or www.examone.com.
+
+
+    Glossary
+    Attending Physician’s Statement (APS): Information provided by a proposed insured’s physician covering
+    medical history and results of medical examinations. It is used to determine the appropriate underwriting
+    classification for the proposed insured.
+    Blood Profile (BP): A series of blood tests that an insurance company may require of applicants during the
+    underwriting process.
+    Driver Risk (DR): A vendor report that provides court records and motor vehicle reports.
+    Electrocardiogram (EKG): A test that checks for problems with electrical activity in the heart.
+    Home Office Urine Specimen (HOS): A full-screen urine test that an insurance company may require of
+    applicants during the underwriting process. The HOS typically tests for the presence of alcohol, drugs or
+    nicotine in the system, as well as medical disorders.
+    LabPiQture (LP): A vendor report that provides access to physician ordered laboratory testing results
+    related to preventative care, disease monitoring and diagnostic purposes.
+    Inspection Report (IR): Provides an expanded view of the proposed insured’s occupation, health history
+    and financial history.
+    IRIX: A vendor report that uses each member’s medical and prescription drug claim history to predict the
+    individual’s relative healthcare cost risk
+    Medical Information Bureau (MIB): A service that compiles medical information and application history of
+    individuals who have applied for insurance in the past. Automatically ordered for most applicants.
+    Motor Vehicle Report (MVR): Checks for reckless driving, suspended license and other more serious
+    motor vehicle incidents.
+    Non-med Band (NM): an underwriting band that does not require a medical exam.
+    Paramedical Exam/Paramed Exam (PM): A brief physical examination usually performed by a registered
+    nurse at a time and location convenient to the applicant. The exam usually consists of measurements
+    (e.g. height/weight, blood pressure, and heart rate), body fluid samples (e.g. urine, blood) and a medical
+    history questionnaire. The insurance company pays for the exam.
+
+
+
+
+4
+Life underwriting classifications
+Non-med nontobacco and tobacco classes for amounts to $300,000*
+Ages 70 and                                                Standard Non                Rapid Std Non
+                        Preferred Non Tobacco                                                                  Standard Tobacco           Rapid Std Tobacco*
+under                                                        Tobacco                     Tobacco*
+
+Tobacco or            "No use in last 5 years          No use in last 12           No use in last 12         Tobacco or Nicotine         Tobacco or Nicotine
+Nicotine              (includes gum, patch, cigar,     months (Exception: 2        months (Exception: 2      used in last 12 months      used in last 12 months
+                      pipe, e-cigarettes)              cigars per month)           cigars per month)
+                      *Exception: 2 cigars per
+                      month (negative specimen)"
+
+Height/Weight         Does not exceed Ht/Wt Chart Does not exceed Ht/              Does not exceed Ht/       Does not exceed Ht/         Does not exceed Ht/
+(stated)              for NON-MED Pref NT         Wt Chart for NON-MED             Wt Chart for NON-MED      Wt Chart for NON-MED        Wt Chart for NON-MED
+                                                  Std NT                           Rapid Std                 Std                         Rapid Std
+
+"Family history       No hx of death of CAD,           No ratable family history   Does not exceed a         No ratable family history   Does not exceed a
+(only applies         Stroke, Diabetes and Cancer                                  Table D                                               Table D
+to proposed           prior to age 60.
+insured ages to
+age 60)"
+
+MVR/Driving           No DWI, DUI, OUI or           No rating                      No ratings in excess of   No rating                   No ratings in excess of
+                      Reckless Driving within the                                  $5/1000                                               $5/1000
+                      past ten years AND/OR No
+                      more than 2 moving violations
+                      within the past 3 years
+
+Alcohol or Drugs      No treatment for alcohol or      No ratable alcohol or       Does not exceed a         No ratable alcohol or       Does not exceed a
+                      drug abuse/addiction.            drug hx                     Table D for alcohol or    drug hx                     Table D for alcohol or
+                                                                                   drug hx                                               drug hx
+
+Avocation             No participation in any          No rating                   No ratings in excess of   No rating                   No ratings in excess of
+                      hazardous sport activities in                                $5/1000                                               $5/1000
+                      the past five years (excluding
+                      recreational scuba up to 50
+                      feet)
+
+Aviation              No participation in any          No rating                   No ratings in excess of   No rating                   No ratings in excess of
+                      aviation in the past 5 years.                                $5/1000                                               $5/1000
+
+Stated Medical        No ratable impairments           No ratable impairment       No ratable impairment     No ratable impairment       No ratable impairment
+Impairments           or impairments in Medical        (wellness credits may       or combination of         (wellness credits may       or combination of
+                      manual suggesting "no            be used for 1 table         impairments over a        be used for 1 table         impairments over a
+                      preferred"                       improvement)                Table D (no flats)        improvement)                Table D (no flats)
+
+Ages 71+                                                   Standard Non                Rapid Std Non
+                        Preferred Non Tobacco                                                                  Standard Tobacco           Rapid Std Tobacco
+additional criteria                                          Tobacco                     Tobacco
+
+Height/Weight         Does not exceed Ht/Wt Chart Does not exceed Ht/              Does not exceed Ht/       Does not exceed Ht/         Does not exceed Ht/
+                      for Preferred (actual exam  Wt Chart for Std (actual         Wt Chart for Rapid Std    Wt Chart for Std (actual    Wt Chart for Rapid Std
+                      results)                    exam results)                    (actual exam results)     exam results)               (actual exam results)
+
+Blood Pressure        Blood pressure 150/90 or         Blood pressure 160/90       Blood pressure not        Blood pressure 160/90       Blood pressure not
+                      less, no other impairments       or less, no other ratable   ratable more than         or less, no other ratable   ratable more than
+                                                       impairments                 a Table D (no other       impairments                 a Table D (no other
+                                                                                   ratable impairments)                                  ratable impairments)
+
+Labs                  HOS Negative, no abnormal      HOS Negative, no              HOS Negative, no          HOS Positive for            HOS Positive for
+                      results (if cholesterol        ratable results               ratable results above a   cotinine, no ratable        cotinine, no ratable
+                      available, use PNT cut offs on                               Table D                   results                     results above a Table D
+                      fully underwritten chart)
+
+Family History        Does not apply                   Does not apply              Does not apply            Does not apply              Does not apply
+
+
+
+* Ages 71+ require exam and specimen (no blood)
+
+
+
+
+                                                                                                                                                                   5
+    Non-med build chart (amounts up to $300,000)
+
+                       NON MED        NON MED
+       NON MED         Preferred      Preferred   NON MED       NON MED         NON MED
+        Height       Nontobacco to   Nontobacco   Standard*   Rapid Standard*   Minimum
+                        Age 70         Age 71+
+          4'7"            121           130         155            184            82
+          4'8"            125           137         160            188            85
+          4'9"            131           142         166            192            88
+         4'10"            132           147          172           200            91
+         4'11"            137           153          178           206            94
+          5'0"            145           154         184            213            97
+          5'1"            149           159          191           220            101
+          5'2"            153           164          197           227            104
+          5'3"            158           169         203            235            107
+          5'4"            162           175          210           242            111
+          5'5"            166           180          216           250            114
+          5'6"            170           186         223            258            118
+          5'7"            176           192         230            265            121
+          5'8"            182           197         237            273            125
+          5'9"            188           203         244            282            129
+         5'10"            193           209          251           290            133
+         5'11"            199           215         258            298            136
+          6'0"            205           221         265            306            140
+          6'1"            211           227         273            315            144
+          6'2"            216           234         280            324            148
+          6'3"            222           240         288            333            152
+          6'4"            227           246         296            341            156
+          6'5"            233           253         304            350            160
+          6'6"            238           260          312           360            165
+          6'7"            243           266         320            369            169
+          6'8"            249           273         328            378            173
+          6'9"            254           280         336            388            177
+         6'10"            260           287         344            397            182
+         6'11"            265           294         352            406            186
+
+
+
+
+    * Tobacco and Non Tobacco
+
+
+
+
+6
+Nontobacco and tobacco classes for fully underwritten amounts
+over $300,000
+
+                   Preferred Plus Non            Preferred Non                                        Standard Non                                       Standard
+Criteria                                                                Select Non Tobacco                                 Preferred Tobacco
+                        Tobacco                    Tobacco                                              Tobacco                                          Tobacco
+
+Tobacco or        No use in last 5 years     No use in last 2 years     No use in the last 12       No use in last 12      Tobacco or Nicotine      Tobacco or
+Nicotine          (includes gum, patch,      (includes gum, patch,      months. (includes           months (includes       used in last 12          Nicotine used in
+                  cigar, pipe, e-cigarettes) cigar, pipe, e-cigarettes) gum, patch, cigar,          gum, patch, cigar,     months (includes         last 12 months
+                  *Exception: 2 cigars       *Exception: 2 cigar        pipe, e-cigarettes)         pipe, e-cigarettes)    gum, patch, cigar,       (includes gum,
+                  per month (negative        per month (negative        *Exception: 2 cigar         *Exception:            pipe, e-cigarettes)      patch, cigar, pipe,
+                  specimen)                  specimen)                  per month (negative         2 cigars per                                    e-cigarettes)
+                                                                        specimen)                   month (negative
+                                                                                                    specimen)
+
+Height/Weight     Does not exceed Ht/        Does not exceed Ht/Wt      Does not exceed Ht/         Does not exceed        Does not exceed          Does not exceed
+                  Wt Chart for Preferred     Chart for Preferred NT     Wt chart for Select         Ht/Wt Chart for        Ht/Wt Chart for          Ht/Wt Chart for Std
+                  Plus NT                                               NT                          Std NT                 Preferred NT             NT (same chart)
+
+Family history    No death or no more        No more than one           No more than two            No ratable family      No more than one      No ratable family
+(only applies     than one event of          event of death or          events of death or          history                event of death or     history
+to proposed       diagnoses of coronary      diagnosis of coronary      diagnosis of coronary                              diagnosis of coronary
+insured ages to   artery disease, cerebral   artery disease, cerebral   artery disease, cerebral                           artery disease,
+age 60)           vascular disease,          vascular disease,          vascular disease,                                  cerebral vascular
+                  diabetes or cancer*        diabetes or cancer*        diabetes or cancer* prior                          disease, diabetes
+                  prior to age 60?           prior to age 60?           to age 60?                                         or cancer* prior to
+                                                                                                                           age 60?
+
+Blood Pressure No significant HTN            Current blood pressure     Current blood               Current blood          Current blood            Current blood
+               history and current           does not exceed:           pressure does not           pressure does not      pressure does not        pressure does not
+               readings 135/85 or less       Ages to 55: 140/85         exceed 150/90               exceed 160/90          exceed: 140/85           exceed 160/90
+                                             Ages 56+: 150/90
+
+Cholesterol       Cholesterol does not       Cholesterol does not       Cholesterol does not                               "Cholesterol does
+                  exceed:                    exceed:                    exceed:                                            not exceed:
+                  Total cholesterol: 250     Total cholesterol: 270     Total cholesterol: 285                             Total cholesterol: 270
+                  Chol/HDL ratio: 5          Chol/HDL ratio: 5.5        Chol/HDL ratio: 6.5                                Chol/HDL ratio: 5.5"
+
+Labs              No abnormal results        HOS Negative for           HOS Negative for            HOS Negative for       No abnormal results      No ratable results
+                  on Blood/Urine. HOS        cotinine, no ratable       cotinine, no ratable        cotinine, no ratable   on Blood/Urine.
+                  negative for cotinine.     results                    results                     results
+
+MVR/Driving       No DWI, DUI, OUI or        No DWI, DUI, OUI or        No DWI, DUI, OUI            No rating              No DWI, DUI, OUI         No rating
+hx                Reckless Driving within    Reckless Driving in the    or Reckless Driving                                or Reckless Driving
+                  the past ten years AND/    past 5 years AND/OR        in the past 3 years                                in the past 5 years
+                  OR No more than 2          no more than 2 moving      AND/OR no more                                     AND/OR no more
+                  moving violations within   violations in the past     than 3 moving                                      than 2 moving
+                  the past 3 years           2 years                    violations in the past                             violations in the past
+                                                                        2 years                                            2 years
+
+Alcohol or        No treatment for           No treatment for           No treatment for            No ratable alcohol     No treatment for         No ratable alcohol
+Drugs             alcohol or drug abuse/     alcohol or drug abuse/     alcohol or drug             or drug hx             alcohol or drug          or drug hx
+                  addiction.                 addiction in the past 10   abuse/addiction in                                 abuse/addiction in
+                                             years.                     the past 8 years.                                  the past 10 years.
+
+Avocation         No participation in        No participation in        No rating                   No rating              No participation         No rating
+                  any hazardous sport        hazardous avocations                                                          in hazardous
+                  activities in the past     in the past 2 years.                                                          avocations in the
+                  five years (excluding      (excluding recreational                                                       past 2 years.
+                  recreational scuba up to   scuba up to 50 feet)
+                  50 feet)
+
+Aviation          No participation in any    Private pilot with more    Private pilot with          No rating              Private pilot with       No rating
+                  aviation in the past 5     than 500 solo hours,       more than 350 solo                                 more than 500
+                  years.                     fly less than 250 hours    hours AND fly less                                 solo hours, fly less
+                                             per year and only fly      than 250 hours/                                    than 250 hours per
+                                             conventional aircraft      year AND only fly                                  year and only fly
+                                             (jet/prop)                 conventional aircraft                              conventional aircraft
+                                                                        (jet/prop)                                         (jet/prop)
+
+
+
+*Excludes gender-specific cancers for applicants that are a different gender from the family member
+
+
+
+
+                                                                                                                                                                          7
+    Build chart – fully underwritten (amounts over $300,000)
+
+                               FULLY UW
+         FULLY UW                                    FULLY UW             FULLY UW        FULLY UW
+                             Preferred Plus
+           Height                                    Preferred*       Select Nontobacco   Standard*
+                              Nontobacco
+             4'7"                  121                  133                   142            161
+             4'8"                  125                  138                   147            167
+             4'9"                 130                   143                   152            173
+            4'10"                  134                  148                   157            179
+            4'11"                  139                  156                   163            185
+             5’0”                  145                  158                   168            191
+             5’1”                  149                  164                   174            198
+             5’2”                  154                  169                   190           205
+             5’3”                  159                  175                   186            211
+             5’4”                 164                   180                   192            218
+             5’5”                 168                   186                   198            225
+             5’6”                  173                  192                   204            232
+             5’7”                  178                  196                   210            239
+             5’8”                 184                   203                   217            246
+             5’9”                 190                   209                   223            253
+            5’10”                 195                   216                   230            261
+            5’11”                 201                   222                   236           268
+             6’0”                 207                   228                   243            276
+             6’1”                  213                  235                   250            284
+             6’2”                  218                  241                   257            292
+             6’3”                  224                  248                   264           299
+             6’4”                 230                   254                   271           308
+             6’5”                 236                   261                   278            316
+             6’6”                  242                  268                   285            324
+             6’7”                 248                   275                   292           332
+             6’8”                 254                   281                   300            341
+             6’9”                 261                   289                   307           349
+            6’10”                 267                   296                   315           358
+            6’11”                  274                  303                   323            367
+
+
+
+
+    * Tobacco and Non Tobacco
+
+    This build chart also applies to FLXelerate, our accelerated underwriting program.
+
+
+
+
+8
+Term and index universal life riders
+Accelerated Death Benefit rider
+   • Terminal Illness, Critical Illness and Chronic Illness available for ratings up to and including Table D
+      or $5/$1000
+   • Terminal Illness available for ratings of Table E to H or over $5/$1000 to $25/$1000
+
+Waiver of Premium rider
+   • Generally available up to and including Table D or $5/$1000
+
+Accidental Death rider
+   • Generally available up to and including Table H or $25/$1000
+
+Children’s rider
+   • Child/Children must be standard risk
+   • If one or more children not a standard risk, the individual child/children will be excluded
+
+
+Index universal life only riders
+Guaranteed Insurability rider
+   • Must be a standard or better risk
+
+Supplemental Coverage rider
+   • Underwritten the same as the base coverage
+
+Early Cash Value rider
+   • Underwritten the same as the base coverage
+
+Lifetime Income rider
+   • Available for rated cases
+
+
+
+
+                                                                                                                 9
+     FLXelerate
+     FLXelerate, an accelerated underwriting program available on Ameritas FLX Term and Index Universal Life
+     products, allows qualifying clients a potentially less invasive, less time-consuming underwriting experience.
+     FLXelerate allows underwriters to use data from MVR, MIB and RX to quickly assess whether a client can
+     receive a fully underwritten, regularly priced policy without the need for lab work and medical exams.
+
+     Eligibility criteria:
+         • eApp with eSignature only
+         • Ages 18-60
+         • $300,001 to $1,000,000 face amount
+         • Meet current financial underwriting guidelines, including no bankruptcy in last 5 years.
+         • US Citizen/permanent resident only (no temporary visas)
+         • No hazardous occupation, avocation, or private aviation
+         • No history of DUI/DWI within 5 years or drug or alcohol dependence history
+         • No prior rated or declined coverage
+         • No major medical conditions (see list on page 17-19) and participating in routine health care if over
+         age 50.
+         • Risk classes eligible: Standard NT, Select NT, Preferred NT, Preferred Plus NT, Standard Tobacco,
+           Preferred Tobacco.
+         • No premium financing
+
+     If the client is not eligible for FLXelerate the underwriter will order labs and medical exams based on current
+     age and amount requirements. This will be communicated to you upon our initial application review.
+
+
+     Underwriting edge program
+     The Underwriting Edge Program allows your clients with one or two impairments outside a particular
+     guideline to potentially improve one rate class. If your client receives a more favorable approval class through
+     this special underwriting program, it will apply to that application only. Additional amounts of insurance may
+     be considered on a case-by-case basis.
+
+     Underwriting Edge can also be used to improve low substandard ratings to standard. Your underwriters will
+     proactively determine if your client can benefit from this program.
+         • Applies to new issues
+         • Ages 20-60
+         • Face amounts from $300,001 up to max of $5,000,000
+
+
+
+
+10
+Financial underwriting
+The purpose of financial underwriting is to ensure that the amount of life insurance applied for is consistent
+with the economic loss due to the premature death of the insured. It is also used to determine that an
+insurable interest exists and that a reasonable level of persistency can be expected. This section is intended
+to provide a general overview for the more common types of financial underwriting and to illustrate the
+methods used to calculate and justify an appropriate amount of coverage. These sections are intended to
+be used as a guideline only and are subject to individual underwriter discretion.
+
+
+Personal insurance
+Income replacement
+Age factor times multiple of earned income
+
+      Age           Multiple of Earned Income
+    18 to 40                    25
+    41 to 50                    20
+    51 to 60                    15
+    61 to 65                    10
+    66 to 70                     5
+      >70            Individual Consideration
+
+Third-party financial statements are required on ages under age 70 for amounts over $5 million; 70 and older
+for $2.5 million and over. These will include copies of tax returns or a signed IRS form 4506-T or documents
+from the applicant’s accountant including a balance sheet, income statement and a list of assets and their
+values. The applicant may be required to complete a separate authorization.
+
+Non-working spouse
+Amounts up to an equal amount of coverage on the working spouse will be considered. If the working
+spouse is medically uninsurable, we will base the benefit on the amount of coverage the working spouse
+would be financially eligible for.
+
+Estate preservation
+Projected estate tax liability is difficult to determine given changing estate tax laws and estate planning
+practices. The agent must secure appropriate documentation illustrating the value of the estate and how the
+estate tax liability was calculated. Accompanying documents from attorneys, financial planners, CPA’s etc.
+should be included. In general the expected mortality of the insured is multiplied by the expected growth of
+the estate. Depending on the assets in the estate a maximum 6% growth rate will be allowed. The expected
+value of the estate will be limited to twice the current market value.
+
+Bequest to charity/charitable remainder trust
+Pattern of gifting must be firmly established for a minimum three-year period. Agent must secure
+documentation from the insured indicating contribution records as well as anticipated future contributions.
+The level of involvement and participation in the charity should also be detailed as well as any other
+supporting information to assist in justifying the coverage. Individual underwriter discretion will apply and
+case should first be discussed with underwriter prior to submission.
+
+
+
+
+                                                                                                                 11
+     Business or other types of insurance
+     We also consider coverage for business and other purposes including the following:
+         • Key Person
+         • Buy Sell
+         • Stock Redemption
+         • Deferred Compensation and Executive Benefits
+         • Business Loan
+         • Premium Financing: Ameritas will consider premium financing cases that meet our requirements.
+            Please refer to the premium financing guidelines and procedures documents found on
+            Producer Workbench.
+
+
+     Juvenile coverage
+         • Amounts applied for should be for a similar face or premium amount on all children.
+         • General guideline for juvenile coverage is 50% of the total in force on the parent who has the highest
+           amount of coverage.
+         • Maximum coverage available is $2 million
+         • APS will be required for all amounts over $500,000
+         • For any amount of coverage, signature of one of the parents is required in order to verify the medical
+            history and to acknowledge that insurance is being applied for on their child. Signature of parent
+            is required n cases where a relative, such as a grandparent wishes to help the parent(s) start an
+            insurance program for the child.
+
+
+     Stranger-owned/investor owned life insurance
+     (STOLI/IOLI)
+     Our life insurance products are intended to provide benefits to the insured and his or her beneficiaries who
+     have a bona fide need for insurance protection and are not intended to enrich investors who hope for a
+     financial profit from the death of the insured. STOLI/IOLI transactions endanger the tax-favored status of life
+     insurance and generally fail state insurable interest requirements. Therefore, the life companies of Ameritas
+     Mutual Holding Company prohibit your participation in any form of stranger-owned or investor-owned or
+     initiated life insurance that involves a policy issued by a life company of Ameritas Mutual Holding Company.
+
+
+
+
+12
+ Single life corporate retention
+                                                                       Table A – D Flat Extras up     Table E- P Flat Extras
+               Ages                            Not Rated
+                                                                                to $7.50                    Over $7.51
+                0-65                           $5,000,000                         $4,000,000                $1,000,000
+              66-75                            $4,000,000                         $2,500,000                $1,000,000
+              76-80                            $2,500,000                         $1,000,000                $500,000
+              81-85                            $1,000,000                             $250,000                    $0
+
+*Option C policies will be 50% of this table
+
+
+
+
+ Single life automatic binding including retention**
+                         Preferred Plus/Preferred                 Table A – D Flat Extras           Table E – P Flat Extras
+        Age
+                             Select/Standard                           Up to $7.50                        Over $7.50
+
+      0 to 65                    $50,000,000                            $40,000,000                      $15,000,000
+
+      66 to 75                    40,000,000                             25,000,000                      10,000,000
+
+      76 to 80                    25,000,000                             10,000,000                       2,000,000
+
+      81 to 85                    5,000,000                               2,000,000                           0
+
+** Professional athletes and entertainers: are reviewed on a facultative basis.
+ Foreign Nationals have a maximum retention of $2,000,000 and maximum automatic bind of $4,000,000.
+
+
+
+Jumbo limits
+        Ages                    Through Table D                           Table E – H                     Table I – P
+
+       0 to 80                    $65,000,000                            $65,000,000                     $65,000,000
+
+       81 to 85                    40,000,000                                     0                            0
+
+Foreign Nationals have a maximum Jumbo Limit of $10,000,000.
+
+
+
+
+                                                                                                                               13
+     Foreign risk
+     U.S. Residents
+     Individuals who reside in the U.S. who are non U.S. citizens may be considered for FLX products subject to
+     the following requirements.
+
+     Non-US Citizens, full time US Residents will be considered subject to the following:
+     1. Permanent Residence status (Green card) and visa types listed to          Visa Types
+         the right with intent to remain in the US                                 EAC/EAD E3           K3     T1
+     2. Minimum of 12 months residence in the US prior to application with        TPS          EB5     L1     TN
+                                                                                   DV1          H1B N8         U1
+         intent to stay in the US                                                  DV2          H3      N9     V1
+     3. Visa must be valid and not expire for at least 60 days                     E1           J1      O1     V2
+                                                                                   E2           K1      R1
+     4. Must demonstrate a need for US life insurance: US assets and US           Individual Consideration will be
+         income to support the amount requested                                    given to the following Visa types:
+     5. Must demonstrate tie to US with 2 or more of the following:               H2           M2      P2
+                                                                                   M1           P1      P3
+         • US home ownership
+         • immediate family (spouse, partner, children, parents) residing in US with applicant
+         • children enrolled in US schools
+         • year-round stable employment in US
+         • active day-to-day involvement in US business owned or partially owned by client
+     6. Must have a US physician
+     7. All applications must be accompanied by copies of government-issued identification, including a current,
+         valid visa, and/or EAC/EAD.
+     8. All sales and solicitation (application, exams, labs, delivery requirements) must be completed in the US
+     9. Travel to native/home country does not exceed more than 4 weeks at one time or more than 8 weeks
+         annually for business and/or personal reasons, as long as the destinations do not fall within the U.S.
+         State Department Travel Warnings List. But underwriter discretion may allow an additional rating. These
+         countries may have political, military unrest or epidemic disease.
+     10. Travel to native/home country in excess of 4 weeks at one time or 8 weeks per year for business and/or
+          personal reasons will be considered on an individual basis. Provide complete details including purpose,
+          specific country(ies), specific cities, or specific area of the country and duration of the trip.
+
+     Please contact your underwriter with complete details if foreign travel is contemplated prior to taking an
+     application. There will be some risks we prefer not to consider.
+
+     Non-U.S. Citizen, Non-U.S. Resident
+     If the applicant was not born in and does not reside in the U.S., the underwriter will seek to understand why
+     they want U.S. insurance. These applicants fall into the Foreign National guidelines below.
+
+     U.S. Citizen, Non-U.S. Resident
+     If the applicant was born in but does not reside in the U.S., the underwriter will review whether their time
+     spent in a foreign country should be considered travel or residency. They will also consider what country, or
+     region the applicant is visiting, as well as the purpose of the visit.
+
+
+
+
+14
+  • Travel is considered eight to twelve weeks on an annual basis, while residency is a longer period.
+  • If residency is 3 years or less the application may be considered under travel guidelines rather than
+     foreign residence guidelines.
+  • If residency is more than 3 years, the application is subject to the Foreign National program guidelines
+     (Foreign National program guidelines are below).
+
+Foreign Nationals
+Non U.S. citizens who do not meet the residency requirements above and those residing in foreign
+countries may be eligible for coverage subject to the following requirements.
+1. Must have a U.S. based insurance need and connection (existing U.S. assets, U.S. tax liability, etc.).
+2. Applicant must have a minimum of $100,000 in assets for at least three months.
+3. Required minimum annual income of $100,000 and/or minimum net worth of $500,000 U.S. dollars
+4. Applicants must spend at least 15 days in the U.S. per year. 2. All applications must be accompanied by
+   copies of government-issued identification, including a passport and U.S. visa.
+5. All application papers, exams, labs, must be completed in the U.S.
+6. If medical records from their physicians are required, they must be supplied in English. We do not pay
+   translation costs.
+7. Maximum issue age is 65.
+8. We have a reduced retention of up to $2,000,000 and reduced automatic binding of up to $4,000,000 on
+   Foreign nationals.
+9. Certain countries prohibit their citizens from purchasing insurance abroad. Examples include but are not
+   limited to Japan, France, Greece.
+10. Certain occupations including missionaries, politicians, military or government officials, foreign diplomats,
+  judges, journalists, etc. are not eligible for coverage.
+11. Premiums must be paid from a U.S. bank account.
+12. Countries with travel warnings and or in unstable political environments will be excluded.
+
+Claiming benefits for Foreign Nationals
+1.	In order for a client to claim accelerated benefits, the medical condition needs to be certified by a U.S.
+   physician, practicing in the U.S.
+     a. Physician is defined as: A doctor of medicine or osteopathy (other than you, your spouse, domestic
+        partner, a member of your family, a business or professional partner, or any person with whom you
+        share a financial or business interest) licensed to practice medicine and surgery in the state in which
+        he or she practices and who is practicing within the scope of such license in the United States.)
+2.	Chronic illnesses require annual certification by a U.S. physician practicing in the U.S.
+
+Applicants who do not speak English
+Agent must be fluent in the proposed insured’s native language. All requirements must be completed in
+English. The agent must indicate on the application that the proposed insured does not speak English and
+specify the language that was used to take the application. Agent or Witness Certification for Non-English
+Speaking Applicants, UN2060, should be completed if translation was used during the application process.
+Additional forms and amendments may be required.
+
+
+
+
+                                                                                                                    15
+     High profile occupations
+     Professional athletes and entertainers
+     1. Will consider for personal coverage.
+     2. Will not consider policies to be owned by the team.
+     3. Maximum amount is $2 million. Any amounts in excess of this must be sent out for facultative offers.
+
+     Prior to taking an application, contact your underwriter with the applicant’s name, date of birth, and amount
+     so we can check for existing coverage.
+
+
+
+
+16
+Underwriting impairments
+The chart below indicates the Underwriting Impairments and best case scenarios allowed. The ultimate rate
+class approved will be determined by the Underwriting evidence.
+
+
+                                                                                                                               Requires full
+
+
+                                                                              No rating**
+                                                                                            Probable    Probable
+                                                                                                                    Probable   Underwriting
+                                                                                            rating of   rating of
+                                                                                                                                (FLXelerate
+                                                                                              A-D*        E-H        Decline
+ Impairment                                                                                                                    unavailable)
+ Alcohol Treatment History
+   Current Alcohol Use or within 2 years                                                                               X            X
+   Alcoholism; within 2 to 5 years                                                                         X                        X
+   Alcoholism; more than 5 years, no relapse                                    X              X                                    X
+ Anxiety Disorders
+   Mild or well-controlled                                                      P
+   Moderate symptoms                                                                           X                                    X
+   Severe symptoms and/or hospitalization, multiple medications,                                                       X            X
+   anti-psychotic treatment, suicide attempt, recent diagnosis
+ Arrhythmias
+   Paroxysmal Atrial Fibrillation                                               X                                                   X
+   Chronic Atrial Fibrillation                                                                 X                                    X
+   PVCs (skipped beats) – more favorable with fewer PVC’s                       P              X
+ Asthma
+   Very mild, no daily medication (over 6 years of age)                         P
+   Moderate – daily use of medication                                                          X           X
+   Other – frequent symptoms, past hospitalization                                                                     X            X
+ Cancer
+   Most benign tumors (Except Brain or Breast Tumors)                           P
+   Basal cell carcinoma (Stage 0 or 1)                                          P
+   Melanoma in situ                                                             X                                                   X
+   Most other malignancies, no recurrence minimum 2+ yrs,                                                  F                        X
+   Consult UW
+   Metastatic disease (Consult UW if cancer free 10 years or more)                                                     X            X
+ Cerebrovascular Disease, Mild                                                                 X                                    X
+ Cerebrovascular Disease, Other                                                                                        X            X
+ Chronic Bronchitis (COPD), Mild                                                               X                                    X
+ Chronic Bronchitis (COPD), Other                                                                                      X            X
+ Coronary Artery Disease
+ Heart valve disorder, mild                                                                    X                                    X
+ Heart valve disorder, other                                                                                           X            X
+ Myocardial infarction (Heart Attack)                                                                      X           X            X
+ Stable CAD, good risk factors, over age 60 at diagnosis                                       X                                    X
+ Other (other risk factors present, under age 60 at diagnosis                                              X           X            X
+
+* Rapid Standard Rate available for amounts up to $300,000 and up to age 60
+** P = Preferred possible
+
+
+
+
+                                                                                                                                               17
+                                                                                                                                    Requires full
+
+
+                                                                                   No rating**
+                                                                                                 Probable    Probable
+                                                                                                                         Probable   Underwriting
+                                                                                                 rating of   rating of
+                                                                                                                                     (FLXelerate
+                                                                                                   A-D*        E-H        Decline
+      Impairment                                                                                                                    unavailable)
+      Crohn’s Disease
+        Symptom free, diagnosis > 2 years, over age 35)                                             X                                    X
+        Other                                                                                                   X           X            X
+      Dementia                                                                                                              X            X
+      Depression
+        Mild, controlled, single medication or therapy                               X
+        Moderate symptoms                                                                           X                                    X
+        Severe, hospitalization                                                                                             X            X
+      Diabetes Mellitus type I – good control
+        Onset prior to age 50                                                                                   X                        X
+        Onset age 51+                                                                               X                                    X
+      Diabetes Mellitus type II – good control
+        Onset prior to age 31                                                                                   X           X            X
+        Onset 31 to 45                                                                                          X                        X
+        Onset 46 to 65                                                                              X                                    X
+        Onset over age 65                                                            X                                                   X
+      Diabetes – Other than above
+        Impaired glucose, mild, controlled                                           X                                                   X
+        Impaired glucose, other                                                                     X                                    X
+        Gestational, mild, controlled                                                X                                                   X
+        Gestational, other                                                                          X                                    X
+      Drug Use (cocaine, heroin, etc.)
+        Use within 3 years                                                                                                  X            X
+        No addiction, 3+ years since last use                                                                   X                        X
+      Drug Addiction
+        No use in 5 years, no history of relapse, all other favorable                                           X                        X
+        risk factors
+      Emphysema (COPD)
+        Minimal symptoms, no other unfavorable risk factors                          X                                                   X
+        Mild to moderate symptoms                                                                   X           X                        X
+        Severe or currently smoking                                                                                         X            X
+      Epilepsy (Seizure disorder)
+        Absence (Petit mal), infrequent seizures                                     X                                                   X
+        Others – infrequent seizures, 3+ years since last episode                                   X                                    X
+        Others – seizure within past year                                                                                   X            X
+      Gastric Stapling/Bypass/Banding                                                X                                                   X
+      High Cholesterol, controlled                                                   P                                                   X
+      High Cholesterol, other                                                        X              X                                    X
+
+     * Rapid Standard Rate available for amounts up to $300,000 and up to age 60
+     ** P = Preferred possible
+
+
+
+
+18
+                                                                                                                               Requires full
+
+
+                                                                              No rating**
+                                                                                            Probable    Probable
+                                                                                                                    Probable   Underwriting
+                                                                                            rating of   rating of
+                                                                                                                                (FLXelerate
+                                                                                              A-D*        E-H        Decline
+ Impairment                                                                                                                    unavailable)
+ Hypertension (high blood pressure)
+   Well controlled                                                              P
+   Moderately controlled                                                                       X                                    X
+   Poorly controlled                                                                                                   X            X
+   Recently Diagnosed, undisclosed, 2 or more medications                                                              X            X
+ Kidney Disease
+   Stable, mild                                                                                X                                    X
+   Other                                                                                                               X            X
+ Liver Disease, Hepatitis
+   Stable, mild                                                                                X                                    X
+   Other                                                                                                               X            X
+ Lupus
+   Stable, mild                                                                                X                                    X
+   Other                                                                                                               X            X
+ Marijuana                                                                      X                                                   X
+ Multiple Sclerosis (MS)
+   Single or multiple episodes, stable 1 year                                                  X                                    X
+   Others                                                                                                              X            X
+ Pacemaker implanted – No defibrillator implanted
+   Within 3 months                                                                                                                  X
+   Thereafter                                                                   X              X                                    X
+ Parkinson’s Disease
+   Best cases, stable                                                                          X                                    X
+   Others                                                                                                              X            X
+ Rheumatoid Arthritis
+   Rare or no treatment                                                         X                                                   X
+   Methotrexate, Prednisone, etc.                                                              X                                    X
+   Disabled                                                                                                            X            X
+ Sleep Apnea
+   Successfully treated                                                         X                                                   X
+   Moderate symptoms, untreated or inconsistent treatment                                      X                                    X
+   Others                                                                                                              X            X
+ Stroke, best cases                                                                            X                                    X
+ Stroke with Diabetes, CAD and/or smoking                                                                              X            X
+ Transient Ischemic Attack (TIA) – single episode, best case                    X                                                   X
+ Transient Ischemic Attack (TIA) – multiple, other risk factors                                                        X            X
+
+* Rapid Standard Rate available for amounts up to $300,000 and up to age 60
+** P = Preferred possible
+
+
+
+
+                                                                                                                                               19
+                                                                                                                                            Requires full
+
+
+                                                                                           No rating**
+                                                                                                         Probable    Probable
+                                                                                                                                 Probable   Underwriting
+                                                                                                         rating of   rating of
+                                                                                                                                             (FLXelerate
+                                                                                                           A-D*        E-H        Decline
+ Impairment                                                                                                                                 unavailable)
+ Ulcerative Colitis
+    Best cases, mild/infrequent symptoms                                                     X                                                   X
+    Moderate disease                                                                                        X                                    X
+    Other                                                                                                                 X         X            X
+ Weight loss surgery in past 5 years                                                                                                             X
+
+ * Rapid Standard Rate available for amounts up to $300,000 and up to age 60
+** P = Preferred possible
+
+
+
+
+This information is provided by Ameritas , which is a marketing name for subsidiaries of Ameritas Mutual Holding Company.
+                                         ®
+
+
+
+Subsidiaries include Ameritas Life Insurance Corp. in Lincoln, Nebraska and Ameritas Life Insurance Corp. of New York (licensed in
+New York) in New York, New York. Each company is solely responsible for its own financial condition and contractual obligations.
+For more information about Ameritas , visit ameritas.com.
+                                     ®
+
+
+
+
+Ameritas and the bison design are registered service marks of Ameritas Life Insurance Corp. Fulfilling life is a registered service mark of
+        ®                                                                                                             ®
+
+
+
+affiliate Ameritas Holding Company.
+
+© 2022 Ameritas Mutual Holding Company.
+
+
+
+                                             For financial professional use only. Not for use with clients.
+

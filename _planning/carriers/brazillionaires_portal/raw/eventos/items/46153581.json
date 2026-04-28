@@ -1,0 +1,50 @@
+{
+  "type": "article",
+  "subtype": "mcms",
+  "id": 46153581,
+  "author": "Marina Couto",
+  "title": "Conheça o Nosso Modelo de Negócios",
+  "date": "2020-05-15T22:24:00+02:00",
+  "leadin": "",
+  "summary": "",
+  "content": " <div class=\"photo top\" style=\"text-align:center\"> <a href=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/46153581-36987827.jpg?v=1589570781\" target=\"_blank\"> <img id=\"img-46153581-36987827\" src=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/46153581-36987827.jpg?v=1589570781\" alt=\"Conheça o Nosso Modelo de Negócios\" title=\"Conheça o Nosso Modelo de Negócios\" /> </a> </div> <br class=\"clear\" /> <iframe src=\"https://player.vimeo.com/video/409205441\" width=\"640\" height=\"360\" frameborder=\"0\" allow=\"autoplay; fullscreen\" allowfullscreen></iframe> ",
+  "images": [
+    {
+      "id": "img-46153581-36987827",
+      "url": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/46153581-36987827.jpg?v=1589570781",
+      "otherImagesUrl": {
+        "large": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/46153581-36987827.jpg?v=1589570781"
+      }
+    }
+  ],
+  "isFeatured": "img-46153581-36987827",
+  "smallThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/13fbc0d8892e50d98b954312225a79b334eed9d2/157/93/",
+  "thumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/13fbc0d8892e50d98b954312225a79b334eed9d2/314/196/",
+  "originalThumbnail": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/46153581-36987827.jpg?v=1589570781",
+  "largeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/13fbc0d8892e50d98b954312225a79b334eed9d2/750/-1/",
+  "xLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/13fbc0d8892e50d98b954312225a79b334eed9d2/1200/-1/",
+  "xxLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/13fbc0d8892e50d98b954312225a79b334eed9d2/3200/-1/",
+  "latitude": "0",
+  "longitude": "0",
+  "subtitle": "",
+  "isHeadline": 0,
+  "authorAvatarUrl": "",
+  "slug": "o-modelo-de-negocios",
+  "meta": {
+    "title": "",
+    "description": ""
+  },
+  "commentsEnabled": true,
+  "commentsPostUrl": "https://brazillionaires.virtualnet.site/apiv3/submitComment/64067065/46153581/?username=[name]&comment=[content]&email=[email]",
+  "commentsUrl": "https://brazillionaires.virtualnet.site/apiv3/getCommentsByItem/64067065/46153581/1/24/",
+  "nbcomments": 0,
+  "url": "https://brazillionaires.virtualnet.site/orientacao/i/46153581/o-modelo-de-negocios",
+  "subsections": {
+    "35469050": [
+      "Categoria principal"
+    ],
+    "64067065": [
+      "Categoria principal"
+    ]
+  }
+}

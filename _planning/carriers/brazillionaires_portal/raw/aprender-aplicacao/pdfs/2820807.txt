@@ -1,0 +1,504 @@
+                                  Dicas sobre Aplicações
+Disclaimer: Esta apresentação destina-se apenas ao
+agente licenciado, a fim de auxiliá-lo na compreensão do
+processo da aplicação. É responsabilidade do agente
+sempre tomar suas próprias decisões em benefício de
+seu cliente e verificar as atualizações das regras do
+estado o qual você está aplicando. Este material é
+propriedade da Five Rings/Brazillionaires e deve ser
+usado exclusivamente por seu agente.                          Rita de Cássia Pierotti-Madden
+Rita Pierotti é uma Brazillionaire desde de 2018, e hoje é também a
+Liaison dos Brazillionaires na Five Rings, ajuda os agentes em distress
+com relação às aplicações e às licenças.
+
+A missão é fazer a diferença na vida do agente semeando a semente de
+conhecimento, e lembrando-o(a) de que hoje é mais uma oportunidade
+de se tornar um ser humano melhor do que foi ontem.
+
+Todo dia devemos trabalhar na nossa melhor versão!
+Licença – E&O – AML - Appointment
+
+
+Ilustração
+
+
+Aplicação (iGo e-app)
+
+
+Processo de Underwriting
+
+
+Aprovação da aplicação
+
+Se aprovado com um rate diferente, e se o cliente aceita, envia-se a nova ilustração
+com o rate aprovado
+
+Emissão da apólice
+
+
+Débito do initial premium
+
+
+Entrega da apólice (melhor opção e-delivery)
+
+
+
+
+
+
+
+
+
+
+
+
+
+Importante: Todo cliente tem uma
+identificação, que pode ser a driver’s license,
+o passaporte, grenn card, work permit, ou a
+certidão de nascimento.
+
+
+Adicione a identificação do cliente à
+aplicação. Faça o upload na página dos
+attachments.
+
+
+
+Você estará poupando tempo de um vai-e-
+volta desnecessário.
+   Apólice juvenil – para cidadão ou não cidadão:
+
+
+  até $500.000 independentemente do valor de cobertura inforce (e/ou aplicado) dos
+pais ou irmãos.
+
+
+  acima de $500.001 a $ 1,000,000 precisará que um dos pais, o provedor, ter mais, ou
+a mesma cobertura e os irmãos a mesma, mas pode ser baseado no mesmo prêmio
+
+
+ acima de $1,000,001 a $3,00,000 ambos os pais devem ter mais ou a mesma
+cobertura com comprovação e a mesma cobertura dos irmãos
+
+
+ Obs 1: a prova de cobertura inforce do provedor pode ser solicitada a critério do
+Underwriter.
+  Obs 2: A cobertura juvenil não foi mudada no Estado de New York e nem para o
+foreign juvenile.
+   Obs 3: A NLG requer que crianças de 0 à 6 anos visitem o médico anualmente. Se a
+criança não fizer consultas anualmente a NLG terá que rejeitar a aplicação.
+A NLG requer que crianças/adolescente de 7 à 15 anos visitem o médico a cada 2 anos.
+Se a criança/adolescente não fizer consultas a cada 2 anos a NLG terá que rejeitar a
+aplicação.
+O dono da apólice aceitável será os pais/legais apenas tutores ou avós (tutela será
+necessária documentação).
+O NLG requer que adultos com 60 anos ou mais
+tenham cuidados de saúde de rotina e um exame
+físico nos últimos 24 meses.
+
+Caso contrário, o NLG precisará rejeitar a aplicação.
+Per the application, the client is a student.
+Please advise name of school attending, field of study and
+expected graduation date.
+
+What is the source of the client’s income?
+
+Please provide their employer information and
+occupation/job duties info.
+Idade - Seguro Pessoal - Reposição de renda:
+
+18–30 40x annual earned income
+31–40 35x annual earned income
+41–50 25x annual earned income
+51–60 15x annual earned income
+61–65 10x annual earned income
+66–69 5x annual earned income
+
+A renda anual que deve ser colocada é o dinheiro recebido
+do trabalho remunerado. Não é a renda de investimentos,
+aluguel de imóveis, pensão alimentícia, contas de poupança,
+etc.
+
+Se você tem uma família solicitando um seguro de vida, é
+importante que o prêmio total não exceda 10% da renda
+anual do household do cliente.
+
+Em caso afirmativo, o Underwriter reservar-se-á o direito de
+solicitar documentação financeira adicional.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Colocar informações bancárias corretas na aplicação, e
+ter fundos para o débito na conta bancária quando for
+emitida a apólice é imprescindível para a proteção do
+cliente em caso de claim falecimento utilizando o
+condition receipt.
+
+
+
+Condition receipt: depende das condições que existiam
+no momento da conclusão do requerimento e/ou exame
+médico. Ele prevê que o requerente será coberto
+imediatamente, desde que ele/ela tenha sido aprovado
+pelos requisitos de underwriting da seguradora.
+Nota: o recebimento condicional é somente em caso de
+falecimento. Ele não cobre reivindicações de Living
+Benefits.
+
+
+
+
+Todo cliente tem o aplicativo do banco e ele poderá fazer
+um print com as informações corretas da conta bancária e
+do routing number e você poderá anexar à aplicação.
+Esta opção authorizará a emissão da apólice mas
+não o débito do premium.
+
+Tenha em mente que toda vez que uma apólice
+for emitida o initial premium é na data da
+emissão, e se cliente/agente demorar para
+responder ao email autorizando o débito (draft)
+poderá incorrer dois premiums muito próximos.
+
+Se isto acontecer e a emissão ter sido antes de
+completar 30 dias você poderá pedir o redate
+desta apólice, mas se certifique que a idade do
+cliente não mudará, pois se mudar o premium
+será mais alto.
+
+
+                                                  PIEROTTI-MADDEN
+Caso você utilize o método Delayed Bank Draft tenha em mente que escolhendo esta opção de Draft After Issue Upon
+Agent Instruction, esta opção autorizará apenas a emissão da apólice mas não o débito do premium.
+
+Com esta opção de delayed bank draft o conditional receipt não é acionado e você está tirando a oportunidade dos
+beneficiários do cliente em ter o benefício no caso de falecimento durante o processo de underwriting.
+
+Conditional Receipt – somente é válido para caso de falecimento, caso aprovado, e se o EFT estiver autorizado e com as
+informações do banco corretas. Quando o caso já está aprovado e em processo de emissão.
+
+Caso você queira que a seguradora espere sua autorização antes de emitir/debitar, o Ideal é colocar uma nota,
+exemplo abaixo:
+
+Nota: AGHOLD - THE AGENT WOULD LIKE AN OFFER BEFORE ISSUING. PLEASE DO NOT ISSUE AND/OR
+DRAFT WITHOUT ASKING THE AGENT
+E a forma de pagamento como Next Available ou a data que o cliente quer que seja debitado.
+
+
+Muita Atenção na aplicação pois o número do routing e da conta bancária devem estar corretos para que o conditional
+receipt seja acionado se necessário.
+
+Sempre esteja atento aos email que você recebe e leia-o todo.
+
+
+                                                    PIEROTTI-MADDEN
+
+
+
+
+
+
+PIEROTTI-MADDEN
+Você alguma vez fez seguro de vida? Se responder que sim, faça esta
+perguntas:
+
+- Qual o nome da seguradora?
+- Qual o valor do face amount?
+- Resultado, como foi aprovado/classificado?
+- A apólice já entrou em vigor?
+- Se estiver em vigor, será substituída ou é uma cobertura adicional?
+- Se a apólice foi cancelada/vencida, quando isso ocorreu?
+- Se parou de pagar a apólice, quando isso ocorreu?
+
+
+
+                              PIEROTTI-MADDEN
+
+
+
+
+
+
+
+
+
+
+    PIEROTTI-MADDEN
+
+
+
+
+
+    PIEROTTI-MADDEN
+PIEROTTI-MADDEN
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    PIEROTTI-MADDEN
+Extremamente importante você
+colocar o peso e altura do cliente
+corretamente (atenção com a
+conversão de kilos para pounds
+e metros e para feet) para evitar
+vai-e-volta e a seguradora irá pedir
+para o cliente ir ao médico e trazer
+um nota do médico com o peso e
+altura corretos.
+
+
+
+
+           Você pode previnir isto!
+
+
+           No Underwriting Guide nas
+           páginas 29 e 30 tem algumas
+           dicas sobre peso e altura
+
+
+
+
+           PIEROTTI-MADDEN
+  Tenha em mente quando estiver aplicando para o seu cliente e se
+ele/ela estiver entrando no período de seis meses antes do aniversário
+dele/dela, tenha em mente que isso mudará o prêmio do seguro se o caso
+for um Termo.
+  Você fez uma ilustração com idade de 41, mas no momento em que a
+apólice será emitida seu cliente entra no período de seis meses, então a
+idade dele/dela agora é 42.
+   Discuta com seu cliente estas duas opções:
+ 1) Salve a idade e retroceda a data da emissão da apólice – save back
+age – e seu cliente pagará dois prêmios.
+   ou
+  2) Aceite a idade de 42 e o prêmio será um pouco maior se for para um
+Termo.
+ Redate: pode ser feito até 30 dias do dia da emissão da
+apólice.
+   Rewrite: pode ser feito até 120 days do dia da aplicação
+ Importante: Antes de solicitar um redate ou rewrite
+verifique a data de nascimento do cliente pois poderá
+mudar a idade se estiver na marca dos 6 meses antes do
+data de aniversário dele(a) o que incorrerá no aumento da
+mensalidade do seguro.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1)   Importante colocar corretamente as informações do cliente:
+     nome, data de nascimento, email, telefone, número da Driver’s
+     License , do social security/ITIN.
+2)   Colocar corretamente o peso e altura do cliente (cuidado com a
+     conversão).
+3)   Identificação do Cliente (passport/DL/Certidão de Nascimento) –
+     ID – anexar na aplicação
+4)   Atenção ao colocar o valor que o cliente recebe por ano no
+     Annual Income e, no Household Annual Income na aplicação
+5)   Se a esposa(o) não trabalha, ela(e) não poderá ter uma cobertura
+     (face amount) maior do que o esposo(a) que trabalha. Deve ser
+     igual ou menor.
+1)   Para ser um beneficiário, ele/ela deve ter perda financeira no caso do
+     segurado falecer (exemplo: esposa(o), filhos, pais, noiva, companheira(o)
+     de vida). Se for ex-esposa ou ex-marido tem que justificar o porquê – tipo
+     eles tem filhos juntos, eles moram juntos apesar de divorciados. Algo que
+     reflete uma perda financeira.Ou uma Court Order referente ao divórcio que
+     deverá ser enviada em anexo à aplicação.
+2)   Email – sempre responda ao email corretamente, exemplo – Yes, please, you
+     can issue and draft the initial premium (se tiver uma data especifica,
+     coloque). Thanks.
+3)   ou
+4)   Yes, please, you can draft the initial premium (se tiver uma data
+     especifica, coloque). Thanks.
+5)   California - não esqueça de perguntar ao cliente se ele tem seguro saúde e
+     coloque esta informação e anexe a foto da carteira do seguro saúde na
+     aplicação.
+1)   Função do cliente: trabalha com demolição (caso ele não trabalhe
+     com explosivos, já coloque uma nota) Non-explosive demolition,
+     client uses hand tools, machinery to break concrete.
+
+
+2)   O cliente limpa janelas ou trabalha com roof: pergunte a ele qual
+     a altura máxima que ele sobe para limpar ou fazer o roof e
+     coloque uma nota.
+1)   DL – O cliente tem carteira de motorista de um estado e mora em
+     outro, por favor, coloque uma nota que justifique.
+     Exemplos:
+2)   The client used to live in MA and now lives in Florida and
+     cannot change the address on his/her DL because of his/her
+     immigration status. Ideal é você deve anexar comprovante de
+     residência (telefone, luz, água, aluguel, extrato bancário mostrando
+     o endereço).
+PIEROTTI-MADDEN
+PIEROTTI-MADDEN
+PIEROTTI-MADDEN
+LSW Accelerated Benefits Rider (ABR) - Alzheimer's Disease
+Resumo deste Rider
+
+Acelera o benefício por morte durante a vida para um
+diagnóstico qualificado de doença de Alzheimer ou
+demência por corpos de Lewy
+
+Idades de emissão: 0 a 60 anos
+
+Sem custo adicional
+
+Os benefícios do ABR geralmente são irrestritos - você pode
+escolher como usar seu benefício.
+
+Limite de benefício vitalício: US$ 1.500.000
+
+Limite de benefício anual: Nenhum.
+
+
+
+      PIEROTTI-MADDEN
+New York, Michigan &
+Illinois a ilustração tem que
+ser assinada e anexada na
+aplicação antes da
+aplicação ser submetida.
+
+Este mesmo procedimento
+de assinatura de ilustração
+pode ser usado também
+para os estados abaixo:
+
+Idaho (para IUL)
+Maryland (para IUL)
+Massachusetts (para IUL)
+North Carolina (para IUL)
+Nevada (para IUL)
+Washington (para Term &
+IUL)
+
+                                PIEROTTI-MADDEN
+PIEROTTI-MADDEN
+PIEROTTI-MADDEN
+PIEROTTI-MADDEN
+PIEROTTI-MADDEN
+Em Nova York, o agente e o cliente precisam assinar a ilustração ao executar o relatório de
+execução antes ou na mesma data do aplicativo e anexar a ilustração assinada ao aplicativo.
+1) Clique no run report
+2) Quando a ilustração aparecer, você clica no botão verde E-Sign Later na parte superior.
+3) Duas ações aparecerão; você vai um pouco mais abaixo na tela e em ADICIONAR
+DESTINATÁRIOS você adiciona seu e-mail e o e-mail do seu cliente para que ele possa assinar
+eletronicamente a ilustração, que é uma exigência do estado de Nova York de que a ilustração
+seja assinada através do NLG ForeSight DocuSign e tenha uma data anterior ou a mesma data do
+aplicativo.
+4) Após adicionar os e-mails, você pode clicar em próximo e depois ele irá para a outra página, e
+só então você pode clicar em enviar para enviar ao cliente assinar.
+5) Após a assinatura do cliente, a ilustração voltará para você para sua assinatura.
+6) Assine e baixe em PDF a ilustração completa assinada por vocês dois e anexada ao aplicativo
+do cliente.
+Obs.: quando for fazer uma aplicação em NY, sempre baixe a ilustração em PDF, pois ela terá a
+data anterior ou a mesma data da aplicação.
+Sobre o formulário - New York form 7289
+É muito importante responder as questões corretamente e completas principalmente na página 4, aquelas questões
+do disclosure do agente.
+Sugestões ilustrativas abaixo, que você adaptará para a realidade de seu cliente:
+1. The primary reason(s) for recommending the new life insurance policy or annuity contract is (are):
+(O(s) principal(is) motivo(s) para recomendar a nova apólice de seguro de vida ou contrato de anuidade é(são):)
+Para fornecer uma melhor estratégia de cobertura para o segurado. Incluir uma apólice de longo prazo com
+benefícios em vida como um IUL e com renda futura é um plano melhor porque otimiza os benefícios potenciais caso
+o cliente adoeça e/ou faleça.
+2. The existing life insurance policy or annuity contract cannot meet the applicant's objectives because:
+(A apólice de seguro de vida ou o contrato de renda existentes não podem satisfazer os objetivos do requerente
+porque:)
+Tipo de resposta para uma apólice que será replaced e que não tenha living benefits:
+Como este plano não tem living benefits adicionado e se o segurado tiver que acessar os benefícios devido a uma
+doença, sua futura renda de aposentadoria ficaria comprometida
+3. The advantages of continuing the existing life insurance policy or annuity contract without changes are:
+(As vantagens de continuar sem alterações a apólice de seguro de vida ou contrato de anuidade existente são:)
+Oferece um benefício por morte de valor nominal ao beneficiário do segurado, caso o segurado faleça. Não precisa de
+um novo processo de underwriting. Porém, não maximiza os benefícios do segurado diante dos diferentes cenários
+de saúde em sua vida.
+Seu cliente está fazendo a
+aplicação com você pelo zoom,
+ainda assim proceda com a
+assinatura por email ou text
+message.
+
+
+    Finalizou a primeira parte da
+    aplicação envie para o seu cliente
+    para ele assinar por text message
+    ou por email.
+
+
+
+        Finalizou a segunda parte da
+        aplicação envie para o seu cliente
+        para ele assinar por text message
+        ou por email.
+PC Sheet no Portal da Five Rings:
+
+
+
+
+     importante: o principal documento que você
+     tem que fazer o upload é a aplicação
+     completa e assinada por você e pelo
+     cliente!
+
+
+
+           Recomendamos fortemente que você upload
+           ilustrações, cartas de apresentação, ID, e
+           documentos relevantes, mas a aplicação
+           inteira e assinada deve estar lá. Ter a
+           ilustração será útil ao fazer avaliações com
+           seus clientes nos próximos anos.
+PIEROTTI-MADDEN
+Conhecer!
+Convidar!
+Encontrar!
+                               Gratidão!!!
+
+                               Rita Pierotti
+             PIEROTTI-MADDEN
+

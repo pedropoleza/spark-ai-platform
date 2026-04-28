@@ -1,0 +1,47 @@
+{
+  "type": "article",
+  "subtype": "mcms",
+  "id": 46348186,
+  "author": "Marina Couto",
+  "title": "Convidar Passo a Passo",
+  "date": "2020-05-20T16:02:00+02:00",
+  "leadin": "",
+  "summary": "",
+  "content": " <div class=\"photo top\" style=\"text-align:center\"> <a href=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/46348186-37065961.jpg?v=1589994584\" target=\"_blank\"> <img id=\"img-46348186-37065961\" src=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/46348186-37065961.jpg?v=1589994584\" alt=\"Convidar Passo a Passo\" title=\"Convidar Passo a Passo\" /> </a> </div> <br class=\"clear\" /> <iframe src=\"https://player.vimeo.com/video/411752273\" width=\"640\" height=\"360\" frameborder=\"0\" allow=\"autoplay; fullscreen\" allowfullscreen></iframe> ",
+  "images": [
+    {
+      "id": "img-46348186-37065961",
+      "url": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/46348186-37065961.jpg?v=1589994584",
+      "otherImagesUrl": {
+        "large": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/46348186-37065961.jpg?v=1589994584"
+      }
+    }
+  ],
+  "isFeatured": "img-46348186-37065961",
+  "smallThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/012fb55ef7b52442c02e32ffe4c793f6d1c3c424/157/93/",
+  "thumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/012fb55ef7b52442c02e32ffe4c793f6d1c3c424/314/196/",
+  "originalThumbnail": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/46348186-37065961.jpg?v=1589994584",
+  "largeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/012fb55ef7b52442c02e32ffe4c793f6d1c3c424/750/-1/",
+  "xLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/012fb55ef7b52442c02e32ffe4c793f6d1c3c424/1200/-1/",
+  "xxLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/012fb55ef7b52442c02e32ffe4c793f6d1c3c424/3200/-1/",
+  "latitude": "0",
+  "longitude": "0",
+  "subtitle": "",
+  "isHeadline": 0,
+  "authorAvatarUrl": "",
+  "slug": "article-98",
+  "meta": {
+    "title": "",
+    "description": ""
+  },
+  "commentsEnabled": true,
+  "commentsPostUrl": "https://brazillionaires.virtualnet.site/apiv3/submitComment/64568456/46348186/?username=[name]&comment=[content]&email=[email]",
+  "commentsUrl": "https://brazillionaires.virtualnet.site/apiv3/getCommentsByItem/64568456/46348186/1/24/",
+  "nbcomments": 0,
+  "url": "https://brazillionaires.virtualnet.site/como-convidar-1/i/46348186/article-98",
+  "subsections": {
+    "64568456": [
+      "Categoria principal"
+    ]
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "type": "article",
+  "subtype": "mcms",
+  "id": 48599129,
+  "author": "Marina Couto",
+  "title": "Revisão Anual",
+  "date": "2020-07-30T22:32:00+02:00",
+  "leadin": "",
+  "summary": "",
+  "content": " <div class=\"photo top\" style=\"text-align:center\"> <a href=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/48599129-58477086.jpg?v=1718915879\" target=\"_blank\"> <img id=\"img-48599129-58477086\" src=\"https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/48599129-58477086.jpg?v=1718915879\" alt=\"Revisão Anual\" title=\"Revisão Anual\" /> </a> </div> <br class=\"clear\" /> <iframe src=\"https://player.vimeo.com/video/429379850\" width=\"640\" height=\"360\" frameborder=\"0\" allow=\"autoplay; fullscreen\" allowfullscreen></iframe> ",
+  "images": [
+    {
+      "id": "img-48599129-58477086",
+      "url": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/default/48599129-58477086.jpg?v=1718915879",
+      "otherImagesUrl": {
+        "large": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/48599129-58477086.jpg?v=1718915879"
+      }
+    }
+  ],
+  "isFeatured": "img-48599129-58477086",
+  "smallThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/49b3efcd06c73634960dba62e5c3e5fe71a0284c/157/93/",
+  "thumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/49b3efcd06c73634960dba62e5c3e5fe71a0284c/314/196/",
+  "originalThumbnail": "https://cmsphoto.ww-cdn.com/superstatic/2009698/art/grande/48599129-58477086.jpg?v=1718915879",
+  "largeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/49b3efcd06c73634960dba62e5c3e5fe71a0284c/750/-1/",
+  "xLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/49b3efcd06c73634960dba62e5c3e5fe71a0284c/1200/-1/",
+  "xxLargeThumbnail": "https://cmsphoto.ww-cdn.com/resizeapi/49b3efcd06c73634960dba62e5c3e5fe71a0284c/3200/-1/",
+  "latitude": "0",
+  "longitude": "0",
+  "subtitle": "",
+  "isHeadline": 0,
+  "authorAvatarUrl": "",
+  "slug": "revisao-anual",
+  "meta": {
+    "title": "",
+    "description": ""
+  },
+  "commentsEnabled": true,
+  "commentsPostUrl": "https://brazillionaires.virtualnet.site/apiv3/submitComment/64072072/48599129/?username=[name]&comment=[content]&email=[email]",
+  "commentsUrl": "https://brazillionaires.virtualnet.site/apiv3/getCommentsByItem/64072072/48599129/1/24/",
+  "nbcomments": 2,
+  "url": "https://brazillionaires.virtualnet.site/estrategias-de-vendas-1/i/48599129/revisao-anual",
+  "subsections": {
+    "49033873": [
+      "Categoria principal"
+    ],
+    "64072072": [
+      "Categoria principal"
+    ]
+  }
+}
