@@ -39,11 +39,33 @@ ABR (Accelerated Benefits Riders) são o **diferencial competitivo da NLG** — 
 - **Term LSW / Term NL Life:** ABR set completo.
 - **RapidProtect / RapidProtect NL:** ABR set NÃO disponível em **Express Standard classes**.
 
-**Restrições por classe (importante):**
+**Restrições por classe — DISTINÇÃO IMPORTANTE (não confundir):**
 
-- Express Standard NT 2 (rating 225–300%) — **LBR e LIBR NÃO disponíveis**.
-- RapidProtect Express classes — ABR NÃO disponível.
-- Foreign Nationals — ABR disponíveis apenas em **A & B countries**.
+Existem DUAS exclusões diferentes que reps frequentemente confundem:
+
+**EXCLUSÃO 1 — Express Standard NT 2 perde LBR e LIBR (NÃO ABR):**
+- Em FlexLife/PeakLife/SummitLife/SurvivorLife/Term, classe **Express Standard NT 2** (rating 225%–300%, table E–H) perde acesso a **Lifetime Income Benefit Rider (LIBR)** e **Lifetime Benefit Rider (LBR)**.
+- **MAS o ABR set completo (Terminal/Chronic/Critical Illness, Critical Injury, Alzheimer, Fertility) CONTINUA disponível** mesmo em Express Standard NT 2.
+- Cliente substandard table E-H ainda tem acesso aos Living Benefits ABR sem custo.
+
+**EXCLUSÃO 2 — RapidProtect Express classes perdem ABR (NÃO LBR):**
+- No produto **RapidProtect** especificamente, as classes **Express Standard NT 1** e **Express Tobacco** (substandard tier do simplified-issue) perdem acesso ao **ABR set**.
+- Isso é exclusivo do RapidProtect (produto simplified) — não aplica a FlexLife/PeakLife/SummitLife/SurvivorLife/Term em full UW.
+
+**EXCLUSÃO 3 — Foreign Nationals ABR limitado por country tier:**
+- Em FN, ABR disponível **apenas em A & B countries**. C/D/E countries: ABR NÃO disponível.
+
+**Tabela rápida pra rep não confundir:**
+
+| Cliente | Acesso ABR | Acesso LBR/LIBR |
+|---|---|---|
+| FlexLife/Peak/Summit Standard NT, NT, Preferred, Elite | ✅ | ✅ |
+| FlexLife/Peak/Summit **Express Standard NT 1** (table B-D) | ✅ | ✅ |
+| FlexLife/Peak/Summit **Express Standard NT 2** (table E-H) | ✅ | ❌ |
+| RapidProtect Standard NT/Tobacco | ✅ | n/a (LIBR não em RapidProtect) |
+| RapidProtect **Express Standard NT 1** ou **Express Tobacco** | ❌ | n/a |
+| FN A or B country | ✅ | depende produto |
+| FN C/D/E country | ❌ | ❌ |
 
 **Como funciona o pagamento (importante explicar ao cliente):**
 
