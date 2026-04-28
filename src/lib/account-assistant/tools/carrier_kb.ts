@@ -75,7 +75,7 @@ const queryCarrierKnowledge: ToolEntry = {
   def: {
     name: "query_carrier_knowledge",
     description:
-      "Consulta a base de conhecimento de uma carrier (seguradora) sobre produtos, underwriting, riders, compliance, processo de aplicação. USE SEMPRE que o rep perguntar algo específico de uma carrier — ex: 'qual o cap do FlexLife em NY?', 'como diabetes Type 2 é underwritten?', 'qual o waiting period do LIBR?', 'pode vender em NY?', 'foreign national brasileiro qual o face máximo?'. Default carrier='national_life_group'. NUNCA invente resposta sem chamar esta tool.",
+      "Consulta DUAS bases de conhecimento: (1) carrier 'national_life_group' = NLG (regras de UW, produtos, riders, compliance, processo); (2) carrier 'brazillionaires_portal' = portal de TREINAMENTO da agência Spark/Brazillionaires (cursos, eventos, dicas operacionais, scripts de venda, processo de aplicação no dia-a-dia, dicas da Rita sobre Inforce/UW, Napkin Presentations, Emergency Contact List, fingerprint, agendar prova, Como Convidar, etc). USE SEMPRE que o rep perguntar sobre QUALQUER ASSUNTO RELACIONADO À PROFISSÃO — não só sobre NLG. Se a query for sobre regras de carrier (cap rate, classe, FN, riders) → carrier='national_life_group'. Se for sobre operação do dia-a-dia, treinamento, processo Brazillionaires, scripts, dicas práticas → carrier='brazillionaires_portal'. Em dúvida, chame primeiro com 'brazillionaires_portal' (cobertura mais ampla de treinamento) e depois com 'national_life_group' se precisar regras técnicas. NUNCA invente resposta sem chamar esta tool.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -86,9 +86,9 @@ const queryCarrierKnowledge: ToolEntry = {
         },
         carrier: {
           type: "string",
-          enum: ["national_life_group"],
-          default: "national_life_group",
-          description: "Por enquanto só NLG.",
+          enum: ["national_life_group", "brazillionaires_portal"],
+          default: "brazillionaires_portal",
+          description: "Qual KB consultar. 'national_life_group' = regras NLG (UW, produtos, FN, compliance). 'brazillionaires_portal' = portal Brazillionaires (treinamento, dicas operacionais, scripts, eventos, processo de aplicação real). Default 'brazillionaires_portal' porque cobre mais perguntas operacionais; consulte 'national_life_group' especificamente quando rep mencionar regra de carrier.",
         },
         category_hint: {
           type: "string",
