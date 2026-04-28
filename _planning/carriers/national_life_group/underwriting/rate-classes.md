@@ -5,7 +5,7 @@ subcategory: rate-classes
 slug: rate-classes
 title: "NLG — rate classes (Elite/Preferred/Select/Standard/Express/Tobacco)"
 priority: on_demand
-tags: [underwriting, rate-classes, preferred, standard, tobacco, ez-uw]
+tags: [underwriting, rate-classes, preferred, standard, tobacco, ez-uw, elite, select, express, substandard, table-ratings, classe, classes, rate-class-eligibility, flexlife-classes, qual-classe, healthy-client, cliente-saudavel, 35-anos]
 applies_to_companies: [LSW, NLIC]
 source: official
 source_doc_cat: "62797(0126)"

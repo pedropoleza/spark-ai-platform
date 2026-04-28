@@ -5,7 +5,7 @@ subcategory: foreign-national-tax
 slug: rfn-vs-nrfn-tax-classification
 title: "RFN vs NRFN — Resident vs Nonresident Alien (IRS classification)"
 priority: on_demand
-tags: [foreign-national, fn, rfn, nrfn, resident-alien, nonresident-alien, substantial-presence-test, spt, green-card, irs, tax-classification]
+tags: [foreign-national, fn, rfn, nrfn, resident-alien, nonresident-alien, substantial-presence-test, spt, green-card, irs, tax-classification, gift-exclusion, annual-exclusion, lifetime-exclusion, 19000, $19000, $19k, 2026-exclusion, gift-tax]
 applies_to_companies: [LSW, NLIC]
 source: official
 source_doc_cat: "103418(1225)"

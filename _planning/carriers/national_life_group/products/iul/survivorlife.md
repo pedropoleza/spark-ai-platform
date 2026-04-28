@@ -6,7 +6,7 @@ slug: survivorlife
 title: "SurvivorLife — Survivorship IUL (joint life)"
 priority: on_demand
 product_refs: [survivorlife]
-tags: [iul, survivorlife, siul, joint-life, second-to-die, estate-planning]
+tags: [iul, survivorlife, siul, joint-life, second-to-die, estate-planning, uninsurable, uninsurable-rule, 200-percent-rated, paired-life, two-lives, joint-survivor]
 applies_to_companies: [LSW, NLIC]
 source: official
 source_doc_cat: "62797(0126)"

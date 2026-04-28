@@ -5,7 +5,7 @@ subcategory: foreign-national-by-country
 slug: by-country
 title: "Foreign National Por País — Brasil, México, Argentina, etc"
 priority: on_demand
-tags: [foreign-national, fn, brasil, brazil, mexico, argentina, paises, country, latam, hispanic]
+tags: [foreign-national, fn, brasil, brazil, mexico, argentina, saudi, saudi-arabia, venezuela, china, uk, paises, country, latam, hispanic, country-c, country-tier-c, classification-by-country]
 applies_to_companies: [LSW, NLIC]
 source: official
 source_doc_cat: "62797(0126)"

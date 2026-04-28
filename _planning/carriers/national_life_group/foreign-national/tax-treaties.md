@@ -5,7 +5,7 @@ subcategory: foreign-national-tax
 slug: tax-treaties
 title: "Tax Treaties — bilateral US com países comuns (Brasil, México, etc)"
 priority: on_demand
-tags: [foreign-national, fn, tax-treaty, brasil, mexico, gift-tax, estate-tax, double-taxation, qdot]
+tags: [foreign-national, fn, tax-treaty, brasil, brazil, mexico, gift-tax, estate-tax, double-taxation, qdot, us-brazil, us-mexico, treaty-modify, gift-exclusion, brazil-no-treaty, mexico-no-treaty]
 applies_to_companies: [LSW, NLIC]
 source: official
 last_verified: 2026-04-28

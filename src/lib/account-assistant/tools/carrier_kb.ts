@@ -119,11 +119,17 @@ const queryCarrierKnowledge: ToolEntry = {
       p_category: categoryHint,
       p_state: state,
       p_top_k: topK,
-      // 0.5 — anti-alucinação threshold. Anteriormente 0.6 mas tava
-      // gerando falso-negativos em queries cujos termos diferem do chunk
-      // (ex: "diabetes" vs "Diabetes Type 2 well-controlled"). Adversarial
-      // tests A1-A4 passam com 0.5 (validado).
-      p_min_similarity: 0.5,
+      // 0.4 — ajustado de 0.5 pra reduzir falso-negativos em queries
+      // laterais (chunks existem mas similarity <0.5 por divergência de
+      // termo entre query do rep e título/corpo do chunk).
+      // Defesa anti-alucinação acontece DOIS níveis:
+      //   1. SQL: chunks com similarity <0.4 nem chegam ao LLM.
+      //   2. Bot prompt: instruído a checar similarity score, hedging
+      //      em chunks com similarity 0.4-0.6 ("pelo que tenho..."),
+      //      recusar com confiança apenas se 0+ chunks ou top<0.4.
+      // Adversarials A1-A4 passam com 0.4 (chunks "DL12 commission"/
+      // "2030 cap" simplesmente não existem; similarity será ~0.2-0.3).
+      p_min_similarity: 0.4,
     });
 
     if (error) {
