@@ -2,8 +2,14 @@
  * Prompt do Sparkbot. Estruturado pra cache-friendly: system prompt byte-exact
  * estável entre turns, runtime context (data, memory injection) fica na user
  * message.
+ *
+ * Carrier KB Tier 1: chunks priority='always' são carregados separadamente
+ * via loadCarrierTier1() e passados aqui como `carrierOverview`. Isso mantém
+ * a função buildSparkbotSystemPrompt pura e síncrona; caller (processor /
+ * dispatcher) faz o IO.
  */
 
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { RepIdentity, RepProfile } from "@/types/account-assistant";
 
 interface BuildPromptArgs {
@@ -12,6 +18,8 @@ interface BuildPromptArgs {
   locationTimezone: string;
   locale: "pt-BR" | "en-US"; // format de data/hora
   confirmationMode: "always" | "medium_and_high" | "high_only";
+  /** Conteúdo Tier 1 da carrier KB (chunks priority='always'). Default vazio. */
+  carrierOverview?: string;
 }
 
 /**
@@ -20,7 +28,7 @@ interface BuildPromptArgs {
  * em runtime context na user message).
  */
 export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
-  const { rep, locationName, locationTimezone, locale, confirmationMode } = args;
+  const { rep, locationName, locationTimezone, locale, confirmationMode, carrierOverview } = args;
   const confirmText =
     confirmationMode === "always"
       ? "Confirme TUDO antes de executar — até leitura."
@@ -74,6 +82,9 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "MENSAGEM PRA LEAD:",
     "- send_message_to_contact: envia msg em nome do rep pelo canal SMS/WhatsApp/Email/IG. ⚠️ AÇÃO AVANÇADA — sempre confirma antes ('Vou mandar X pro Y. Confirma? Essa é uma ação avançada').",
     "",
+    "CARRIER KNOWLEDGE BASE (NLG e futuras carriers):",
+    "- query_carrier_knowledge: consulta a base de conhecimento de uma carrier (NLG por enquanto). USE SEMPRE que o rep perguntar sobre: produtos NLG (FlexLife, PeakLife, SummitLife, Term, RapidProtect, Annuities), underwriting (rate classes, build chart, EZ UW, condições médicas), riders (ABR, LIBR, Alzheimer, Fertility, Overloan), foreign nationals (country tier A/B, visa, financiamento), replacement/1035/comissão, compliance (NY Reg 187, illustration regulation), processo (eApp/iGo/ForeSight/Resonant). Sempre que o rep mencionar estado, passe `state`. Se a pergunta tiver foco claro, passe `category_hint`.",
+    "",
     "# PROTOCOLO DE CONFIRMAÇÃO",
     confirmText,
     "",
@@ -105,12 +116,80 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     buildMemorySection(rep.profile),
     "",
     "# LIMITES IMPORTANTES",
-    "- Responda APENAS sobre operações do GHL deste rep. Se ele perguntar outra coisa, diga que não faz parte do seu escopo.",
+    "- Responda APENAS sobre operações do GHL deste rep ou consultas à Carrier KB. Se ele perguntar outra coisa, diga que não faz parte do seu escopo.",
     "- Se uma tool falhar, informe e pergunte se quer tentar de novo. Não invente resultados.",
     "- Se receber input inesperado (áudio ruidoso, PDF ilegível), pergunte em vez de chutar.",
+    "",
+    // Carrier KB Tier 1 — chunks priority='always'. Limite 5KB total
+    // (verificado em loadCarrierTier1). Se vazio, seção é omitida pelo .filter(Boolean).
+    carrierOverview ? "# CARRIER REFERENCE (sempre disponível)" : "",
+    carrierOverview || "",
+    "",
+    "# HONESTIDADE EPISTÊMICA — REGRA INVIOLÁVEL (Carrier KB)",
+    "Você NUNCA inventa info sobre uma carrier (NLG, etc). Você só afirma o que tem na KB",
+    "(retornada pela tool query_carrier_knowledge ou no Tier 1 acima).",
+    "",
+    "ANTES de responder pergunta sobre carrier, checa:",
+    "1. A tool retornou chunks? Se NÃO (chunks=[] ou similarity baixa) → você diz claramente:",
+    "   'não tenho info confiável sobre isso. Recomendo: Sales Desk NLG 800-906-3310, ou seu IMO'.",
+    "   NÃO chuta. NÃO inventa número, idade, valor.",
+    "2. Top similarity é entre 0.6 e 0.74? Você responde com hedging: 'pelo que tenho, a regra geral é X — mas",
+    "   não tenho chunk específico, confirme com Sales Desk antes de cotar com cliente'.",
+    "3. Algum chunk tem is_stale=true (verified > 180 dias)? Você ALERTA: 'essa info foi verificada em",
+    "   [mês/ano] — valores como cap rates podem ter mudado. Confirme no portal antes de cotar.'",
+    "4. Algum chunk tem state_match='mismatch'? Você diz: 'essa regra é específica de [estado X];",
+    "   em [estado Y do cliente] pode ser diferente — não tenho chunk específico de [Y]'.",
+    "5. Conteúdo do chunk inclui '[unverified]'? Você propaga: 'esse valor está marcado como",
+    "   não-confirmado na nossa base; valide no portal antes de usar'.",
+    "6. Quando citar valor (cap rate, comissão, face limit, age range), CITE a fonte:",
+    "   '(fonte: NLG Cat 62797, validado em 04/2026)' — pegue source_doc_cat e last_verified_at do chunk.",
+    "",
+    "Se forçado a escolher entre soar prestativo e soar honesto: ESCOLHA HONESTO. Rep prefere",
+    "'não sei, consulte X' do que info errada que ele repete pro cliente.",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * Carrega chunks Tier 1 (priority='always') da carrier KB pra injetar inline
+ * no system prompt do Sparkbot. Volume target: ≤5KB. Se exceder, log warning
+ * e trunca pra evitar inflar todos os turns.
+ *
+ * Chamado pelo caller (processor / dispatcher) ANTES de buildSparkbotSystemPrompt.
+ */
+export async function loadCarrierTier1(carrier = "national_life_group"): Promise<string> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("carrier_knowledge")
+    .select("title, content, category, last_verified_at, source_doc_cat")
+    .eq("carrier", carrier)
+    .eq("priority", "always")
+    .order("category", { ascending: true });
+
+  if (error || !data || data.length === 0) return "";
+
+  const rendered = data
+    .map((c) => {
+      const fonte = c.source_doc_cat ? ` (fonte: ${c.source_doc_cat})` : "";
+      return `## ${c.title}${fonte}\n${c.content}`;
+    })
+    .join("\n\n");
+
+  // Guard: Tier 1 NÃO pode passar de 6KB. Se passar, trunca + warn no log
+  // (Pedro reduz chunks priority='always' ou move pra 'on_demand').
+  // 6KB ≈ 1.5K tokens — overhead aceitável em todo turn, garante bot
+  // tem overview + pitfalls críticos sempre disponível sem tool call.
+  const MAX_TIER1_CHARS = 6000;
+  if (rendered.length > MAX_TIER1_CHARS) {
+    console.warn(
+      `[carrier_kb] Tier 1 overview (${carrier}) excede ${MAX_TIER1_CHARS} chars: ${rendered.length}. ` +
+      `Reduza chunks priority='always' ou mova pra 'on_demand'.`,
+    );
+    return rendered.slice(0, MAX_TIER1_CHARS) + "\n[...truncado — ajuste priority]";
+  }
+
+  return rendered;
 }
 
 /**

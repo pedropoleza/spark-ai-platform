@@ -20,7 +20,7 @@ import {
   parseTermsResponse,
 } from "./terms";
 import { acceptTerms, setActiveLocation } from "./identity";
-import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext } from "./prompt-builder";
+import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "./prompt-builder";
 import { runWithTools, type LLMMessage } from "./llm-client";
 import { TOOL_REGISTRY, executeTool, type ToolContext } from "./tools";
 
@@ -144,13 +144,21 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     ? "en-US"
     : "pt-BR";
 
-  // 4. Build prompt + messages
+  // 4. Build prompt + messages.
+  // Carrier Tier 1 carregado em paralelo — chunks priority='always' (~5KB).
+  // Se KB vazia ou fail, fica string vazia e seção é omitida.
+  const carrierOverview = await loadCarrierTier1("national_life_group").catch((err) => {
+    console.warn("[processor] loadCarrierTier1 falhou (não-fatal):", err);
+    return "";
+  });
+
   const systemPrompt = buildSparkbotSystemPrompt({
     rep,
     locationName: activeLink.location_name || location.location_name || activeLocationId,
     locationTimezone: timezone,
     locale,
     confirmationMode: input.config.confirmation_mode || "medium_and_high",
+    carrierOverview,
   });
 
   const runtimeContext = buildSparkbotRuntimeContext({

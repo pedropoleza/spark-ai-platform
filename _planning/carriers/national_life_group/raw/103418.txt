@@ -1,0 +1,317 @@
+                                          Planning for
+                                          Foreign Nationals
+
+
+
+
+U.S. Federal Gift and
+Estate Tax Considerations
+For Non-U.S. Citizens with U.S. Connections
+  Products issued by National Life Insurance Company® | Life Insurance Company of the Southwest®
+
+TC8678636(1225)1                                                                     Cat No 103418(1225)
+Who is a Foreign National?
+The term foreign national is not officially defined in the Internal Revenue Code
+(Code). However, a foreign national is broadly defined as an individual who is not a
+United States citizen by birth or naturalization. The Code uses the word alien to
+refer to foreign nationals. There are two types of “aliens” for federal tax purposes:
+Resident Aliens and Nonresident Aliens. These terms carry different meanings for
+income tax purposes and gift and estate tax purposes.
+
+The Two Types of Aliens
+
+  1. Resident Alien
+
+  Definition for Federal Income Tax Purposes
+
+  Generally, an individual is a resident alien for income tax purposes if they are a lawful permanent resident
+  of the United States (U.S.) or if they meet the substantial presence test.1
+  • A lawful permanent resident is someone who has                          • Generally, an individual meets the substantial
+    been granted permanent resident status by United                          presence test if they are physically present in
+    States Citizenship and Immigration Services. These                        the U.S. for at least 31 days during the current
+    individuals are informally referred to as green card                      year and at least 183 days during the three-year
+    holders because the background of the permanent                           period that includes the current year and the
+    resident identification card has a green tint.                            two years immediately preceding.
+
+  Definition for Federal Gift and Estate Tax Purposes
+
+  A resident alien is an individual who, at the time of the gift or date of death, was domiciled in the U.S.2
+
+
+  2. Nonresident Alien
+
+  Definition for Federal Income Tax Purposes
+
+  An individual is a nonresident alien if they are neither a citizen or resident of the United States.1
+
+  Definition for Federal Gift and Estate Tax Purposes
+
+  A nonresident alien is an individual who, at the time of the gift or at the date of death, was domiciled outside
+  the United States.2
+
+
+
+
+In this guide, a Resident Alien is referred to as a Resident Foreign National (RFN) and is assumed to be a non-U.S. citizen living in the
+U.S. A Nonresident Alien is referred to as a Nonresident Foreign National (NRFN) and is assumed to be a non-U.S. citizen living outside
+the U.S.
+
+                                                                        2
+    U.S. Income Taxation
+    Resident foreign nationals are subject to U.S. income
+    tax on all income earned worldwide. Nonresident
+    foreign nationals are subject to income tax on income
+    from U.S. sources or income connected with a U.S.
+    trade or business.
+
+    It is important to note that a tax treaty between the U.S.
+    and a foreign country may modify your taxation under
+    these tax rules. The purpose of a tax treaty is to help
+    minimize or avoid double taxation of assets if a person
+    has multiple citizenships or property located in multiple
+    countries. It is important for you to consult with your
+    U.S. and international tax and legal advisors for the tax
+    considerations of your unique situation.
+
+
+
+    U.S. Gift and Estate
+    Taxation
+    Do any of the following statements apply
+    to you?
+
+    I am a foreign national currently living or planning
+    to live in the U.S.
+
+
+    I am a foreign national who owns a business or
+    other assets that are located in the U.S.
+
+
+    My spouse and I intend to transfer U.S. property to
+    each other, and one or both of us are foreign nationals.
+
+    If any of these statements is applicable, your U.S.-based
+    assets may be subject to a federal transfer tax as high
+    as 40% with only a small tax exemption available.
+
+    U.S. citizens enjoy an annual gift tax exclusion which is
+    a set amount that they could give away to any number of
+    people each year without incurring a gift tax. U.S. citizens
+    are also entitled to a lifetime estate and gift exemption
+    (lifetime transfer tax exemption) which is an amount —
+    indexed for inflation — that they can give during their
+    lifetime or upon death in total without paying federal
+    estate or gift tax.
+
+
+
+3
+  U.S. Gift Tax                                                             U.S. Estate Tax
+Resident foreign nationals are generally subject to the                   Resident foreign nationals are generally subject to
+same gift tax rules as U.S. citizens. Therefore, the annual               the same estate tax rules as U.S. citizens. All property
+gift tax exclusion amount and the lifetime transfer tax                   worldwide is subject to U.S. estate tax, and they are
+exemption amount are available. Nonresident foreign                       afforded the full estate tax exemption amount (less
+nationals may be subject to U.S. gift tax if they make gifts              any amount allocated to lifetime gifts). Note that the
+of real or tangible personal property located in the U.S.                 estate may qualify for a credit for any foreign death taxes
+While nonresident foreign nationals are not afforded                      paid. Nonresident foreign nationals may be subject to
+the lifetime transfer tax exemption amount, they can                      estate tax regarding assets situated in the U.S. They are
+use the gift tax annual exclusion. The unlimited gift tax                 afforded a $60,000 lifetime estate tax exemption amount.
+marital deduction is not available for lifetime transfers                 Note that life insurance owned by an NRFN insured is
+to a foreign national spouse. However, these gifts may                    considered property situated outside the U.S., therefore
+be sheltered by a larger gift tax annual exclusion allowed                not included in the NRFN's gross estate for U.S. estate
+for transfers between spouses as indexed annually. Also,                  tax purposes.
+U.S. citizen spouses can allocate their lifetime transfer
+                                                                          The unlimited marital deduction is not available for
+tax exemption amount to gifts to their foreign national
+                                                                          transfers from a deceased U.S. citizen spouse to a
+spouse (also indexed for inflation).
+                                                                          foreign national surviving spouse. However, with proper
+Note that resident foreign nationals (as well as U.S.                     planning and execution, the marital deduction may be
+citizens) generally must file an informational return with                available for assets transferred to a Qualified Domestic
+the Internal Revenue Service if they receive gifts from                   Trust (QDOT) of which the foreign national surviving
+nonresident foreign nationals of more than $100,000                       spouse is the beneficiary. Distributions from the QDOT
+cumulatively. This also applies to bequests from foreign                  to the foreign national surviving spouse may be subject
+estates. Please see IRS Form 3520 | Annual Return to                      to estate tax withholding (unless such surviving spouse
+Report Transactions With Foreign Trusts and Receipt of                    becomes a U.S. citizen).
+Certain Foreign Gifts.
+
+The U.S. gift and estate tax rules applicable to foreign nationals is summarized in the table* below.
+
+      Assets                 Assets                Annual Gift              Gift Tax               Estate Tax     Gift and Estate Tax
+ Transferred From        Transferred To           Tax Exclusion            Exemption               Exemption      Marital Deduction
+                      U.S. Citizen Spouse      N/A due to unlimited                  $15,000,000                       Unlimited
+                                                marital deduction
+
+                          U.S. Citizen               $19,000                         $15,000,000                          N/A
+ U.S. Citizen             Non-Spouse
+ or
+ Resident Foreign       Foreign National            $194,000                         $15,000,000                   Allowed if assets
+ National                   Spouse                                                                                  are transferred
+                                                                                                                      to a QDOT
+                        Foreign National             $19,000                         $15,000,000                          N/A
+                          Non-Spouse
+                      U.S. Citizen Spouse          N/A due to                  $0                   $60,000            Unlimited
+                                                unlimited marital
+                                                    deduction
+                          U.S. Citizen               $19,000                   $0                   $60,000               N/A
+ Nonresident              Non-Spouse
+ Foreign National       Foreign National            $194,000                   $0                   $60,000         Legal ambiguity
+                            Spouse                                                                                 on the availability
+                                                                                                                       of QDOT
+                        Foreign National             $19,000                   $0                   $60,000               N/A
+                          Non-Spouse
+
+
+*Figures assume the transfer occurs in 2026.
+                                                                      4
+                                                                                                                    Examples*
+
+
+
+
+       Juan and Maria are married and their                                           Mei and Kai are married. They are
+       primary residence is in the U.S. Juan and                                      residents and citizens of China, but have
+       Maria met while Juan was working as an                                         family living in the U.S. Kai and Mei found
+       engineer for a U.S. firm based in Mexico.                                      that they were often visiting their relatives
+       Juan is a U.S. citizen, and Maria is a                                         in the U.S. and decided to purchase a
+       citizen of Mexico. Juan was very successful                                    vacation home near their family to use
+       and has a diverse investment portfolio                                         during their visits. Under the nonresident
+       including stocks, bonds, and real estate                                       foreign national estate tax rules, if Kai dies,
+       worth approximately $16,500,000. If Juan                                       Kai's estate may be required to pay estate
+       predeceases Maria in 2026, Juan's estate                                       tax on the vacation home and any other U.S.
+       may owe estate taxes on any assets in excess                                   assets in excess of the $60,000 exemption
+       of the $15,000,000 exemption, and the                                          limit. Since Mai is also a nonresident
+       marital deduction would not apply unless                                       foreign national, there is no available
+       the assets transferred through a QDOT.                                         marital deduction or other exclusions.
+
+
+
+
+       A Simple Solution for these Couples — Life Insurance
+       The Benefits of Owning U.S. Life Insurance for Foreign Nationals
+       As illustrated above, foreign nationals are exposed to U.S. gift and estate tax whether
+       or not they reside in the U.S. For the reasons set forth below, owning a U.S.-based life
+       insurance policy may provide foreign nationals with several valuable benefits.
+
+
+
+
+*This is a hypothetical example and is used for illustrative purposes only. Actual results will vary.
+                                                                           5
+Why Life Insurance?
+There are many reasons a foreign national should consider
+owning a U.S.-based life insurance policy. A permanent policy
+may provide:
+
+Death benefits that may avoid U.S. income3 and estate taxes
+
+
+Tax-deferred cash value growth in the U.S.
+
+
+Tax-advantaged distributions in the U.S.4
+
+Liquidity heirs can use to protect
+their assets
+
+Estate planning
+confidence
+
+
+
+
+                                             6
+Benefits of Life Insurance
+Life insurance offers many benefits to the owner                Regardless of the policy owner’s citizenship status,
+and beneficiaries regardless of their U.S. citizenship          a life insurance policy may also help with other needs
+status. Life insurance may help provide death benefit           such as income protection, business succession
+protection, long-term income tax benefits, asset                planning, legacy planning, wealth protection, and
+security, and certainty in estate planning for you              executive benefit planning.
+and your spouse. There are characteristics of a life
+                                                                Moreover, by using life insurance as part of an estate
+insurance policy that may assist foreign nationals
+                                                                plan, a policy owner may be able to provide an income
+with these special planning needs.
+                                                                tax-free benefit to their heirs in order to pay any U.S.
+• The proceeds payable under a life insurance policy            estate taxes without having to sell property. In addition,
+  are not considered a tangible U.S.-based asset and            the policy may also provide some wealth transfer to the
+  therefore are not subject to U.S. estate taxes for            beneficiary after any tax liabilities are met.
+  nonresident foreign nationals.
+• Benefits payable under a life insurance policy are            Therefore, if either you or your spouse (or both of
+  generally income tax-free in the U.S.3                        you) are foreign nationals, but own U.S. property,
+                                                                life insurance may be an important element of
+• In a permanent life insurance policy any growth in
+                                                                your overall planning portfolio.
+  the cash value is income tax-deferred in the U.S. This
+  cash value may also be accessed by the policy owner
+  without triggering U.S. income tax.4
+
+Additional benefits of a U.S.-based policy
+A foreign national may also find benefit in participating
+in the U.S. life insurance industry.
+• The industry is one of the most mature in the world
+  which may allow for access to improved product
+  design and competitive product pricing.5
+• The industry is highly regulated through both federal
+  and state oversight and is considered one of the most
+  stable in the world.5
+• In addition, with the contract and benefits denominated
+  in the U.S. Dollar, a policy may provide financial
+  confidence, wealth diversification, and economic
+  security that may not otherwise be available in a
+  foreign market.
+• A U.S. life insurance contract provides the
+  personal freedom to choose beneficiaries
+  and heirs and can avoid the concern
+  of forced heirship for those whose
+  home country requires a
+  specific inheritance.
+                                                                     These benefits are meaningful for
+                                                                   all insurance policy owners but there
+                                                                    may be special tax considerations
+                                                                       when you are a foreign national.
+
+
+
+                                                            7
+       National Life as the Right Company
+       Choosing the life insurance company with which to partner can be just as important as
+       deciding to purchase a life insurance policy. The insurance companies of the National
+       Life Group maintain a strong portfolio of products and our agents are committed to
+       finding the right product to fit your needs.
+
+       Financial Strength Ratings6
+
+              A+ (Superior)                                      A+ (Strong)                                     A1 (Good)
+               BY A.M. BEST                                BY STANDARD & POOR’S                                  BY MOODY’S
+          Second highest of 16 rankings                      Fifth highest of 21 rankings                  Fifth highest of 21 rankings
+
+
+       At National Life, our story is simple: since 1848, we've been working hard to deliver on our promises to
+       millions of people with our vision of providing peace of mind in times of need. It's our cause, stemming
+       from a deep passion to live our values to do good, be good, and make good — every day.
+
+
+
+
+National Life Group® is a trade name of National Life Insurance Company, founded in Montpelier, VT, in 1848, Life Insurance Company
+of the Southwest (LSW), Addison, TX, chartered in 1955 and their Affiliates. Each company of National Life Group is solely responsible for
+its own financial condition and contractual obligations. Life Insurance Company of the Southwest is not an authorized insurer in New York
+and does not conduct insurance business in New York.
+
+ No bank or credit union guarantee | Not a deposit | Not FDIC/NCUA insured | May lose value | Not insured by any federal or state government agency
+                                   Guarantees are dependent upon the claims-paying ability of the issuing company.
+
+1 Code § 7701(b).
+2 Treas. Reg. § 20.0-1.
+3 Internal Revenue Code § 101(a)(1). There are some exceptions to this rule. Please consult a qualified tax professional for advice concerning
+   your individual situation.
+4 Policy loans and withdrawals reduce the policy’s cash value and death benefit and may result in a taxable event. Withdrawals up to the basis
+   paid into the contract and loans thereafter will not create an immediate taxable event, but substantial income tax ramifications could result
+   upon contract lapse or surrender. Surrender charges may reduce the policy's cash value in early years.
+5 See generally National Association of Insurance Commissioners at https://content.naic.org.
+6 Financial strength ratings for National Life Insurance Company as of 12/9/2025. Ratings are subject to change.
+This is not a solicitation of any specific insurance policy.
+                                                                         8
+

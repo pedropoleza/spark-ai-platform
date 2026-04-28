@@ -22,7 +22,7 @@ import { trackAndCharge } from "@/lib/billing/charge";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runWithTools, type LLMMessage } from "../llm-client";
 import { getToolDefinitions, executeTool, type ToolContext } from "../tools";
-import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext } from "../prompt-builder";
+import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "../prompt-builder";
 import type {
   ProactiveRule,
   RepIdentity,
@@ -270,6 +270,12 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
       ? "en-US"
       : "pt-BR";
 
+  // Tier 1 carregado em paralelo — graceful fallback se falhar.
+  const carrierOverview = await loadCarrierTier1("national_life_group").catch((err) => {
+    console.warn("[dispatcher] loadCarrierTier1 falhou (não-fatal):", err);
+    return "";
+  });
+
   const systemPrompt = [
     buildSparkbotSystemPrompt({
       rep,
@@ -279,6 +285,7 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
       confirmationMode:
         (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
         "medium_and_high",
+      carrierOverview,
     }),
     "",
     "# MODO PROATIVO ATIVADO",
