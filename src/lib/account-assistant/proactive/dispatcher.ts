@@ -317,6 +317,9 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     companyId: location.company_id,
     ghlClient,
     testSessionId: testSessionId || null,
+    confirmationMode:
+      (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
+      "medium_and_high",
   };
 
   const toolDefs = getToolDefinitions(rule.tools_allowed);

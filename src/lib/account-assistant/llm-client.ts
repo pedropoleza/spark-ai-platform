@@ -12,24 +12,48 @@ import type { ToolDefinition } from "@/types/account-assistant";
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const FALLBACK_MODEL = "gpt-4.1";
 const MAX_ITERATIONS = 6;
+
+// H1 (review 2026-04-28): no stress test, 6 de 7 falhas conversacionais
+// (hallucinations, compliance flexível) ocorreram em GPT-4.1 fallback —
+// nenhuma em Claude. Pra Sparkbot, queries de compliance/UW/produto NLG
+// pedem comportamento conservador.
+//
+// Em vez de fallback agressivo na primeira falha de Claude, agora:
+//   1) Anthropic SDK maxRetries=3 internamente (rate-limit, 5xx)
+//   2) Se Anthropic ainda falhar, tentamos novamente com Haiku (mesmo
+//      provider, mais barato + diferente capacity pool da Anthropic)
+//   3) Só caímos pra OpenAI em failure terminal — e logamos como ERROR
+//      pra Pedro investigar (não warn).
+//
+// Setting de env STRICT_CLAUDE_ONLY=1 desativa fallback OpenAI por completo
+// (testes mostraram que OpenAI fallback é fonte de regressões em compliance).
+const SECONDARY_CLAUDE_MODEL = "claude-haiku-4-5";
+const STRICT_CLAUDE_ONLY = process.env.STRICT_CLAUDE_ONLY === "1";
+
 // Cap defensivo no payload de tool result que vai pro LLM. Tools tipo
 // get_conversation_history podem retornar MB se conversa for longa,
-// estourando context window silenciosamente. Truncamos com aviso explícito
-// pra LLM saber que faltam dados.
+// estourando context window silenciosamente.
+//
+// H9 (review 2026-04-28): truncamos preservando HEAD + TAIL — antes
+// truncávamos só o final, exatamente onde get_conversation_history retorna
+// as msgs MAIS RECENTES. Pre-meeting briefing (system-rules.ts:36-43) usa
+// essa tool e estava recebendo dados truncados sem saber.
 const MAX_TOOL_RESULT_CHARS = 12000;
 
 function truncateToolResult(serialized: string): string {
   if (serialized.length <= MAX_TOOL_RESULT_CHARS) return serialized;
-  const truncated = serialized.slice(0, MAX_TOOL_RESULT_CHARS);
-  const omitted = serialized.length - MAX_TOOL_RESULT_CHARS;
-  return `${truncated}\n\n[TRUNCATED: ${omitted} chars omitidos do resultado. Considere refinar o filtro/limit pra obter dados completos.]`;
+  const half = Math.floor((MAX_TOOL_RESULT_CHARS - 200) / 2);
+  const head = serialized.slice(0, half);
+  const tail = serialized.slice(-half);
+  const omitted = serialized.length - head.length - tail.length;
+  return `${head}\n\n[TRUNCATED: ${omitted} chars do MEIO omitidos pra preservar início + fim. Considere refinar filtro/limit pra obter dados completos.]\n\n${tail}`;
 }
 
 async function getAnthropicClient() {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) throw new Error("ANTHROPIC_API_KEY não configurada.");
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
-  return new Anthropic({ apiKey: key, timeout: 45000, maxRetries: 1 });
+  return new Anthropic({ apiKey: key, timeout: 60000, maxRetries: 3 });
 }
 
 export interface LLMContentBlock {
@@ -93,18 +117,37 @@ export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToo
     try {
       return await runWithClaude({ ...input, model });
     } catch (err) {
-      console.warn(
-        `[LLM] Claude (${model}) failed, falling back to OpenAI ${FALLBACK_MODEL}:`,
+      // H1: tenta secundário Anthropic antes de cair pra OpenAI. Diferente
+      // capacity pool, mesmo comportamento conservador em compliance/UW.
+      console.error(
+        `[LLM] Claude primário (${model}) falhou, tentando ${SECONDARY_CLAUDE_MODEL}:`,
         err instanceof Error ? err.message : err,
       );
       try {
-        return await runWithOpenAI({ ...input, model: FALLBACK_MODEL });
+        return await runWithClaude({ ...input, model: SECONDARY_CLAUDE_MODEL });
       } catch (err2) {
+        if (STRICT_CLAUDE_ONLY) {
+          console.error(
+            `[LLM] STRICT_CLAUDE_ONLY=1 — não cai pra OpenAI. Erro Claude secundário:`,
+            err2 instanceof Error ? err2.message : err2,
+          );
+          return llmFailureStub(model);
+        }
         console.error(
-          `[LLM] OpenAI fallback também falhou:`,
+          `[LLM] Claude secundário também falhou, fallback OpenAI ${FALLBACK_MODEL} ` +
+          `(ATENÇÃO: stress test mostrou ~85% de regressões de compliance ` +
+          `nesse fallback — investigar causa raiz Claude):`,
           err2 instanceof Error ? err2.message : err2,
         );
-        return llmFailureStub(model);
+        try {
+          return await runWithOpenAI({ ...input, model: FALLBACK_MODEL });
+        } catch (err3) {
+          console.error(
+            `[LLM] OpenAI fallback também falhou:`,
+            err3 instanceof Error ? err3.message : err3,
+          );
+          return llmFailureStub(model);
+        }
       }
     }
   }

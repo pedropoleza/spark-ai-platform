@@ -184,6 +184,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     companyId: location.company_id,
     ghlClient,
     testSessionId: input.testSessionId || null,
+    confirmationMode: input.config.confirmation_mode || "medium_and_high",
   };
 
   const result = await runWithTools({

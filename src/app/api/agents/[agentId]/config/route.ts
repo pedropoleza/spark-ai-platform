@@ -6,8 +6,9 @@ import { updateAgentConfigSchema, validateBody } from "@/lib/utils/validation";
 // GET /api/agents/[agentId]/config
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { agentId: string } }
+  { params }: { params: Promise<{ agentId: string }> }
 ) {
+  const { agentId } = await params;
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
@@ -20,7 +21,7 @@ export async function GET(
   const { data: agent } = await supabase
     .from("agents")
     .select("id, type, location_id")
-    .eq("id", params.agentId)
+    .eq("id", agentId)
     .single();
 
   if (!agent) {
@@ -33,7 +34,7 @@ export async function GET(
   const { data: config, error } = await supabase
     .from("agent_configs")
     .select("*")
-    .eq("agent_id", params.agentId)
+    .eq("agent_id", agentId)
     .single();
 
   if (error) {
@@ -46,8 +47,9 @@ export async function GET(
 // PUT /api/agents/[agentId]/config
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { agentId: string } }
+  { params }: { params: Promise<{ agentId: string }> }
 ) {
+  const { agentId } = await params;
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
@@ -65,7 +67,7 @@ export async function PUT(
   const { data: agent } = await supabase
     .from("agents")
     .select("id, type, location_id")
-    .eq("id", params.agentId)
+    .eq("id", agentId)
     .single();
 
   if (!agent) {
@@ -86,7 +88,7 @@ export async function PUT(
   const { data: config, error } = await supabase
     .from("agent_configs")
     .update(updateData)
-    .eq("agent_id", params.agentId)
+    .eq("agent_id", agentId)
     .select()
     .single();
 

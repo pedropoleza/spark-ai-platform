@@ -8,8 +8,9 @@ export const maxDuration = 60;
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { agentId: string } }
+  { params }: { params: Promise<{ agentId: string }> }
 ) {
+  const { agentId } = await params;
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Não autenticado" }, { status: 401 });
@@ -28,7 +29,7 @@ export async function POST(
   const { data: agent } = await supabase
     .from("agents")
     .select("id, agent_configs(ai_model)")
-    .eq("id", params.agentId)
+    .eq("id", agentId)
     .eq("location_id", session.locationId)
     .single();
 
@@ -43,12 +44,12 @@ export async function POST(
   await adminDb
     .from("conversation_state")
     .update({ summary_note_id: null })
-    .eq("agent_id", params.agentId)
+    .eq("agent_id", agentId)
     .eq("contact_id", contact_id);
 
   try {
     await generateSummaryNote({
-      agentId: params.agentId,
+      agentId: agentId,
       locationId: session.locationId,
       contactId: contact_id,
       conversationId: "",

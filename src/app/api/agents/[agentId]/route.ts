@@ -5,8 +5,9 @@ import { createServerClient } from "@/lib/supabase/server";
 // GET /api/agents/[agentId]
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { agentId: string } }
+  { params }: { params: Promise<{ agentId: string }> }
 ) {
+  const { agentId } = await params;
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
@@ -16,7 +17,7 @@ export async function GET(
   const { data: agent, error } = await supabase
     .from("agents")
     .select("*, agent_configs(*)")
-    .eq("id", params.agentId)
+    .eq("id", agentId)
     .eq("location_id", session.locationId)
     .single();
 
@@ -30,8 +31,9 @@ export async function GET(
 // PUT /api/agents/[agentId]
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { agentId: string } }
+  { params }: { params: Promise<{ agentId: string }> }
 ) {
+  const { agentId } = await params;
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
@@ -48,7 +50,7 @@ export async function PUT(
   const { data: agent, error } = await supabase
     .from("agents")
     .update(allowedFields)
-    .eq("id", params.agentId)
+    .eq("id", agentId)
     .eq("location_id", session.locationId)
     .select()
     .single();
@@ -63,7 +65,7 @@ export async function PUT(
     await supabase
       .from("conversation_state")
       .update({ ai_paused_at: null, ai_paused_reason: null, status: "active" })
-      .eq("agent_id", params.agentId)
+      .eq("agent_id", agentId)
       .not("ai_paused_at", "is", null);
   }
 
@@ -73,8 +75,9 @@ export async function PUT(
 // DELETE /api/agents/[agentId]
 export async function DELETE(
   _request: NextRequest,
-  { params }: { params: { agentId: string } }
+  { params }: { params: Promise<{ agentId: string }> }
 ) {
+  const { agentId } = await params;
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
@@ -84,7 +87,7 @@ export async function DELETE(
   const { error } = await supabase
     .from("agents")
     .delete()
-    .eq("id", params.agentId)
+    .eq("id", agentId)
     .eq("location_id", session.locationId);
 
   if (error) {

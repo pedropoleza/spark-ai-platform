@@ -4,8 +4,9 @@ import { createServerClient } from "@/lib/supabase/server";
 
 export async function GET(
   _request: NextRequest,
-  { params }: { params: { agentId: string } }
+  { params }: { params: Promise<{ agentId: string }> }
 ) {
+  const { agentId } = await params;
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
@@ -21,7 +22,7 @@ export async function GET(
     supabase
       .from("execution_log")
       .select("created_at")
-      .eq("agent_id", params.agentId)
+      .eq("agent_id", agentId)
       .eq("location_id", session.locationId)
       .in("action_type", messageTypes)
       .eq("success", true)
@@ -31,7 +32,7 @@ export async function GET(
     supabase
       .from("execution_log")
       .select("id", { count: "exact", head: true })
-      .eq("agent_id", params.agentId)
+      .eq("agent_id", agentId)
       .eq("location_id", session.locationId)
       .in("action_type", messageTypes)
       .eq("success", true)

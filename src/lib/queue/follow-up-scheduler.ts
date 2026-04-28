@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { buildFollowUpPrompt } from "@/lib/ai/prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
+import { trackAndCharge } from "@/lib/billing/charge";
 import type { FollowUpConfig } from "@/types/agent";
 
 /**
@@ -301,6 +302,35 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           newMessages: `Follow-up #${followUp.attempt_number} para o lead. Gere uma unica mensagem de follow-up.`,
           model: config.ai_model || "gpt-4.1-mini",
         });
+
+        // C3: cobrar follow-up. Antes deste fix rodava 100% free.
+        // Estimativa: 30% leads × 5 follow-ups × $0.005 = $22.50/mês/location.
+        try {
+          let usesCustomKey = false;
+          try {
+            const { data: ls } = await supabase
+              .from("location_settings")
+              .select("openai_api_key")
+              .eq("location_id", followUp.location_id)
+              .maybeSingle();
+            usesCustomKey = !!ls?.openai_api_key;
+          } catch { /* sem location_settings */ }
+
+          await trackAndCharge({
+            locationId: followUp.location_id,
+            companyId: location.company_id,
+            agentId: followUp.agent_id,
+            contactId: followUp.contact_id,
+            actionType: "follow_up",
+            model: config.ai_model || "gpt-4.1-mini",
+            promptTokens: result.prompt_tokens || 0,
+            completionTokens: result.completion_tokens || 0,
+            cachedTokens: result.cached_tokens || 0,
+            usesCustomKey,
+          });
+        } catch (e) {
+          console.error("[FollowUp] Billing failed (non-blocking):", e instanceof Error ? e.message : e);
+        }
 
         if (result.success && result.response?.message) {
           await client.post("/conversations/messages", {

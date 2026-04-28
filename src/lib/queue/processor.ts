@@ -42,7 +42,17 @@ interface MessageGroup {
 }
 
 /**
- * Processa todas as mensagens prontas na fila
+ * Processa todas as mensagens prontas na fila.
+ *
+ * H12 (review 2026-04-28): reaper inline. Antes deste fix, msgs em
+ * `status='processing'` ficavam órfãs se o processo morresse (timeout
+ * Vercel, SIGKILL, lambda restart) — `finally` não roda em todos cenários.
+ * Agora antes de claimar novas, resetamos `processing` > 5min pra pending.
+ *
+ * H11 (review 2026-04-28): `LIMIT 100` por chamada. O atomic claim em
+ * UPDATE...RETURNING garante que mesmo com 60 workers concorrentes (1 por
+ * webhook), cada msg é claimada por UM só. Workers que não conseguem
+ * claimar nada retornam imediatamente com {processed:0, errors:0}.
  */
 export async function processMessageQueue(): Promise<{
   processed: number;
@@ -51,6 +61,22 @@ export async function processMessageQueue(): Promise<{
   const supabase = createAdminClient();
   let processed = 0;
   let errors = 0;
+
+  // 0. Reaper: reseta msgs órfãs em "processing" > 5 min. Se o processo que
+  // claimou morreu, essa janela é o teto de delay antes de a msg voltar pra
+  // fila e ser processada de novo. Pode causar processamento duplo se a msg
+  // FOI processada mas o lambda morreu antes do UPDATE final — aceitável vs
+  // perda total. Idempotência via ghl_message_id UNIQUE evita double-send.
+  const reaperCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { data: orphans } = await supabase
+    .from("message_queue")
+    .update({ status: "pending" })
+    .eq("status", "processing")
+    .lt("updated_at", reaperCutoff)
+    .select("id");
+  if (orphans && orphans.length > 0) {
+    console.warn(`[Processor] Reaped ${orphans.length} orphan 'processing' messages`);
+  }
 
   // 1. ATOMIC: Marcar como "processing" e retornar em uma operação
   // Isso evita race condition onde dois workers pegam a mesma mensagem
@@ -108,10 +134,17 @@ export async function processMessageQueue(): Promise<{
   }
 
   // 4. Processar cada grupo
+  // H2 (review 2026-04-28): cada grupo é INDEPENDENTE — antes deste fix,
+  // o `finally` marcava status do grupo atual baseado em contadores GLOBAIS
+  // `errors > processed`, o que dava status errado quando 1 dos N grupos
+  // falhava (podia marcar "completed" de grupos que falharam ou "failed" de
+  // grupos que passaram). Agora rastreamos sucesso por-grupo.
   for (const group of Array.from(groups.values())) {
     const ids = group.messages.map((m) => m.id);
+    let groupSucceeded = false;
     try {
       await processGroup(supabase, group);
+      groupSucceeded = true;
       processed++;
     } catch (error) {
       console.error(`[Processor] Erro grupo ${group.contactId}:`, error instanceof Error ? error.message : error);
@@ -127,7 +160,7 @@ export async function processMessageQueue(): Promise<{
       // SEMPRE marcar mensagens — evita orfãos em "processing"
       await supabase
         .from("message_queue")
-        .update({ status: errors > processed ? "failed" : "completed" })
+        .update({ status: groupSucceeded ? "completed" : "failed" })
         .in("id", ids)
         .eq("status", "processing");
     }
@@ -238,6 +271,31 @@ async function processGroup(
   const enableImage = config.enable_image_analysis === true;
   const enablePdf = config.enable_pdf_reading === true;
 
+  // Pra cobrar Whisper precisamos de company_id antecipadamente.
+  // Buscamos location aqui ao invés de no §2 — evita refactor maior do
+  // pipeline. (Mantida cópia abaixo no §2 pra retrocompat dos refs `location`
+  // a partir dali.)
+  const { data: locationForBilling } = await supabase
+    .from("locations")
+    .select("company_id, location_id")
+    .eq("location_id", group.locationId)
+    .single();
+
+  // Custom key check (BYO key skipa cobrança)
+  let usesCustomKeyForAudio = false;
+  if (locationForBilling) {
+    try {
+      const { data: ls } = await supabase
+        .from("location_settings")
+        .select("openai_api_key")
+        .eq("location_id", group.locationId)
+        .maybeSingle();
+      usesCustomKeyForAudio = !!ls?.openai_api_key;
+    } catch {
+      // location_settings ausente — assume sem BYO key
+    }
+  }
+
   // Audio: transcrever se toggle ativo
   if (enableAudio) {
     for (const msg of group.messages) {
@@ -252,6 +310,25 @@ async function processGroup(
         const result = await transcribeAudioFromUrl(audioUrl, audioMime);
         if (result?.text) {
           group.aggregatedBody = [group.aggregatedBody, result.text].filter(Boolean).join("\n");
+
+          // C3: cobrar Whisper. Antes deste fix, áudio rodava 100% free.
+          if (locationForBilling && result.audio_seconds > 0) {
+            try {
+              await trackAndCharge({
+                locationId: group.locationId,
+                companyId: locationForBilling.company_id,
+                agentId: agent.id,
+                contactId: group.contactId,
+                actionType: "audio_transcription",
+                model: result.model,
+                audioSeconds: result.audio_seconds,
+                audioModel: result.model,
+                usesCustomKey: usesCustomKeyForAudio,
+              });
+            } catch (e) {
+              console.error("[Processor] Whisper billing failed (non-blocking):", e instanceof Error ? e.message : e);
+            }
+          }
         }
       }
     }
@@ -509,6 +586,13 @@ async function processGroup(
     turns: conversationTurns,
     cachedSummary: (convState as { history_summary?: string } | null)?.history_summary,
     cachedCoveredCount: (convState as { history_summary_covers_count?: number } | null)?.history_summary_covers_count,
+    billing: {
+      locationId: group.locationId,
+      companyId: location.company_id,
+      agentId: agent.id,
+      contactId: group.contactId,
+      usesCustomKey: usesCustomKeyForAudio,
+    },
   });
   if (compressed.regenerated && compressed.summary) {
     // Persistir summary atualizado. Fire-and-forget para não atrasar a resposta.

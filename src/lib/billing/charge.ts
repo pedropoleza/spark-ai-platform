@@ -10,26 +10,44 @@ interface TrackUsageParams {
   contactId?: string;
   actionType: string;
   model: string;
-  promptTokens: number;
-  completionTokens: number;
+  promptTokens?: number;
+  completionTokens?: number;
   cachedTokens?: number;
+  cacheCreationTokens?: number;
+  audioSeconds?: number;          // Whisper
+  audioModel?: string;
+  imageCount?: number;            // telemetria de vision
   usesCustomKey: boolean;
 }
 
 /**
- * Registra uso e cobra do wallet do GHL (se nao usa chave propria)
+ * Registra uso e cobra do wallet do GHL (se nao usa chave propria).
+ *
+ * Notas P0 (review 2026-04-28):
+ *   - cached_tokens persistido pra auditoria (não estava antes — bug de
+ *     sub-cobrança em chamadas com cache hit alto).
+ *   - cache_creation_tokens (Anthropic) cobrado como 125% (premium correto).
+ *   - audio_seconds + image_count persistidos pra cross-check com providers.
+ *   - GHL idempotency key = usage_record.id, evita double-charge em retry
+ *     do client side.
+ *
+ * Erros do INSERT NÃO são engolidos silenciosamente — chamamos console.error
+ * pra ficar visível no Vercel log se a tabela não existir / RLS bloquear.
  */
 export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
   const supabase = createAdminClient();
-  const cost = calculateCost(
-    params.model,
-    params.promptTokens,
-    params.completionTokens,
-    params.cachedTokens || 0
-  );
+  const cost = calculateCost({
+    model: params.model,
+    promptTokens: params.promptTokens ?? 0,
+    completionTokens: params.completionTokens ?? 0,
+    cachedTokens: params.cachedTokens ?? 0,
+    cacheCreationTokens: params.cacheCreationTokens ?? 0,
+    audioSeconds: params.audioSeconds ?? 0,
+    audioModel: params.audioModel,
+  });
 
   // Registrar uso
-  const { data: record } = await supabase
+  const { data: record, error: insertError } = await supabase
     .from("usage_records")
     .insert({
       location_id: params.locationId,
@@ -39,7 +57,10 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
       ai_model: cost.model,
       prompt_tokens: cost.promptTokens,
       completion_tokens: cost.completionTokens,
+      cached_tokens: cost.cachedTokens,
       total_tokens: cost.totalTokens,
+      audio_seconds: cost.audioSeconds,
+      image_count: params.imageCount ?? 0,
       cost_usd: cost.costUsd,
       markup_usd: cost.markupUsd,
       total_charge_usd: cost.totalChargeUsd,
@@ -49,12 +70,17 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
     .select("id")
     .single();
 
+  if (insertError) {
+    console.error("[Billing] Failed to insert usage_record:", insertError.message);
+    return;
+  }
+
   // Se usa chave propria, nao cobra
   if (params.usesCustomKey) {
     if (record) {
       await supabase
         .from("usage_records")
-        .update({ charged_to_wallet: true })
+        .update({ charged_to_wallet: true, charged_at: new Date().toISOString() })
         .eq("id", record.id);
     }
     return;
@@ -63,40 +89,59 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
   // Cobrar do wallet via GHL Marketplace API
   if (cost.totalChargeUsd > 0 && record) {
     try {
-      await chargeWallet(params.companyId, params.locationId, cost.totalChargeUsd, params.actionType);
+      const ghlChargeId = await chargeWallet(
+        params.companyId,
+        params.locationId,
+        cost.totalChargeUsd,
+        params.actionType,
+        record.id, // idempotency key
+      );
 
       await supabase
         .from("usage_records")
-        .update({ charged_to_wallet: true })
+        .update({
+          charged_to_wallet: true,
+          charged_at: new Date().toISOString(),
+          ghl_charge_id: ghlChargeId ?? null,
+        })
         .eq("id", record.id);
     } catch (error) {
       console.error("[Billing] Failed to charge wallet:", error);
-      // Nao bloqueia o processamento — a cobranca pode ser retentada depois
+      // Nao bloqueia o processamento — cron chargeUnbilledRecords retenta.
     }
   }
 }
 
 /**
- * Cobra do wallet da sub-account via GHL Marketplace API
+ * Cobra do wallet da sub-account via GHL Marketplace API.
+ * Retorna o ID da cobrança no GHL pra rastreamento (se disponível na resposta).
+ *
+ * Idempotency: passamos `Idempotency-Key` baseado no usage_record.id.
+ * Se o GHL respeitar (atualmente honra Idempotency-Key em endpoints de
+ * billing), retry do mesmo record não duplica cobrança.
  */
 async function chargeWallet(
   companyId: string,
   locationId: string,
   amountUsd: number,
-  description: string
-): Promise<void> {
+  description: string,
+  idempotencyKey?: string,
+): Promise<string | null> {
   const token = await getLocationToken(companyId, locationId);
 
-  // Converter para centavos (GHL pode esperar em centavos)
+  // Converter para centavos (GHL espera em centavos)
   const amountCents = Math.ceil(amountUsd * 100);
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    Version: "2021-07-28",
+  };
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
 
   const response = await fetch(`${GHL_API_BASE}/marketplace/billing/charges`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      Version: "2021-07-28",
-    },
+    headers,
     body: JSON.stringify({
       locationId,
       amount: amountCents,
@@ -109,6 +154,14 @@ async function chargeWallet(
     const errorBody = await response.text();
     throw new Error(`GHL billing charge failed: ${response.status} - ${errorBody}`);
   }
+
+  // Tenta extrair ID retornado (formato pode variar)
+  try {
+    const data = await response.json() as { id?: string; charge_id?: string };
+    return data.id || data.charge_id || null;
+  } catch {
+    return null;
+  }
 }
 
 function formatDescription(actionType: string): string {
@@ -116,38 +169,38 @@ function formatDescription(actionType: string): string {
     ai_processing: "Processamento de mensagem IA",
     follow_up: "Follow-up automatico",
     send_message: "Envio de mensagem",
+    audio_transcription: "Transcricao de audio",
+    summary_note: "Resumo de conversa",
+    history_compression: "Compressao de historico",
+    proactive: "Acao proativa do Sparkbot",
+    sparkbot: "Conversa com Sparkbot",
   };
   return map[actionType] || actionType;
 }
 
 /**
- * Verificar se a sub-account tem saldo suficiente
+ * Verificar se a sub-account tem saldo suficiente.
+ * TODO P2: implementar de verdade. Por enquanto fail-open propositalmente.
  */
 export async function checkWalletBalance(
-  companyId: string,
-  locationId: string
+  _companyId: string,
+  _locationId: string,
 ): Promise<boolean> {
-  try {
-    const token = await getLocationToken(companyId, locationId);
-
-    const response = await fetch(`${GHL_API_BASE}/marketplace/billing/charges`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Version: "2021-07-28",
-      },
-    });
-
-    if (!response.ok) return true; // Em caso de erro, permitir (fail open para nao bloquear)
-
-    return true;
-  } catch {
-    return true; // Fail open
-  }
+  // Fail-open: cliente sem saldo continua usando até implementarmos hard cap.
+  // Quando implementar, ler /marketplace/billing/balance e comparar com
+  // mediana de spend mensal pra decidir.
+  return true;
 }
 
 /**
- * Cobra registros pendentes que falharam anteriormente
+ * Cobra registros pendentes que falharam anteriormente.
+ *
+ * P1 (review 2026-04-28): claim atômico via UPDATE...RETURNING pra evitar
+ * 2 crons concorrentes pegarem o mesmo batch.
+ *   1. UPDATE pega rows não-claimed (claim_token IS NULL) e marca com nosso
+ *      token. Postgres garante que cada row é atribuída a UM claim.
+ *   2. Apenas rows com claim_token = nosso token são processadas.
+ *   3. Em caso de falha, claim é resetado em finally.
  */
 export async function chargeUnbilledRecords(): Promise<{ charged: number; failed: number }> {
   const supabase = createAdminClient();
@@ -155,7 +208,6 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
   let failed = 0;
 
   // Alerta: registros unbilled antigos indicam problema recorrente com o GHL wallet.
-  // Se > 100 registros OU total > $10 parados há >1h, loga ERROR para visibilidade.
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const { data: staleStats } = await supabase
     .from("usage_records")
@@ -169,30 +221,34 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
     const totalStale = staleStats.reduce((s, r) => s + Number(r.total_charge_usd || 0), 0);
     if (staleStats.length >= 100 || totalStale >= 10) {
       console.error(
-        `[Billing ALERT] ${staleStats.length} unbilled records older than 1h, total $${totalStale.toFixed(4)}. Investigate wallet charge failures.`
+        `[Billing ALERT] ${staleStats.length} unbilled records older than 1h, total $${totalStale.toFixed(4)}. Investigate wallet charge failures.`,
       );
     } else {
       console.warn(
-        `[Billing] ${staleStats.length} unbilled records older than 1h, total $${totalStale.toFixed(4)}`
+        `[Billing] ${staleStats.length} unbilled records older than 1h, total $${totalStale.toFixed(4)}`,
       );
     }
   }
 
-  const { data: pending } = await supabase
+  // Atomic claim: UPDATE pega rows livres e marca com nosso token
+  const claimToken = (globalThis.crypto as Crypto).randomUUID();
+  const { data: claimed } = await supabase
     .from("usage_records")
-    .select("*")
+    .update({ claim_token: claimToken, claimed_at: new Date().toISOString() })
     .eq("charged_to_wallet", false)
     .eq("uses_custom_key", false)
     .gt("total_charge_usd", 0)
+    .is("claim_token", null)
+    .select("*")
     .order("created_at", { ascending: true })
     .limit(50);
 
-  if (!pending || pending.length === 0) return { charged: 0, failed: 0 };
+  if (!claimed || claimed.length === 0) return { charged: 0, failed: 0 };
 
   // Agrupar por location para cobrar em batch
   const byLocation = new Map<string, { totalUsd: number; ids: string[] }>();
 
-  for (const record of pending) {
+  for (const record of claimed) {
     const key = record.location_id;
     if (!byLocation.has(key)) {
       byLocation.set(key, { totalUsd: 0, ids: [] });
@@ -212,24 +268,44 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
 
       if (!location) {
         failed += group.ids.length;
+        // Libera claim pra próxima rodada tentar de novo
+        await supabase
+          .from("usage_records")
+          .update({ claim_token: null, claimed_at: null })
+          .in("id", group.ids);
         continue;
       }
 
-      await chargeWallet(
+      // Idempotency: hash dos ids do batch — se mesmo batch for retentado,
+      // o GHL deve ignorar a cobrança duplicada (se respeitar a header).
+      const batchIdempotencyKey = `batch-${group.ids.slice().sort().join(",").slice(0, 64)}`;
+
+      const ghlChargeId = await chargeWallet(
         location.company_id,
         locationId,
         group.totalUsd,
-        `Batch: ${group.ids.length} interacoes`
+        `Batch: ${group.ids.length} interacoes`,
+        batchIdempotencyKey,
       );
 
       await supabase
         .from("usage_records")
-        .update({ charged_to_wallet: true })
+        .update({
+          charged_to_wallet: true,
+          charged_at: new Date().toISOString(),
+          ghl_charge_id: ghlChargeId ?? null,
+        })
         .in("id", group.ids);
 
       charged += group.ids.length;
-    } catch {
+    } catch (err) {
       failed += group.ids.length;
+      // Libera claim pra próxima tentativa
+      await supabase
+        .from("usage_records")
+        .update({ claim_token: null, claimed_at: null })
+        .in("id", group.ids);
+      console.error(`[Billing] Batch charge failed for ${locationId}:`, err);
     }
   }
 

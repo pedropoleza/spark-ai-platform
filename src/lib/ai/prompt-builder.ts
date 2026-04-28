@@ -857,25 +857,74 @@ export function buildResponseJsonSchema(ctx: PromptContext) {
         should_send_message: { type: "boolean" },
         actions: {
           type: "array",
+          // H4 (review 2026-04-28): antes deste fix, o schema tinha um único
+          // `properties` com 10 campos TODOS required (`field_key`, `value`,
+          // `tag`, `calendar_id`, `start_time`, `appointment_id`, `title`,
+          // `pipeline_id`, `stage_id`). Em modo strict, modelo gerava 10
+          // keys com null em CADA action — 20-30% desperdício de output
+          // tokens. Agora discriminamos por `type` via anyOf — cada variante
+          // marca apenas seus campos como required.
           items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["type", "field_key", "value", "tag", "calendar_id", "start_time", "appointment_id", "title", "pipeline_id", "stage_id"],
-            properties: {
-              type: {
-                type: "string",
-                enum: ["send_message", "update_field", "add_tag", "remove_tag", "book_appointment", "reschedule_appointment", "move_pipeline"],
+            anyOf: [
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["type"],
+                properties: {
+                  type: { type: "string", enum: ["send_message"] },
+                },
               },
-              field_key: { type: ["string", "null"] },
-              value: { type: ["string", "null"] },
-              tag: { type: ["string", "null"] },
-              calendar_id: { type: ["string", "null"] },
-              start_time: { type: ["string", "null"] },
-              appointment_id: { type: ["string", "null"] },
-              title: { type: ["string", "null"] },
-              pipeline_id: { type: ["string", "null"] },
-              stage_id: { type: ["string", "null"] },
-            },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["type", "field_key", "value"],
+                properties: {
+                  type: { type: "string", enum: ["update_field"] },
+                  field_key: { type: "string" },
+                  value: { type: "string" },
+                },
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["type", "tag"],
+                properties: {
+                  type: { type: "string", enum: ["add_tag", "remove_tag"] },
+                  tag: { type: "string" },
+                },
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["type", "calendar_id", "start_time"],
+                properties: {
+                  type: { type: "string", enum: ["book_appointment"] },
+                  calendar_id: { type: "string" },
+                  start_time: { type: "string", description: "ISO 8601 com offset" },
+                  title: { type: "string" },
+                },
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["type", "appointment_id", "start_time"],
+                properties: {
+                  type: { type: "string", enum: ["reschedule_appointment"] },
+                  appointment_id: { type: "string" },
+                  start_time: { type: "string", description: "ISO 8601 com offset" },
+                },
+              },
+              {
+                type: "object",
+                additionalProperties: false,
+                required: ["type", "pipeline_id", "stage_id"],
+                properties: {
+                  type: { type: "string", enum: ["move_pipeline"] },
+                  pipeline_id: { type: "string" },
+                  stage_id: { type: "string" },
+                },
+              },
+            ],
           },
         },
         collected_data: {

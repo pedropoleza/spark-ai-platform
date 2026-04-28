@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { shouldFireCron } from "@/lib/account-assistant/proactive/cron-evaluator";
 import { fireScheduledReminders } from "@/lib/account-assistant/proactive/reminder-runner";
+import { isAuthorizedCron } from "@/lib/utils/cron-auth";
 import type { ProactiveRule, RepIdentity, ScheduledTrigger } from "@/types/account-assistant";
 
 export const maxDuration = 60;
@@ -29,13 +30,8 @@ export const maxDuration = 60;
  * Auth: header `Authorization: Bearer ${CRON_SECRET}` ou Vercel Cron header.
  */
 export async function GET(request: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const auth = request.headers.get("authorization");
-    const isVercelCron = request.headers.get("x-vercel-cron") === "1";
-    if (!isVercelCron && auth !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-    }
+  if (!isAuthorizedCron(request)) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
   const startTs = Date.now();

@@ -19,6 +19,15 @@ export interface ToolContext {
    * na sessão correta. Quando undefined, é fluxo real (V3 envia via WhatsApp).
    */
   testSessionId?: string | null;
+  /**
+   * H8: enforcement de confirmação no nível de execução.
+   * - "always" — toda tool exige confirmed_by_rep:true
+   * - "medium_and_high" — só tools risk=medium ou high exigem
+   * - "high_only" — só tools risk=high exigem
+   * Bypass: handler recebe arg confirmed_by_rep:true do LLM (que pega depois
+   * do "Confirma?" verbal do rep).
+   */
+  confirmationMode?: "always" | "medium_and_high" | "high_only";
 }
 
 export type ToolHandler = (ctx: ToolContext, args: Record<string, unknown>) => Promise<ToolResult>;

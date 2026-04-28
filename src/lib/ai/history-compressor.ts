@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
+import { trackAndCharge } from "@/lib/billing/charge";
 
 /**
  * Rolling summarization de histórico longo. Substitui os N turns mais antigos
@@ -21,12 +22,22 @@ export interface CompressedHistory {
   regenerated: boolean;
 }
 
+interface BillingContext {
+  locationId: string;
+  companyId: string;
+  agentId: string;
+  contactId?: string;
+  usesCustomKey?: boolean;
+}
+
 interface CompressInput {
   turns: ConversationTurn[];
   /** Summary em cache (já cobre os primeiros N turns). */
   cachedSummary?: string | null;
   /** Quantos turns o summary em cache cobre. */
   cachedCoveredCount?: number | null;
+  /** Opcional: passe pra cobrar o uso (P0 review 2026-04-28). */
+  billing?: BillingContext;
 }
 
 export async function compressHistory(input: CompressInput): Promise<CompressedHistory> {
@@ -57,7 +68,7 @@ export async function compressHistory(input: CompressInput): Promise<CompressedH
 
   // Gerar novo summary
   try {
-    const summary = await summarizeTurns(oldTurns, input.cachedSummary || undefined);
+    const summary = await summarizeTurns(oldTurns, input.cachedSummary || undefined, input.billing);
     return {
       turns: buildResult(summary, recentTurns),
       summary,
@@ -87,7 +98,11 @@ function buildResult(summary: string, recentTurns: ConversationTurn[]): Conversa
   ];
 }
 
-async function summarizeTurns(turns: ConversationTurn[], priorSummary?: string): Promise<string> {
+async function summarizeTurns(
+  turns: ConversationTurn[],
+  priorSummary?: string,
+  billing?: BillingContext,
+): Promise<string> {
   const client = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
     timeout: 15000,
@@ -125,5 +140,28 @@ Formato: parágrafos curtos ou bullets. Idioma: português.`;
 
   const summary = completion.choices[0]?.message?.content?.trim();
   if (!summary) throw new Error("empty summary");
+
+  // C3: cobrar o uso da compressão. Custo individual ~$0.0002/compress mas
+  // disparado a cada vez que o cutoff avança em conversas longas.
+  if (billing) {
+    try {
+      await trackAndCharge({
+        locationId: billing.locationId,
+        companyId: billing.companyId,
+        agentId: billing.agentId,
+        contactId: billing.contactId,
+        actionType: "history_compression",
+        model: SUMMARY_MODEL,
+        promptTokens: completion.usage?.prompt_tokens ?? 0,
+        completionTokens: completion.usage?.completion_tokens ?? 0,
+        cachedTokens: (completion.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
+          ?.prompt_tokens_details?.cached_tokens ?? 0,
+        usesCustomKey: billing.usesCustomKey ?? false,
+      });
+    } catch (e) {
+      console.error("[compressHistory] billing failed (non-blocking):", e instanceof Error ? e.message : e);
+    }
+  }
+
   return summary;
 }

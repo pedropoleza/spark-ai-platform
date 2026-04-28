@@ -260,6 +260,10 @@ async function findExistingAppointment(
   contactId: string,
   locationId: string
 ): Promise<{ id: string; title: string; calendarId: string; startTime: string } | null> {
+  // H6 (review 2026-04-28): GHL API tem formato variável; antes deste fix,
+  // chamávamos os 3 endpoints SEQUENCIAL (~400ms p99 desnecessário em
+  // booking flow). Agora rodamos os 3 em paralelo e pegamos o primeiro
+  // que retorna um appointment futuro válido.
   type AppointmentItem = { id: string; title: string; calendarId: string; startTime: string; status?: string; appointmentStatus?: string };
 
   const endpoints = [
@@ -268,11 +272,13 @@ async function findExistingAppointment(
     { path: "/calendars/events", params: { locationId, contactId } as Record<string, string> },
   ];
 
-  for (const ep of endpoints) {
-    try {
-      const result = await client.get<Record<string, unknown>>(ep.path, ep.params);
+  const now = new Date();
 
-      // GHL pode retornar em diferentes formatos
+  // Paraleliza todas as chamadas. Cada Promise resolve com o primeiro
+  // appointment futuro válido daquele endpoint (ou null se não houver).
+  const results = await Promise.allSettled(
+    endpoints.map(async (ep) => {
+      const result = await client.get<Record<string, unknown>>(ep.path, ep.params);
       const items: AppointmentItem[] =
         (result.events as AppointmentItem[]) ||
         (result.appointments as AppointmentItem[]) ||
@@ -281,21 +287,29 @@ async function findExistingAppointment(
 
       console.log(`[FindAppointment] ${ep.path} returned ${items.length} items`);
 
-      if (items.length > 0) {
-        const now = new Date();
-        const future = items.find((e) => {
-          const start = new Date(e.startTime);
-          const status = (e.status || e.appointmentStatus || "").toLowerCase();
-          return start > now && status !== "cancelled" && status !== "deleted";
-        });
+      if (items.length === 0) return null;
+      const future = items.find((e) => {
+        const start = new Date(e.startTime);
+        const status = (e.status || e.appointmentStatus || "").toLowerCase();
+        return start > now && status !== "cancelled" && status !== "deleted";
+      });
+      return future || null;
+    }),
+  );
 
-        if (future) {
-          console.log(`[FindAppointment] Found: ${future.id} at ${future.startTime}`);
-          return future;
-        }
-      }
-    } catch (err) {
-      console.log(`[FindAppointment] ${ep.path} failed:`, err instanceof Error ? err.message : err);
+  // Prioridade pelo ordem dos endpoints (primeiro endpoint que retornou
+  // resultado válido vence). Mantém comportamento legado.
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (r.status === "fulfilled" && r.value) {
+      console.log(`[FindAppointment] Found via ${endpoints[i].path}: ${r.value.id} at ${r.value.startTime}`);
+      return r.value;
+    }
+    if (r.status === "rejected") {
+      console.log(
+        `[FindAppointment] ${endpoints[i].path} failed:`,
+        r.reason instanceof Error ? r.reason.message : r.reason,
+      );
     }
   }
 

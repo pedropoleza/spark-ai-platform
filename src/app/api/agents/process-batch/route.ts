@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { processMessageQueue } from "@/lib/queue/processor";
 import { processScheduledFollowUps } from "@/lib/queue/follow-up-scheduler";
+import { isAuthorizedCron } from "@/lib/utils/cron-auth";
 
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
-  const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
-
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  if (!isAuthorizedCron(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

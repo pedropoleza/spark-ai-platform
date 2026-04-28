@@ -42,10 +42,17 @@ function getExtensionFromMime(mime: string): string {
   return map[m] || (m.startsWith("audio/") ? "ogg" : "");
 }
 
+export interface TranscriptionResult {
+  text: string;
+  duration_ms: number;     // wall-clock do download+transcribe
+  audio_seconds: number;   // duração REAL do áudio (pra billing Whisper)
+  model: string;
+}
+
 export async function transcribeAudioFromUrl(
   audioUrl: string,
   mimeType?: string
-): Promise<{ text: string; duration_ms: number } | null> {
+): Promise<TranscriptionResult | null> {
   const startTime = Date.now();
   console.log(`[Audio] Starting transcription: ${audioUrl.substring(0, 120)}... (mime: ${mimeType || "unknown"})`);
 
@@ -87,11 +94,15 @@ export async function transcribeAudioFromUrl(
       type: mimeType || contentType || `audio/${ext}`,
     });
 
+    // verbose_json devolve `duration` (segundos) — fundamental pra cobrança
+    // de Whisper $0.006/min. Sem isso teríamos que estimar do tamanho do
+    // buffer e ficar errado em ±20%.
     const transcription = await getOpenAIClient().audio.transcriptions.create({
       file,
       model: "whisper-1",
       language: "pt",
-    });
+      response_format: "verbose_json",
+    }) as { text?: string; duration?: number };
 
     const text = transcription.text?.trim();
     if (!text) {
@@ -99,8 +110,9 @@ export async function transcribeAudioFromUrl(
       return null;
     }
 
-    console.log(`[Audio] Transcribed in ${Date.now() - startTime}ms: "${text.substring(0, 100)}"`);
-    return { text, duration_ms: Date.now() - startTime };
+    const audioSeconds = typeof transcription.duration === "number" ? transcription.duration : 0;
+    console.log(`[Audio] Transcribed ${audioSeconds.toFixed(1)}s of audio in ${Date.now() - startTime}ms: "${text.substring(0, 100)}"`);
+    return { text, duration_ms: Date.now() - startTime, audio_seconds: audioSeconds, model: "whisper-1" };
   } catch (error) {
     console.error("[Audio] Transcription error:", error instanceof Error ? error.message : error);
     return null;

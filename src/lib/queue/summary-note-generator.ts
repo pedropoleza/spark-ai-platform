@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
+import { trackAndCharge } from "@/lib/billing/charge";
 
 const INACTIVITY_MINUTES = 30;
 
@@ -169,6 +170,37 @@ Gere o resumo agora.`,
 
     const raw = completion.choices[0]?.message?.content || "";
     console.log(`${tag} OpenAI response: ${raw.length} chars`);
+
+    // C3: cobrar o uso do summary-note-generator. Antes deste fix rodava 100%
+    // free. Custo típico ~$0.003/note × 100 notes/dia/location = $9/mês/loc.
+    // BYO key check: se location tem própria OPENAI_API_KEY, marca uses_custom_key.
+    let summaryUsesCustomKey = false;
+    try {
+      const { data: ls } = await supabase
+        .from("location_settings")
+        .select("openai_api_key")
+        .eq("location_id", params.locationId)
+        .maybeSingle();
+      summaryUsesCustomKey = !!ls?.openai_api_key;
+    } catch { /* location_settings ausente — sem BYO key */ }
+
+    try {
+      await trackAndCharge({
+        locationId: params.locationId,
+        companyId: params.companyId,
+        agentId: params.agentId,
+        contactId: params.contactId,
+        actionType: "summary_note",
+        model,
+        promptTokens: completion.usage?.prompt_tokens ?? 0,
+        completionTokens: completion.usage?.completion_tokens ?? 0,
+        cachedTokens: (completion.usage as { prompt_tokens_details?: { cached_tokens?: number } } | undefined)
+          ?.prompt_tokens_details?.cached_tokens ?? 0,
+        usesCustomKey: summaryUsesCustomKey,
+      });
+    } catch (e) {
+      console.error(`${tag} Billing failed (non-blocking):`, e instanceof Error ? e.message : e);
+    }
 
     // 8. Extrair HTML
     let noteHtml = "";

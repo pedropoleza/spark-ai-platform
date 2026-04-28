@@ -13,6 +13,9 @@ import { processIncoming } from "./processor";
 import { transcribeAudioFromUrl, extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import type { RepInput } from "@/types/account-assistant";
+import type { ConversationTurn } from "@/lib/ai/openai-client";
+
+const SPARKBOT_HISTORY_TURNS = 30;
 
 export interface HandleAssistantInboundArgs {
   hubLocationId: string;
@@ -100,11 +103,54 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     ? hubAgent.agent_configs[0]
     : hubAgent.agent_configs;
 
-  // 5. Processa
+  // 5. Carregar histórico real da conversa do rep com o Sparkbot.
+  // Antes deste fix (C2), o webhook chamava processIncoming SEM
+  // conversationHistory → bot era amnésico. Synthetic-test funcionava
+  // (lia agent_test_messages); produção real não.
+  // Lê últimos N turns da tabela sparkbot_messages dedicada.
+  const { data: priorMsgs } = await supabase
+    .from("sparkbot_messages")
+    .select("role, content, created_at")
+    .eq("rep_id", rep.id)
+    .eq("hub_location_id", hubLocationId)
+    .order("created_at", { ascending: false })
+    .limit(SPARKBOT_HISTORY_TURNS);
+
+  // Reverte pra ordem cronológica (oldest first) e mapeia pra ConversationTurn.
+  const conversationHistory: ConversationTurn[] = (priorMsgs || [])
+    .reverse()
+    .map((m) => ({
+      role: m.role === "user" ? "user" : "assistant",
+      content: m.content,
+    }));
+
+  // Persiste a msg do rep ANTES de processar (assim se LLM crashar, o
+  // próximo turno ainda tem o histórico completo).
+  const userMsgContent =
+    repInput.kind === "audio"
+      ? `🎤 "${repInput.transcribed_text}"`
+      : repInput.kind === "image"
+      ? repInput.caption || "[imagem]"
+      : repInput.kind === "document"
+      ? `📎 ${repInput.filename}${repInput.extracted_text ? `\n${repInput.extracted_text.substring(0, 500)}` : ""}`
+      : repInput.text;
+
+  await supabase.from("sparkbot_messages").insert({
+    rep_id: rep.id,
+    hub_location_id: hubLocationId,
+    agent_id: hubAgent.id,
+    active_location_id: rep.active_location_id || null,
+    role: "user",
+    content: userMsgContent,
+    metadata: { input_kind: repInput.kind, ghl_contact_id: contactId },
+  });
+
+  // 6. Processa
   const result = await processIncoming({
     rep,
     input: repInput,
     agentId: hubAgent.id,
+    conversationHistory,
     config: {
       confirmation_mode:
         (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
@@ -117,7 +163,25 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     await sendResponseToRep(hubClient, contactId, conversationId, messageType, result.text);
   }
 
-  // 6. Log execution
+  // Persiste resposta do agente
+  await supabase.from("sparkbot_messages").insert({
+    rep_id: rep.id,
+    hub_location_id: hubLocationId,
+    agent_id: hubAgent.id,
+    active_location_id: rep.active_location_id || null,
+    role: "agent",
+    content: result.text || "(sem resposta)",
+    metadata: {
+      model: result.model_used,
+      tools: result.tools_executed,
+      prompt_tokens: result.tokens?.prompt,
+      completion_tokens: result.tokens?.completion,
+      cached_tokens: result.tokens?.cached,
+      llm_failed: result.llm_failed,
+    },
+  });
+
+  // 7. Log execution
   await supabase.from("execution_log").insert({
     agent_id: hubAgent.id,
     location_id: hubLocationId,

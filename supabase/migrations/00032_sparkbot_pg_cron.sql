@@ -1,5 +1,11 @@
 -- Sparkbot V2.1 — pg_cron job pra triggers proativos.
 --
+-- ⚠️ DEPRECATED — VER 00041_cron_secret_rotation.sql
+-- Esta migration tem Bearer secret HARDCODED (review 2026-04-28 C4).
+-- 00041 reagenda o job lendo o secret de current_setting('app.cron_secret').
+-- Em DBs novos, aplicar 00041 imediatamente após esta — em DBs já em prod,
+-- aplicar 00041 sozinho (idempotente, drop+recreate).
+--
 -- Substitui o Vercel Cron (que era limitado a 1x/dia no plano Hobby).
 -- Reusa o mesmo padrão do `process-message-queue` job: net.http_post a
 -- cada 30s com conditional fire (só dispara se houver work pendente).
