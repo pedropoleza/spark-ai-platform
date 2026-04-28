@@ -75,7 +75,7 @@ const queryCarrierKnowledge: ToolEntry = {
   def: {
     name: "query_carrier_knowledge",
     description:
-      "Consulta DUAS bases de conhecimento da operação. HIERARQUIA: National Life (carrier que emite a apólice) → Five Rings Financial (MGA/IMO master) → Brazillionaires (sub-agência dos brasileiros, onde o rep está). KBs: (1) 'national_life_group' = regras técnicas da carrier NLG (produtos, UW, riders, FN, compliance, illustration regs); (2) 'agency_brazillionaires' = portal de TREINAMENTO da sub-agência Brazillionaires/Five Rings (cursos, processo de aplicação no dia-a-dia, dicas da Rita sobre Inforce/UW, scripts de venda, Napkin Presentations, Emergency Contact List, fingerprint, agendar prova, Como Convidar, IUL University, Power Monday, etc). USE SEMPRE que rep perguntar QUALQUER ASSUNTO da profissão. Se for regra técnica NLG → 'national_life_group'. Se for processo da agência, treinamento, dia-a-dia → 'agency_brazillionaires'. Em dúvida ou pergunta híbrida (ex: UW de diabetes), chame as DUAS sequencialmente. NUNCA invente resposta sem chamar esta tool.",
+      "Consulta uma das DUAS knowledge bases (kb). Estrutura da operação: National Life (carrier que emite a apólice) → Five Rings Financial (MGA/IMO) → Brazillionaires (sub-agência dos brasileiros). KBs disponíveis (parameter `kb`):\n\n  • kb='national_life_group' — regras TÉCNICAS DA CARRIER NLG. Use pra: produtos NLG (FlexLife, PeakLife, Term, RapidProtect, Annuities), rate classes UW, build chart, FN country tier, riders (LIBR, ABR, Alzheimer, Fertility, Overloan), compliance (NY Reg 187, illustration regs), commission policy, replacement/1035, processo NLG (eApp/iGo/ForeSight).\n\n  • kb='agency_brazillionaires' — portal de TREINAMENTO/OPERAÇÃO da sub-agência Brazillionaires (Five Rings). Use pra: emergency contact list, Napkin Presentations, Como Convidar, fingerprint, agendar prova, scripts de venda, Power Monday, IUL University, Dicas da Rita (Inforce, UW, Term Conversion, Owner Change), educação financeira, modelo de negócios, eventos, processo no dia-a-dia da agência.\n\nEXEMPLOS:\n- 'qual cap do FlexLife em NY?' → kb='national_life_group'\n- 'como funciona Emergency Contact List?' → kb='agency_brazillionaires'\n- 'cliente diabético, dá Standard?' → kb='national_life_group'\n- 'como Napkin Presentation?' → kb='agency_brazillionaires'\n- 'dicas da Rita pra Inforce?' → kb='agency_brazillionaires'\n- 'como agendar prova de licença?' → kb='agency_brazillionaires'\n- 'quais visas válidos pra FN brasileiro?' → kb='national_life_group'\n\nEm dúvida ou pergunta híbrida, chame a tool DUAS VEZES (uma com cada kb). NUNCA invente resposta sem chamar esta tool.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -84,11 +84,10 @@ const queryCarrierKnowledge: ToolEntry = {
           type: "string",
           description: "Pergunta em linguagem natural — quanto mais específica, melhor o retrieval.",
         },
-        carrier: {
+        kb: {
           type: "string",
           enum: ["national_life_group", "agency_brazillionaires"],
-          default: "agency_brazillionaires",
-          description: "Qual KB consultar. 'national_life_group' = regras técnicas da carrier NLG (UW, produtos, riders, FN, compliance). 'agency_brazillionaires' = portal de treinamento/operação da sub-agência Brazillionaires sob Five Rings (processo de campo, dicas, scripts, eventos). Default 'agency_brazillionaires' porque cobre cenários operacionais mais amplos; consulte 'national_life_group' especificamente quando rep mencionar regra técnica de carrier.",
+          description: "OBRIGATÓRIO. Escolha qual KB consultar baseado na pergunta. 'national_life_group' = regras técnicas NLG (carrier). 'agency_brazillionaires' = portal de treinamento Brazillionaires/Five Rings (processo, scripts, dicas operacionais). Veja exemplos na description da tool.",
         },
         category_hint: {
           type: "string",
@@ -109,7 +108,7 @@ const queryCarrierKnowledge: ToolEntry = {
           description: "Quantos chunks retornar (max 8).",
         },
       },
-      required: ["question"],
+      required: ["question", "kb"],
     },
   },
   handler: async (_ctx, args) => {
@@ -117,7 +116,9 @@ const queryCarrierKnowledge: ToolEntry = {
     if (!question) {
       return { status: "error", message: "question vazia", retryable: false };
     }
-    const carrier = String(args.carrier || "national_life_group");
+    // Aceita `kb` (novo, preferred) ou `carrier` (backwards-compat).
+    // Default agency_brazillionaires (cobre maioria das queries operacionais).
+    const carrier = String(args.kb || args.carrier || "agency_brazillionaires");
     const categoryHint = args.category_hint ? String(args.category_hint) : null;
     const state = args.state ? String(args.state).toUpperCase() : null;
     const topK = Math.min(Math.max(Number(args.top_k) || 5, 1), 8);
