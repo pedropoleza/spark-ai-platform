@@ -2,10 +2,10 @@
 // Plataforma GoodBarber, API REST pública (api.ww-api.com).
 //
 // Output:
-//   _planning/carriers/brazillionaires_portal/raw/{section}/items/{itemId}.json
-//   _planning/carriers/brazillionaires_portal/raw/{section}/pdfs/{pdfId}.pdf
-//   _planning/carriers/brazillionaires_portal/raw/{section}/pdfs/{pdfId}.txt
-//   _planning/carriers/brazillionaires_portal/raw/_video-queue.json
+//   _planning/carriers/agency_brazillionaires/raw/{section}/items/{itemId}.json
+//   _planning/carriers/agency_brazillionaires/raw/{section}/pdfs/{pdfId}.pdf
+//   _planning/carriers/agency_brazillionaires/raw/{section}/pdfs/{pdfId}.txt
+//   _planning/carriers/agency_brazillionaires/raw/_video-queue.json
 //
 // Uso: npx tsx scripts/crawl-brazillionaires.ts
 
@@ -18,7 +18,7 @@ const WEBZINE_ID = 2009698;
 const REFERER = "https://brazillionaires.virtualnet.site/";
 const API_BASE = "https://api.ww-api.com/front/get_items";
 const PDF_BASE = "https://brazillionaires.virtualnet.site/apiv3/attachment/download";
-const ROOT = join(process.cwd(), "_planning", "carriers", "brazillionaires_portal", "raw");
+const ROOT = join(process.cwd(), "_planning", "carriers", "agency_brazillionaires", "raw");
 
 // Sections selecionadas pelo Pedro (Bootcamps fora de scope)
 interface SectionDef {

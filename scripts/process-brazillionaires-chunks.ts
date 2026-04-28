@@ -11,7 +11,7 @@
 //   7. Extrai keywords/tags do conteúdo
 //   8. Output: chunk final em formato Markdown frontmatter padrão.
 //
-// Output em _planning/carriers/brazillionaires_portal/{section}/{slug}.md
+// Output em _planning/carriers/agency_brazillionaires/{section}/{slug}.md
 // (mesma estrutura que NLG — pronto pra ingest-carrier-kb.ts)
 //
 // Uso: npx tsx scripts/process-brazillionaires-chunks.ts
@@ -38,7 +38,7 @@ function loadDotEnv(path: string) {
 }
 loadDotEnv(join(process.cwd(), ".env.local"));
 
-const ROOT = join(process.cwd(), "_planning", "carriers", "brazillionaires_portal");
+const ROOT = join(process.cwd(), "_planning", "carriers", "agency_brazillionaires");
 const RAW = join(ROOT, "raw");
 const SOURCE_BASE = "https://brazillionaires.virtualnet.site";
 
@@ -397,7 +397,7 @@ async function processItem(
   // Frontmatter
   const fm = [
     `---`,
-    `carrier: brazillionaires_portal`,
+    `carrier: agency_brazillionaires`,
     `category: workflow`,
     `subcategory: ${slugify(subSectionName)}`,
     `slug: ${slug}`,
@@ -407,7 +407,7 @@ async function processItem(
     `applies_to_companies: []`,
     `source: official`,
     `source_url: ${sourceUrl}`,
-    `source_doc_cat: brazillionaires-portal-${itemFile.section}-${slugify(subSectionName)}`,
+    `source_doc_cat: agency-brazillionaires-${itemFile.section}-${slugify(subSectionName)}`,
     `last_verified: ${lastVerified}`,
     `---`,
     ``,
@@ -415,7 +415,7 @@ async function processItem(
     ``,
   ].join("\n");
 
-  // Output path: _planning/carriers/brazillionaires_portal/{section}/{slug}.md
+  // Output path: _planning/carriers/agency_brazillionaires/{section}/{slug}.md
   const outPath = join(ROOT, itemFile.section, `${slug}.md`);
   await mkdir(join(ROOT, itemFile.section), { recursive: true });
   await writeFile(outPath, fm);

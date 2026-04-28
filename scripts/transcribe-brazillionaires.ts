@@ -41,7 +41,7 @@ function loadDotEnv(path: string) {
 loadDotEnv(join(process.cwd(), ".env.local"));
 
 const REFERER = "https://brazillionaires.virtualnet.site/";
-const ROOT = join(process.cwd(), "_planning", "carriers", "brazillionaires_portal", "raw");
+const ROOT = join(process.cwd(), "_planning", "carriers", "agency_brazillionaires", "raw");
 const QUEUE_FILE = join(ROOT, "_video-queue.json");
 
 interface QueueEntry {
