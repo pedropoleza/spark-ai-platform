@@ -1,131 +1,124 @@
-# Brazillionaires Portal — Status do Crawl
+# Brazillionaires Portal — Status
 
-**Data:** 2026-04-28
-**Estado:** Parcialmente completo. Bloqueado por quota OpenAI (rate limit + budget).
+**Última atualização:** 2026-04-28 (sessão final)
+**Estado:** ✅ Production-ready (135 chunks total: 49 NLG + 86 Brazillionaires)
+**Synthetic tests final:** 11/11 PASS
 
 ---
 
-## ✅ Completo
+## ✅ Concluído
 
 ### Crawl + extração textual
 - 123 items extraídos via API REST pública (`api.ww-api.com/front/get_items/`)
 - 32 PDFs baixados + texto extraído via `pdftotext`
 - Sections processadas: Eventos/Comece Aqui, Aprender Profissão, Aprender Aplicação
-- Bootcamps **NÃO** processado (decisão Pedro: skip)
-- Output: `raw/{section}/items/*.json + *.md`, `raw/{section}/pdfs/*.pdf + *.txt`
+- Bootcamps NÃO processado (decisão Pedro: skip)
 
-### Transcrição (parcial)
-- **27 vídeos transcritos** com sucesso via OpenAI Whisper API
-- Custo: ~$2.27 USD
-- Output: `raw/{section}/transcripts/{itemId}-{vimeoId}.{json,md}`
+### Transcrição (parcial — 30/68 vídeos)
+- 30 vídeos transcritos com sucesso
+  - 27 via OpenAI Whisper (~$2.27 USD antes de quota)
+  - 3 via Groq whisper-large-v3 (free tier, $0)
+- 38 vídeos pendentes (Groq rate limit ASPH 7200s/hora — completar em batches)
 
 ### Processor + chunks
-- **84 chunks finais gerados** combinando items + PDFs + transcripts
-- Compression média: 42% (raw 473KB → 201KB final)
-- 29 items resumidos via Claude Haiku 4.5 (overflow >4500 chars)
-- 38 items skipped (estavam vazios — são items sem texto E sem transcript ainda)
-- Output: `_planning/carriers/brazillionaires_portal/{section}/*.md`
+- 86 chunks finais gerados combinando items + PDFs + transcripts
+- Compression média: 40%
+- 32 items resumidos via Claude Haiku 4.5 (overflow >4500 chars)
 
-### Ingestão (parcial)
-- **19 chunks inseridos** na `carrier_knowledge` (carrier='brazillionaires_portal')
-- 65 chunks falharam embedding por quota OpenAI 429
+### Embeddings + Ingest
+- 86/86 chunks ingeridos com Voyage AI voyage-3-large (1024 dims)
+- Migration 00039: `vector(1536) → vector(1024)`
+- Provider migrado de OpenAI text-embedding-3-small → Voyage AI
 
----
+### Sparkbot integration
+- Tool `query_carrier_knowledge` aceita parameter `kb`:
+  - `national_life_group` (49 chunks)
+  - `agency_brazillionaires` (86 chunks)
+- 7 exemplos concretos na tool description guiando LLM
+- `category_hint` opcional, só pra NLG; pra agency deixa similarity decidir
 
-## ❌ Bloqueado
-
-### Quota OpenAI esgotada
-
-Erro 429 começou em:
-1. Whisper transcription após ~$2.27 (vídeo 31/68)
-2. Embeddings (text-embedding-3-small) após 19 chunks
-
-**Pra desbloquear:** adicionar crédito ou aguardar reset em https://platform.openai.com/usage
-
-### Trabalho pendente quando quota voltar
-
-1. **Re-rodar transcrição dos 41 vídeos restantes** (tentando bitrate 24K pra evitar limite 25MB Whisper):
-   ```bash
-   # Editar scripts/transcribe-brazillionaires.ts: -b:a 24k em vez de 64k
-   npx tsx scripts/transcribe-brazillionaires.ts --workers=4
-   ```
-
-2. **2 vídeos sem hash Vimeo** (`420808221`, `449701711`): precisam Chrome MCP pra capturar hash dinâmico do iframe pós-JS:
-   - Item 46355812 - "Agendar a Prova" (vimeo 420808221, hash sabido = `f46ad16ffa`)
-   - Item 49785317 - "Cálculo do Benefício em Vida" (vimeo 449701711, hash desconhecido)
-
-3. **1 vídeo > 25MB** (`980900211`, "Gravação Academia de Produto"): re-download com bitrate 24K → áudio cabe no limite.
-
-4. **Re-rodar processor** após transcrição completa — vai pegar os 38 items skipped.
-
-5. **Re-ingest com `--force-embed`** — re-embeda os 19 já inseridos (com texto possivelmente atualizado por novos transcripts) + adiciona os 65 que falharam.
-
-6. **Synthetic tests Brazillionaires** pra validar Sparkbot escolhe carrier correto:
-   - "como funciona a comissão das anuidades?" → Brazillionaires (Dicas Rita) OU NLG (commission/annuity-general-terms)?
-   - "como faço o fingerprint pra licença?" → Brazillionaires (eventos)
-   - "como funciona o emergency contact list?" → Brazillionaires
-   - "FlexLife pode vender em NY?" → NLG (carrier rules)
+### Final synthetic tests (11/11 PASS)
+- 3 NLG (FlexLife, diabetes UW, Brazil FN)
+- 4 Brazillionaires (Emergency Contact, fingerprint, Napkin Presentations, Dicas Rita)
+- 2 cross-KB (UW diabetes, NY Reg 187 — chama tool 2x)
+- 2 adversarial (recusa DL12 invent, fora de escopo unrelated)
 
 ---
 
-## Arquivos críticos
+## ⏳ Pendente
 
+### Vídeos restantes (38 / 68)
+
+Causa: Groq Whisper free tier ASPH 7200s/hora. Reset a cada hora.
+
+Pra retomar:
+```bash
+# Cada hora o rate limit reseta — rodar bate em ~2h de áudio
+npx tsx scripts/transcribe-brazillionaires.ts --workers=2
+# Quando completar (vai dar erros 429 e parar)
+# Aguardar 1h
+# Re-rodar (skipping inteligente pega só os pendentes)
 ```
-scripts/
-  ├── crawl-brazillionaires.ts        ✅ funciona (idempotente)
-  ├── transcribe-brazillionaires.ts   ⚠️ precisa --workers e quota
-  ├── process-brazillionaires-chunks.ts ✅ funciona (idempotente)
-  └── ingest-carrier-kb.ts            ✅ funciona com --carrier=brazillionaires_portal
 
-_planning/carriers/brazillionaires_portal/
-  ├── raw/                            (ignorado pelo ingest)
-  │   ├── _video-queue.json           (69 entries)
-  │   ├── _pdfs-manifest.json         (32 entries)
-  │   ├── eventos/{items,pdfs,transcripts}/
-  │   ├── aprender-profissao/{items,pdfs,transcripts}/
-  │   └── aprender-aplicacao/{items,pdfs,transcripts}/
-  ├── eventos/*.md                    ← chunks (ingestable)
-  ├── aprender-profissao/*.md         ← chunks
-  ├── aprender-aplicacao/*.md         ← chunks
-  └── STATUS.md                       (este arquivo)
+Total estimado pra completar: ~12-14h wall time (38 vídeos × 38 min ÷ 7200s/hora).
+
+Falhas conhecidas que NÃO vão resolver mesmo após quota:
+- 2 vídeos sem hash Vimeo (`420808221`, `449701711`) — yt-dlp 401 Unauthorized
+- 1 vídeo `980900211` com áudio >25MB mesmo em 24K bitrate
+
+Quando todos transcripts estiverem prontos:
+```bash
+npx tsx scripts/process-brazillionaires-chunks.ts
+npx tsx scripts/ingest-carrier-kb.ts --carrier=agency_brazillionaires
 ```
 
 ---
 
-## Comandos úteis pós-quota
+## 📊 Estatísticas finais
+
+| Métrica | NLG | Brazillionaires | Total |
+|---|---|---|---|
+| Chunks no DB | 49 | 86 | 135 |
+| Embedding model | voyage-3-large | voyage-3-large | — |
+| Embedding dim | 1024 | 1024 | — |
+| Volume conteúdo | ~95KB | ~214KB | ~309KB |
+| Synthetic tests | 3/3 | 4/4 | 7/7 funcional |
+| Adversarial gates | — | — | 2/2 |
+| Cross-KB tests | — | — | 2/2 |
+| **TOTAL** | — | — | **11/11 PASS** |
+
+---
+
+## Custo investido
+
+| Provider | Valor | Notas |
+|---|---|---|
+| OpenAI Whisper | $2.27 | 27 transcripts antes da quota |
+| Groq Whisper | $0.00 | 3 transcripts via free tier |
+| Voyage embeddings | $0.00 | 135 chunks dentro do free tier 200M tokens |
+| Anthropic Claude Haiku | <$0.05 | 32 summaries de items grandes |
+| **TOTAL** | **~$2.30** | — |
+
+---
+
+## Comandos úteis
 
 ```bash
-# 1. Continuar transcrição (skip já existentes via dedup do script)
-npx tsx scripts/transcribe-brazillionaires.ts --workers=4
+# Continuar transcrição
+npx tsx scripts/transcribe-brazillionaires.ts --workers=2
 
-# 2. Re-processar (idempotente, atualiza chunks com transcripts novos)
+# Re-processar
 npx tsx scripts/process-brazillionaires-chunks.ts
 
-# 3. Ingest tudo (skip metadata-only se hash igual)
-npx tsx scripts/ingest-carrier-kb.ts --carrier=brazillionaires_portal
+# Ingest
+npx tsx scripts/ingest-carrier-kb.ts --carrier=agency_brazillionaires
 
-# 4. Verificar status
-curl -H "Cookie: <admin>" https://spark-ai-platform.vercel.app/api/admin/carrier-kb?carrier=brazillionaires_portal | jq .metrics
+# Verificar via admin
+curl -H "Cookie: <admin>" https://spark-ai-platform.vercel.app/api/admin/carrier-kb?carrier=agency_brazillionaires | jq .metrics
 
-# 5. Synthetic test
+# Synthetic test
 curl -X POST https://spark-ai-platform.vercel.app/api/agents/account-assistant/synthetic-test \
   -H "Authorization: Bearer spark-cron-secret-2026" \
   -H "Content-Type: application/json" \
   -d '{"message":"como funciona o emergency contact list?","rep_phone":"+17867717077","input_kind":"text"}'
 ```
-
----
-
-## Estatísticas finais (parciais)
-
-| Métrica | Valor |
-|---|---|
-| Items extraídos | 123 |
-| PDFs baixados | 32 |
-| Vídeos transcritos | 27 / 69 (39%) |
-| Vídeos pendentes | 42 (41 sem transcript + 1 retry bitrate) |
-| Chunks gerados | 84 |
-| Chunks ingeridos | 19 / 84 (23%) |
-| Pendentes ingest | 65 |
-| Custo OpenAI gasto | ~$2.30 (Whisper) + ~$0.001 (embeddings) |
-| Custo OpenAI estimado pra completar | ~$13-15 (Whisper restante) + ~$0.005 (embeddings) |
