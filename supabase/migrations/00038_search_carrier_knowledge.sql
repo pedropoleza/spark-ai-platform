@@ -19,7 +19,7 @@ CREATE OR REPLACE FUNCTION search_carrier_knowledge(
   p_category TEXT DEFAULT NULL,
   p_state TEXT DEFAULT NULL,
   p_top_k INT DEFAULT 5,
-  p_min_similarity FLOAT DEFAULT 0.6
+  p_min_similarity FLOAT DEFAULT 0.5
 )
 RETURNS TABLE (
   id UUID,

@@ -192,9 +192,19 @@ async function processFile(
   let embedding: number[] | null = null;
   if (needsEmbed && !opts.dryRun) {
     try {
+      // Embedding input enriquecido: title + tags + category/subcategory + content.
+      // Tags + categoria atuam como keyword boost — query "diabetes" mapeia
+      // melhor pra chunk com tag "diabetes" do que se input fosse só content.
+      const tagLine = (fm.tags && fm.tags.length > 0)
+        ? `Tags: ${fm.tags.join(", ")}\n`
+        : "";
+      const subcatLine = fm.subcategory
+        ? `Category: ${fm.category}/${fm.subcategory}\n`
+        : `Category: ${fm.category}\n`;
+      const embeddingInput = `${fm.title}\n${subcatLine}${tagLine}\n${trimmedContent}`;
       const res = await openai.embeddings.create({
         model: "text-embedding-3-small",
-        input: `${fm.title}\n\n${trimmedContent}`, // título junto melhora retrieval
+        input: embeddingInput,
       });
       embedding = res.data[0].embedding;
     } catch (err) {

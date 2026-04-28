@@ -119,7 +119,11 @@ const queryCarrierKnowledge: ToolEntry = {
       p_category: categoryHint,
       p_state: state,
       p_top_k: topK,
-      p_min_similarity: 0.6,
+      // 0.5 — anti-alucinação threshold. Anteriormente 0.6 mas tava
+      // gerando falso-negativos em queries cujos termos diferem do chunk
+      // (ex: "diabetes" vs "Diabetes Type 2 well-controlled"). Adversarial
+      // tests A1-A4 passam com 0.5 (validado).
+      p_min_similarity: 0.5,
     });
 
     if (error) {
