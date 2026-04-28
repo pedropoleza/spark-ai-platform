@@ -96,7 +96,7 @@ const queryCarrierKnowledge: ToolEntry = {
             "compliance", "process", "pitfall", "resource",
             "commission", "workflow",
           ],
-          description: "Restringe busca a uma categoria. Use 'underwriting' pra perguntas sobre rate classes/build chart/medical, 'product' pra detalhes de produto, 'rider' pra ABR/LIBR/etc, 'commission' pra 1035/comissão.",
+          description: "OPCIONAL. SÓ use pra kb='national_life_group' (esquema de categorias bem definido: 'underwriting' rate classes/build/medical, 'product' produtos, 'rider' ABR/LIBR, 'commission' 1035, 'compliance' Reg 187/illustration). Pra kb='agency_brazillionaires' NÃO PASSE category_hint — deixa similarity ranking decidir, pq o esquema de categorias do portal é diferente.",
         },
         state: {
           type: "string",
