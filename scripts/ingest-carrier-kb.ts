@@ -32,6 +32,47 @@ import matter from "gray-matter";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 
+// Voyage com payment method (não cobra dentro de 200M tokens free) = 2000 RPM.
+// Sem payment method = 3 RPM. Definimos delay mínimo conservador via env var
+// ou padrão 100ms (= 600 RPM, abaixo do limit pago). Backoff em 429.
+let lastVoyageCall = 0;
+const VOYAGE_MIN_INTERVAL_MS = parseInt(process.env.VOYAGE_MIN_INTERVAL_MS || "100", 10);
+
+async function embedVoyage(input: string, key: string, retries = 3): Promise<number[]> {
+  const now = Date.now();
+  const elapsed = now - lastVoyageCall;
+  if (elapsed < VOYAGE_MIN_INTERVAL_MS) {
+    await new Promise((r) => setTimeout(r, VOYAGE_MIN_INTERVAL_MS - elapsed));
+  }
+  lastVoyageCall = Date.now();
+
+  const res = await fetch("https://api.voyageai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      input,
+      model: "voyage-3-large",
+      input_type: "document",
+    }),
+  });
+  if (res.status === 429 && retries > 0) {
+    // Rate limit hit (apesar do delay). Aguarda 60s + retry.
+    const errText = await res.text();
+    console.warn(`  ⏳ Voyage 429 — aguardando 60s antes de retry (${errText.slice(0, 100)})`);
+    await new Promise((r) => setTimeout(r, 60_000));
+    return embedVoyage(input, key, retries - 1);
+  }
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Voyage API ${res.status}: ${errText.slice(0, 300)}`);
+  }
+  const data = await res.json() as { data: { embedding: number[] }[] };
+  return data.data[0].embedding;
+}
+
 // ---------- env loading -----------------------------------------------------
 // Script roda fora do Next, então tem que carregar .env.local na unha.
 function loadDotEnv(path: string) {
@@ -51,6 +92,15 @@ function loadDotEnv(path: string) {
 
 loadDotEnv(join(process.cwd(), ".env.local"));
 loadDotEnv(join(process.cwd(), ".env"));
+
+// Provider config — DEPOIS do loadDotEnv pra ler env vars já populadas.
+// Voyage primary (free tier generoso, 1024 dims voyage-3-large).
+// OpenAI fallback (1536 dims text-embedding-3-small) — usado se VOYAGE_API_KEY
+// ausente. Nota: schema atual é vector(1024) (migration 00039), então OpenAI
+// fallback NÃO funciona sem revert da migration.
+const VOYAGE_KEY = process.env.VOYAGE_API_KEY;
+const EMBEDDING_PROVIDER = VOYAGE_KEY ? "voyage" : "openai";
+const EMBEDDING_MODEL = VOYAGE_KEY ? "voyage-3-large" : "text-embedding-3-small";
 
 // ---------- types -----------------------------------------------------------
 interface ChunkFrontmatter {
@@ -187,7 +237,7 @@ async function processFile(
   const needsEmbed = opts.forceEmbed
     || !existing
     || existing.content_hash !== contentHash
-    || existing.embedding_model !== "text-embedding-3-small";
+    || existing.embedding_model !== EMBEDDING_MODEL;
 
   let embedding: number[] | null = null;
   if (needsEmbed && !opts.dryRun) {
@@ -202,11 +252,15 @@ async function processFile(
         ? `Category: ${fm.category}/${fm.subcategory}\n`
         : `Category: ${fm.category}\n`;
       const embeddingInput = `${fm.title}\n${subcatLine}${tagLine}\n${trimmedContent}`;
-      const res = await openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: embeddingInput,
-      });
-      embedding = res.data[0].embedding;
+      if (EMBEDDING_PROVIDER === "voyage") {
+        embedding = await embedVoyage(embeddingInput, VOYAGE_KEY!);
+      } else {
+        const res = await openai.embeddings.create({
+          model: "text-embedding-3-small",
+          input: embeddingInput,
+        });
+        embedding = res.data[0].embedding;
+      }
     } catch (err) {
       return {
         status: "error",
@@ -252,7 +306,7 @@ async function processFile(
     const updateRow: Record<string, unknown> = { ...baseRow };
     if (needsEmbed) {
       updateRow.embedding = embedding;
-      updateRow.embedding_model = "text-embedding-3-small";
+      updateRow.embedding_model = EMBEDDING_MODEL;
       updateRow.embedded_at = new Date().toISOString();
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -271,7 +325,7 @@ async function processFile(
   const insertRow = {
     ...baseRow,
     embedding,
-    embedding_model: "text-embedding-3-small",
+    embedding_model: EMBEDDING_MODEL,
     embedded_at: embedding ? new Date().toISOString() : null,
     created_by_user_id: opts.actorUserId,
   };

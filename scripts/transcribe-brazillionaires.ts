@@ -3,11 +3,13 @@
 // Pipeline por vídeo:
 //   1. yt-dlp download m4a/mp3 (audio-only — economiza banda)
 //   2. ffmpeg → mp3 16kHz mono 64kbps (formato ótimo pra Whisper)
-//   3. OpenAI Whisper API (verbose_json + segment timestamps)
+//   3. Whisper API (verbose_json + segment timestamps)
+//      Provider: GROQ_API_KEY presente → Groq whisper-large-v3 (free tier alto)
+//                fallback: OpenAI whisper-1
 //   4. Save transcripts/{itemId}-{vimeoId}.{json,md}
 //   5. Cleanup intermediários
 //
-// Usa concurrency limitado pra respeitar OpenAI rate limit + I/O local.
+// Usa concurrency limitado pra respeitar rate limit + I/O local.
 //
 // Skipping inteligente: se já existe transcript .md no destino, pula.
 //
@@ -63,6 +65,15 @@ interface ProcessResult {
   message?: string;
 }
 
+// Provider config: Groq se GROQ_API_KEY presente (drop-in OpenAI compat), senão OpenAI.
+const GROQ_KEY = process.env.GROQ_API_KEY;
+const PROVIDER = GROQ_KEY ? "groq" : "openai";
+const PROVIDER_BASE_URL = GROQ_KEY ? "https://api.groq.com/openai/v1" : undefined;
+// whisper-large-v3-turbo tem rate limit independente do large-v3 (free tier separado)
+const WHISPER_MODEL = GROQ_KEY ? "whisper-large-v3-turbo" : "whisper-1";
+// Groq free tier: $0.00 (até 14400s/min audio). OpenAI: $0.006/min.
+const COST_PER_MIN = GROQ_KEY ? 0 : 0.006;
+
 async function transcribeOne(entry: QueueEntry, openai: OpenAI): Promise<ProcessResult> {
   const sectionDir = join(ROOT, entry.section, "transcripts");
   await mkdir(sectionDir, { recursive: true });
@@ -96,30 +107,39 @@ async function transcribeOne(entry: QueueEntry, openai: OpenAI): Promise<Process
       throw new Error("yt-dlp não baixou nenhum arquivo");
     }
 
-    // 2. Convert to MP3 16kHz mono 64kbps (formato ótimo Whisper, baixo I/O)
+    // 2. Convert to MP3 16kHz mono. Groq/OpenAI Whisper limit é 25MB.
+    //    Bitrate adaptativo: começa em 64K, se passar 25MB, retry com 24K.
     const mp3Path = join(tmp, "audio.mp3");
-    execSync(`ffmpeg -y -i "${downloaded}" -vn -ar 16000 -ac 1 -b:a 64k "${mp3Path}" 2>/dev/null`, {
-      timeout: 5 * 60 * 1000,
-    });
-
-    const mp3Stat = await stat(mp3Path);
-    if (mp3Stat.size < 1000) {
+    let bitrate = "64k";
+    let mp3Stat;
+    for (const tryBitrate of ["64k", "32k", "24k"]) {
+      bitrate = tryBitrate;
+      execSync(`ffmpeg -y -i "${downloaded}" -vn -ar 16000 -ac 1 -b:a ${bitrate} "${mp3Path}" 2>/dev/null`, {
+        timeout: 5 * 60 * 1000,
+      });
+      mp3Stat = await stat(mp3Path);
+      if (mp3Stat.size < 25 * 1024 * 1024) break; // OK abaixo de 25MB
+    }
+    if (!mp3Stat || mp3Stat.size < 1000) {
       throw new Error("MP3 vazio ou muito pequeno");
     }
+    if (mp3Stat.size > 25 * 1024 * 1024) {
+      throw new Error(`MP3 ainda > 25MB mesmo com 24K bitrate (${mp3Stat.size} bytes)`);
+    }
 
-    // 3. Whisper API. response_format=verbose_json pra ter duração + segments
+    // 3. Whisper API. Provider Groq ou OpenAI (compatible API).
     const audioFile = await readFile(mp3Path);
     const transcript = await openai.audio.transcriptions.create({
       file: new File([new Uint8Array(audioFile)], "audio.mp3", { type: "audio/mpeg" }),
-      model: "whisper-1",
+      model: WHISPER_MODEL,
       response_format: "verbose_json",
       timestamp_granularities: ["segment"],
-      language: "pt", // hint, mas detecta automatic
+      language: "pt",
     });
 
     const duration = transcript.duration || 0;
     const text = transcript.text || "";
-    const costUsd = (duration / 60) * 0.006;
+    const costUsd = (duration / 60) * COST_PER_MIN;
 
     // 4. Save outputs
     await writeFile(jsonPath, JSON.stringify({
@@ -214,11 +234,17 @@ async function main() {
   const args = process.argv.slice(2);
   const workers = parseInt(args.find(a => a.startsWith("--workers="))?.split("=")[1] || "4", 10);
 
-  if (!process.env.OPENAI_API_KEY) {
-    console.error("OPENAI_API_KEY não configurado");
+  // Inicializa client baseado em provider detectado
+  const apiKey = GROQ_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    console.error("Nem GROQ_API_KEY nem OPENAI_API_KEY configurados");
     process.exit(1);
   }
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const openai = new OpenAI({
+    apiKey,
+    baseURL: PROVIDER_BASE_URL,
+  });
+  console.log(`[transcribe] Provider: ${PROVIDER} (model: ${WHISPER_MODEL})`);
 
   if (!existsSync(QUEUE_FILE)) {
     console.error(`Queue file não existe: ${QUEUE_FILE}\nRoda crawl-brazillionaires.ts primeiro.`);

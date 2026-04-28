@@ -23,6 +23,41 @@ import OpenAI from "openai";
 import type { ToolEntry } from "./types";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+// Provider config: Voyage AI primary (voyage-3-large, 1024 dims, free tier
+// alto, qualidade superior multilingual). OpenAI text-embedding-3-small (1536)
+// só é fallback se VOYAGE_API_KEY não estiver configurado E migration de DB
+// foi revertida pra 1536. Atualmente schema é 1024 (migration 00039).
+const VOYAGE_KEY = process.env.VOYAGE_API_KEY;
+
+async function embedQuery(text: string): Promise<number[]> {
+  if (VOYAGE_KEY) {
+    const res = await fetch("https://api.voyageai.com/v1/embeddings", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${VOYAGE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: text,
+        model: "voyage-3-large",
+        // input_type=query indica busca (vs document) — Voyage otimiza assimetria query↔doc
+        input_type: "query",
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Voyage API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    }
+    const data = await res.json() as { data: { embedding: number[] }[] };
+    return data.data[0].embedding;
+  }
+  // Fallback OpenAI
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("Nem VOYAGE_API_KEY nem OPENAI_API_KEY configurados");
+  const openai = new OpenAI({ apiKey });
+  const res = await openai.embeddings.create({
+    model: "text-embedding-3-small",
+    input: text,
+  });
+  return res.data[0].embedding;
+}
+
 interface SearchRow {
   id: string;
   category: string;
@@ -87,21 +122,13 @@ const queryCarrierKnowledge: ToolEntry = {
     const state = args.state ? String(args.state).toUpperCase() : null;
     const topK = Math.min(Math.max(Number(args.top_k) || 5, 1), 8);
 
-    // 1. Embed da pergunta. Mesmo modelo que ingestion script — fundamental
-    //    pra similarity ser comparável.
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return { status: "error", message: "OPENAI_API_KEY não configurado no servidor", retryable: false };
-    }
-    const openai = new OpenAI({ apiKey });
-
+    // 1. Embed da pergunta. Voyage primary (1024 dims voyage-3-large) com
+    //    input_type=query pra otimizar similarity contra documents (que foram
+    //    embedded com input_type=document via ingest-carrier-kb.ts).
+    //    Fundamental que provider+modelo bata com o usado na ingestão.
     let queryEmbedding: number[];
     try {
-      const res = await openai.embeddings.create({
-        model: "text-embedding-3-small",
-        input: question,
-      });
-      queryEmbedding = res.data[0].embedding;
+      queryEmbedding = await embedQuery(question);
     } catch (err) {
       return {
         status: "error",
