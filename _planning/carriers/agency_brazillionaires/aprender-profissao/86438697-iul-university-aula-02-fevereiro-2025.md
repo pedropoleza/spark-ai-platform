@@ -5,7 +5,7 @@ subcategory: plano-indexado
 slug: 86438697-iul-university-aula-02-fevereiro-2025
 title: "IUL University Aula 02 - Fevereiro 2025"
 priority: on_demand
-tags: [iul, indexed-universal-life, plano-indexado]
+tags: [iul, indexed-universal-life, plano-indexado, 401k, 401(k), qualified-plan, exam, prova, comissao, commission, instrutor, nlg]
 applies_to_companies: []
 source: official
 source_url: https://brazillionaires.virtualnet.site/aprender-profissao/c/0/i/86438697/iul-university-aula-02-fevereiro-2025
@@ -13,9 +13,11 @@ source_doc_cat: agency-brazillionaires-aprender-profissao-plano-indexado
 last_verified: 2025-02-11
 ---
 
-**Resumo:** Gustavo fornece uma visão geral dos planos IUL, explicando que eles precisam ser configurados adequadamente para proporcionar os melhores resultados para os clientes. Ele discute reclamações comuns sobre os planos IUL e as atribui à configuração inadequada ou à falta de conhecimento sobre como os planos funcionam.
+SUMMARY: Gustavo fornece uma visão geral dos planos IUL, explicando que eles precisam ser configurados adequadamente para proporcionar os melhores resultados para os clientes. Ele discute reclamações comuns sobre os planos IUL e as atribui à configuração inadequada ou à falta de conhecimento sobre como os planos funcionam.
 
-**Conteúdo:**
+---
+
+TEXTO DO ITEM:
 Gustavo fornece uma visão geral dos planos IUL, explicando que eles precisam ser configurados adequadamente para proporcionar os melhores resultados para os clientes. Ele discute reclamações comuns sobre os planos IUL e as atribui à configuração inadequada ou à falta de conhecimento sobre como os planos funcionam.
 
 Configurando informações do cliente @ 5:47
@@ -42,4 +44,12 @@ Utilizando empréstimos da apólice @ 49:41
 
 Gustavo percorre um exemplo de uso de um empréstimo da apólice para financiar despesas universitárias e discute estratégias para pagar o empréstimo enquanto continua contribuindo para a apólice.
 
-**Source:** https://brazillionaires.virtualnet.site/aprender-profissao/c/0/i/86438697/iul-university-aula-02-fevereiro-2025
+---
+
+TRANSCRIÇÃO DE VÍDEO (55min):
+Bom dia, boa tarde, bem-vindos, Brasilionaires, para o segundo encontro do IOL University. Nesse encontro eu vou mostrar para vocês como a gente vai configurar o IOL das melhores maneiras possíveis para ter o melhor resultado possível para os nossos clientes. Para os nossos clientes, o IOL é um win-win, desde que ele seja bem configurado. Então vamos começar. Para quem não estava aqui no nosso, assiste o primeiro encontro, porque esse encontro é continuação do nosso primeiro bate-papo lá. Falando do IOL, a gente tem que entender o seguinte, ele tem que ser bem configurado para ter os melhores resultados para o cliente. Se o IOL for mal configurado, ele não vai fazer o que a gente fez, a intenção dele para o cliente. Então tudo começa com uma boa configuração. O que você vê hoje na internet de reclamação sobre o plano indexado, comentário negativo, são pessoas que estão pegando, se elas têm o plano, elas foram vendidas em um plano mal configurado. E aí não tem jeito, se o plano foi mal configurado, ele não vai performar da maneira possível para a pessoa. E essa é a razão pela qual as pessoas reclamam ou falam mal do IOL por falta de conhecimento. Se você não tem acesso ao sistema para entrar em detalhes e configurar ele de maneira otimizada, você não sabe nem o que está acontecendo, e aí é mesmo que eu leio uma revista sobre algo e fala mal daquilo porque eu li naquela revista que aquilo não é bom. É meio que falta de conhecimento e falta de contexto. Então hoje nós vamos ter contexto sobre isso. Estou aqui já no site da National Life e quero mostrar para vocês como nós fazemos a configuração. Essa aula vai estar gravada, então não precisa você estar anotando cada passo aqui da tela, mas eu vou acompanhar você. Então quando eu entro no Illustrations, eu venho aqui em New Illustration. Quando eu entro aqui, vai aparecer o tipo de produto, nós vamos usar o Index Universal Life e o Flex Life é o produto que nós usamos para os nossos clientes. Flex Life NL é para aqueles clientes que moram em New York, only, somente em New York. E exis
+[...truncado]
+
+**Recursos:**
+- Vídeo Vimeo: 1056086336 (55:45 min)
+- Source: https://brazillionaires.virtualnet.site/aprender-profissao/c/0/i/86438697/iul-university-aula-02-fevereiro-2025

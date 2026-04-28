@@ -1,8 +1,9 @@
 # Brazillionaires Portal — Status
 
-**Última atualização:** 2026-04-28 (sessão final)
-**Estado:** ✅ Production-ready (135 chunks total: 49 NLG + 86 Brazillionaires)
-**Synthetic tests final:** 11/11 PASS
+**Última atualização:** 2026-04-28 (sessão final pós OpenAI quota volta)
+**Estado:** ✅ Production-ready (149 chunks total: 49 NLG + 100 Brazillionaires)
+**Synthetic tests:** 11/11 inicial + 8/8 conteúdo novo = **19/19 PASS**
+**Transcripts:** 66/68 vídeos (97%, 2 vídeos sem hash Vimeo conhecidos)
 
 ---
 
@@ -14,19 +15,23 @@
 - Sections processadas: Eventos/Comece Aqui, Aprender Profissão, Aprender Aplicação
 - Bootcamps NÃO processado (decisão Pedro: skip)
 
-### Transcrição (parcial — 30/68 vídeos)
-- 30 vídeos transcritos com sucesso
-  - 27 via OpenAI Whisper (~$2.27 USD antes de quota)
-  - 3 via Groq whisper-large-v3 (free tier, $0)
-- 38 vídeos pendentes (Groq rate limit ASPH 7200s/hora — completar em batches)
+### Transcrição (66/68 vídeos completos — 97%)
+- 27 via OpenAI Whisper round 1 (~$2.27 USD antes da quota original)
+- 3 via Groq whisper-large-v3 (free tier durante quota OpenAI)
+- 36 via OpenAI Whisper round 2 ($5.97 USD após quota voltou) → 994 min, 50 min wall time
+- **2 vídeos sem hash Vimeo (NÃO baixáveis via yt-dlp):**
+  - `420808221` "Agendar a Prova"
+  - `449701711` "Cálculo do Benefício em Vida"
+  - Pra completar: precisa Chrome MCP capturar hash dinâmico do iframe
 
-### Processor + chunks
-- 86 chunks finais gerados combinando items + PDFs + transcripts
-- Compression média: 40%
-- 32 items resumidos via Claude Haiku 4.5 (overflow >4500 chars)
+### Processor + chunks (final)
+- **100 chunks finais** combinando items + PDFs + transcripts
+- Compression média: 23% (raw 1.5MB → 351KB final)
+- 66 items resumidos via Claude Haiku 4.5 (overflow >4500 chars)
+- 22 items skipped (vazios — itens sem texto ÚTIL e sem transcript ainda)
 
-### Embeddings + Ingest
-- 86/86 chunks ingeridos com Voyage AI voyage-3-large (1024 dims)
+### Embeddings + Ingest (final)
+- **100/100 chunks ingeridos** com Voyage AI voyage-3-large (1024 dims)
 - Migration 00039: `vector(1536) → vector(1024)`
 - Provider migrado de OpenAI text-embedding-3-small → Voyage AI
 

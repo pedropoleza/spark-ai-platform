@@ -5,7 +5,7 @@ subcategory: plano-indexado
 slug: 86465621-iul-university-aula-03-fevereiro-2025
 title: "IUL University Aula 03 - Fevereiro 2025"
 priority: on_demand
-tags: [iul, indexed-universal-life, plano-indexado, term, termo, term-life, nlg, national-life-group]
+tags: [iul, indexed-universal-life, plano-indexado, term, termo, term-life, annuity, annuities, anuidade, exam, prova, comissao]
 applies_to_companies: []
 source: official
 source_url: https://brazillionaires.virtualnet.site/aprender-profissao/c/0/i/86465621/iul-university-aula-03-fevereiro-2025
@@ -13,9 +13,11 @@ source_doc_cat: agency-brazillionaires-aprender-profissao-plano-indexado
 last_verified: 2025-02-09
 ---
 
-**Resumo:** Gustavo fornece uma visão geral dos produtos IUL, explicando como funcionam e a importância de entender o desempenho histórico dos índices subjacentes. Ele demonstra como acessar o portal da National Life para visualizar o histórico de desempenho de diferentes produtos IUL.
+SUMMARY: Gustavo fornece uma visão geral dos produtos IUL, explicando como funcionam e a importância de entender o desempenho histórico dos índices subjacentes. Ele demonstra como acessar o portal da National Life para visualizar o histórico de desempenho de diferentes produtos IUL.
 
-**Conteúdo:**
+---
+
+TEXTO DO ITEM:
 Gustavo fornece uma visão geral dos produtos IUL, explicando como funcionam e a importância de entender o desempenho histórico dos índices subjacentes. Ele demonstra como acessar o portal da National Life para visualizar o histórico de desempenho de diferentes produtos IUL.
 
 Selecionando índices apropriados para alocações de clientes - 7:26
@@ -42,4 +44,12 @@ Conclusão e princípios-chave - 55:49
 
 Gustavo conclui enfatizando a importância de sempre colocar os melhores interesses do cliente em primeiro lugar ao configurar planos IUL, em vez de se concentrar em maximizar comissões. Ele encoraja os participantes a abordar seu trabalho com uma mentalidade centrada no cliente para construir sucesso a longo prazo.
 
-**Source:** https://brazillionaires.virtualnet.site/aprender-profissao/c/0/i/86465621/iul-university-aula-03-fevereiro-2025
+---
+
+TRANSCRIÇÃO DE VÍDEO (54min):
+Bem-vindos galera, bem-vindos ao terceiro encontro do IOL University. Hoje eu vou mostrar pra vocês como que performou o IOL ao longo dos últimos anos, na verdade mais de 10 anos atrás, desde a época que eu comecei na Five Rings a entender do IOL, eu vou mostrar pra você onde você vai achar a performance histórica real do produto desde que ele foi criado pela National Life, os produtos que nós trazemos para os nossos clientes. Vou te mostrar mais detalhes de configuração, o que fazer e mais importante do que fazer, o que não fazer quando você está configurando um plano para o seu cliente. Vamos lá? Então vamos começar aqui compartilhando aqui a minha tela como que a gente faz a configuração do IOL. Deixa eu fechar aqui o PowerPoint. Primeira coisa que a gente tem que entender quando a gente está fazendo um plano e ofertando para os nossos clientes é aquela dúvida, será que esse produto vai fazer o que eu estou falando? Será que a performance vai funcionar? Será que vai, será que não vai? Será que é verdade, será que não é? Onde que eu vejo isso? Deixa eu mostrar uma coisa importante para vocês aqui. No portal da National Life, depois que você entra, você vai em produtos, Life Insurance, e aqui você vai achar um link muito importante. Na verdade é produtos, Life Insurance Annuities Interest Rates, era isso que eu queria achar. Eu quero mostrar para vocês o histórico dos planos indexados. Na verdade se você olhar aqui, Life Interest Rate Histories, aqui nessa opção, não se perca com a lista de nomes e produtos, você tem que achar o produto que você representa. Eu vou te mostrar aqui o seguinte, quando eu comecei, o produto que eu trabalhav
+[...truncado]
+
+**Recursos:**
+- Vídeo Vimeo: 1056519327 (54:51 min)
+- Source: https://brazillionaires.virtualnet.site/aprender-profissao/c/0/i/86465621/iul-university-aula-03-fevereiro-2025

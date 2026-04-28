@@ -147,7 +147,7 @@ async function walkMarkdown(dir: string): Promise<string[]> {
       out.push(...(await walkMarkdown(path)));
     } else if (e.name.endsWith(".md")) {
       // Pula arquivos meta — só ingere chunks reais
-      if (e.name === "README.md" || e.name === "_template.md") continue;
+      if (e.name === "README.md" || e.name.startsWith("_")) continue;
       out.push(path);
     }
   }
