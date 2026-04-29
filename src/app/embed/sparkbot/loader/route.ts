@@ -32,7 +32,10 @@ export async function GET() {
     status: 200,
     headers: {
       "Content-Type": "application/javascript; charset=utf-8",
-      "Cache-Control": "public, max-age=300", // 5 min
+      // Sem cache: queremos que mudanças apareçam imediatamente sem o
+      // Pedro ter que limpar cache. Browsers ainda revalidam (304 ETag).
+      // Custo: 1 request/page-load — irrelevante.
+      "Cache-Control": "no-cache, must-revalidate",
       "Access-Control-Allow-Origin": "*",
     },
   });
