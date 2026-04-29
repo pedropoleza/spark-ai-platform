@@ -108,16 +108,27 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   // conversationHistory → bot era amnésico. Synthetic-test funcionava
   // (lia agent_test_messages); produção real não.
   // Lê últimos N turns da tabela sparkbot_messages dedicada.
-  const { data: priorMsgs } = await supabase
-    .from("sparkbot_messages")
-    .select("role, content, created_at")
-    .eq("rep_id", rep.id)
-    .eq("hub_location_id", hubLocationId)
-    .order("created_at", { ascending: false })
-    .limit(SPARKBOT_HISTORY_TURNS);
+  // Defensivo: se tabela não existe (migration 00040 não aplicada ainda),
+  // segue sem histórico. Pior caso: bot continua amnésico (estado atual).
+  let priorMsgs: Array<{ role: string; content: string; created_at: string }> = [];
+  try {
+    const r = await supabase
+      .from("sparkbot_messages")
+      .select("role, content, created_at")
+      .eq("rep_id", rep.id)
+      .eq("hub_location_id", hubLocationId)
+      .order("created_at", { ascending: false })
+      .limit(SPARKBOT_HISTORY_TURNS);
+    if (r.data) priorMsgs = r.data;
+    if (r.error) {
+      console.warn("[Sparkbot] sparkbot_messages read failed (migration pendente?):", r.error.message);
+    }
+  } catch (err) {
+    console.warn("[Sparkbot] sparkbot_messages read crashed:", err instanceof Error ? err.message : err);
+  }
 
   // Reverte pra ordem cronológica (oldest first) e mapeia pra ConversationTurn.
-  const conversationHistory: ConversationTurn[] = (priorMsgs || [])
+  const conversationHistory: ConversationTurn[] = priorMsgs
     .reverse()
     .map((m) => ({
       role: m.role === "user" ? "user" : "assistant",
@@ -135,15 +146,21 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
       ? `📎 ${repInput.filename}${repInput.extracted_text ? `\n${repInput.extracted_text.substring(0, 500)}` : ""}`
       : repInput.text;
 
-  await supabase.from("sparkbot_messages").insert({
-    rep_id: rep.id,
-    hub_location_id: hubLocationId,
-    agent_id: hubAgent.id,
-    active_location_id: rep.active_location_id || null,
-    role: "user",
-    content: userMsgContent,
-    metadata: { input_kind: repInput.kind, ghl_contact_id: contactId },
-  });
+  // Defensivo: tabela pode não existir; não queremos quebrar webhook.
+  try {
+    await supabase.from("sparkbot_messages").insert({
+      rep_id: rep.id,
+      hub_location_id: hubLocationId,
+      agent_id: hubAgent.id,
+      active_location_id: rep.active_location_id || null,
+      role: "user",
+      content: userMsgContent,
+      channel: "whatsapp",
+      metadata: { input_kind: repInput.kind, ghl_contact_id: contactId },
+    });
+  } catch (err) {
+    console.warn("[Sparkbot] sparkbot_messages insert (user) failed:", err instanceof Error ? err.message : err);
+  }
 
   // 6. Processa
   const result = await processIncoming({
@@ -151,6 +168,7 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     input: repInput,
     agentId: hubAgent.id,
     conversationHistory,
+    channel: "whatsapp",
     config: {
       confirmation_mode:
         (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
@@ -163,23 +181,28 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     await sendResponseToRep(hubClient, contactId, conversationId, messageType, result.text);
   }
 
-  // Persiste resposta do agente
-  await supabase.from("sparkbot_messages").insert({
-    rep_id: rep.id,
-    hub_location_id: hubLocationId,
-    agent_id: hubAgent.id,
-    active_location_id: rep.active_location_id || null,
-    role: "agent",
-    content: result.text || "(sem resposta)",
-    metadata: {
-      model: result.model_used,
-      tools: result.tools_executed,
-      prompt_tokens: result.tokens?.prompt,
-      completion_tokens: result.tokens?.completion,
-      cached_tokens: result.tokens?.cached,
-      llm_failed: result.llm_failed,
-    },
-  });
+  // Persiste resposta do agente (defensivo)
+  try {
+    await supabase.from("sparkbot_messages").insert({
+      rep_id: rep.id,
+      hub_location_id: hubLocationId,
+      agent_id: hubAgent.id,
+      active_location_id: rep.active_location_id || null,
+      role: "agent",
+      content: result.text || "(sem resposta)",
+      channel: "whatsapp",
+      metadata: {
+        model: result.model_used,
+        tools: result.tools_executed,
+        prompt_tokens: result.tokens?.prompt,
+        completion_tokens: result.tokens?.completion,
+        cached_tokens: result.tokens?.cached,
+        llm_failed: result.llm_failed,
+      },
+    });
+  } catch (err) {
+    console.warn("[Sparkbot] sparkbot_messages insert (agent) failed:", err instanceof Error ? err.message : err);
+  }
 
   // 7. Log execution
   await supabase.from("execution_log").insert({

@@ -47,12 +47,27 @@ export function isAuthorizedCron(request: NextRequest): boolean {
 
   // Defesa: secret antigo conhecido nunca é aceito mesmo que ENV esteja
   // desatualizado (force operadores a rotacionar).
+  //
+  // Override transitório: se ALLOW_LEAKED_CRON_SECRET=1, aceita o antigo
+  // com warning loud. Use APENAS durante deploy da rotação (até atualizar
+  // CRON_SECRET no Vercel + app.cron_secret GUC no Supabase). Remover essa
+  // env var assim que a rotação completar.
   if (KNOWN_LEAKED_SECRETS.has(provided)) {
-    console.error(
-      "[cron-auth] Rejected request with KNOWN-LEAKED secret. " +
-      "Rotate CRON_SECRET (Vercel) and app.cron_secret GUC (Supabase) ASAP.",
-    );
-    return false;
+    if (process.env.ALLOW_LEAKED_CRON_SECRET === "1") {
+      console.warn(
+        "[cron-auth] ⚠️  Aceitando secret VAZADO (ALLOW_LEAKED_CRON_SECRET=1). " +
+        "REMOVA essa env var assim que terminar a rotação do CRON_SECRET.",
+      );
+      // Compara mesmo assim com expected pra ainda validar — fail-safe:
+      // se ambos baterem (env e leaked), aceita; senão, ainda rejeita.
+    } else {
+      console.error(
+        "[cron-auth] Rejected request with KNOWN-LEAKED secret. " +
+        "Rotate CRON_SECRET (Vercel) and app.cron_secret GUC (Supabase) ASAP. " +
+        "Pra emergência, set ALLOW_LEAKED_CRON_SECRET=1 no Vercel.",
+      );
+      return false;
+    }
   }
 
   const expected = process.env.CRON_SECRET?.trim();

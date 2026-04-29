@@ -72,40 +72,60 @@ export async function POST(request: NextRequest) {
 
   // 4. Histórico unificado: lê últimos N turns de sparkbot_messages
   // (mesma lógica do webhook handler — bot lembra do WhatsApp aqui)
-  const { data: priorMsgs } = await supabase
-    .from("sparkbot_messages")
-    .select("role, content, created_at")
-    .eq("rep_id", rep.id)
-    .eq("hub_location_id", hubLocationId)
-    .order("created_at", { ascending: false })
-    .limit(30);
+  let priorMsgs: Array<{ role: string; content: string; created_at: string }> = [];
+  try {
+    const r = await supabase
+      .from("sparkbot_messages")
+      .select("role, content, created_at")
+      .eq("rep_id", rep.id)
+      .eq("hub_location_id", hubLocationId)
+      .order("created_at", { ascending: false })
+      .limit(30);
+    if (r.data) priorMsgs = r.data;
+    if (r.error) {
+      // Migration 00040 ainda não aplicada — segue sem histórico.
+      console.warn("[Sparkbot:send] sparkbot_messages read err:", r.error.message);
+    }
+  } catch { /* tabela ausente — segue sem hist */ }
 
-  const conversationHistory: ConversationTurn[] = (priorMsgs || [])
+  const conversationHistory: ConversationTurn[] = priorMsgs
     .reverse()
     .map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content }));
 
   // 5. Persiste msg do user (channel='web_ui')
-  const userInsert = await supabase
-    .from("sparkbot_messages")
-    .insert({
-      rep_id: rep.id,
-      hub_location_id: hubLocationId,
-      agent_id: hubAgent.id,
-      active_location_id: tok.location_id,
-      role: "user",
-      content: message,
-      channel: "web_ui",
-      metadata: { ghl_user_id: tok.ghl_user_id },
-    })
-    .select("id")
-    .single();
+  let userInsertId: string | null = null;
+  try {
+    const r = await supabase
+      .from("sparkbot_messages")
+      .insert({
+        rep_id: rep.id,
+        hub_location_id: hubLocationId,
+        agent_id: hubAgent.id,
+        active_location_id: tok.location_id,
+        role: "user",
+        content: message,
+        channel: "web_ui",
+        metadata: { ghl_user_id: tok.ghl_user_id },
+      })
+      .select("id")
+      .single();
+    userInsertId = r.data?.id || null;
+    if (r.error) {
+      console.warn("[Sparkbot:send] sparkbot_messages insert err:", r.error.message);
+    }
+  } catch (err) {
+    console.warn("[Sparkbot:send] sparkbot_messages insert crashed:", err instanceof Error ? err.message : err);
+  }
 
   // 6. Heartbeat: marca que rep tá ativo no web (pra canal automático
-  // decidir mandar proativos no web vs WhatsApp)
-  await supabase
-    .from("rep_identities")
-    .update({ web_session_active_at: new Date().toISOString() })
-    .eq("id", rep.id);
+  // decidir mandar proativos no web vs WhatsApp). Defensivo — coluna pode
+  // não existir se migration 00042 ainda pendente.
+  try {
+    await supabase
+      .from("rep_identities")
+      .update({ web_session_active_at: new Date().toISOString() })
+      .eq("id", rep.id);
+  } catch { /* coluna ausente — sem heartbeat */ }
 
   // 7. Processa via Sparkbot — channel='web_ui' injetado no runtime context
   // pra prompt-builder/tools saberem o contexto.
@@ -126,26 +146,30 @@ export async function POST(request: NextRequest) {
   const durationMs = Date.now() - startTs;
 
   // 8. Persiste resposta (channel='web_ui'); marca como já lida (foi sent
-  // diretamente pro browser, não é proativa pendente)
-  await supabase.from("sparkbot_messages").insert({
-    rep_id: rep.id,
-    hub_location_id: hubLocationId,
-    agent_id: hubAgent.id,
-    active_location_id: tok.location_id,
-    role: "agent",
-    content: result.text || "(sem resposta)",
-    channel: "web_ui",
-    read_in_web_at: new Date().toISOString(),
-    metadata: {
-      model: result.model_used,
-      tools: result.tools_executed,
-      prompt_tokens: result.tokens?.prompt,
-      completion_tokens: result.tokens?.completion,
-      cached_tokens: result.tokens?.cached,
-      duration_ms: durationMs,
-      llm_failed: result.llm_failed,
-    },
-  });
+  // diretamente pro browser, não é proativa pendente). Defensivo.
+  try {
+    await supabase.from("sparkbot_messages").insert({
+      rep_id: rep.id,
+      hub_location_id: hubLocationId,
+      agent_id: hubAgent.id,
+      active_location_id: tok.location_id,
+      role: "agent",
+      content: result.text || "(sem resposta)",
+      channel: "web_ui",
+      read_in_web_at: new Date().toISOString(),
+      metadata: {
+        model: result.model_used,
+        tools: result.tools_executed,
+        prompt_tokens: result.tokens?.prompt,
+        completion_tokens: result.tokens?.completion,
+        cached_tokens: result.tokens?.cached,
+        duration_ms: durationMs,
+        llm_failed: result.llm_failed,
+      },
+    });
+  } catch (err) {
+    console.warn("[Sparkbot:send] persist agent msg failed:", err instanceof Error ? err.message : err);
+  }
 
   return json({
     ok: true,
@@ -154,6 +178,6 @@ export async function POST(request: NextRequest) {
     tokens: result.tokens,
     model_used: result.model_used,
     duration_ms: durationMs,
-    user_message_id: userInsert.data?.id || null,
+    user_message_id: userInsertId,
   });
 }
