@@ -206,53 +206,66 @@ const LOADER_SOURCE = `(function () {
   function injectStyles() {
     if (document.getElementById("sparkbot-styles")) return;
     var css = \`
-      /* Botão inline no header GHL — segue tamanho/forma dos outros círculos */
+      /* Botão inline no header — Spark blue, mesmo formato dos outros círculos */
       .sparkbot-btn {
         position: relative;
         width: 36px; height: 36px; border-radius: 50%;
-        background: linear-gradient(135deg, #6366f1, #8b5cf6);
-        box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+        background: linear-gradient(135deg, #1675F2 0%, #2980F2 100%);
+        box-shadow: 0 2px 10px rgba(22, 117, 242, 0.32);
         display: inline-flex; align-items: center; justify-content: center;
-        cursor: pointer; border: none; transition: transform 0.15s, box-shadow 0.15s;
+        cursor: pointer; border: none;
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
         font-family: system-ui, -apple-system, sans-serif;
         margin: 0 6px; flex-shrink: 0;
         vertical-align: middle;
+        overflow: visible;
       }
-      .sparkbot-btn:hover { transform: scale(1.06); box-shadow: 0 3px 12px rgba(99, 102, 241, 0.45); }
-      .sparkbot-btn svg { width: 18px; height: 18px; color: white; }
+      .sparkbot-btn:hover {
+        transform: scale(1.07);
+        box-shadow: 0 4px 16px rgba(22, 117, 242, 0.45);
+      }
+      .sparkbot-btn svg { width: 22px; height: 22px; }
       .sparkbot-btn .sparkbot-badge {
         position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px;
         padding: 0 5px; background: #ef4444; color: white; border-radius: 9px;
         font-size: 10px; font-weight: 700; display: flex; align-items: center;
         justify-content: center; border: 2px solid white;
       }
-      /* Fallback flutuante (canto inferior direito) — usado se header não for achado */
       .sparkbot-btn.sparkbot-floating {
         position: fixed; right: 20px; bottom: 20px; z-index: 999998;
         width: 56px; height: 56px; margin: 0;
       }
-      .sparkbot-btn.sparkbot-floating svg { width: 28px; height: 28px; }
+      .sparkbot-btn.sparkbot-floating svg { width: 32px; height: 32px; }
       .sparkbot-btn.sparkbot-floating .sparkbot-badge {
         top: -4px; right: -4px; min-width: 20px; height: 20px; font-size: 11px;
       }
       #sparkbot-panel {
-        position: fixed; top: 0; right: 0; bottom: 0; width: 450px;
+        position: fixed; top: 0; right: 0; bottom: 0; width: 460px;
         max-width: 100vw; z-index: 999999;
-        background: white; box-shadow: -4px 0 16px rgba(0, 0, 0, 0.1);
-        transform: translateX(100%); transition: transform 0.3s ease;
+        background: white;
+        box-shadow:
+          -8px 0 32px rgba(15, 23, 42, 0.12),
+          -2px 0 8px rgba(15, 23, 42, 0.06);
+        transform: translateX(100%);
+        transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
         display: flex; flex-direction: column;
-        font-family: system-ui, -apple-system, sans-serif;
+        font-family: 'Open Sans', system-ui, -apple-system, sans-serif;
       }
       #sparkbot-panel.open { transform: translateX(0); }
-      #sparkbot-panel-header {
-        padding: 16px; border-bottom: 1px solid #e5e7eb;
-        display: flex; justify-content: space-between; align-items: center;
-        background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white;
-      }
-      #sparkbot-panel-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
       #sparkbot-panel-close {
-        background: rgba(255,255,255,0.2); border: 0; color: white; cursor: pointer;
-        width: 28px; height: 28px; border-radius: 50%; font-size: 18px; line-height: 1;
+        position: absolute;
+        top: 12px; right: 12px;
+        background: rgba(15, 23, 42, 0.04);
+        border: 0; color: #475569; cursor: pointer;
+        width: 28px; height: 28px; border-radius: 50%;
+        font-size: 18px; line-height: 1;
+        display: inline-flex; align-items: center; justify-content: center;
+        transition: background 0.15s, color 0.15s;
+        z-index: 10;
+      }
+      #sparkbot-panel-close:hover {
+        background: rgba(15, 23, 42, 0.08);
+        color: #0f172a;
       }
       #sparkbot-panel iframe {
         flex: 1; border: 0; width: 100%;
@@ -296,10 +309,21 @@ const LOADER_SOURCE = `(function () {
 
     var btn = document.createElement("button");
     btn.className = "sparkbot-btn";
-    btn.title = "Sparkbot — copiloto IA";
-    btn.setAttribute("aria-label", "Abrir Sparkbot");
-    // Ícone de chat/sparkles (combina com a estética do GHL e diferencia do "Ask AI")
-    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M19 14l.7 2.1L21.8 17l-2.1.7L19 19.8l-.7-2.1L16.2 17l2.1-.7L19 14z"/></svg>';
+    btn.title = "SparkBot — copiloto IA";
+    btn.setAttribute("aria-label", "Abrir SparkBot");
+    // Mascote robô — versão simplificada do que aparece no painel.
+    // Branco translúcido sobre o gradient azul.
+    btn.innerHTML = [
+      '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">',
+        '<line x1="12" y1="3" x2="12" y2="6" stroke="white" stroke-width="1.6" stroke-linecap="round"/>',
+        '<circle cx="12" cy="2.5" r="1.1" fill="white"/>',
+        '<rect x="5" y="6" width="14" height="12" rx="4.5" fill="white" fill-opacity="0.95"/>',
+        '<rect x="7.5" y="8.5" width="9" height="6" rx="2.5" fill="#0E54B0"/>',
+        '<circle cx="10" cy="11.5" r="1.2" fill="#9be3ff"/>',
+        '<circle cx="14" cy="11.5" r="1.2" fill="#9be3ff"/>',
+        '<path d="M10.5 13.6 Q12 14.4 13.5 13.6" stroke="#5eb5ff" stroke-width="0.9" stroke-linecap="round" fill="none"/>',
+      '</svg>'
+    ].join("");
     btn.onclick = togglePanel;
 
     // 1) Tenta inline no header (preferido — fica do lado dos outros botões)
@@ -327,16 +351,13 @@ const LOADER_SOURCE = `(function () {
     var panel = document.createElement("div");
     panel.id = "sparkbot-panel";
 
-    var header = document.createElement("div");
-    header.id = "sparkbot-panel-header";
-    var title = document.createElement("h3");
-    title.textContent = "Sparkbot";
+    // Botão fechar flutuante (sobreposto ao header do painel SPA, no topo
+    // direito). O painel SPA tem seu próprio header com mascote/branding.
     var close = document.createElement("button");
     close.id = "sparkbot-panel-close";
     close.innerHTML = "&times;";
     close.onclick = togglePanel;
-    header.appendChild(title);
-    header.appendChild(close);
+    close.setAttribute("aria-label", "Fechar SparkBot");
 
     var iframe = document.createElement("iframe");
     iframe.id = "sparkbot-iframe";
@@ -344,7 +365,7 @@ const LOADER_SOURCE = `(function () {
                  "&repName=" + encodeURIComponent(STATE.repName);
     iframe.allow = "microphone; clipboard-write; notifications";
 
-    panel.appendChild(header);
+    panel.appendChild(close);
     panel.appendChild(iframe);
     document.body.appendChild(panel);
   }
