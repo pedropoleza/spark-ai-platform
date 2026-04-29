@@ -74,8 +74,56 @@ const LOADER_SOURCE = `(function () {
     return match ? match[1] : null;
   }
 
+  // Cacheia o claims do JWT pra não decodificar 4x
+  var __ghlClaims = null;
+  function getGhlClaims() {
+    if (__ghlClaims) return __ghlClaims;
+    // Chaves conhecidas (em ordem de preferência):
+    //   - 'refreshedToken' (white-label sparkleads + GHL atual): JSON envelope
+    //     { refreshedToken: { claims: { user_id, company_id, role, ... } } }
+    //   - 'token-id' / 'ghl_user_token' (legado): JWT direto
+    var keys = ["refreshedToken", "token-id", "ghl_user_token"];
+    for (var i = 0; i < keys.length; i++) {
+      var raw = localStorage.getItem(keys[i]);
+      if (!raw) continue;
+      // Tenta como JSON envelope primeiro (refreshedToken pattern)
+      try {
+        var parsed = JSON.parse(raw);
+        // Caso A: { refreshedToken: { claims: {...} } } — sparkleads atual
+        if (parsed && parsed.refreshedToken && parsed.refreshedToken.claims) {
+          __ghlClaims = parsed.refreshedToken.claims;
+          return __ghlClaims;
+        }
+        // Caso B: { claims: {...} } direto
+        if (parsed && parsed.claims) {
+          __ghlClaims = parsed.claims;
+          return __ghlClaims;
+        }
+      } catch (e) {}
+      // Tenta como JWT direto (formato xxx.yyy.zzz)
+      try {
+        var parts = raw.split(".");
+        if (parts.length === 3) {
+          var payload = JSON.parse(atob(parts[1]));
+          if (payload.claims) { __ghlClaims = payload.claims; return __ghlClaims; }
+          // Algumas versões expõem direto no payload
+          if (payload.user_id || payload.userId || payload.sub) {
+            __ghlClaims = payload;
+            return __ghlClaims;
+          }
+        }
+      } catch (e) {}
+    }
+    return null;
+  }
+
   function detectCompanyId() {
-    // GHL injeta em vários globais; tenta os mais comuns.
+    var c = getGhlClaims();
+    if (c) {
+      if (c.company_id) return c.company_id;
+      if (c.companyId) return c.companyId;
+    }
+    // Fallbacks
     try { if (window.__INITIAL_STATE__ && window.__INITIAL_STATE__.companyId) return window.__INITIAL_STATE__.companyId; } catch (e) {}
     try { if (window.app && window.app.companyId) return window.app.companyId; } catch (e) {}
     var meta = document.querySelector('meta[name="company-id"]');
@@ -84,17 +132,14 @@ const LOADER_SOURCE = `(function () {
   }
 
   function detectUserId() {
-    // 1) Tenta JWT do localStorage (pattern conhecido do GHL)
-    try {
-      var jwt = localStorage.getItem("token-id") || localStorage.getItem("ghl_user_token");
-      if (jwt) {
-        var payload = JSON.parse(atob(jwt.split(".")[1]));
-        if (payload.user_id) return payload.user_id;
-        if (payload.userId) return payload.userId;
-        if (payload.sub) return payload.sub;
-      }
-    } catch (e) {}
-    // 2) Globals
+    var c = getGhlClaims();
+    if (c) {
+      if (c.user_id) return c.user_id;
+      if (c.userId) return c.userId;
+      if (c.uid) return c.uid;
+      if (c.sub) return c.sub;
+    }
+    // Fallbacks (alguns white-labels antigos)
     try { if (window.__INITIAL_STATE__ && window.__INITIAL_STATE__.user) return window.__INITIAL_STATE__.user.id; } catch (e) {}
     try { if (window.app && window.app.user && window.app.user.id) return window.app.user.id; } catch (e) {}
     return null;
