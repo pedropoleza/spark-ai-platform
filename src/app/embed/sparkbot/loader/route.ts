@@ -147,26 +147,38 @@ const LOADER_SOURCE = `(function () {
     return sel ? (sel.textContent || "").trim() : null;
   }
 
-  // ---------- UI: floating button + panel ----------
+  // ---------- UI: header button + panel ----------
   function injectStyles() {
     if (document.getElementById("sparkbot-styles")) return;
     var css = \`
-      #sparkbot-fab {
-        position: fixed; right: 20px; bottom: 20px; z-index: 999998;
-        width: 56px; height: 56px; border-radius: 50%;
+      /* Botão inline no header GHL — segue tamanho/forma dos outros círculos */
+      .sparkbot-btn {
+        position: relative;
+        width: 36px; height: 36px; border-radius: 50%;
         background: linear-gradient(135deg, #6366f1, #8b5cf6);
-        box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
-        display: flex; align-items: center; justify-content: center;
-        cursor: pointer; border: none; transition: transform 0.2s;
+        box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+        display: inline-flex; align-items: center; justify-content: center;
+        cursor: pointer; border: none; transition: transform 0.15s, box-shadow 0.15s;
         font-family: system-ui, -apple-system, sans-serif;
+        margin: 0 6px; flex-shrink: 0;
+        vertical-align: middle;
       }
-      #sparkbot-fab:hover { transform: scale(1.05); }
-      #sparkbot-fab svg { width: 28px; height: 28px; color: white; }
-      #sparkbot-fab .badge {
-        position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px;
-        padding: 0 6px; background: #ef4444; color: white; border-radius: 10px;
-        font-size: 11px; font-weight: 700; display: flex; align-items: center;
+      .sparkbot-btn:hover { transform: scale(1.06); box-shadow: 0 3px 12px rgba(99, 102, 241, 0.45); }
+      .sparkbot-btn svg { width: 18px; height: 18px; color: white; }
+      .sparkbot-btn .sparkbot-badge {
+        position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px;
+        padding: 0 5px; background: #ef4444; color: white; border-radius: 9px;
+        font-size: 10px; font-weight: 700; display: flex; align-items: center;
         justify-content: center; border: 2px solid white;
+      }
+      /* Fallback flutuante (canto inferior direito) — usado se header não for achado */
+      .sparkbot-btn.sparkbot-floating {
+        position: fixed; right: 20px; bottom: 20px; z-index: 999998;
+        width: 56px; height: 56px; margin: 0;
+      }
+      .sparkbot-btn.sparkbot-floating svg { width: 28px; height: 28px; }
+      .sparkbot-btn.sparkbot-floating .sparkbot-badge {
+        top: -4px; right: -4px; min-width: 20px; height: 20px; font-size: 11px;
       }
       #sparkbot-panel {
         position: fixed; top: 0; right: 0; bottom: 0; width: 450px;
@@ -200,14 +212,59 @@ const LOADER_SOURCE = `(function () {
     document.head.appendChild(style);
   }
 
+  /**
+   * Tenta achar o container ideal pro botão (dentro do header GHL).
+   * Ordem de tentativas (do mais específico pro genérico):
+   *   1. .hl_header--controls (container conhecido dos ícones de cima)
+   *   2. .hl_header__nav, .hl_header
+   *   3. nav[role="navigation"]
+   * Retorna null se nenhum bater — caller usa floating fallback.
+   */
+  function findHeaderContainer() {
+    var candidates = [
+      ".hl_header--controls",
+      ".hl_header .controls",
+      ".hl_header__controls",
+      ".hl_header__right",
+      ".hl_header",
+    ];
+    for (var i = 0; i < candidates.length; i++) {
+      var el = document.querySelector(candidates[i]);
+      if (el) return el;
+    }
+    return null;
+  }
+
   function injectFab() {
-    if (document.getElementById("sparkbot-fab")) return;
+    // Se já existe (de tentativa anterior), não duplica
+    if (document.querySelector(".sparkbot-btn")) return true;
+
     var btn = document.createElement("button");
-    btn.id = "sparkbot-fab";
-    btn.title = "Sparkbot";
-    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+    btn.className = "sparkbot-btn";
+    btn.title = "Sparkbot — copiloto IA";
+    btn.setAttribute("aria-label", "Abrir Sparkbot");
+    // Ícone de chat/sparkles (combina com a estética do GHL e diferencia do "Ask AI")
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M19 14l.7 2.1L21.8 17l-2.1.7L19 19.8l-.7-2.1L16.2 17l2.1-.7L19 14z"/></svg>';
     btn.onclick = togglePanel;
+
+    // 1) Tenta inline no header (preferido — fica do lado dos outros botões)
+    var header = findHeaderContainer();
+    if (header) {
+      // Insere ANTES do avatar/dropdown (que costuma ser o último child).
+      // Se acharmos o avatar, prependamos antes dele; senão, append no fim
+      // (ainda visível, só fica depois dos demais).
+      var avatar = header.querySelector(".hl_header--avatar, .hl_header--dropdown");
+      if (avatar) header.insertBefore(btn, avatar);
+      else header.appendChild(btn);
+      console.log("[Sparkbot] botão injetado no header GHL");
+      return true;
+    }
+
+    // 2) Fallback: floating no canto inferior direito (caso GHL mude markup)
+    btn.classList.add("sparkbot-floating");
     document.body.appendChild(btn);
+    console.warn("[Sparkbot] header GHL não encontrado — usando fallback flutuante");
+    return true;
   }
 
   function injectPanel() {
@@ -258,13 +315,13 @@ const LOADER_SOURCE = `(function () {
 
   function updateBadge(count) {
     STATE.unread = count;
-    var fab = document.getElementById("sparkbot-fab");
+    var fab = document.querySelector(".sparkbot-btn");
     if (!fab) return;
-    var existing = fab.querySelector(".badge");
+    var existing = fab.querySelector(".sparkbot-badge");
     if (count > 0) {
       if (!existing) {
         var b = document.createElement("span");
-        b.className = "badge";
+        b.className = "sparkbot-badge";
         fab.appendChild(b);
         existing = b;
       }
@@ -347,24 +404,71 @@ const LOADER_SOURCE = `(function () {
 
   // ---------- Boot ----------
   function boot() {
+    console.log("[Sparkbot] boot() iniciado");
     // Wait pra GHL terminar o initial load (URL pode ainda não ter locationId)
     var attempts = 0;
     var iv = setInterval(function () {
       attempts++;
-      if (detectLocationId() && detectUserId()) {
+      var loc = detectLocationId();
+      var usr = detectUserId();
+      var co = detectCompanyId();
+      if (attempts === 1 || attempts === 5 || attempts === 15) {
+        console.log("[Sparkbot] tentativa " + attempts + ":", { locationId: loc, userId: usr, companyId: co });
+      }
+      if (loc && usr && co) {
         clearInterval(iv);
         authenticate().then(function (ok) {
-          if (!ok) return;
+          if (!ok) {
+            console.warn("[Sparkbot] não autenticado (não-admin ou erro)");
+            return;
+          }
+          console.log("[Sparkbot] autenticado como", STATE.repName || STATE.repId);
           injectStyles();
           injectFab();
           poll();
           setInterval(poll, POLL_MS);
           setInterval(heartbeat, HEARTBEAT_MS);
+          // Watcher: GHL pode re-renderizar o header em SPA navigation,
+          // matando nosso botão. Re-injeta a cada 3s se sumir.
+          setInterval(function () {
+            if (!document.querySelector(".sparkbot-btn")) {
+              injectFab();
+            }
+          }, 3000);
         });
       }
-      if (attempts > 30) clearInterval(iv); // 30s timeout — desiste se URL não evolui
+      if (attempts > 30) {
+        clearInterval(iv);
+        console.warn("[Sparkbot] desistindo após 30 tentativas — não consegui detectar contexto GHL", { locationId: loc, userId: usr, companyId: co });
+      }
     }, 1000);
   }
+
+  // Helper de debug exposto no window pro Pedro inspecionar:
+  // > __sparkbotDebug()
+  window.__sparkbotDebug = function () {
+    return {
+      injected: !!document.querySelector(".sparkbot-btn"),
+      panel_open: STATE.panelOpen,
+      authenticated: !!STATE.token,
+      rep_name: STATE.repName,
+      rep_id: STATE.repId,
+      location_id: STATE.locationId,
+      company_id: STATE.companyId,
+      user_id: STATE.userId,
+      unread: STATE.unread,
+      header_found: !!findHeaderContainer(),
+      header_selector: (function () {
+        var el = findHeaderContainer();
+        return el ? el.className : null;
+      })(),
+      detected: {
+        locationId: detectLocationId(),
+        userId: detectUserId(),
+        companyId: detectCompanyId(),
+      },
+    };
+  };
 
   // SPA navigation: re-detecta location quando muda URL (GHL é Vue SPA)
   var lastPath = location.pathname;
