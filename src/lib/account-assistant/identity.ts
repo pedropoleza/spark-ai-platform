@@ -140,3 +140,113 @@ export async function setActiveLocation(repId: string, locationId: string): Prom
     .update({ active_location_id: locationId, updated_at: new Date().toISOString() })
     .eq("id", repId);
 }
+
+/**
+ * Identifica rep pelo ghl_user_id (usado pelo Web UI no GHL onde não temos
+ * phone direto, só user_id). Se não existir, busca o user no GHL pra obter
+ * phone e cria o registro. Igual identifyRep mas começando do user_id.
+ *
+ * Retorna null se user não tem permissão de admin OU não foi encontrado.
+ */
+export async function identifyRepByGhlUser(args: {
+  ghlUserId: string;
+  locationId: string;
+  companyId: string;
+}): Promise<RepIdentity | null> {
+  const { ghlUserId, locationId, companyId } = args;
+  const supabase = createAdminClient();
+
+  // 1. Busca rep que já tem esse ghl_user_id na location
+  // Usa filtro JSONB containment: ghl_users contém { ghl_user_id, location_id }
+  const { data: existing } = await supabase
+    .from("rep_identities")
+    .select("*")
+    .filter("ghl_users", "cs", JSON.stringify([{ ghl_user_id: ghlUserId, location_id: locationId }]))
+    .maybeSingle();
+
+  if (existing) return existing as RepIdentity;
+
+  // 2. Primeira vez que esse user usa o web — busca dados via GHL API
+  let userPhone: string | null = null;
+  let userName: string | null = null;
+  let userRole: string | null = null;
+  try {
+    const client = new GHLClient(companyId, locationId);
+    const res = await client.get<{
+      users?: Array<{
+        id: string;
+        firstName?: string;
+        lastName?: string;
+        phone?: string;
+        roles?: { role?: string };
+      }>;
+    }>("/users/", { locationId });
+
+    const u = (res.users || []).find((x) => x.id === ghlUserId);
+    if (u) {
+      userPhone = u.phone ? normalizePhone(u.phone) : null;
+      userName = [u.firstName, u.lastName].filter(Boolean).join(" ") || null;
+      userRole = u.roles?.role || null;
+    }
+  } catch (err) {
+    console.warn(
+      `[identity:web] failed to fetch user ${ghlUserId} in ${locationId}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // 3. Se já existir um rep com o mesmo phone (ex: cadastrado via WhatsApp),
+  // appenda esse user_id em ghl_users em vez de criar novo (mantém histórico
+  // unificado entre canais).
+  if (userPhone) {
+    const { data: byPhone } = await supabase
+      .from("rep_identities")
+      .select("*")
+      .eq("phone", userPhone)
+      .maybeSingle();
+
+    if (byPhone) {
+      const repExisting = byPhone as RepIdentity;
+      const links = (repExisting.ghl_users || []) as GHLUserLink[];
+      const alreadyHas = links.some(
+        (l) => l.ghl_user_id === ghlUserId && l.location_id === locationId,
+      );
+      if (!alreadyHas) {
+        const updatedLinks = [
+          ...links,
+          { ghl_user_id: ghlUserId, location_id: locationId, location_name: null, role: userRole },
+        ];
+        await supabase
+          .from("rep_identities")
+          .update({ ghl_users: updatedLinks, updated_at: new Date().toISOString() })
+          .eq("id", repExisting.id);
+        return { ...repExisting, ghl_users: updatedLinks };
+      }
+      return repExisting;
+    }
+  }
+
+  // 4. Cria rep novo. Phone pode ser null (rep só usa via web por ora).
+  // O UNIQUE em phone exige valor, então usamos placeholder único quando
+  // phone real não tá disponível.
+  const phoneOrPlaceholder = userPhone || `webonly:${ghlUserId}`;
+  const { data: created, error } = await supabase
+    .from("rep_identities")
+    .insert({
+      phone: phoneOrPlaceholder,
+      display_name: userName,
+      ghl_users: [
+        { ghl_user_id: ghlUserId, location_id: locationId, location_name: null, role: userRole },
+      ],
+      active_location_id: locationId,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error("[identity:web] failed to insert rep_identity:", error.message);
+    return null;
+  }
+
+  return created as RepIdentity;
+}

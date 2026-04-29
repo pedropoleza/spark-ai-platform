@@ -20,6 +20,11 @@ interface BuildPromptArgs {
   confirmationMode: "always" | "medium_and_high" | "high_only";
   /** Conteúdo Tier 1 da carrier KB (chunks priority='always'). Default vazio. */
   carrierOverview?: string;
+  /**
+   * Canal pelo qual o rep está interagindo agora. Default 'whatsapp'.
+   * Usado pra adaptar regras de schedule_reminder (perguntar canal no web).
+   */
+  channel?: "whatsapp" | "web_ui";
 }
 
 /**
@@ -28,7 +33,7 @@ interface BuildPromptArgs {
  * em runtime context na user message).
  */
 export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
-  const { rep, locationName, locationTimezone, locale, confirmationMode, carrierOverview } = args;
+  const { rep, locationName, locationTimezone, locale, confirmationMode, carrierOverview, channel = "whatsapp" } = args;
   const confirmText =
     confirmationMode === "always"
       ? "Confirme TUDO antes de executar — até leitura."
@@ -92,6 +97,21 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "# CONFIRMAÇÃO DE AÇÕES (enforcado em código — H8)",
     `Modo atual da location: '${confirmationMode}'. ${confirmText}`,
     "Quando o gate exigir confirmação, a tool retorna erro com a frase exata pra você usar. Pergunte ao rep, espere 'sim/confirma/pode/ok', e RECHAME a mesma tool com `confirmed_by_rep: true` no input. Sem essa flag, o sistema bloqueia a execução de tools risk=high (e medium em modo medium_and_high).",
+    "",
+    `# CANAL ATUAL: ${channel === "web_ui" ? "Web UI (painel no GHL)" : "WhatsApp"}`,
+    channel === "web_ui"
+      ? [
+          "Rep tá conversando com você pelo painel flutuante dentro do GHL — não é WhatsApp.",
+          "REGRA DE LEMBRETES (schedule_reminder):",
+          "- Quando o rep pedir lembrete neste canal, SEMPRE pergunte ANTES de chamar a tool: 'Onde quer receber: computador, celular ou ambos?'",
+          "- Mapeie a resposta pro arg `delivery_channel`: 'computador'/'aqui'/'no GHL' → 'web_ui'; 'celular'/'WhatsApp'/'cel' → 'whatsapp'; 'ambos'/'os dois' → 'both'.",
+          "- Só depois chame schedule_reminder com o delivery_channel escolhido + confirmed_by_rep:true.",
+          "- Pra recurring_reminder vale a mesma regra (pergunta uma vez, vale pra todos os disparos).",
+        ].join("\n")
+      : [
+          "Rep tá conversando com você pelo WhatsApp.",
+          "REGRA DE LEMBRETES: chame schedule_reminder direto com `delivery_channel: 'whatsapp'` (default automático). Sem precisar perguntar canal.",
+        ].join("\n"),
     "",
     "HIERARQUIA DA OPERAÇÃO:",
     "  National Life (carrier que emite apólice) → Five Rings Financial (MGA/IMO) → Brazillionaires (sub-agência dos brasileiros, onde o rep está).",
@@ -277,6 +297,7 @@ function buildMemorySection(profile: RepProfile): string {
 export function buildSparkbotRuntimeContext(args: {
   locationTimezone: string;
   locale: "pt-BR" | "en-US";
+  channel?: "whatsapp" | "web_ui";
 }): string {
   const now = new Date();
   const dateStr = now.toLocaleString(args.locale, {
@@ -298,6 +319,7 @@ export function buildSparkbotRuntimeContext(args: {
   return [
     `[Agora: ${dateStr} (${args.locationTimezone}, offset ${offsetStr})]`,
     `[ISO agora: ${localIso}]`,
+    `[Canal atual: ${args.channel || "whatsapp"}]`,
     `[Ao criar task com due_at, use ISO 8601 com offset ${offsetStr}. Ex: segunda-feira 10h seria calculado a partir deste momento e emitido como AAAA-MM-DDT10:00:00${offsetStr}]`,
   ].join("\n");
 }

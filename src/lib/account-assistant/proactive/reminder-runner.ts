@@ -29,6 +29,7 @@ interface ScheduledTaskRow {
   cron_expr: string | null;
   status: string;
   last_run_at: string | null;
+  delivery_channel?: "whatsapp" | "web_ui" | "both" | null;
 }
 
 export async function fireScheduledReminders(): Promise<ReminderRunResult> {
@@ -81,39 +82,125 @@ async function fireOne(task: ScheduledTaskRow): Promise<"fired" | "failed" | "sk
     return "failed";
   }
 
-  // V2 simulated: precisa de session_id pra mostrar no chat. Sem session,
-  // marca como skipped (V3 vai usar WhatsApp direto, sem precisar disso).
-  if (!sessionId) {
-    // Tenta achar uma sessão de teste recente do rep pra entregar
-    const { data: recentSession } = await supabase
-      .from("agent_test_sessions")
-      .select("id")
-      .eq("location_id", task.location_id)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+  // Resolve canais de entrega. Default 'whatsapp' pra retrocompat com tasks
+  // criadas antes da migration 00042. 'both' explode em 2 entregas.
+  const explicitChannel = task.delivery_channel || "whatsapp";
+  const channels: Array<"whatsapp" | "web_ui"> =
+    explicitChannel === "both" ? ["whatsapp", "web_ui"] : [explicitChannel];
 
-    if (!recentSession) {
-      await advanceTask(task);
-      return "skipped";
-    }
-    await deliverReminder(recentSession.id, task, message, title);
-  } else {
-    // Verifica se a sessão ainda existe
+  // Sessão de teste é prioritária (pra rodar synthetic-test). Senão usa
+  // entregas reais — Web UI (sparkbot_messages) e/ou WhatsApp (V3).
+  if (sessionId) {
     const { data: sess } = await supabase
       .from("agent_test_sessions")
       .select("id")
       .eq("id", sessionId)
       .maybeSingle();
-    if (!sess) {
+    if (sess) {
+      await deliverReminderTestSession(sessionId, task, message, title);
       await advanceTask(task);
-      return "skipped";
+      return "fired";
     }
-    await deliverReminder(sessionId, task, message, title);
+  }
+
+  // Web UI: insere em sparkbot_messages com channel='system' (proativa).
+  // Painel web vai pegar no próximo poll e mostrar como notificação.
+  if (channels.includes("web_ui")) {
+    await deliverReminderWeb(task, message, title);
+  }
+
+  // WhatsApp: V3 enviaria pelo Hub real; por enquanto registra como
+  // 'system' channel='whatsapp' pra histórico (e V3 envia depois).
+  if (channels.includes("whatsapp")) {
+    await deliverReminderWhatsapp(task, message, title);
   }
 
   await advanceTask(task);
   return "fired";
+}
+
+async function deliverReminderWeb(
+  task: ScheduledTaskRow,
+  message: string,
+  title: string | undefined,
+): Promise<void> {
+  const supabase = createAdminClient();
+  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  if (!hubLocationId) {
+    console.warn("[reminder-runner] ASSISTANT_HUB_LOCATION_ID não configurado — pulando entrega web");
+    return;
+  }
+  // Resolve agent_id (sparkbot do Hub)
+  const { data: hubAgent } = await supabase
+    .from("agents")
+    .select("id")
+    .eq("location_id", hubLocationId)
+    .eq("type", "account_assistant")
+    .eq("status", "active")
+    .maybeSingle();
+  if (!hubAgent) return;
+
+  await supabase.from("sparkbot_messages").insert({
+    rep_id: task.rep_id,
+    hub_location_id: hubLocationId,
+    agent_id: hubAgent.id,
+    active_location_id: task.location_id,
+    role: "agent",
+    content: `🔔 ${title || "Lembrete"}\n\n${message}`,
+    channel: "system",
+    metadata: {
+      reminder_id: task.id,
+      task_type: task.task_type,
+      source: "scheduled_reminder",
+    },
+  });
+}
+
+async function deliverReminderWhatsapp(
+  task: ScheduledTaskRow,
+  message: string,
+  title: string | undefined,
+): Promise<void> {
+  // V3 enviaria via GHL conversations/messages aqui. Por enquanto, registra
+  // em sparkbot_messages com channel='whatsapp' (já lida — não aparece no
+  // badge web). Quando V3 chegar, append GHLClient.post call aqui.
+  const supabase = createAdminClient();
+  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  if (!hubLocationId) return;
+  const { data: hubAgent } = await supabase
+    .from("agents")
+    .select("id")
+    .eq("location_id", hubLocationId)
+    .eq("type", "account_assistant")
+    .eq("status", "active")
+    .maybeSingle();
+  if (!hubAgent) return;
+
+  await supabase.from("sparkbot_messages").insert({
+    rep_id: task.rep_id,
+    hub_location_id: hubLocationId,
+    agent_id: hubAgent.id,
+    active_location_id: task.location_id,
+    role: "agent",
+    content: `🔔 ${title || "Lembrete"}\n\n${message}`,
+    channel: "whatsapp",
+    read_in_web_at: new Date().toISOString(), // já lida — não badge no web
+    metadata: {
+      reminder_id: task.id,
+      task_type: task.task_type,
+      source: "scheduled_reminder",
+      pending_v3_send: true, // flag pro V3 picker enviar depois
+    },
+  });
+}
+
+async function deliverReminderTestSession(
+  sessionId: string,
+  task: ScheduledTaskRow,
+  message: string,
+  title: string | undefined,
+): Promise<void> {
+  await deliverReminder(sessionId, task, message, title);
 }
 
 async function deliverReminder(

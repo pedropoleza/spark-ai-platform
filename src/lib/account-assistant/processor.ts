@@ -33,6 +33,13 @@ export interface ProcessInput {
   /** Quando preenchido, rep está em modo teste — tools de scheduling marcam
    *  o reminder pra disparar nessa session. */
   testSessionId?: string | null;
+  /**
+   * Canal pelo qual o rep enviou a mensagem. Default 'whatsapp'.
+   * - 'whatsapp': fluxo padrão; reminders agendados vão automático no WhatsApp
+   * - 'web_ui': painel flutuante no GHL; bot deve perguntar canal antes de
+   *   agendar lembrete (computador/celular/ambos)
+   */
+  channel?: "whatsapp" | "web_ui";
   config: {
     confirmation_mode?: "always" | "medium_and_high" | "high_only";
     ai_model?: string;
@@ -152,6 +159,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     return "";
   });
 
+  const channel = input.channel || "whatsapp";
   const systemPrompt = buildSparkbotSystemPrompt({
     rep,
     locationName: activeLink.location_name || location.location_name || activeLocationId,
@@ -159,11 +167,13 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     locale,
     confirmationMode: input.config.confirmation_mode || "medium_and_high",
     carrierOverview,
+    channel,
   });
 
   const runtimeContext = buildSparkbotRuntimeContext({
     locationTimezone: timezone,
     locale,
+    channel,
   });
 
   // Constrói user message (pode ter imagem anexada)

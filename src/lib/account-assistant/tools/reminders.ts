@@ -22,7 +22,7 @@ const scheduleReminder: ToolEntry = {
   def: {
     name: "schedule_reminder",
     description:
-      "Agenda uma mensagem proativa do Sparkbot pro rep no horário combinado. Use quando o rep pedir 'me lembra/avisa em X', 'todo dia/sexta às Y, me manda Z'. NÃO confunda com create_task (que cria task no CRM, visível no GHL). Reminder = msg do Sparkbot pelo mesmo canal que ele usa hoje.",
+      "Agenda uma mensagem proativa do Sparkbot pro rep no horário combinado. Use quando o rep pedir 'me lembra/avisa em X', 'todo dia/sexta às Y, me manda Z'. NÃO confunda com create_task (que cria task no CRM, visível no GHL). Reminder = msg do Sparkbot.\n\nCANAL DE ENTREGA (delivery_channel):\n- Se rep tá no WhatsApp: passe 'whatsapp' (default).\n- Se rep tá no Web UI (painel no GHL): PERGUNTE primeiro 'computador, celular ou ambos?' e mapeie pra 'web_ui'/'whatsapp'/'both' antes de chamar a tool.",
     risk: "medium",
     parameters: {
       type: "object",
@@ -45,6 +45,12 @@ const scheduleReminder: ToolEntry = {
         title: {
           type: "string",
           description: "Título curto pra mostrar em list_my_reminders. Default: primeiros 40 chars do message.",
+        },
+        delivery_channel: {
+          type: "string",
+          enum: ["whatsapp", "web_ui", "both"],
+          description:
+            "Onde entregar o lembrete. 'whatsapp' = WhatsApp do rep (default p/ requests vindos do WhatsApp). 'web_ui' = só no painel do GHL (computador). 'both' = nos dois lugares. Pra requests vindos do Web UI, PERGUNTE ao rep antes de chamar.",
         },
       },
       required: ["message", "remind_at"],
@@ -76,6 +82,15 @@ const scheduleReminder: ToolEntry = {
       ? String(args.title).slice(0, 100)
       : message.slice(0, 40) + (message.length > 40 ? "…" : "");
 
+    // delivery_channel: respeita o que LLM passou; senão usa o canal atual
+    // do contexto como default. Importante: pra Web UI, prompt-builder
+    // ensinou o LLM a perguntar antes — se chegou 'whatsapp' aqui veio do WA.
+    const requestedChannel = args.delivery_channel ? String(args.delivery_channel) : null;
+    const validChannels = ["whatsapp", "web_ui", "both"];
+    const deliveryChannel = requestedChannel && validChannels.includes(requestedChannel)
+      ? requestedChannel
+      : (ctx.confirmationMode ? "whatsapp" : "whatsapp"); // default whatsapp
+
     const supabase = createAdminClient();
     const { data, error } = await supabase
       .from("assistant_scheduled_tasks")
@@ -91,9 +106,10 @@ const scheduleReminder: ToolEntry = {
         },
         next_run_at: isoRemind,
         cron_expr: recurrence,
+        delivery_channel: deliveryChannel,
         status: "pending",
       })
-      .select("id, next_run_at")
+      .select("id, next_run_at, delivery_channel")
       .single();
 
     if (error) {
@@ -105,6 +121,7 @@ const scheduleReminder: ToolEntry = {
         reminder_id: data.id,
         next_run_at: data.next_run_at,
         recurrence: recurrence || null,
+        delivery_channel: data.delivery_channel,
         title,
       },
     };
