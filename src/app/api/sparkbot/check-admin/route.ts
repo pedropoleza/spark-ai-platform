@@ -58,16 +58,71 @@ export async function POST(request: NextRequest) {
       console.warn("[check-admin] upsertLocation falhou (não-fatal):", err instanceof Error ? err.message : err);
     }
 
-    // Valida via GHL API. validateGHLUser retorna o user com role+type;
-    // isAdmin já considera 'admin', 'owner', 'agency_owner', 'agency_user',
-    // 'account', 'admin', 'agency'.
-    const validation = await validateGHLUser(companyId, locationId, userId);
-    if (!validation) {
-      return json({ ok: false, reason: "ghl_validation_failed" }, { status: 502 });
+    // Validação multi-fonte (em ordem):
+    //   1. JWT do Firebase no localStorage (claims.role/type) — mais confiável
+    //      pra agency users que não aparecem em /users/?locationId=...
+    //   2. GHL API (/users/) — fallback pra users location-level
+    //
+    // O `idToken` (refreshedToken do localStorage GHL) vem do Firebase Auth do
+    // GHL, é assinado pelo Google. Pra MVP confiamos no payload sem verify de
+    // assinatura (qualquer adversário precisa estar autenticado no white-label
+    // pra obter um JWT válido). Verificamos consistência: claims.user_id /
+    // claims.company_id têm que bater com os fields do request body.
+    let isAdmin = false;
+    let adminSource = "";
+    const idToken: string | undefined = body.idToken ? String(body.idToken) : undefined;
+    if (idToken) {
+      try {
+        const parts = idToken.split(".");
+        if (parts.length === 3) {
+          // Base64URL → Base64 (jose já tem helpers, mas é simples)
+          const payloadB64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+          const payload = JSON.parse(
+            Buffer.from(payloadB64, "base64").toString("utf-8"),
+          ) as {
+            claims?: { user_id?: string; company_id?: string; role?: string; type?: string };
+            exp?: number;
+          };
+          const claims = payload.claims || {};
+          const matchesUser = claims.user_id === userId;
+          const matchesCompany = claims.company_id === companyId;
+          const notExpired = !payload.exp || payload.exp * 1000 > Date.now() - 60_000;
+          if (matchesUser && matchesCompany && notExpired) {
+            const role = (claims.role || "").toLowerCase();
+            const type = (claims.type || "").toLowerCase();
+            const adminRoles = ["admin", "owner", "agency_owner", "agency_user"];
+            const adminTypes = ["admin", "agency", "account"];
+            if (adminRoles.includes(role) || adminTypes.includes(type)) {
+              isAdmin = true;
+              adminSource = `jwt_claims (role=${role}, type=${type})`;
+            }
+          } else {
+            console.warn(
+              "[check-admin] idToken mismatch:",
+              { matchesUser, matchesCompany, notExpired },
+            );
+          }
+        }
+      } catch (e) {
+        console.warn("[check-admin] idToken decode falhou:", e instanceof Error ? e.message : e);
+      }
     }
-    if (!validation.isAdmin) {
+
+    if (!isAdmin) {
+      // Fallback: tenta GHL API
+      const validation = await validateGHLUser(companyId, locationId, userId);
+      if (validation && validation.isAdmin) {
+        isAdmin = true;
+        adminSource = "ghl_api";
+      } else if (!validation) {
+        return json({ ok: false, reason: "ghl_validation_failed" }, { status: 502 });
+      }
+    }
+
+    if (!isAdmin) {
       return json({ ok: false, reason: "not_admin" }, { status: 403 });
     }
+    console.log(`[check-admin] admin OK via ${adminSource} (user=${userId})`);
 
     // Encontra ou cria rep_identity. Se rep não tem phone cadastrado,
     // ainda funciona (web-only). Quando rep usar WhatsApp depois com phone

@@ -162,6 +162,12 @@ const LOADER_SOURCE = `(function () {
     STATE.companyId = companyId;
     STATE.userId = userId;
 
+    // Envia também o idToken (refreshedToken do localStorage GHL). Server
+    // usa pra validar admin via claims.role/type — mais confiável que GHL API
+    // (que não retorna agency users em /users/?locationId=...).
+    var idToken = null;
+    try { idToken = localStorage.getItem("refreshedToken"); } catch (e) {}
+
     return fetch(APP_URL + "/api/sparkbot/check-admin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -171,6 +177,7 @@ const LOADER_SOURCE = `(function () {
         companyId: companyId,
         locationName: detectLocationName(),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        idToken: idToken,
       }),
     })
     .then(function (r) { return r.json(); })
