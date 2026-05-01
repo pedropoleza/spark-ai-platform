@@ -33,7 +33,7 @@ export const maxDuration = 30;
 // as keys do JWKS até achar a que valida (single key na maioria das vezes).
 const GHL_SERVICE_ACCOUNT_EMAIL = "default-crm-marketplace@highlevel-backend.iam.gserviceaccount.com";
 const GHL_JWKS = createRemoteJWKSet(
-  new URL(`https://www.googleapis.com/service_accounts/v1/jwk/${GHL_SERVICE_ACCOUNT_EMAIL}`),
+  new URL(`https://www.googleapis.com/robot/v1/metadata/jwk/${GHL_SERVICE_ACCOUNT_EMAIL}`),
 );
 
 interface FirebaseClaims {
