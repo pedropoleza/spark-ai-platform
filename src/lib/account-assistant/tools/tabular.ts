@@ -142,6 +142,14 @@ const importContactsFromData: ToolEntry = {
           type: "string",
           description: "OPCIONAL. Location pra importar (default: active_location do rep).",
         },
+        assigned_to: {
+          type: "string",
+          description:
+            "OPCIONAL. GHL user ID do dono pra TODOS os contatos importados. " +
+            "Se o rep pedir 'me coloca como owner' / 'meu user como owner', use 'self' " +
+            "(a tool resolve automaticamente pro ghl_user_id do rep na location ativa). " +
+            "Pode também passar o user_id direto se for outro user.",
+        },
       },
       required: ["column_mapping"],
     },
@@ -168,6 +176,28 @@ const importContactsFromData: ToolEntry = {
     const mapping = (args.column_mapping || {}) as ColumnMapping;
     const tags = Array.isArray(args.tags) ? (args.tags as string[]) : [];
     const targetLocation = args.target_location_id ? String(args.target_location_id) : ctx.locationId;
+
+    // Owner: 'self' resolve pro ghl_user_id do rep na location ativa.
+    // Aceita também o user_id direto (caso o rep peça pra atribuir a outro).
+    let assignedTo: string | undefined;
+    if (args.assigned_to) {
+      const raw = String(args.assigned_to).trim();
+      if (raw === "self" || raw === "me" || raw === "rep") {
+        const repGhlUserId = getRepGhlUserId(ctx);
+        if (!repGhlUserId) {
+          return {
+            status: "error",
+            message:
+              "Não achei seu ghl_user_id na location ativa pra setar como owner. " +
+              "Verifique se você tá cadastrado no GHL desta location.",
+            retryable: false,
+          };
+        }
+        assignedTo = repGhlUserId;
+      } else {
+        assignedTo = raw;
+      }
+    }
 
     // Validação: ao menos phone OU email mapeado
     if (!mapping.phone && !mapping.email) {
@@ -242,6 +272,7 @@ const importContactsFromData: ToolEntry = {
         state: state || undefined,
         source: source || "Sparkbot Import",
         tags: allTags,
+        assignedTo: assignedTo, // undefined = GHL não muda owner; string = aplica esse user
       };
 
       contactsToCreate.push({
@@ -327,6 +358,7 @@ const importContactsFromData: ToolEntry = {
         failed_count: failed.length,
         skipped_count: skipped.length,
         tags_applied: allTags,
+        assigned_to: assignedTo || null,
         notes_created: notesCreated,
         notes_failed: notesFailed,
         notes_mapped_column: mapping.notes || null,

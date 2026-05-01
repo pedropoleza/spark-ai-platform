@@ -125,6 +125,12 @@ const createContact: ToolEntry = {
         company_name: { type: "string" },
         tags: { type: "array", items: { type: "string" } },
         source: { type: "string", description: "Onde o lead veio (ex: 'WhatsApp inbound')." },
+        assigned_to: {
+          type: "string",
+          description:
+            "GHL user ID do dono/owner. Se o rep pedir 'me coloca como owner', " +
+            "use o ghl_user_id dele na location ativa.",
+        },
       },
     },
   },
@@ -146,6 +152,7 @@ const createContact: ToolEntry = {
       if (args.company_name) body.companyName = String(args.company_name);
       if (Array.isArray(args.tags)) body.tags = args.tags;
       if (args.source) body.source = String(args.source);
+      if (args.assigned_to) body.assignedTo = String(args.assigned_to);
 
       const res = await ctx.ghlClient.post<{ contact?: { id: string } }>("/contacts/", body);
       return { status: "ok", data: { contact_id: res.contact?.id } };
@@ -159,7 +166,7 @@ const updateContact: ToolEntry = {
   def: {
     name: "update_contact",
     description:
-      "Atualiza um ou mais campos do contato. Aceita standard fields (firstName, lastName, email, phone, address1, city, state, postalCode, country, companyName, dateOfBirth) ou custom fields via custom_fields[].",
+      "Atualiza um ou mais campos do contato. Aceita standard fields (firstName, lastName, email, phone, address1, city, state, postalCode, country, companyName, dateOfBirth), owner via assigned_to (GHL user ID), ou custom fields via custom_fields[].",
     risk: "medium",
     parameters: {
       type: "object",
@@ -178,6 +185,12 @@ const updateContact: ToolEntry = {
           },
         },
         date_of_birth: { type: "string", description: "ISO date YYYY-MM-DD" },
+        assigned_to: {
+          type: "string",
+          description:
+            "GHL user ID do dono/owner do contato (campo `assignedTo` na API GHL). " +
+            "Se o rep pedir 'me coloca como owner', use ctx.rep.ghl_users[active].ghl_user_id.",
+        },
         custom_fields: {
           type: "array",
           description: "[{ key: 'field_id_or_key', value: '...' }]",
@@ -203,6 +216,7 @@ const updateContact: ToolEntry = {
     if (args.phone) body.phone = String(args.phone);
     if (args.company_name) body.companyName = String(args.company_name);
     if (args.date_of_birth) body.dateOfBirth = String(args.date_of_birth);
+    if (args.assigned_to) body.assignedTo = String(args.assigned_to);
     if (args.address && typeof args.address === "object") {
       const a = args.address as Record<string, unknown>;
       if (a.line1) body.address1 = String(a.line1);

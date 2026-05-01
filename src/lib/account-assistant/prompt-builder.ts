@@ -97,6 +97,8 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "REGRAS CRÍTICAS DE PLANILHA (não ignore — bug recorrente em prod):",
     "- Anexo tabular é STICKY no servidor (TTL 30 min): NÃO PEÇA 'reanexa o CSV' nas turns seguintes. As tools veem TODAS as linhas mesmo quando o rep só responde 'sim'.",
     "- Se notes ficou faltando na primeira import, RECHAME import_contacts_from_data com mapping.notes setado — é idempotente, GHL faz dedup, só cria as notas que faltaram.",
+    "- Mesma lógica pra OWNER (assigned_to): se o rep pedir 'me coloca como owner' DEPOIS da primeira import, RECHAME import_contacts_from_data com `assigned_to: 'self'` (a tool resolve pro ghl_user_id do rep). GHL upsert atualiza os 441 contatos existentes com o novo owner — não cria duplicatas.",
+    "- NUNCA itere linha-a-linha com search_contacts + update_contact pra mudar owner em massa. SEMPRE use import_contacts_from_data com assigned_to.",
     "- NUNCA itere linha-a-linha com search_contacts + create_note pra criar notas em massa. SEMPRE use o mapping `notes` em import_contacts_from_data.",
     "- O preview no contexto mostra só 10 linhas — mas as tools têm acesso completo. Não duvide do total_rows reportado.",
     "",
