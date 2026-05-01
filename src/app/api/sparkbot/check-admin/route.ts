@@ -105,17 +105,18 @@ async function verifyFirebaseIdToken(idToken: string): Promise<VerifyResult> {
   }
 
   // Lê iss do token pra escolher JWKS correto. Se iss for unknown, rejeita.
-  const issuer = peekIssuer(token);
-  if (!issuer) {
+  const peekedIssuer = peekIssuer(token);
+  if (!peekedIssuer) {
     return { claims: null, errorCode: "missing_iss", errorMessage: "JWT sem iss claim" };
   }
-  if (!GHL_KNOWN_ISSUERS.includes(issuer)) {
+  if (!GHL_KNOWN_ISSUERS.includes(peekedIssuer)) {
     return {
       claims: null,
       errorCode: "unknown_iss",
-      errorMessage: `iss não é GHL known: ${issuer}`,
+      errorMessage: `iss não é GHL known: ${peekedIssuer}`,
     };
   }
+  const issuer: string = peekedIssuer;
 
   // Helper: tenta cada key do set
   async function tryKeys(keys: JWK[]): Promise<{ claims: FirebaseClaims | null; lastError: { code?: string; message?: string } | null }> {
