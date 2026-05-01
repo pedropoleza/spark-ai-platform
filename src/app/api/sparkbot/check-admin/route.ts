@@ -20,21 +20,37 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateGHLUser, upsertLocation } from "@/lib/auth/sso";
 import { identifyRepByGhlUser, acceptTerms } from "@/lib/account-assistant/identity";
 import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
-import { createRemoteJWKSet, jwtVerify } from "jose";
+import { importJWK, jwtVerify, type JWK } from "jose";
 
 export const maxDuration = 30;
 
 // O JWT do GHL/sparkleads é assinado pelo SERVICE ACCOUNT custom do GHL
-// (default-crm-marketplace@highlevel-backend.iam.gserviceaccount.com), não
-// pelas chaves do securetoken@system padrão do Firebase. JWKS do service
-// account fica em endpoint específico — Google publica as public keys lá.
+// (default-crm-marketplace@highlevel-backend.iam.gserviceaccount.com).
+// O JWKS público fica em /robot/v1/metadata/jwk/.
 //
-// Header desses tokens não tem `kid` claim, então jose vai testar todas
-// as keys do JWKS até achar a que valida (single key na maioria das vezes).
+// Tokens não têm `kid` no header, e o JWKS tem múltiplas keys (rotação).
+// jose.createRemoteJWKSet falha com ERR_JWKS_MULTIPLE_MATCHING_KEYS — então
+// fazemos seleção manual: cache JWKS por 1h, tentar cada key até validar.
 const GHL_SERVICE_ACCOUNT_EMAIL = "default-crm-marketplace@highlevel-backend.iam.gserviceaccount.com";
-const GHL_JWKS = createRemoteJWKSet(
-  new URL(`https://www.googleapis.com/robot/v1/metadata/jwk/${GHL_SERVICE_ACCOUNT_EMAIL}`),
-);
+const GHL_JWKS_URL = `https://www.googleapis.com/robot/v1/metadata/jwk/${GHL_SERVICE_ACCOUNT_EMAIL}`;
+const JWKS_CACHE_TTL_MS = 60 * 60 * 1000; // 1h
+
+interface JwksCacheEntry {
+  keys: JWK[];
+  fetchedAt: number;
+}
+let jwksCache: JwksCacheEntry | null = null;
+
+async function fetchJwks(): Promise<JWK[]> {
+  if (jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_CACHE_TTL_MS) {
+    return jwksCache.keys;
+  }
+  const res = await fetch(GHL_JWKS_URL, { cache: "no-store" });
+  if (!res.ok) throw new Error(`JWKS fetch ${res.status}`);
+  const data = await res.json() as { keys: JWK[] };
+  jwksCache = { keys: data.keys || [], fetchedAt: Date.now() };
+  return jwksCache.keys;
+}
 
 interface FirebaseClaims {
   user_id?: string;
@@ -67,23 +83,42 @@ async function verifyFirebaseIdToken(idToken: string): Promise<VerifyResult> {
     try { token = JSON.parse(token) as string; } catch { /* deixa como tava */ }
   }
 
+  let keys: JWK[];
   try {
-    const { payload } = await jwtVerify(token, GHL_JWKS, {
-      issuer: GHL_SERVICE_ACCOUNT_EMAIL,
-      // Audience é Identity Toolkit do GHL — não validamos.
-    });
-    const claims = (payload as { claims?: FirebaseClaims }).claims;
-    return { claims: claims || null };
+    keys = await fetchJwks();
   } catch (err) {
-    const e = err as { code?: string; message?: string };
-    const errorCode = e.code || "unknown";
-    const errorMessage = e.message || String(err);
-    console.warn(
-      `[check-admin] GHL idToken verify falhou: code=${errorCode} msg=${errorMessage} `
-      + `tokenLen=${token.length} tokenStart=${token.slice(0, 30)}`,
-    );
-    return { claims: null, errorCode, errorMessage };
+    return { claims: null, errorCode: "jwks_fetch_failed", errorMessage: String(err) };
   }
+  if (keys.length === 0) {
+    return { claims: null, errorCode: "jwks_empty", errorMessage: "no keys" };
+  }
+
+  // Tenta cada key — primeira que valida ganha.
+  let lastError: { code?: string; message?: string } | null = null;
+  for (const jwk of keys) {
+    try {
+      const key = await importJWK(jwk, jwk.alg || "RS256");
+      const { payload } = await jwtVerify(token, key, {
+        issuer: GHL_SERVICE_ACCOUNT_EMAIL,
+      });
+      const claims = (payload as { claims?: FirebaseClaims }).claims;
+      return { claims: claims || null };
+    } catch (err) {
+      const e = err as { code?: string; message?: string };
+      lastError = { code: e.code, message: e.message };
+      // Continua tentando próxima key (signature errada = essa key não bate)
+    }
+  }
+
+  console.warn(
+    `[check-admin] GHL idToken verify falhou em todas ${keys.length} keys: `
+    + `code=${lastError?.code || "?"} msg=${lastError?.message || "?"}`,
+  );
+  return {
+    claims: null,
+    errorCode: lastError?.code || "verify_failed_all_keys",
+    errorMessage: lastError?.message || `tried ${keys.length} keys`,
+  };
 }
 
 const CORS_HEADERS: Record<string, string> = {
