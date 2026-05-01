@@ -26,12 +26,36 @@ interface Message {
   pending?: boolean;
 }
 
+// Tipo do attachment retornado pelo /upload — espelha RepInput não-text/audio.
+type AttachmentKind = "image" | "document" | "tabular";
+interface PainelAttachment {
+  kind: AttachmentKind;
+  // image:
+  base64_data_uri?: string;
+  filename?: string;
+  // document:
+  extracted_text?: string;
+  // tabular:
+  tabular?: {
+    filename: string;
+    columns: string[];
+    total_rows: number;
+    rows: Array<Record<string, unknown>>;
+    sheets?: Array<{ name: string; total_rows: number; columns: string[] }>;
+    active_sheet?: string;
+  };
+  /** Resumo curto pro chip ("Excel lista.xlsx — 47 linhas, 3 colunas") */
+  summary: string;
+}
+
 const SUGGESTIONS = [
   "Quem tá na minha agenda hoje?",
   "Resume meus opps abertos",
   "Cliente diabético — qual rate no FlexLife?",
-  "Como funciona Emergency Contact List?",
+  "Importa esses leads pra mim (anexa CSV)",
 ];
+
+const ACCEPT_FILES = ".png,.jpg,.jpeg,.webp,.gif,.pdf,.csv,.xlsx,.xls,image/*,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel";
 
 function SparkbotPanel() {
   const [token, setToken] = useState<string | null>(null);
@@ -43,11 +67,16 @@ function SparkbotPanel() {
   const [recording, setRecording] = useState(false);
   const [recDuration, setRecDuration] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
+  const [attachment, setAttachment] = useState<PainelAttachment | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const mediaRec = useRef<MediaRecorder | null>(null);
   const recChunks = useRef<Blob[]>([]);
   const recTimer = useRef<NodeJS.Timeout | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const dragCounterRef = useRef(0);
 
   // Boot: lê token + repName da URL
   useEffect(() => {
@@ -95,24 +124,42 @@ function SparkbotPanel() {
   const sendMessage = useCallback(async (overrideText?: string) => {
     if (!token || sending) return;
     const text = (overrideText ?? input).trim();
-    if (!text) return;
+    // Pode mandar com attachment sem texto, ou texto sem attachment, mas
+    // não vazio total
+    if (!text && !attachment) return;
     setInput("");
     setSending(true);
     setError(null);
+
+    // Conteúdo legível pra histórico optimistic
+    const optimisticContent = (() => {
+      if (!attachment) return text;
+      const filename = attachment.filename || attachment.tabular?.filename || "arquivo";
+      const icon = attachment.kind === "image" ? "🖼️" : attachment.kind === "tabular" ? "📊" : "📄";
+      const meta = attachment.kind === "tabular"
+        ? ` (${attachment.tabular!.total_rows} linhas)`
+        : "";
+      return `${icon} ${filename}${meta}${text ? `\n${text}` : ""}`;
+    })();
 
     const userTmpId = `tmp-u-${Date.now()}`;
     const agentTmpId = `tmp-a-${Date.now()}`;
     setMessages((prev) => [
       ...prev,
-      { id: userTmpId, role: "user", content: text, channel: "web_ui", created_at: new Date().toISOString() },
+      { id: userTmpId, role: "user", content: optimisticContent, channel: "web_ui", created_at: new Date().toISOString() },
       { id: agentTmpId, role: "agent", content: "", channel: "web_ui", created_at: new Date().toISOString(), pending: true },
     ]);
+
+    // Constrói payload — attachment vai como RepInput "puro" (sem campo summary)
+    const attachmentPayload = attachment ? buildAttachmentPayload(attachment) : null;
+    // Limpa anexo da UI antes mesmo da response (rep pode anexar próximo)
+    setAttachment(null);
 
     try {
       const res = await fetch(`/api/sparkbot/send`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, attachment: attachmentPayload }),
       });
       const data = await res.json();
       if (!data.ok) {
@@ -120,7 +167,6 @@ function SparkbotPanel() {
         setMessages((prev) => prev.filter((m) => m.id !== agentTmpId));
         return;
       }
-      // FIX: resposta vem no body do POST send, não esperamos polling
       setMessages((prev) =>
         prev.map((m) =>
           m.id === agentTmpId
@@ -133,10 +179,114 @@ function SparkbotPanel() {
       setMessages((prev) => prev.filter((m) => m.id !== agentTmpId));
     } finally {
       setSending(false);
-      // Re-foca no input
       setTimeout(() => textareaRef.current?.focus(), 50);
     }
-  }, [token, input, sending]);
+  }, [token, input, sending, attachment]);
+
+  // ---------- File upload ----------
+  const uploadFile = useCallback(async (file: File) => {
+    if (!token || uploading) return;
+    if (file.size > 12 * 1024 * 1024) {
+      setError("Arquivo maior que 12 MB");
+      return;
+    }
+    setUploading(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`/api/sparkbot/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(data.message || data.reason || "Falha no upload");
+        return;
+      }
+      // /upload retorna { kind, attachment (RepInput-like), summary }
+      // Adapta pro shape local PainelAttachment
+      const a = data.attachment;
+      const local: PainelAttachment = a.kind === "image"
+        ? { kind: "image", base64_data_uri: a.base64_data_uri, filename: a.filename, summary: data.summary }
+        : a.kind === "document"
+        ? { kind: "document", filename: a.filename, extracted_text: a.extracted_text, summary: data.summary }
+        : { kind: "tabular", tabular: a.tabular, summary: data.summary };
+      setAttachment(local);
+      setTimeout(() => textareaRef.current?.focus(), 50);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "falha no upload");
+    } finally {
+      setUploading(false);
+    }
+  }, [token, uploading]);
+
+  const cancelAttachment = useCallback(() => setAttachment(null), []);
+
+  // Click no botão 📎
+  const onPickFile = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const onFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) uploadFile(f);
+    e.target.value = ""; // permite re-pick do mesmo arquivo
+  }, [uploadFile]);
+
+  // Drag-and-drop globally on root
+  useEffect(() => {
+    if (!token) return;
+    const onDragEnter = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes("Files")) return;
+      dragCounterRef.current++;
+      setDragOver(true);
+    };
+    const onDragLeave = () => {
+      dragCounterRef.current--;
+      if (dragCounterRef.current <= 0) setDragOver(false);
+    };
+    const onDragOver = (e: DragEvent) => { e.preventDefault(); };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounterRef.current = 0;
+      setDragOver(false);
+      const f = e.dataTransfer?.files?.[0];
+      if (f) uploadFile(f);
+    };
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [token, uploadFile]);
+
+  // Paste de imagem (ctrl+v) na composer
+  useEffect(() => {
+    if (!token) return;
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.kind === "file") {
+          const f = item.getAsFile();
+          if (f) {
+            e.preventDefault();
+            uploadFile(f);
+            return;
+          }
+        }
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [token, uploadFile]);
 
   // ---------- Áudio (MediaRecorder) ----------
   const startRecording = useCallback(async () => {
@@ -264,6 +414,30 @@ function SparkbotPanel() {
 
       {error && <div className="error" onClick={() => setError(null)}>⚠ {error} <span style={{ opacity: 0.5 }}>(clique pra fechar)</span></div>}
 
+      {/* DRAG OVERLAY */}
+      {dragOver && (
+        <div className="drag-overlay">
+          <div className="drag-card">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <div className="drag-title">Solta aqui</div>
+            <div className="drag-sub">Imagem · PDF · CSV · Excel</div>
+          </div>
+        </div>
+      )}
+
+      {/* HIDDEN FILE INPUT */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={ACCEPT_FILES}
+        onChange={onFileInputChange}
+        style={{ display: "none" }}
+      />
+
       {/* COMPOSER */}
       {recording ? (
         <div className="rec-bar">
@@ -278,42 +452,83 @@ function SparkbotPanel() {
           </button>
         </div>
       ) : (
-        <div className="composer">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder={transcribing ? "Transcrevendo…" : "Manda uma pergunta ou pedido"}
-            rows={1}
-            disabled={sending || transcribing}
-            className="textarea"
-          />
-          <button
-            className="mic-btn"
-            onClick={startRecording}
-            disabled={sending || transcribing}
-            title="Gravar áudio"
-            aria-label="Gravar áudio"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="9" y="2" width="6" height="12" rx="3"/>
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-              <line x1="12" y1="19" x2="12" y2="23"/>
-            </svg>
-          </button>
-          <button
-            className="send-btn"
-            onClick={() => sendMessage()}
-            disabled={!input.trim() || sending || transcribing}
-            title="Enviar"
-            aria-label="Enviar"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"/>
-              <polygon points="22 2 15 22 11 13 2 9 22 2" fill="currentColor"/>
-            </svg>
-          </button>
+        <div className="composer-wrap">
+          {(attachment || uploading) && (
+            <div className="attach-chip">
+              {uploading ? (
+                <>
+                  <div className="chip-icon-spinner" />
+                  <div className="chip-meta">
+                    <div className="chip-title">Processando arquivo…</div>
+                  </div>
+                </>
+              ) : attachment ? (
+                <>
+                  <AttachmentIcon kind={attachment.kind} attachment={attachment} />
+                  <div className="chip-meta">
+                    <div className="chip-title">
+                      {attachment.filename || attachment.tabular?.filename || "arquivo"}
+                    </div>
+                    <div className="chip-sub">{attachment.summary}</div>
+                  </div>
+                  <button className="chip-x" onClick={cancelAttachment} aria-label="Remover anexo">×</button>
+                </>
+              ) : null}
+            </div>
+          )}
+          <div className="composer">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={
+                transcribing ? "Transcrevendo…"
+                : uploading ? "Aguarde o arquivo…"
+                : attachment ? "Mensagem (opcional)…"
+                : "Manda uma pergunta ou anexa arquivo (📎 / Ctrl+V / arrasta)"
+              }
+              rows={1}
+              disabled={sending || transcribing}
+              className="textarea"
+            />
+            <button
+              className="attach-btn"
+              onClick={onPickFile}
+              disabled={sending || transcribing || uploading}
+              title="Anexar arquivo (imagem, PDF, CSV, Excel)"
+              aria-label="Anexar arquivo"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+              </svg>
+            </button>
+            <button
+              className="mic-btn"
+              onClick={startRecording}
+              disabled={sending || transcribing || uploading}
+              title="Gravar áudio"
+              aria-label="Gravar áudio"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="2" width="6" height="12" rx="3"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+              </svg>
+            </button>
+            <button
+              className="send-btn"
+              onClick={() => sendMessage()}
+              disabled={(!input.trim() && !attachment) || sending || transcribing || uploading}
+              title="Enviar"
+              aria-label="Enviar"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"/>
+                <polygon points="22 2 15 22 11 13 2 9 22 2" fill="currentColor"/>
+              </svg>
+            </button>
+          </div>
         </div>
       )}
 
@@ -404,14 +619,18 @@ function SparkbotPanel() {
           cursor: pointer;
         }
 
+        .composer-wrap {
+          display: flex;
+          flex-direction: column;
+          background: rgba(255,255,255,0.95);
+          backdrop-filter: blur(8px);
+          border-top: 1px solid var(--sb-border);
+        }
         .composer {
           display: flex;
           align-items: flex-end;
           gap: 8px;
           padding: 12px 14px;
-          background: rgba(255,255,255,0.95);
-          backdrop-filter: blur(8px);
-          border-top: 1px solid var(--sb-border);
         }
         .textarea {
           flex: 1;
@@ -434,7 +653,7 @@ function SparkbotPanel() {
           background: var(--sb-surface);
         }
         .textarea:disabled { opacity: 0.6; }
-        .mic-btn, .send-btn {
+        .attach-btn, .mic-btn, .send-btn {
           width: 38px;
           height: 38px;
           flex-shrink: 0;
@@ -444,14 +663,14 @@ function SparkbotPanel() {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          transition: transform 0.12s, box-shadow 0.15s, background 0.15s;
+          transition: transform 0.12s, box-shadow 0.15s, background 0.15s, color 0.15s, border-color 0.15s;
         }
-        .mic-btn {
+        .attach-btn, .mic-btn {
           background: var(--sb-bg);
           color: var(--sb-muted);
           border: 1px solid var(--sb-border);
         }
-        .mic-btn:hover:not(:disabled) {
+        .attach-btn:hover:not(:disabled), .mic-btn:hover:not(:disabled) {
           color: var(--sb-brand);
           border-color: var(--sb-brand);
           background: rgba(22,117,242,0.04);
@@ -466,7 +685,86 @@ function SparkbotPanel() {
           box-shadow: 0 6px 16px var(--sb-brand-glow);
         }
         .send-btn:active:not(:disabled) { transform: translateY(0); }
-        .send-btn:disabled, .mic-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .send-btn:disabled, .mic-btn:disabled, .attach-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* Attachment chip acima da composer */
+        .attach-chip {
+          display: flex; align-items: center; gap: 12px;
+          margin: 8px 14px 0;
+          padding: 10px 12px;
+          background: linear-gradient(180deg, #ffffff, #f8fafc);
+          border: 1px solid var(--sb-border);
+          border-radius: 12px;
+          box-shadow: 0 1px 2px rgba(15,23,42,0.04);
+          animation: chipIn 0.18s ease-out;
+        }
+        @keyframes chipIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+        .chip-thumb {
+          width: 40px; height: 40px;
+          border-radius: 8px;
+          overflow: hidden;
+          flex-shrink: 0;
+          background: var(--sb-bg);
+          border: 1px solid var(--sb-border);
+        }
+        .chip-thumb img { width: 100%; height: 100%; object-fit: cover; }
+        .chip-icon {
+          width: 40px; height: 40px;
+          border-radius: 8px;
+          display: flex; align-items: center; justify-content: center;
+          flex-shrink: 0;
+        }
+        .chip-icon-spinner {
+          width: 24px; height: 24px;
+          border: 2.5px solid rgba(22,117,242,0.2);
+          border-top-color: var(--sb-brand);
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+          margin-left: 8px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .chip-meta { flex: 1; min-width: 0; }
+        .chip-title {
+          font-weight: 600; font-size: 13px; color: var(--sb-text);
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .chip-sub {
+          font-size: 11.5px; color: var(--sb-muted); margin-top: 2px;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .chip-x {
+          width: 26px; height: 26px;
+          border: 0; border-radius: 50%;
+          background: rgba(15,23,42,0.05); color: var(--sb-muted);
+          cursor: pointer; font-size: 18px; line-height: 1;
+          display: inline-flex; align-items: center; justify-content: center;
+          transition: background 0.15s, color 0.15s;
+        }
+        .chip-x:hover { background: #fee2e2; color: #dc2626; }
+
+        /* Drag overlay full-screen */
+        .drag-overlay {
+          position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(22,117,242,0.08);
+          backdrop-filter: blur(6px);
+          z-index: 100;
+          display: flex; align-items: center; justify-content: center;
+          pointer-events: none;
+          animation: fadeIn 0.15s ease-out;
+        }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .drag-card {
+          background: white;
+          border: 2px dashed var(--sb-brand);
+          border-radius: 20px;
+          padding: 32px 48px;
+          color: var(--sb-brand);
+          text-align: center;
+          box-shadow: 0 16px 40px rgba(22,117,242,0.18);
+        }
+        .drag-card svg { color: var(--sb-brand); }
+        .drag-title { font-weight: 700; font-size: 18px; margin-top: 8px; color: var(--sb-text); }
+        .drag-sub { font-size: 12px; color: var(--sb-muted); margin-top: 4px; letter-spacing: 0.04em; }
 
         /* Recording bar */
         .rec-bar {
@@ -764,6 +1062,59 @@ function Bubble({ msg }: { msg: Message }) {
           35% { transform: translateY(-3px); opacity: 1; }
         }
       `}</style>
+    </div>
+  );
+}
+
+/** Constrói payload pra mandar pro /send (RepInput-like, sem `summary`) */
+function buildAttachmentPayload(a: PainelAttachment): Record<string, unknown> {
+  if (a.kind === "image") {
+    return {
+      kind: "image",
+      base64_data_uri: a.base64_data_uri,
+      filename: a.filename,
+    };
+  }
+  if (a.kind === "document") {
+    return {
+      kind: "document",
+      extracted_text: a.extracted_text,
+      filename: a.filename,
+    };
+  }
+  // tabular
+  return {
+    kind: "tabular",
+    tabular: a.tabular,
+  };
+}
+
+function AttachmentIcon({ kind, attachment }: { kind: AttachmentKind; attachment: PainelAttachment }) {
+  if (kind === "image" && attachment.base64_data_uri) {
+    return (
+      <div className="chip-thumb">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={attachment.base64_data_uri} alt="" />
+      </div>
+    );
+  }
+  // PDF / Tabular: ícone SVG colorido
+  const color = kind === "tabular" ? "#16a34a" : "#dc2626"; // verde Excel, vermelho PDF
+  const icon = kind === "tabular" ? (
+    <>
+      <path d="M3 3h18v18H3z" fill="none" stroke={color} strokeWidth="1.6"/>
+      <path d="M3 9h18M3 15h18M9 3v18M15 3v18" stroke={color} strokeWidth="1.2"/>
+    </>
+  ) : (
+    <>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke={color} strokeWidth="1.6"/>
+      <path d="M14 2v6h6" stroke={color} strokeWidth="1.6"/>
+      <text x="12" y="17" textAnchor="middle" fontSize="6" fill={color} fontWeight="700">PDF</text>
+    </>
+  );
+  return (
+    <div className="chip-icon" style={{ background: kind === "tabular" ? "#dcfce7" : "#fee2e2" }}>
+      <svg width="22" height="22" viewBox="0 0 24 24">{icon}</svg>
     </div>
   );
 }

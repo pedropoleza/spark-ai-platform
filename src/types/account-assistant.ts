@@ -104,8 +104,33 @@ export interface AssistantConversation {
 export type RepInput =
   | { kind: "text"; text: string }
   | { kind: "audio"; transcribed_text: string; original_url?: string }
-  | { kind: "image"; base64_data_uri: string; caption?: string }
-  | { kind: "document"; extracted_text: string; filename: string };
+  | { kind: "image"; base64_data_uri: string; caption?: string; filename?: string }
+  | { kind: "document"; extracted_text: string; filename: string; caption?: string }
+  | { kind: "tabular"; tabular: TabularData; caption?: string };
+
+/** Dados parseados de planilha (CSV/XLSX). Pass-through — não persiste arquivo original. */
+export interface TabularData {
+  filename: string;
+  /** Colunas detectadas (cabeçalhos da primeira linha). */
+  columns: string[];
+  /** Total de linhas no arquivo (pode ser > rows.length se truncamos). */
+  total_rows: number;
+  /** Linhas parseadas (truncadas a TABULAR_MAX_ROWS=500). */
+  rows: Array<Record<string, string | number | null>>;
+  /** Sheets do XLSX (para CSV: array de 1 com nome do filename). */
+  sheets?: TabularSheet[];
+  /** Sheet ativa (default: primeira). */
+  active_sheet?: string;
+  /** Source mime: 'text/csv' | 'application/vnd...sheet' */
+  source_mime: string;
+}
+
+export interface TabularSheet {
+  name: string;
+  columns: string[];
+  total_rows: number;
+  rows: Array<Record<string, string | number | null>>;
+}
 
 /** Tool do catálogo V1. */
 export interface ToolDefinition {

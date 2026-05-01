@@ -17,6 +17,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { processIncoming } from "@/lib/account-assistant/processor";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
+import type { RepInput } from "@/types/account-assistant";
 
 export const maxDuration = 60;
 
@@ -40,7 +41,12 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json();
   const message = String(body.message || "").trim();
-  if (!message) return json({ ok: false, reason: "empty_message" }, { status: 400 });
+  // Attachment opcional vindo do POST /upload — Painel guarda e manda no
+  // próximo /send. Tipo é RepInput não-text/audio (image/document/tabular).
+  const attachment = body.attachment as RepInput | undefined;
+  if (!message && !attachment) {
+    return json({ ok: false, reason: "empty_message_and_attachment" }, { status: 400 });
+  }
 
   const supabase = createAdminClient();
 
@@ -92,7 +98,23 @@ export async function POST(request: NextRequest) {
     .reverse()
     .map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content }));
 
-  // 5. Persiste msg do user (channel='web_ui')
+  // 5. Persiste msg do user (channel='web_ui'). Conteúdo refletindo anexo
+  // pra histórico legível: "📎 lista.xlsx (47 linhas)" + caption.
+  const persistContent = (() => {
+    if (!attachment) return message;
+    const filename = (() => {
+      if (attachment.kind === "image") return attachment.filename || "imagem";
+      if (attachment.kind === "document") return attachment.filename;
+      if (attachment.kind === "tabular") return attachment.tabular.filename;
+      return "arquivo";
+    })();
+    const icon = attachment.kind === "image" ? "🖼️" : attachment.kind === "tabular" ? "📊" : "📄";
+    const meta = attachment.kind === "tabular"
+      ? ` (${attachment.tabular.total_rows} linhas)`
+      : "";
+    return `${icon} ${filename}${meta}${message ? `\n${message}` : ""}`;
+  })();
+
   let userInsertId: string | null = null;
   try {
     const r = await supabase
@@ -103,9 +125,21 @@ export async function POST(request: NextRequest) {
         agent_id: hubAgent.id,
         active_location_id: tok.location_id,
         role: "user",
-        content: message,
+        content: persistContent,
         channel: "web_ui",
-        metadata: { ghl_user_id: tok.ghl_user_id },
+        metadata: {
+          ghl_user_id: tok.ghl_user_id,
+          attachment_kind: attachment?.kind || null,
+          attachment_filename: !attachment
+            ? null
+            : attachment.kind === "tabular"
+            ? attachment.tabular.filename
+            : attachment.kind === "image"
+            ? (attachment.filename ?? null)
+            : attachment.kind === "document"
+            ? attachment.filename
+            : null,
+        },
       })
       .select("id")
       .single();
@@ -127,12 +161,30 @@ export async function POST(request: NextRequest) {
       .eq("id", rep.id);
   } catch { /* coluna ausente — sem heartbeat */ }
 
-  // 7. Processa via Sparkbot — channel='web_ui' injetado no runtime context
+  // 7. Monta RepInput. Se tem attachment, usa ele; message vira caption.
+  // Se só tem message, kind=text. Se ambos, attachment ganha (com caption).
+  const repInput: RepInput = (() => {
+    if (attachment) {
+      // Aceita só os 3 kinds vindos do upload (não text/audio)
+      if (attachment.kind === "image") {
+        return { ...attachment, caption: message || attachment.caption };
+      }
+      if (attachment.kind === "document") {
+        return { ...attachment, caption: message || attachment.caption };
+      }
+      if (attachment.kind === "tabular") {
+        return { ...attachment, caption: message || attachment.caption };
+      }
+    }
+    return { kind: "text", text: message };
+  })();
+
+  // 8. Processa via Sparkbot — channel='web_ui' injetado no runtime context
   // pra prompt-builder/tools saberem o contexto.
   const startTs = Date.now();
   const result = await processIncoming({
     rep,
-    input: { kind: "text", text: message },
+    input: repInput,
     agentId: hubAgent.id,
     conversationHistory,
     channel: "web_ui",

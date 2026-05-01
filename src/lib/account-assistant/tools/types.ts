@@ -6,7 +6,7 @@
  */
 
 import type { GHLClient } from "@/lib/ghl/client";
-import type { ToolDefinition, ToolResult, RepIdentity } from "@/types/account-assistant";
+import type { ToolDefinition, ToolResult, RepIdentity, RepInput } from "@/types/account-assistant";
 
 export interface ToolContext {
   rep: RepIdentity;
@@ -28,6 +28,13 @@ export interface ToolContext {
    * do "Confirma?" verbal do rep).
    */
   confirmationMode?: "always" | "medium_and_high" | "high_only";
+  /**
+   * Anexo da turn atual (imagem/PDF/CSV/XLSX). Usado por tools como
+   * `import_contacts_from_data` que precisam acessar rows completas SEM
+   * que o LLM tenha que copiá-las pro `args` (economiza tokens + evita
+   * que o LLM perca rows na hora de copiar 500 linhas como string).
+   */
+  attachment?: RepInput | null;
 }
 
 export type ToolHandler = (ctx: ToolContext, args: Record<string, unknown>) => Promise<ToolResult>;

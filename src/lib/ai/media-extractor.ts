@@ -11,11 +11,15 @@ const DOC_MIMES = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "text/plain",
   "text/csv",
+  "application/csv",
+  // Excel
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
 ];
 const SUPPORTED_MIMES = [...IMAGE_MIMES, ...DOC_MIMES];
 
 const IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic"];
-const DOC_EXTS = [".pdf", ".doc", ".docx", ".txt", ".csv"];
+const DOC_EXTS = [".pdf", ".doc", ".docx", ".txt", ".csv", ".xlsx", ".xls"];
 
 function isSupportedMime(mime: string): boolean {
   const m = mime.toLowerCase().split(";")[0].trim();
@@ -41,6 +45,8 @@ function guessContentType(url: string): string {
   if (lower.includes(".pdf")) return "application/pdf";
   if (lower.includes(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   if (lower.includes(".doc")) return "application/msword";
+  if (lower.includes(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (lower.includes(".xls")) return "application/vnd.ms-excel";
   if (lower.includes(".txt")) return "text/plain";
   if (lower.includes(".csv")) return "text/csv";
   if (lower.includes(".png")) return "image/png";

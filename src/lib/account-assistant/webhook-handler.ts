@@ -178,13 +178,17 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   // Persiste a msg do rep ANTES de processar (assim se LLM crashar, o
   // próximo turno ainda tem o histórico completo).
   const userMsgContent =
-    repInput.kind === "audio"
+    repInput.kind === "text"
+      ? repInput.text
+      : repInput.kind === "audio"
       ? `🎤 "${repInput.transcribed_text}"`
       : repInput.kind === "image"
       ? repInput.caption || "[imagem]"
       : repInput.kind === "document"
       ? `📎 ${repInput.filename}${repInput.extracted_text ? `\n${repInput.extracted_text.substring(0, 500)}` : ""}`
-      : repInput.text;
+      : repInput.kind === "tabular"
+      ? `📊 ${repInput.tabular.filename} (${repInput.tabular.total_rows} linhas)${repInput.caption ? `\n${repInput.caption}` : ""}`
+      : "(input)";
 
   // Defensivo: tabela pode não existir; não queremos quebrar webhook.
   try {
@@ -297,29 +301,42 @@ async function extractRepInput(args: {
 
   const attachments = extractMediaAttachments(body);
   if (attachments.length > 0) {
-    try {
-      const { processMediaAttachments } = await import("@/lib/ai/media-processor");
-      const processed = await processMediaAttachments(attachments);
+    // Pega o PRIMEIRO anexo suportado e processa via file-processor unificado
+    // (mesmo parser que o painel web usa). Imagem/PDF/CSV/XLSX viram RepInput
+    // do tipo apropriado.
+    for (const att of attachments) {
+      try {
+        const res = await fetch(att.url, { signal: AbortSignal.timeout(20_000) });
+        if (!res.ok) {
+          console.warn(`[Sparkbot] failed to fetch attachment ${att.url}: ${res.status}`);
+          continue;
+        }
+        const buffer = Buffer.from(await res.arrayBuffer());
+        const { processFile } = await import("./file-processor");
+        const result = await processFile({
+          buffer,
+          mime: att.contentType,
+          filename: att.fileName || "arquivo",
+        });
 
-      const image = processed.find((p) => p.type === "image" && p.base64DataUri);
-      if (image?.base64DataUri) {
-        return {
-          kind: "image",
-          base64_data_uri: image.base64DataUri,
-          caption: messageBody || undefined,
-        };
+        // Anexa caption do messageBody (rep pode mandar texto + arquivo)
+        const repInput = result.repInput;
+        if (repInput.kind === "image") {
+          return { ...repInput, caption: messageBody || undefined };
+        }
+        if (repInput.kind === "document") {
+          return { ...repInput, caption: messageBody || undefined };
+        }
+        if (repInput.kind === "tabular") {
+          return { ...repInput, caption: messageBody || undefined };
+        }
+      } catch (err) {
+        console.warn(
+          "[Sparkbot] file processing failed for", att.url, ":",
+          err instanceof Error ? err.message : err,
+        );
+        // Tenta próximo anexo
       }
-
-      const doc = processed.find((p) => p.type === "document" && p.extractedText);
-      if (doc?.extractedText) {
-        return {
-          kind: "document",
-          extracted_text: doc.extractedText,
-          filename: doc.fileName || "documento",
-        };
-      }
-    } catch (err) {
-      console.warn("[Sparkbot] media processing failed:", err instanceof Error ? err.message : err);
     }
   }
 

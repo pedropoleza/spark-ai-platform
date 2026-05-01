@@ -195,6 +195,11 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     ghlClient,
     testSessionId: input.testSessionId || null,
     confirmationMode: input.config.confirmation_mode || "medium_and_high",
+    // Tools (ex: import_contacts_from_data) acessam rows via ctx.attachment
+    // pra economizar tokens vs LLM copiando rows no args.
+    attachment: input.input.kind === "tabular" || input.input.kind === "image" || input.input.kind === "document"
+      ? input.input
+      : null,
   };
 
   const result = await runWithTools({
@@ -289,6 +294,8 @@ function extractUserText(input: RepInput): string {
       return input.caption || "";
     case "document":
       return input.extracted_text.substring(0, 500);
+    case "tabular":
+      return input.caption || "";
   }
 }
 
@@ -311,6 +318,36 @@ function buildUserMessage(input: RepInput, runtimeContext: string): LLMMessage {
       role: "user",
       content: `${header}[Rep enviou documento "${input.filename}" — conteúdo extraído]\n${preview}`,
     };
+  }
+  if (input.kind === "tabular") {
+    const t = input.tabular;
+    const sampleRows = t.rows.slice(0, 5);
+    const lines: string[] = [];
+    lines.push(`[Rep anexou planilha "${t.filename}" — ${t.total_rows} linhas, ${t.columns.length} colunas]`);
+    if (t.sheets && t.sheets.length > 1) {
+      lines.push(`Sheets: ${t.sheets.map((s) => s.name).join(", ")}. Ativa: "${t.active_sheet}"`);
+    }
+    lines.push(`Colunas: ${t.columns.join(" | ")}`);
+    lines.push(`Primeiras ${sampleRows.length} linhas (de ${t.total_rows}):`);
+    sampleRows.forEach((row, i) => {
+      const compact = t.columns.map((c) => `${c}=${row[c] ?? ""}`).join(" | ");
+      lines.push(`  ${i + 1}. ${compact}`);
+    });
+    if (t.total_rows > sampleRows.length) {
+      lines.push(`  […+${t.total_rows - sampleRows.length} linhas]`);
+    }
+    if (input.caption) {
+      lines.push("");
+      lines.push(`Mensagem do rep: ${input.caption}`);
+    }
+    lines.push("");
+    lines.push(
+      "REGRA: pra IMPORTAR esses contatos pro CRM, use a tool " +
+      "`import_contacts_from_data`. Os rows COMPLETOS estão acessíveis " +
+      "via o anexo da turn (não precisa repassá-los como arg). Sugira o " +
+      "mapping de colunas → campos GHL e pergunte ao rep antes de importar.",
+    );
+    return { role: "user", content: lines.join("\n") };
   }
   // image — multimodal content
   const match = input.base64_data_uri.match(/^data:(image\/\w+);base64,(.+)$/);

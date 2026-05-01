@@ -18,6 +18,7 @@ import { MESSAGES_TOOLS } from "./messages";
 import { METADATA_TOOLS } from "./metadata";
 import { REMINDERS_TOOLS } from "./reminders";
 import { CARRIER_KB_TOOLS } from "./carrier_kb";
+import { TABULAR_TOOLS } from "./tabular";
 
 const ALL_ENTRIES: ToolEntry[] = [
   ...CONTACTS_TOOLS,
@@ -30,6 +31,7 @@ const ALL_ENTRIES: ToolEntry[] = [
   ...METADATA_TOOLS,
   ...REMINDERS_TOOLS,
   ...CARRIER_KB_TOOLS,
+  ...TABULAR_TOOLS,
 ];
 
 export const TOOL_REGISTRY: Record<string, ToolEntry> = Object.fromEntries(
