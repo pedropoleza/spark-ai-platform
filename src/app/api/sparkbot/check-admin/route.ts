@@ -41,8 +41,8 @@ interface JwksCacheEntry {
 }
 let jwksCache: JwksCacheEntry | null = null;
 
-async function fetchJwks(): Promise<JWK[]> {
-  if (jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_CACHE_TTL_MS) {
+async function fetchJwks(force = false): Promise<JWK[]> {
+  if (!force && jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_CACHE_TTL_MS) {
     return jwksCache.keys;
   }
   const res = await fetch(GHL_JWKS_URL, { cache: "no-store" });
@@ -83,6 +83,26 @@ async function verifyFirebaseIdToken(idToken: string): Promise<VerifyResult> {
     try { token = JSON.parse(token) as string; } catch { /* deixa como tava */ }
   }
 
+  // Helper: tenta cada key do set; primeira que valida vence.
+  async function tryKeys(keys: JWK[]): Promise<{ claims: FirebaseClaims | null; lastError: { code?: string; message?: string } | null }> {
+    let lastError: { code?: string; message?: string } | null = null;
+    for (const jwk of keys) {
+      try {
+        const key = await importJWK(jwk, jwk.alg || "RS256");
+        const { payload } = await jwtVerify(token, key, {
+          issuer: GHL_SERVICE_ACCOUNT_EMAIL,
+        });
+        const claims = (payload as { claims?: FirebaseClaims }).claims;
+        return { claims: claims || null, lastError: null };
+      } catch (err) {
+        const e = err as { code?: string; message?: string };
+        lastError = { code: e.code, message: e.message };
+      }
+    }
+    return { claims: null, lastError };
+  }
+
+  // 1ª tentativa com cache
   let keys: JWK[];
   try {
     keys = await fetchJwks();
@@ -93,31 +113,31 @@ async function verifyFirebaseIdToken(idToken: string): Promise<VerifyResult> {
     return { claims: null, errorCode: "jwks_empty", errorMessage: "no keys" };
   }
 
-  // Tenta cada key — primeira que valida ganha.
-  let lastError: { code?: string; message?: string } | null = null;
-  for (const jwk of keys) {
+  let result = await tryKeys(keys);
+  if (result.claims) return { claims: result.claims };
+
+  // Se erro foi 'signature verification failed' em TODAS keys, JWKS pode ter
+  // rotacionado — força refresh e tenta uma vez mais.
+  const sigError = result.lastError?.code === "ERR_JWS_SIGNATURE_VERIFICATION_FAILED";
+  if (sigError) {
+    console.warn("[check-admin] todas keys cacheadas falharam — force-refresh JWKS");
     try {
-      const key = await importJWK(jwk, jwk.alg || "RS256");
-      const { payload } = await jwtVerify(token, key, {
-        issuer: GHL_SERVICE_ACCOUNT_EMAIL,
-      });
-      const claims = (payload as { claims?: FirebaseClaims }).claims;
-      return { claims: claims || null };
+      keys = await fetchJwks(true);
+      result = await tryKeys(keys);
+      if (result.claims) return { claims: result.claims };
     } catch (err) {
-      const e = err as { code?: string; message?: string };
-      lastError = { code: e.code, message: e.message };
-      // Continua tentando próxima key (signature errada = essa key não bate)
+      console.warn("[check-admin] JWKS force-refresh falhou:", err instanceof Error ? err.message : err);
     }
   }
 
   console.warn(
     `[check-admin] GHL idToken verify falhou em todas ${keys.length} keys: `
-    + `code=${lastError?.code || "?"} msg=${lastError?.message || "?"}`,
+    + `code=${result.lastError?.code || "?"} msg=${result.lastError?.message || "?"}`,
   );
   return {
     claims: null,
-    errorCode: lastError?.code || "verify_failed_all_keys",
-    errorMessage: lastError?.message || `tried ${keys.length} keys`,
+    errorCode: result.lastError?.code || "verify_failed_all_keys",
+    errorMessage: result.lastError?.message || `tried ${keys.length} keys`,
   };
 }
 
