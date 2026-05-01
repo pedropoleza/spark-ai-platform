@@ -22,7 +22,7 @@ import {
 import { acceptTerms, setActiveLocation } from "./identity";
 import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "./prompt-builder";
 import { runWithTools, type LLMMessage } from "./llm-client";
-import { TOOL_REGISTRY, executeTool, type ToolContext } from "./tools";
+import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
 
 export interface ProcessInput {
   rep: RepIdentity;
@@ -205,7 +205,11 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   const result = await runWithTools({
     systemPrompt,
     messages: [...history, userMessage],
-    tools: Object.values(TOOL_REGISTRY).map((t) => t.def),
+    // Passa o confirmationMode pra getAllToolDefinitions injetar
+    // `confirmed_by_rep` no schema das tools que o gate exige — sem isso
+    // o LLM não tem como saber que precisa enviar o flag e fica em loop
+    // "Confirma? → sim → bloqueado de novo" (visto em prod 2026-04-30).
+    tools: getAllToolDefinitions(input.config.confirmation_mode || "medium_and_high"),
     executor: (name, args) => executeTool(name, args, toolCtx),
     model: input.config.ai_model,
   });
