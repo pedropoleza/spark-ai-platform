@@ -216,17 +216,23 @@ export async function POST(request: NextRequest) {
     }
 
     if (!isAdmin) {
-      // Debug temporário: retorna detalhes do verify pra o cliente diagnosticar.
-      // TODO: remover após estabilizar o JWKS verify.
-      return json({
-        ok: false,
-        reason: "not_admin",
-        debug: {
-          jwt_verify_error: jwtVerifyError,
-          jwt_claims_mismatch: jwtClaimsMismatch,
-          had_id_token: !!idToken,
-        },
-      }, { status: 403 });
+      // Debug exposto SOMENTE em modo dev — em prod retornamos só o reason.
+      // Ainda logamos detalhes server-side pra debug operacional.
+      if (process.env.NODE_ENV !== "production") {
+        return json({
+          ok: false,
+          reason: "not_admin",
+          debug: {
+            jwt_verify_error: jwtVerifyError,
+            jwt_claims_mismatch: jwtClaimsMismatch,
+            had_id_token: !!idToken,
+          },
+        }, { status: 403 });
+      }
+      // Suppress unused warnings em prod
+      void jwtVerifyError;
+      void jwtClaimsMismatch;
+      return json({ ok: false, reason: "not_admin" }, { status: 403 });
     }
     console.log(`[check-admin] admin OK via ${adminSource} (user=${userId})`);
 
