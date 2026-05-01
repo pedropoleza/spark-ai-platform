@@ -58,7 +58,10 @@ function buildLoaderScript(): string {
 }
 
 const LOADER_SOURCE = `(function () {
-  if (window.__sparkbotInjected) return;
+  // Reentrância: snippet do GHL Custom JS pode setar __sparkbotInjected
+  // antes do fetch+Function completar. Aceita re-execução se loader ainda
+  // não foi totalmente carregado (debug fn ainda undefined).
+  if (window.__sparkbotInjected && typeof window.__sparkbotDebug === "function") return;
   window.__sparkbotInjected = true;
 
   var APP_URL = "__APP_URL__";
