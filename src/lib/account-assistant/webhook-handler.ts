@@ -12,10 +12,17 @@ import { identifyRep } from "./identity";
 import { processIncoming } from "./processor";
 import { transcribeAudioFromUrl, extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
+import { trackAndCharge } from "@/lib/billing/charge";
 import type { RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 
 const SPARKBOT_HISTORY_TURNS = 30;
+
+/** Acumulador de telemetria de áudio extraído (pra billing posterior). */
+interface AudioMeta {
+  audio_seconds: number;
+  model: string;
+}
 
 export interface HandleAssistantInboundArgs {
   hubLocationId: string;
@@ -77,8 +84,10 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     return;
   }
 
-  // 3. Extrai input multimodal
-  const repInput = await extractRepInput({ body, messageBody });
+  // 3. Extrai input multimodal — captura audio_seconds em audioSink pra
+  //    cobrança Whisper posterior (depois de hubAgent ser conhecido).
+  const audioSink: { current: AudioMeta | null } = { current: null };
+  const repInput = await extractRepInput({ body, messageBody, audioMetaSink: audioSink });
 
   // 4. Busca agent Sparkbot na Hub (pra billing + config)
   const supabase = createAdminClient();
@@ -102,6 +111,37 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   const agentConfig = Array.isArray(hubAgent.agent_configs)
     ? hubAgent.agent_configs[0]
     : hubAgent.agent_configs;
+
+  // C4 fix: cobra Whisper se o webhook recebeu áudio. Antes, transcribe
+  // rodava mas NUNCA cobrava — Sparkbot WhatsApp Whisper 100% free.
+  if (audioSink.current && audioSink.current.audio_seconds > 0) {
+    try {
+      // BYO key check — se hub location tem própria OPENAI_API_KEY, skipa
+      const { data: ls } = await supabase
+        .from("location_settings")
+        .select("openai_api_key")
+        .eq("location_id", hubLocationId)
+        .maybeSingle();
+      const usesCustomKey = !!ls?.openai_api_key;
+
+      await trackAndCharge({
+        locationId: hubLocationId,
+        companyId: hubCompanyId,
+        agentId: hubAgent.id,
+        contactId: rep.id,
+        actionType: "audio_transcription",
+        model: audioSink.current.model,
+        audioSeconds: audioSink.current.audio_seconds,
+        audioModel: audioSink.current.model,
+        usesCustomKey,
+      });
+    } catch (e) {
+      console.warn(
+        "[Sparkbot] Whisper billing falhou (não-bloqueante):",
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
 
   // 5. Carregar histórico real da conversa do rep com o Sparkbot.
   // Antes deste fix (C2), o webhook chamava processIncoming SEM
@@ -223,18 +263,31 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   });
 }
 
-/** Extrai RepInput do webhook body (áudio → whisper, imagem → base64, doc → extract). */
+/**
+ * Extrai RepInput do webhook body (áudio → whisper, imagem → base64, doc → extract).
+ *
+ * C4 fix: caller pode passar `audioMetaSink` pra capturar audio_seconds e
+ * cobrar Whisper depois. Antes deste fix, extractRepInput transcrevia áudio
+ * mas NUNCA cobrava — Sparkbot WhatsApp rodava Whisper free.
+ */
 async function extractRepInput(args: {
   body: Record<string, unknown>;
   messageBody: string;
+  audioMetaSink?: { current: AudioMeta | null };
 }): Promise<RepInput> {
-  const { body, messageBody } = args;
+  const { body, messageBody, audioMetaSink } = args;
 
   const audioInfo = extractAudioUrl(body);
   if (audioInfo?.url) {
     try {
       const transcribed = await transcribeAudioFromUrl(audioInfo.url);
       if (transcribed?.text) {
+        if (audioMetaSink && transcribed.audio_seconds > 0) {
+          audioMetaSink.current = {
+            audio_seconds: transcribed.audio_seconds,
+            model: transcribed.model,
+          };
+        }
         return { kind: "audio", transcribed_text: transcribed.text, original_url: audioInfo.url };
       }
     } catch (err) {

@@ -59,63 +59,78 @@ export async function POST(request: NextRequest) {
     }
 
     // Validação multi-fonte (em ordem):
-    //   1. JWT do Firebase no localStorage (claims.role/type) — mais confiável
-    //      pra agency users que não aparecem em /users/?locationId=...
-    //   2. GHL API (/users/) — fallback pra users location-level
+    //   1. GHL API (/users/) — sempre tentado primeiro, é a fonte segura
+    //   2. JWT do Firebase claims (idToken) — APENAS se SPARKBOT_TRUST_IDTOKEN=1
+    //      (default 0 — desabilitado por segurança)
     //
-    // O `idToken` (refreshedToken do localStorage GHL) vem do Firebase Auth do
-    // GHL, é assinado pelo Google. Pra MVP confiamos no payload sem verify de
-    // assinatura (qualquer adversário precisa estar autenticado no white-label
-    // pra obter um JWT válido). Verificamos consistência: claims.user_id /
-    // claims.company_id têm que bater com os fields do request body.
+    // Por que idToken trust desabilitado por default (review 2026-04-29 C3):
+    //
+    // O server decodifica payload do JWT SEM verificar assinatura (Firebase
+    // JWKS verify não implementado). Atacante anônimo pode forjar JWT com
+    // claims.role:"admin" + claims.type:"agency" e enviar QUALQUER user_id/
+    // company_id consistente — o "match check" entre body e claims é
+    // tautológico (atacante controla AMBOS os lados).
+    //
+    // Stress test confirmou: JWT com sig literal "fake-signature-not-verified"
+    // foi aceito.
+    //
+    // Fix correto (P1, sprint 1): implementar verify via Firebase JWKS:
+    //   https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com
+    //
+    // Mitigation atual: SPARKBOT_TRUST_IDTOKEN=0 desabilita o branch.
+    // GHL API valida via service-to-service token (assinatura Google OAuth).
+    // Custo: agency users que não aparecem em /users/?locationId=... voltam
+    // a falhar. Pra esses, alternativa: passar via env ASSISTANT_AGENCY_ADMIN_USER_IDS
+    // (allowlist de UUIDs) — mas não implementado ainda.
     let isAdmin = false;
     let adminSource = "";
-    const idToken: string | undefined = body.idToken ? String(body.idToken) : undefined;
-    if (idToken) {
-      try {
-        const parts = idToken.split(".");
-        if (parts.length === 3) {
-          // Base64URL → Base64 (jose já tem helpers, mas é simples)
-          const payloadB64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-          const payload = JSON.parse(
-            Buffer.from(payloadB64, "base64").toString("utf-8"),
-          ) as {
-            claims?: { user_id?: string; company_id?: string; role?: string; type?: string };
-            exp?: number;
-          };
-          const claims = payload.claims || {};
-          const matchesUser = claims.user_id === userId;
-          const matchesCompany = claims.company_id === companyId;
-          const notExpired = !payload.exp || payload.exp * 1000 > Date.now() - 60_000;
-          if (matchesUser && matchesCompany && notExpired) {
-            const role = (claims.role || "").toLowerCase();
-            const type = (claims.type || "").toLowerCase();
-            const adminRoles = ["admin", "owner", "agency_owner", "agency_user"];
-            const adminTypes = ["admin", "agency", "account"];
-            if (adminRoles.includes(role) || adminTypes.includes(type)) {
-              isAdmin = true;
-              adminSource = `jwt_claims (role=${role}, type=${type})`;
-            }
-          } else {
-            console.warn(
-              "[check-admin] idToken mismatch:",
-              { matchesUser, matchesCompany, notExpired },
-            );
-          }
-        }
-      } catch (e) {
-        console.warn("[check-admin] idToken decode falhou:", e instanceof Error ? e.message : e);
-      }
+
+    // 1. Tenta GHL API primeiro (sempre)
+    const validation = await validateGHLUser(companyId, locationId, userId);
+    if (validation === null) {
+      return json({ ok: false, reason: "ghl_validation_failed" }, { status: 502 });
+    }
+    if (validation.isAdmin) {
+      isAdmin = true;
+      adminSource = "ghl_api";
     }
 
-    if (!isAdmin) {
-      // Fallback: tenta GHL API
-      const validation = await validateGHLUser(companyId, locationId, userId);
-      if (validation && validation.isAdmin) {
-        isAdmin = true;
-        adminSource = "ghl_api";
-      } else if (!validation) {
-        return json({ ok: false, reason: "ghl_validation_failed" }, { status: 502 });
+    // 2. Fallback idToken — APENAS se feature flag explicitamente liga
+    if (!isAdmin && process.env.SPARKBOT_TRUST_IDTOKEN === "1") {
+      const idToken: string | undefined = body.idToken ? String(body.idToken) : undefined;
+      if (idToken) {
+        try {
+          const parts = idToken.split(".");
+          if (parts.length === 3) {
+            const payloadB64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+            const payload = JSON.parse(
+              Buffer.from(payloadB64, "base64").toString("utf-8"),
+            ) as {
+              claims?: { user_id?: string; company_id?: string; role?: string; type?: string };
+              exp?: number;
+            };
+            const claims = payload.claims || {};
+            const matchesUser = claims.user_id === userId;
+            const matchesCompany = claims.company_id === companyId;
+            const notExpired = !payload.exp || payload.exp * 1000 > Date.now() - 60_000;
+            if (matchesUser && matchesCompany && notExpired) {
+              const role = (claims.role || "").toLowerCase();
+              const type = (claims.type || "").toLowerCase();
+              const adminRoles = ["admin", "owner", "agency_owner", "agency_user"];
+              const adminTypes = ["admin", "agency", "account"];
+              if (adminRoles.includes(role) || adminTypes.includes(type)) {
+                isAdmin = true;
+                adminSource = `jwt_claims_TRUSTED (role=${role}, type=${type}) — INSEGURO sem JWKS verify`;
+                console.warn(
+                  "[check-admin] aceitando idToken sem verify de assinatura " +
+                  "(SPARKBOT_TRUST_IDTOKEN=1). Implementar JWKS verify ASAP.",
+                );
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[check-admin] idToken decode falhou:", e instanceof Error ? e.message : e);
+        }
       }
     }
 

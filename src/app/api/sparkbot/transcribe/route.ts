@@ -78,8 +78,24 @@ export async function POST(request: NextRequest) {
     }
 
     // Cobra Whisper. Defensivo — não bloqueia se billing falhar.
+    // C4 fix: agent_id deve ser hubAgent.id (FK válida), não rep_id (UUID
+    // de rep_identities, não de agents). Antes deste fix, INSERT de
+    // usage_records falhava em FK violation silenciosamente → Whisper Web 100% free.
     try {
       const supabase = createAdminClient();
+      const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+      let hubAgentId: string | null = null;
+      if (hubLocationId) {
+        const { data: hubAgent } = await supabase
+          .from("agents")
+          .select("id")
+          .eq("location_id", hubLocationId)
+          .eq("type", "account_assistant")
+          .eq("status", "active")
+          .maybeSingle();
+        hubAgentId = hubAgent?.id || null;
+      }
+
       const { data: ls } = await supabase
         .from("location_settings")
         .select("openai_api_key")
@@ -87,17 +103,24 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
       const usesCustomKey = !!ls?.openai_api_key;
 
-      await trackAndCharge({
-        locationId: tok.location_id,
-        companyId: tok.company_id,
-        agentId: tok.rep_id, // rep_id como fallback de agent_id no contexto web
-        contactId: undefined,
-        actionType: "audio_transcription",
-        model: "whisper-1",
-        audioSeconds,
-        audioModel: "whisper-1",
-        usesCustomKey,
-      });
+      if (hubAgentId) {
+        await trackAndCharge({
+          locationId: tok.location_id,
+          companyId: tok.company_id,
+          agentId: hubAgentId, // FK válida vs agents(id)
+          contactId: undefined,
+          actionType: "audio_transcription",
+          model: "whisper-1",
+          audioSeconds,
+          audioModel: "whisper-1",
+          usesCustomKey,
+        });
+      } else {
+        console.warn(
+          "[transcribe] ASSISTANT_HUB_LOCATION_ID não setada ou hub agent inativo — " +
+          "Whisper rodando sem billing. Setar env var no Vercel.",
+        );
+      }
     } catch (e) {
       console.warn("[transcribe] billing falhou (não-bloqueante):", e instanceof Error ? e.message : e);
     }

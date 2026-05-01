@@ -161,12 +161,25 @@ async function deliverReminderWhatsapp(
   message: string,
   title: string | undefined,
 ): Promise<void> {
-  // V3 enviaria via GHL conversations/messages aqui. Por enquanto, registra
-  // em sparkbot_messages com channel='whatsapp' (já lida — não aparece no
-  // badge web). Quando V3 chegar, append GHLClient.post call aqui.
+  // C1 fix: tenta enviar WhatsApp real via GHL conversations/messages.
+  // Antes deste fix, lembretes WhatsApp NUNCA chegavam no celular — só
+  // marcavam pending_v3_send que ninguém consumia.
+  //
+  // Comportamento controlado por env vars:
+  //   - WHATSAPP_DELIVERY_ENABLED=1 (default 0): tenta envio real via GHL
+  //   - WHATSAPP_DELIVERY_LOCATION_ID: location pra usar pra enviar (se rep
+  //     tem múltiplas, fixa essa); fallback pra task.location_id
+  //
+  // Se delivery falha (ou flag off), faz FALLBACK pro web: insere msg
+  // como channel='system' (badge no painel) — assim lembrete não some
+  // silenciosamente, rep vê na próxima vez que abrir o GHL.
+
   const supabase = createAdminClient();
   const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  const hubCompanyId = process.env.ASSISTANT_HUB_COMPANY_ID?.trim()
+    || process.env.NEXT_PUBLIC_GHL_COMPANY_ID?.trim();
   if (!hubLocationId) return;
+
   const { data: hubAgent } = await supabase
     .from("agents")
     .select("id")
@@ -176,20 +189,98 @@ async function deliverReminderWhatsapp(
     .maybeSingle();
   if (!hubAgent) return;
 
+  const formattedMessage = `🔔 ${title || "Lembrete"}\n\n${message}`;
+  const enabled = process.env.WHATSAPP_DELIVERY_ENABLED === "1";
+
+  // Tenta envio WhatsApp real
+  let sentViaWhatsapp = false;
+  let sendError: string | null = null;
+  if (enabled && hubCompanyId) {
+    try {
+      // Resolve qual location usar pra enviar (a do task ou override env)
+      const sendLocationId = process.env.WHATSAPP_DELIVERY_LOCATION_ID?.trim()
+        || task.location_id;
+
+      // Resolve rep info pra encontrar phone/contact
+      const { data: rep } = await supabase
+        .from("rep_identities")
+        .select("phone, ghl_users")
+        .eq("id", task.rep_id)
+        .maybeSingle();
+
+      if (!rep || !rep.phone || rep.phone.startsWith("webonly:")) {
+        throw new Error(`rep ${task.rep_id} sem phone real (web-only)`);
+      }
+
+      // Busca contact_id do rep no GHL pela phone (ou ghl_user_id)
+      const { GHLClient } = await import("@/lib/ghl/client");
+      const ghlClient = new GHLClient(hubCompanyId, sendLocationId);
+
+      // Busca contact pelo phone (pode existir como contact regular ou criar)
+      type ContactSearchResult = {
+        contacts?: Array<{ id: string; phone?: string }>;
+        results?: Array<{ id: string; phone?: string }>;
+      };
+      const search = await ghlClient.get<ContactSearchResult>(
+        "/contacts/search/duplicate",
+        { locationId: sendLocationId, number: rep.phone },
+      ).catch(() => null);
+
+      let contactId = search?.contacts?.[0]?.id || search?.results?.[0]?.id;
+
+      // Se não achou, cria contact mínimo (pra poder enviar msg)
+      if (!contactId) {
+        const created = await ghlClient.post<{ contact: { id: string } }>(
+          "/contacts/",
+          {
+            locationId: sendLocationId,
+            phone: rep.phone,
+            firstName: "Spark Rep",
+            lastName: task.rep_id.slice(0, 8),
+            tags: ["sparkbot-rep"],
+          },
+        );
+        contactId = created.contact?.id;
+      }
+
+      if (!contactId) throw new Error("não consegui resolver contact_id no GHL");
+
+      // Envia via WhatsApp
+      await ghlClient.post("/conversations/messages", {
+        type: "WhatsApp",
+        contactId,
+        message: formattedMessage,
+      });
+      sentViaWhatsapp = true;
+    } catch (err) {
+      sendError = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[reminder-runner] WhatsApp delivery falhou pra task ${task.id}, ` +
+        `fallback pro painel web: ${sendError}`,
+      );
+    }
+  }
+
+  // Insere registro em sparkbot_messages.
+  // - Se enviou via WhatsApp: read_in_web_at=now (não badge no web)
+  // - Se falhou OU flag desabilitada: read_in_web_at=null (badge no web pra
+  //   rep não perder o lembrete)
   await supabase.from("sparkbot_messages").insert({
     rep_id: task.rep_id,
     hub_location_id: hubLocationId,
     agent_id: hubAgent.id,
     active_location_id: task.location_id,
     role: "agent",
-    content: `🔔 ${title || "Lembrete"}\n\n${message}`,
-    channel: "whatsapp",
-    read_in_web_at: new Date().toISOString(), // já lida — não badge no web
+    content: formattedMessage,
+    channel: sentViaWhatsapp ? "whatsapp" : "system",
+    read_in_web_at: sentViaWhatsapp ? new Date().toISOString() : null,
     metadata: {
       reminder_id: task.id,
       task_type: task.task_type,
       source: "scheduled_reminder",
-      pending_v3_send: true, // flag pro V3 picker enviar depois
+      whatsapp_sent: sentViaWhatsapp,
+      whatsapp_send_error: sendError,
+      whatsapp_delivery_enabled: enabled,
     },
   });
 }
