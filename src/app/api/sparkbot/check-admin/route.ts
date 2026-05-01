@@ -53,7 +53,13 @@ interface FirebaseClaims {
  * Identity Toolkit do Firebase do GHL. Verificamos só assinatura + exp + iss
  * (=securetoken.google.com).
  */
-async function verifyFirebaseIdToken(idToken: string): Promise<FirebaseClaims | null> {
+interface VerifyResult {
+  claims: FirebaseClaims | null;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+async function verifyFirebaseIdToken(idToken: string): Promise<VerifyResult> {
   // Tolerância: localStorage GHL/sparkleads pode ter o JWT JSON-stringified
   // (com aspas extras). Strip antes de passar pro jose.
   let token = idToken.trim();
@@ -67,13 +73,16 @@ async function verifyFirebaseIdToken(idToken: string): Promise<FirebaseClaims | 
       // Audience é Identity Toolkit do GHL — não validamos.
     });
     const claims = (payload as { claims?: FirebaseClaims }).claims;
-    return claims || null;
+    return { claims: claims || null };
   } catch (err) {
+    const e = err as { code?: string; message?: string };
+    const errorCode = e.code || "unknown";
+    const errorMessage = e.message || String(err);
     console.warn(
-      "[check-admin] GHL idToken verify falhou:",
-      err instanceof Error ? err.message : err,
+      `[check-admin] GHL idToken verify falhou: code=${errorCode} msg=${errorMessage} `
+      + `tokenLen=${token.length} tokenStart=${token.slice(0, 30)}`,
     );
-    return null;
+    return { claims: null, errorCode, errorMessage };
   }
 }
 
@@ -127,14 +136,15 @@ export async function POST(request: NextRequest) {
     //   https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com
     let isAdmin = false;
     let adminSource = "";
+    let jwtVerifyError: { code?: string; message?: string } | null = null;
+    let jwtClaimsMismatch: { jwtUser?: string; jwtCompany?: string } | null = null;
 
     // 1. Tenta verificar idToken Firebase (assinatura RS256)
     const idToken: string | undefined = body.idToken ? String(body.idToken) : undefined;
     if (idToken) {
-      const claims = await verifyFirebaseIdToken(idToken);
-      if (claims) {
-        // Verify de consistência (defesa contra replay-com-userId-trocado):
-        // claims do JWT autêntico têm que bater com userId/companyId do body
+      const result = await verifyFirebaseIdToken(idToken);
+      if (result.claims) {
+        const claims = result.claims;
         const matchesUser = claims.user_id === userId;
         const matchesCompany = claims.company_id === companyId;
         if (matchesUser && matchesCompany) {
@@ -147,11 +157,14 @@ export async function POST(request: NextRequest) {
             adminSource = `firebase_jwt (role=${role}, type=${type})`;
           }
         } else {
+          jwtClaimsMismatch = { jwtUser: claims.user_id, jwtCompany: claims.company_id };
           console.warn(
-            "[check-admin] Firebase JWT VERIFICADO mas claims user/company não batem com body — possível CSRF",
+            "[check-admin] Firebase JWT VERIFICADO mas claims não batem com body",
             { jwtUser: claims.user_id, bodyUser: userId, jwtCompany: claims.company_id, bodyCompany: companyId },
           );
         }
+      } else {
+        jwtVerifyError = { code: result.errorCode, message: result.errorMessage };
       }
     }
 
@@ -168,7 +181,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (!isAdmin) {
-      return json({ ok: false, reason: "not_admin" }, { status: 403 });
+      // Debug temporário: retorna detalhes do verify pra o cliente diagnosticar.
+      // TODO: remover após estabilizar o JWKS verify.
+      return json({
+        ok: false,
+        reason: "not_admin",
+        debug: {
+          jwt_verify_error: jwtVerifyError,
+          jwt_claims_mismatch: jwtClaimsMismatch,
+          had_id_token: !!idToken,
+        },
+      }, { status: 403 });
     }
     console.log(`[check-admin] admin OK via ${adminSource} (user=${userId})`);
 
