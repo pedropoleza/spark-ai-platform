@@ -20,8 +20,55 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateGHLUser, upsertLocation } from "@/lib/auth/sso";
 import { identifyRepByGhlUser, acceptTerms } from "@/lib/account-assistant/identity";
 import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 export const maxDuration = 30;
+
+// JWKS público do Firebase Auth (chaves rotacionam, mas jose cacheia
+// internamente e busca de novo quando key id desconhecido aparece).
+// O JWT do GHL/sparkleads é emitido pelo securetoken.google.com (Identity
+// Toolkit do Firebase) — verificação RS256 contra essa JWKS prova
+// inviolável que o claim foi emitido pelo Firebase pra um user real.
+const FIREBASE_JWKS = createRemoteJWKSet(
+  new URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"),
+);
+
+interface FirebaseClaims {
+  user_id?: string;
+  company_id?: string;
+  role?: string;
+  type?: string;
+  locations?: string[];
+}
+
+/**
+ * Verifica idToken do GHL via Firebase JWKS.
+ * Retorna claims se válido (assinatura + exp + iss), null caso contrário.
+ *
+ * Nota: aud claim do GHL aponta pra "https://identitytoolkit.googleapis.com/..."
+ * (não pro nosso projeto Firebase). Isso é normal — o JWT é da própria
+ * Identity Toolkit do Firebase do GHL. Verificamos só assinatura + exp + iss
+ * (=securetoken.google.com).
+ */
+async function verifyFirebaseIdToken(idToken: string): Promise<FirebaseClaims | null> {
+  try {
+    const { payload } = await jwtVerify(idToken, FIREBASE_JWKS, {
+      issuer: [
+        "https://securetoken.google.com/highlevel-backend",
+        "default-crm-marketplace@highlevel-backend.iam.gserviceaccount.com",
+      ],
+      // Não validamos audience — varia entre tokens do GHL.
+    });
+    const claims = (payload as { claims?: FirebaseClaims }).claims;
+    return claims || null;
+  } catch (err) {
+    console.warn(
+      "[check-admin] Firebase idToken verify falhou:",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -59,78 +106,57 @@ export async function POST(request: NextRequest) {
     }
 
     // Validação multi-fonte (em ordem):
-    //   1. GHL API (/users/) — sempre tentado primeiro, é a fonte segura
-    //   2. JWT do Firebase claims (idToken) — APENAS se SPARKBOT_TRUST_IDTOKEN=1
-    //      (default 0 — desabilitado por segurança)
+    //   1. idToken Firebase (JWT do GHL/sparkleads localStorage.refreshedToken)
+    //      → verificado RS256 contra Firebase JWKS público. Assinatura
+    //      válida = JWT emitido pelo Identity Toolkit pra um user REAL do
+    //      Firebase Auth do GHL. Claims confiáveis (role, type, etc).
+    //   2. GHL API (/users/?locationId=...) — fallback pra users
+    //      location-level que não estão como agency-admin.
     //
-    // Por que idToken trust desabilitado por default (review 2026-04-29 C3):
-    //
-    // O server decodifica payload do JWT SEM verificar assinatura (Firebase
-    // JWKS verify não implementado). Atacante anônimo pode forjar JWT com
-    // claims.role:"admin" + claims.type:"agency" e enviar QUALQUER user_id/
-    // company_id consistente — o "match check" entre body e claims é
-    // tautológico (atacante controla AMBOS os lados).
-    //
-    // Stress test confirmou: JWT com sig literal "fake-signature-not-verified"
-    // foi aceito.
-    //
-    // Fix correto (P1, sprint 1): implementar verify via Firebase JWKS:
+    // Histórico (review 2026-04-29 C3):
+    // Versão anterior decodificava idToken sem verify → atacante anônimo
+    // forjava JWT com claims arbitrários. Stress test confirmou exploit.
+    // Fix definitivo: jose.jwtVerify contra
     //   https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com
-    //
-    // Mitigation atual: SPARKBOT_TRUST_IDTOKEN=0 desabilita o branch.
-    // GHL API valida via service-to-service token (assinatura Google OAuth).
-    // Custo: agency users que não aparecem em /users/?locationId=... voltam
-    // a falhar. Pra esses, alternativa: passar via env ASSISTANT_AGENCY_ADMIN_USER_IDS
-    // (allowlist de UUIDs) — mas não implementado ainda.
     let isAdmin = false;
     let adminSource = "";
 
-    // 1. Tenta GHL API primeiro (sempre)
-    const validation = await validateGHLUser(companyId, locationId, userId);
-    if (validation === null) {
-      return json({ ok: false, reason: "ghl_validation_failed" }, { status: 502 });
-    }
-    if (validation.isAdmin) {
-      isAdmin = true;
-      adminSource = "ghl_api";
+    // 1. Tenta verificar idToken Firebase (assinatura RS256)
+    const idToken: string | undefined = body.idToken ? String(body.idToken) : undefined;
+    if (idToken) {
+      const claims = await verifyFirebaseIdToken(idToken);
+      if (claims) {
+        // Verify de consistência (defesa contra replay-com-userId-trocado):
+        // claims do JWT autêntico têm que bater com userId/companyId do body
+        const matchesUser = claims.user_id === userId;
+        const matchesCompany = claims.company_id === companyId;
+        if (matchesUser && matchesCompany) {
+          const role = (claims.role || "").toLowerCase();
+          const type = (claims.type || "").toLowerCase();
+          const adminRoles = ["admin", "owner", "agency_owner", "agency_user"];
+          const adminTypes = ["admin", "agency", "account"];
+          if (adminRoles.includes(role) || adminTypes.includes(type)) {
+            isAdmin = true;
+            adminSource = `firebase_jwt (role=${role}, type=${type})`;
+          }
+        } else {
+          console.warn(
+            "[check-admin] Firebase JWT VERIFICADO mas claims user/company não batem com body — possível CSRF",
+            { jwtUser: claims.user_id, bodyUser: userId, jwtCompany: claims.company_id, bodyCompany: companyId },
+          );
+        }
+      }
     }
 
-    // 2. Fallback idToken — APENAS se feature flag explicitamente liga
-    if (!isAdmin && process.env.SPARKBOT_TRUST_IDTOKEN === "1") {
-      const idToken: string | undefined = body.idToken ? String(body.idToken) : undefined;
-      if (idToken) {
-        try {
-          const parts = idToken.split(".");
-          if (parts.length === 3) {
-            const payloadB64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-            const payload = JSON.parse(
-              Buffer.from(payloadB64, "base64").toString("utf-8"),
-            ) as {
-              claims?: { user_id?: string; company_id?: string; role?: string; type?: string };
-              exp?: number;
-            };
-            const claims = payload.claims || {};
-            const matchesUser = claims.user_id === userId;
-            const matchesCompany = claims.company_id === companyId;
-            const notExpired = !payload.exp || payload.exp * 1000 > Date.now() - 60_000;
-            if (matchesUser && matchesCompany && notExpired) {
-              const role = (claims.role || "").toLowerCase();
-              const type = (claims.type || "").toLowerCase();
-              const adminRoles = ["admin", "owner", "agency_owner", "agency_user"];
-              const adminTypes = ["admin", "agency", "account"];
-              if (adminRoles.includes(role) || adminTypes.includes(type)) {
-                isAdmin = true;
-                adminSource = `jwt_claims_TRUSTED (role=${role}, type=${type}) — INSEGURO sem JWKS verify`;
-                console.warn(
-                  "[check-admin] aceitando idToken sem verify de assinatura " +
-                  "(SPARKBOT_TRUST_IDTOKEN=1). Implementar JWKS verify ASAP.",
-                );
-              }
-            }
-          }
-        } catch (e) {
-          console.warn("[check-admin] idToken decode falhou:", e instanceof Error ? e.message : e);
-        }
+    // 2. Fallback GHL API (location-level admins)
+    if (!isAdmin) {
+      const validation = await validateGHLUser(companyId, locationId, userId);
+      if (validation === null) {
+        return json({ ok: false, reason: "ghl_validation_failed" }, { status: 502 });
+      }
+      if (validation.isAdmin) {
+        isAdmin = true;
+        adminSource = "ghl_api";
       }
     }
 
