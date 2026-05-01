@@ -44,10 +44,17 @@ export async function GET() {
 function buildLoaderScript(): string {
   // Embedded as a single IIFE. Cada `__VAR__` é um placeholder substituído
   // server-side pra não vazar URL/intervalos nos comentários do navegador.
-  const raw = LOADER_SOURCE
+  let raw = LOADER_SOURCE
     .replaceAll("__APP_URL__", APP_URL)
     .replaceAll("__POLL_INTERVAL_MS__", String(POLL_INTERVAL_MS))
     .replaceAll("__HEARTBEAT_INTERVAL_MS__", String(HEARTBEAT_INTERVAL_MS));
+  // O Custom JS do GHL usa postscribe/document.write pra carregar scripts
+  // externos. Postscribe parse o response como HTML antes de executar — se
+  // achar tags reais (<svg>, <rect>, </script>), quebra com "Unexpected
+  // token '<'". Nosso loader tem SVG em strings JS — JS engine entende
+  // </> exatamente como </>, mas postscribe não reconhece como
+  // tag. Substituímos antes de servir.
+  raw = raw.replaceAll("<", "\\u003C").replaceAll(">", "\\u003E");
   return raw;
 }
 
