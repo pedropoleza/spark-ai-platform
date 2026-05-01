@@ -216,9 +216,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (!isAdmin) {
-      // Debug exposto SOMENTE em modo dev — em prod retornamos só o reason.
-      // Ainda logamos detalhes server-side pra debug operacional.
-      if (process.env.NODE_ENV !== "production") {
+      // Debug exposto em dev OU se body.debug=true (op auto-diagnostic).
+      const wantDebug = process.env.NODE_ENV !== "production" || body.debug === true;
+      if (wantDebug) {
         return json({
           ok: false,
           reason: "not_admin",
@@ -229,7 +229,6 @@ export async function POST(request: NextRequest) {
           },
         }, { status: 403 });
       }
-      // Suppress unused warnings em prod
       void jwtVerifyError;
       void jwtClaimsMismatch;
       return json({ ok: false, reason: "not_admin" }, { status: 403 });
