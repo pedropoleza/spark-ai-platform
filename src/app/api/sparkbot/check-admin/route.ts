@@ -51,8 +51,15 @@ interface FirebaseClaims {
  * (=securetoken.google.com).
  */
 async function verifyFirebaseIdToken(idToken: string): Promise<FirebaseClaims | null> {
+  // Tolerância: localStorage GHL/sparkleads pode ter o JWT JSON-stringified
+  // (com aspas extras). Strip antes de passar pro jose.
+  let token = idToken.trim();
+  if (token.startsWith('"') && token.endsWith('"')) {
+    try { token = JSON.parse(token) as string; } catch { /* deixa como tava */ }
+  }
+
   try {
-    const { payload } = await jwtVerify(idToken, FIREBASE_JWKS, {
+    const { payload } = await jwtVerify(token, FIREBASE_JWKS, {
       issuer: [
         "https://securetoken.google.com/highlevel-backend",
         "default-crm-marketplace@highlevel-backend.iam.gserviceaccount.com",

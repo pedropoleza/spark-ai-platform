@@ -163,10 +163,22 @@ const LOADER_SOURCE = `(function () {
     STATE.userId = userId;
 
     // Envia também o idToken (refreshedToken do localStorage GHL). Server
-    // usa pra validar admin via claims.role/type — mais confiável que GHL API
+    // verifica RS256 via Firebase JWKS público — fonte confiável vs GHL API
     // (que não retorna agency users em /users/?locationId=...).
+    //
+    // refreshedToken pode estar JSON-stringified (com aspas extras) no
+    // localStorage do GHL/sparkleads. Tenta parse, fallback pro raw.
     var idToken = null;
-    try { idToken = localStorage.getItem("refreshedToken"); } catch (e) {}
+    try {
+      var raw = localStorage.getItem("refreshedToken");
+      if (raw) {
+        if (raw.startsWith('"')) {
+          try { idToken = JSON.parse(raw); } catch (e) { idToken = raw; }
+        } else {
+          idToken = raw;
+        }
+      }
+    } catch (e) {}
 
     return fetch(APP_URL + "/api/sparkbot/check-admin", {
       method: "POST",
