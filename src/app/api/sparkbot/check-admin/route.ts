@@ -24,13 +24,16 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 
 export const maxDuration = 30;
 
-// JWKS público do Firebase Auth (chaves rotacionam, mas jose cacheia
-// internamente e busca de novo quando key id desconhecido aparece).
-// O JWT do GHL/sparkleads é emitido pelo securetoken.google.com (Identity
-// Toolkit do Firebase) — verificação RS256 contra essa JWKS prova
-// inviolável que o claim foi emitido pelo Firebase pra um user real.
-const FIREBASE_JWKS = createRemoteJWKSet(
-  new URL("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com"),
+// O JWT do GHL/sparkleads é assinado pelo SERVICE ACCOUNT custom do GHL
+// (default-crm-marketplace@highlevel-backend.iam.gserviceaccount.com), não
+// pelas chaves do securetoken@system padrão do Firebase. JWKS do service
+// account fica em endpoint específico — Google publica as public keys lá.
+//
+// Header desses tokens não tem `kid` claim, então jose vai testar todas
+// as keys do JWKS até achar a que valida (single key na maioria das vezes).
+const GHL_SERVICE_ACCOUNT_EMAIL = "default-crm-marketplace@highlevel-backend.iam.gserviceaccount.com";
+const GHL_JWKS = createRemoteJWKSet(
+  new URL(`https://www.googleapis.com/service_accounts/v1/jwk/${GHL_SERVICE_ACCOUNT_EMAIL}`),
 );
 
 interface FirebaseClaims {
@@ -59,18 +62,15 @@ async function verifyFirebaseIdToken(idToken: string): Promise<FirebaseClaims | 
   }
 
   try {
-    const { payload } = await jwtVerify(token, FIREBASE_JWKS, {
-      issuer: [
-        "https://securetoken.google.com/highlevel-backend",
-        "default-crm-marketplace@highlevel-backend.iam.gserviceaccount.com",
-      ],
-      // Não validamos audience — varia entre tokens do GHL.
+    const { payload } = await jwtVerify(token, GHL_JWKS, {
+      issuer: GHL_SERVICE_ACCOUNT_EMAIL,
+      // Audience é Identity Toolkit do GHL — não validamos.
     });
     const claims = (payload as { claims?: FirebaseClaims }).claims;
     return claims || null;
   } catch (err) {
     console.warn(
-      "[check-admin] Firebase idToken verify falhou:",
+      "[check-admin] GHL idToken verify falhou:",
       err instanceof Error ? err.message : err,
     );
     return null;
