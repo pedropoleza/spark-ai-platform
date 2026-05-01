@@ -43,10 +43,15 @@ export async function POST(request: NextRequest) {
   const message = String(body.message || "").trim();
   // Attachment opcional vindo do POST /upload — Painel guarda e manda no
   // próximo /send. Tipo é RepInput não-text/audio (image/document/tabular).
-  const attachment = body.attachment as RepInput | undefined;
+  let attachment = body.attachment as RepInput | undefined;
   if (!message && !attachment) {
     return json({ ok: false, reason: "empty_message_and_attachment" }, { status: 400 });
   }
+  // True quando o anexo foi recuperado do cache (não foi enviado nesta turn).
+  // Usado pra ajustar o `persistContent` — não queremos repetir o ícone no
+  // histórico cada vez que o user só responde "sim", mas as tools precisam
+  // ver os rows.
+  let attachmentRestoredFromCache = false;
 
   const supabase = createAdminClient();
 
@@ -98,10 +103,54 @@ export async function POST(request: NextRequest) {
     .reverse()
     .map((m) => ({ role: m.role === "user" ? "user" : "assistant", content: m.content }));
 
+  // 4b. Anexo "sticky" — só pra tabular (CSV/XLSX), que historicamente é o
+  // workflow onde o rep manda 1x e responde várias turns ("sim", "ok", "muda
+  // mapping"). Sem isso o LLM virava bobo: "Reanexa o CSV" → user reanexa →
+  // bot mapeia → "Sim" → "Reanexa o CSV de novo" (visto em prod 2026-04-30).
+  //
+  // Estratégia: se a request veio SEM attachment, busca no cache o último
+  // anexo tabular do rep (TTL 30 min). Pra image/PDF mantemos comportamento
+  // atual (reupload obrigatório) — esses payloads são MB-grandes (base64) e
+  // não cabem no metadata sem inflar muito o DB.
+  const ATTACHMENT_TTL_MIN = 30;
+  if (!attachment) {
+    try {
+      const cutoff = new Date(Date.now() - ATTACHMENT_TTL_MIN * 60 * 1000).toISOString();
+      const r = await supabase
+        .from("sparkbot_messages")
+        .select("metadata, created_at")
+        .eq("rep_id", rep.id)
+        .eq("hub_location_id", hubLocationId)
+        .eq("role", "user")
+        .gte("created_at", cutoff)
+        .order("created_at", { ascending: false })
+        .limit(10);
+      const cachedRow = (r.data || []).find((m) => {
+        const meta = m.metadata as { attachment_full?: { kind?: string } } | null;
+        return meta?.attachment_full?.kind === "tabular";
+      });
+      if (cachedRow) {
+        const meta = cachedRow.metadata as { attachment_full?: RepInput };
+        if (meta.attachment_full) {
+          attachment = meta.attachment_full;
+          attachmentRestoredFromCache = true;
+          console.log(
+            `[Sparkbot:send] anexo tabular recuperado do cache (rep=${rep.id}, ` +
+            `idade=${Math.round((Date.now() - new Date(cachedRow.created_at as unknown as string).getTime()) / 1000)}s)`,
+          );
+        }
+      }
+    } catch (err) {
+      console.warn("[Sparkbot:send] cache lookup falhou:", err instanceof Error ? err.message : err);
+    }
+  }
+
   // 5. Persiste msg do user (channel='web_ui'). Conteúdo refletindo anexo
   // pra histórico legível: "📎 lista.xlsx (47 linhas)" + caption.
+  // Se anexo veio do cache (sticky tabular), NÃO repete o ícone — só mostra
+  // a mensagem do user. Senão fica poluído ("📊 lista.csv" em toda turn).
   const persistContent = (() => {
-    if (!attachment) return message;
+    if (!attachment || attachmentRestoredFromCache) return message;
     const filename = (() => {
       if (attachment.kind === "image") return attachment.filename || "imagem";
       if (attachment.kind === "document") return attachment.filename;
@@ -117,6 +166,15 @@ export async function POST(request: NextRequest) {
 
   let userInsertId: string | null = null;
   try {
+    // attachment_full salva o RepInput inteiro pra cache de "sticky tabular".
+    // Só ativamos pra tabular (rows ≤ 500, payload ≤ ~250KB) — image/PDF são
+    // base64 multi-MB e estouram o jsonb sem necessidade prática.
+    // Se o anexo VEIO do cache, NÃO regravamos — preservamos o original.
+    const shouldCacheAttachment =
+      !!attachment &&
+      attachment.kind === "tabular" &&
+      !attachmentRestoredFromCache;
+
     const r = await supabase
       .from("sparkbot_messages")
       .insert({
@@ -139,6 +197,8 @@ export async function POST(request: NextRequest) {
             : attachment.kind === "document"
             ? attachment.filename
             : null,
+          attachment_restored_from_cache: attachmentRestoredFromCache,
+          ...(shouldCacheAttachment ? { attachment_full: attachment } : {}),
         },
       })
       .select("id")

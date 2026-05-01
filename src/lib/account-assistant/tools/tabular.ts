@@ -17,6 +17,7 @@
  */
 
 import type { ToolEntry } from "./types";
+import { getRepGhlUserId } from "./types";
 import { normalizePhone } from "../identity";
 import type { RepInput } from "@/types/account-assistant";
 
@@ -197,6 +198,7 @@ const importContactsFromData: ToolEntry = {
       idx: number;
       payload: Record<string, unknown>;
       identifier: string;
+      notes_text: string; // texto da coluna mapeada como notes (vazio = sem nota)
     }> = [];
     const skipped: Array<{ idx: number; reason: string; row: Record<string, unknown> }> = [];
 
@@ -242,14 +244,11 @@ const importContactsFromData: ToolEntry = {
         tags: allTags,
       };
 
-      // notes não vai no /upsert payload base; criamos depois se necessário
-      // (GHL tem endpoint /contacts/{id}/notes separado).
-      void notes; // futuro: criar nota via segunda call
-
       contactsToCreate.push({
         idx,
         payload,
         identifier: validPhone ? normalizedPhone : email,
+        notes_text: notes,
       });
     });
 
@@ -262,7 +261,12 @@ const importContactsFromData: ToolEntry = {
     }
 
     // Importa em batches paralelos
-    const created: Array<{ idx: number; ghl_id: string; identifier: string }> = [];
+    const created: Array<{
+      idx: number;
+      ghl_id: string;
+      identifier: string;
+      notes_text: string;
+    }> = [];
     const failed: Array<{ idx: number; identifier: string; reason: string }> = [];
 
     for (let i = 0; i < contactsToCreate.length; i += IMPORT_BATCH_SIZE) {
@@ -274,7 +278,7 @@ const importContactsFromData: ToolEntry = {
           const res = await ctx.ghlClient.post<{ contact?: { id: string } }>("/contacts/upsert", c.payload);
           const ghlId = res.contact?.id;
           if (!ghlId) throw new Error("response sem contact.id");
-          return { idx: c.idx, ghl_id: ghlId, identifier: c.identifier };
+          return { idx: c.idx, ghl_id: ghlId, identifier: c.identifier, notes_text: c.notes_text };
         }),
       );
       results.forEach((r, j) => {
@@ -288,6 +292,31 @@ const importContactsFromData: ToolEntry = {
       });
     }
 
+    // Cria notas pra contatos que tinham coluna `notes` mapeada e texto não-vazio.
+    // GHL não aceita notes em /contacts/upsert, então é segunda chamada por contato.
+    // Roda em paralelo controlado pra não estourar rate limit.
+    let notesCreated = 0;
+    let notesFailed = 0;
+    if (mapping.notes) {
+      const repGhlUserId = getRepGhlUserId(ctx);
+      const contactsWithNotes = created.filter((c) => c.notes_text && c.notes_text.trim().length > 0);
+      for (let i = 0; i < contactsWithNotes.length; i += IMPORT_BATCH_SIZE) {
+        const batch = contactsWithNotes.slice(i, i + IMPORT_BATCH_SIZE);
+        const noteResults = await Promise.allSettled(
+          batch.map((c) =>
+            ctx.ghlClient.post(`/contacts/${c.ghl_id}/notes`, {
+              body: c.notes_text,
+              userId: repGhlUserId, // se undefined, GHL usa o user do token
+            }),
+          ),
+        );
+        for (const r of noteResults) {
+          if (r.status === "fulfilled") notesCreated++;
+          else notesFailed++;
+        }
+      }
+    }
+
     return {
       status: "ok",
       data: {
@@ -298,8 +327,14 @@ const importContactsFromData: ToolEntry = {
         failed_count: failed.length,
         skipped_count: skipped.length,
         tags_applied: allTags,
+        notes_created: notesCreated,
+        notes_failed: notesFailed,
+        notes_mapped_column: mapping.notes || null,
         // Trunca samples pra não estourar response (LLM já tem o info essencial)
-        created_sample: created.slice(0, 5),
+        created_sample: created.slice(0, 5).map((c) => ({
+          idx: c.idx, ghl_id: c.ghl_id, identifier: c.identifier,
+          had_note: !!c.notes_text,
+        })),
         failed_sample: failed.slice(0, 5),
         skipped_sample: skipped.slice(0, 3).map((s) => ({ idx: s.idx, reason: s.reason })),
       },

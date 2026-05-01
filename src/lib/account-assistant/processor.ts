@@ -325,20 +325,22 @@ function buildUserMessage(input: RepInput, runtimeContext: string): LLMMessage {
   }
   if (input.kind === "tabular") {
     const t = input.tabular;
-    const sampleRows = t.rows.slice(0, 5);
+    // 10 linhas: o suficiente pra LLM detectar variedade de formato
+    // (telefones com/sem DDI, nomes vazios, etc.) sem inflar o prompt.
+    const sampleRows = t.rows.slice(0, 10);
     const lines: string[] = [];
     lines.push(`[Rep anexou planilha "${t.filename}" — ${t.total_rows} linhas, ${t.columns.length} colunas]`);
     if (t.sheets && t.sheets.length > 1) {
       lines.push(`Sheets: ${t.sheets.map((s) => s.name).join(", ")}. Ativa: "${t.active_sheet}"`);
     }
     lines.push(`Colunas: ${t.columns.join(" | ")}`);
-    lines.push(`Primeiras ${sampleRows.length} linhas (de ${t.total_rows}):`);
+    lines.push(`Amostra de ${sampleRows.length} linhas (de ${t.total_rows} totais):`);
     sampleRows.forEach((row, i) => {
       const compact = t.columns.map((c) => `${c}=${row[c] ?? ""}`).join(" | ");
       lines.push(`  ${i + 1}. ${compact}`);
     });
     if (t.total_rows > sampleRows.length) {
-      lines.push(`  […+${t.total_rows - sampleRows.length} linhas]`);
+      lines.push(`  […+${t.total_rows - sampleRows.length} linhas não mostradas no prompt — mas as tools veem TODAS]`);
     }
     if (input.caption) {
       lines.push("");
@@ -346,10 +348,25 @@ function buildUserMessage(input: RepInput, runtimeContext: string): LLMMessage {
     }
     lines.push("");
     lines.push(
-      "REGRA: pra IMPORTAR esses contatos pro CRM, use a tool " +
-      "`import_contacts_from_data`. Os rows COMPLETOS estão acessíveis " +
-      "via o anexo da turn (não precisa repassá-los como arg). Sugira o " +
-      "mapping de colunas → campos GHL e pergunte ao rep antes de importar.",
+      "REGRAS CRÍTICAS sobre planilhas anexadas:",
+    );
+    lines.push(
+      `1. As ${t.total_rows} linhas COMPLETAS já estão acessíveis às tools via ` +
+      "ctx.attachment — você NÃO precisa pedir 'reanexa o CSV' pra processar mais. " +
+      "A amostra acima é só pro seu entendimento do formato.",
+    );
+    lines.push(
+      "2. Pra IMPORTAR contatos: use `import_contacts_from_data`. Ela processa " +
+      "TODAS as linhas, cria notes (se mapping.notes setado), aplica tags, idempotente.",
+    );
+    lines.push(
+      "3. NÃO tente iterar manualmente: NÃO chame search_contacts + create_note " +
+      "linha a linha. import_contacts_from_data já faz isso em batch.",
+    );
+    lines.push(
+      "4. Se o rep esqueceu de mapear notes na primeira tentativa, basta " +
+      "RECHAMAR import_contacts_from_data com o mapping correto — é idempotente " +
+      "(GHL faz dedup por phone/email), só cria as notas que faltaram.",
     );
     return { role: "user", content: lines.join("\n") };
   }
