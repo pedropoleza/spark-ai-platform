@@ -225,7 +225,10 @@ export async function POST(request: NextRequest) {
     let jwtVerifyError: { code?: string; message?: string } | null = null;
     let jwtClaimsMismatch: { jwtUser?: string; jwtCompany?: string } | null = null;
 
-    // 1. Tenta verificar idToken Firebase (assinatura RS256)
+    // 1. Tenta verificar idToken Firebase (assinatura RS256).
+    // Em prática, GHL nem sempre publica as keys públicas no JWKS standard
+    // — quando funciona é o caminho mais seguro; quando falha caímos no
+    // fallback de allowlist + GHL API.
     const idToken: string | undefined = body.idToken ? String(body.idToken) : undefined;
     if (idToken) {
       const result = await verifyFirebaseIdToken(idToken);
@@ -240,21 +243,39 @@ export async function POST(request: NextRequest) {
           const adminTypes = ["admin", "agency", "account"];
           if (adminRoles.includes(role) || adminTypes.includes(type)) {
             isAdmin = true;
-            adminSource = `firebase_jwt (role=${role}, type=${type})`;
+            adminSource = `firebase_jwt_verified (role=${role}, type=${type})`;
           }
         } else {
           jwtClaimsMismatch = { jwtUser: claims.user_id, jwtCompany: claims.company_id };
-          console.warn(
-            "[check-admin] Firebase JWT VERIFICADO mas claims não batem com body",
-            { jwtUser: claims.user_id, bodyUser: userId, jwtCompany: claims.company_id, bodyCompany: companyId },
-          );
         }
       } else {
         jwtVerifyError = { code: result.errorCode, message: result.errorMessage };
       }
     }
 
-    // 2. Fallback GHL API (location-level admins)
+    // 2. Fallback: allowlist explícita por env. Pra agency-level admins
+    // que GHL API não retorna em /users/?locationId= e cujo JWT não é
+    // publicly verifiable.
+    //
+    // Format: ASSISTANT_ALLOWED_AGENCY_USERS="userId1:companyId1,userId2:companyId2"
+    // Pra ser aceito, userId+companyId têm que bater EXATAMENTE com um par.
+    //
+    // Segurança: companyId só é obtido via session ativa do GHL/sparkleads
+    // — atacante anônimo não tem como adivinhar. Mas se quiser endurecer,
+    // implementar JWKS verify quando GHL publicar keys.
+    if (!isAdmin) {
+      const allowlist = (process.env.ASSISTANT_ALLOWED_AGENCY_USERS || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const targetPair = `${userId}:${companyId}`;
+      if (allowlist.includes(targetPair)) {
+        isAdmin = true;
+        adminSource = `agency_allowlist`;
+      }
+    }
+
+    // 3. Fallback GHL API (location-level admins)
     if (!isAdmin) {
       const validation = await validateGHLUser(companyId, locationId, userId);
       if (validation === null) {
