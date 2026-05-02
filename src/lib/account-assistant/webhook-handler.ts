@@ -13,6 +13,7 @@ import { processIncoming } from "./processor";
 import { transcribeAudioFromUrl, extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { trackAndCharge } from "@/lib/billing/charge";
+import { pickOutboundChannel, fallbackChannel } from "./outbound-channel";
 import type { RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 
@@ -43,11 +44,49 @@ export interface HandleAssistantInboundArgs {
  * o handler não pôde processar e o webhook principal deve tratar como erro.
  */
 export async function handleAssistantInbound(args: HandleAssistantInboundArgs): Promise<void> {
-  const { hubLocationId, contactId, conversationId, messageBody, messageType, direction, body } = args;
+  const { hubLocationId, contactId, conversationId, messageBody: rawBody, messageType, direction, body } = args;
 
   if (direction !== "inbound") {
     console.log(`[Sparkbot] skip outbound (type=${messageType})`);
     return;
+  }
+
+  // Idempotency (fix audit C3): GHL retry de webhook com mesmo messageId
+  // não pode reprocessar (2x Whisper bill, 2x LLM, 2x resposta enviada).
+  // Query upfront — se já existe, skip.
+  const ghlMessageId = (body.messageId || body.message_id || body.id) as string | undefined;
+  if (ghlMessageId) {
+    try {
+      const supabaseEarly = createAdminClient();
+      const { data: existing } = await supabaseEarly
+        .from("sparkbot_messages")
+        .select("id")
+        .eq("ghl_message_id", ghlMessageId)
+        .maybeSingle();
+      if (existing) {
+        console.log(`[Sparkbot] dedupe: ghl_message_id ${ghlMessageId} já processado, skipping`);
+        return;
+      }
+    } catch (err) {
+      console.warn("[Sparkbot] idempotency lookup falhou — segue (pior caso: 2x):", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // REACTION detection (fix audit Reaction emoji loops):
+  // GHL/Stevo enviam reactions com messageType=REACTION e body=emoji puro.
+  // 👍 ✅ 👌 → "sim" pra LLM tratar como confirmação.
+  // Outros emojis → ignora (return). Senão LLM gera greeting estranho.
+  let messageBody = rawBody;
+  if (messageType === "REACTION" || messageType === "Reaction") {
+    const emoji = (rawBody || "").trim();
+    const positiveReactions = ["👍", "✅", "👌", "🆗", "✔️", "✓"];
+    if (positiveReactions.includes(emoji)) {
+      messageBody = "sim";
+      console.log(`[Sparkbot] REACTION ${emoji} mapeado pra "sim" (confirmation)`);
+    } else {
+      console.log(`[Sparkbot] REACTION ${emoji} ignorado (não é positiva)`);
+      return;
+    }
   }
 
   const hubCompanyId =
@@ -87,10 +126,43 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   // 3. Extrai input multimodal — captura audio_seconds em audioSink pra
   //    cobrança Whisper posterior (depois de hubAgent ser conhecido).
   const audioSink: { current: AudioMeta | null } = { current: null };
-  const repInput = await extractRepInput({ body, messageBody, audioMetaSink: audioSink });
+  let repInput = await extractRepInput({ body, messageBody, audioMetaSink: audioSink });
 
   // 4. Busca agent Sparkbot na Hub (pra billing + config)
   const supabase = createAdminClient();
+
+  // Sticky tabular cache (fix audit C1): se este turn é só texto e o rep
+  // mandou um CSV/XLSX nas últimas 30 min, restaura o anexo. Senão LLM
+  // perde contexto e pede "reanexa o CSV" — bug visto no Web UI antes do
+  // fix em send/route.ts; aqui replicamos pra paridade WhatsApp.
+  if (repInput.kind === "text") {
+    try {
+      const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      const { data: cachedRows } = await supabase
+        .from("sparkbot_messages")
+        .select("metadata, created_at")
+        .eq("rep_id", rep.id)
+        .eq("hub_location_id", hubLocationId)
+        .eq("role", "user")
+        .gte("created_at", cutoff)
+        .order("created_at", { ascending: false })
+        .limit(10);
+      const cachedRow = (cachedRows || []).find((m) => {
+        const meta = m.metadata as { attachment_full?: { kind?: string } } | null;
+        return meta?.attachment_full?.kind === "tabular";
+      });
+      if (cachedRow) {
+        const meta = cachedRow.metadata as { attachment_full?: RepInput };
+        if (meta.attachment_full && meta.attachment_full.kind === "tabular") {
+          // Preserva o texto do rep como caption pro contexto da turn
+          repInput = { ...meta.attachment_full, caption: repInput.text };
+          console.log(`[Sparkbot] anexo tabular restaurado do cache (rep=${rep.id}, idade=${Math.round((Date.now() - new Date(cachedRow.created_at as unknown as string).getTime()) / 1000)}s)`);
+        }
+      }
+    } catch (err) {
+      console.warn("[Sparkbot] sticky cache lookup falhou:", err instanceof Error ? err.message : err);
+    }
+  }
   const { data: hubAgent } = await supabase
     .from("agents")
     .select("id, agent_configs(confirmation_mode, ai_model)")
@@ -191,6 +263,12 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
       : "(input)";
 
   // Defensivo: tabela pode não existir; não queremos quebrar webhook.
+  // Cache da tabular pra sticky attachment (TTL 30min, mesma lógica do
+  // send/route.ts). Só salva se for tabular nesta turn original (não
+  // restaurada do cache — senão duplica metadados).
+  const shouldCacheTabular =
+    repInput.kind === "tabular" &&
+    !((body as { __sparkbot_restored?: boolean }).__sparkbot_restored);
   try {
     await supabase.from("sparkbot_messages").insert({
       rep_id: rep.id,
@@ -200,10 +278,38 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
       role: "user",
       content: userMsgContent,
       channel: "whatsapp",
-      metadata: { input_kind: repInput.kind, ghl_contact_id: contactId },
+      ghl_message_id: ghlMessageId || null,
+      metadata: {
+        input_kind: repInput.kind,
+        ghl_contact_id: contactId,
+        ...(shouldCacheTabular ? { attachment_full: repInput } : {}),
+      },
     });
   } catch (err) {
-    console.warn("[Sparkbot] sparkbot_messages insert (user) failed:", err instanceof Error ? err.message : err);
+    // Idempotency: UNIQUE violation on ghl_message_id é normal em retry
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("uniq_sparkbot_messages_ghl_msg_id") || msg.includes("23505")) {
+      console.log(`[Sparkbot] dedupe via UNIQUE: ghl_message_id ${ghlMessageId} já inserido — skipping`);
+      return;
+    }
+    console.warn("[Sparkbot] sparkbot_messages insert (user) failed:", msg);
+  }
+
+  // Silence reset (fix audit Phase 3): qualquer inbound do rep limpa
+  // o counter e a pausa. Se o rep tava silenciado, agora reabriu a janela
+  // (no sentido WhatsApp 24h tbm).
+  try {
+    await supabase
+      .from("rep_identities")
+      .update({
+        last_inbound_at: new Date().toISOString(),
+        consecutive_proactive_without_reply: 0,
+        proactive_paused_at: null,
+        proactive_warned_at: null,
+      })
+      .eq("id", rep.id);
+  } catch (err) {
+    console.warn("[Sparkbot] silence reset falhou (não-bloqueante):", err instanceof Error ? err.message : err);
   }
 
   // 6. Processa
@@ -343,7 +449,16 @@ async function extractRepInput(args: {
   return { kind: "text", text: messageBody };
 }
 
-/** Envia resposta pro rep via GHL (WhatsApp dentro de 24h, SMS fora). */
+/**
+ * Envia resposta pro rep via GHL.
+ *
+ * Default agora é SMS (Stevo/Evolution roteia pro WhatsApp do rep) porque
+ * a WhatsApp Business API ainda tá em review. Quando liberada, basta setar
+ * ASSISTANT_OUTBOUND_CHANNEL=auto e implementar checkConversationWindow.
+ *
+ * Mantém fallback pra outro canal em caso de falha (ex: SMS provider down →
+ * tenta WhatsApp; ou WhatsApp 24h-window fechada → tenta SMS).
+ */
 async function sendResponseToRep(
   client: GHLClient,
   contactId: string,
@@ -351,7 +466,7 @@ async function sendResponseToRep(
   incomingType: string,
   text: string,
 ): Promise<void> {
-  const tryType = incomingType.toUpperCase().includes("WHATSAPP") ? "WhatsApp" : "SMS";
+  const tryType = pickOutboundChannel(incomingType);
   const payload: Record<string, unknown> = {
     type: tryType,
     contactId,
@@ -362,13 +477,14 @@ async function sendResponseToRep(
   try {
     await client.post("/conversations/messages", payload);
   } catch (err) {
+    const fb = fallbackChannel(tryType);
     console.warn(
-      "[Sparkbot] send failed on", tryType, "— trying fallback:",
+      `[Sparkbot] send failed on ${tryType} — trying fallback ${fb}:`,
       err instanceof Error ? err.message : err,
     );
     try {
       await client.post("/conversations/messages", {
-        type: tryType === "WhatsApp" ? "SMS" : "WhatsApp",
+        type: fb,
         contactId,
         message: text,
         ...(conversationId ? { conversationId } : {}),

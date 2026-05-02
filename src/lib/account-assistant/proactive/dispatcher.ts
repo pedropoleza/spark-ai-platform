@@ -20,6 +20,7 @@
 import { GHLClient } from "@/lib/ghl/client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
 import { runWithTools, type LLMMessage } from "../llm-client";
 import { getToolDefinitions, executeTool, type ToolContext } from "../tools";
 import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "../prompt-builder";
@@ -244,6 +245,25 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
   const alertStateId = await tryClaimDispatchSlot(rule, rep.id, targetId, forceFire === true);
   if (!alertStateId) {
     return { status: "skipped_cooldown", message: "Em cooldown (claim negado)" };
+  }
+
+  // Silence gate (fix audit Phase 3): rep parou de responder? Skip pra não
+  // queimar mensagens em sequência (risco banimento WhatsApp). Aplica APENAS
+  // em mode='real' — em testes (simulated) seguimos sem gate pra Pedro
+  // poder validar regras.
+  // O gate roda APÓS o claim do slot pra não afogar o cron com chamadas
+  // canceladas, e ANTES do LLM (pra não desperdiçar tokens).
+  const silenceDecision = mode === "real"
+    ? await loadSilenceDecision(supabase, rep.id)
+    : null;
+  if (silenceDecision && !silenceDecision.canSend) {
+    console.log(
+      `[dispatcher] rep ${rep.id} silenciado (reason=${silenceDecision.reason}) ` +
+      `— pulando rule ${rule.name}${silenceDecision.shouldSetPaused ? ' + pausando' : ''}`,
+    );
+    await recordProactiveSent(supabase, rep.id, silenceDecision);
+    await finalizeDispatch(alertStateId, "skipped_silence");
+    return { status: "skipped_silence", message: "Rep silenciado (sem resposta recente)" };
   }
 
   // 5. Resolve location ativa do rep + GHL client

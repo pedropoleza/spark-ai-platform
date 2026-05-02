@@ -6,17 +6,58 @@ import type { RepIdentity, GHLUserLink, RepProfile } from "@/types/account-assis
  * Normaliza phone para formato E.164 (+<countrycode><number>).
  * GHL envia phones em vários formatos; padronizamos pra ter unique constraint
  * funcionando e lookups determinísticos.
+ *
+ * IMPORTANTE: o default country é via `defaultCountry` arg (vem da timezone
+ * da location ativa). Antes assumia US sempre (`+1` em 10/11 dígitos), o que
+ * quebrou TODOS os imports brasileiros: `11987654321` virava `+11987654321`
+ * (US wrong) em vez de `+5511987654321`.
+ *
+ * Heurística:
+ * - Se já começa com `+` → preserva (assumindo E.164 já válido)
+ * - Se tem 12+ dígitos sem `+` → assume que tem country code, prepend `+`
+ * - Se tem 10/11 dígitos:
+ *   - defaultCountry='BR' → prepend `+55`
+ *   - defaultCountry='US' (default) → prepend `+1`
+ * - Fallback: prepend `+` direto
+ *
+ * Para detectar country da location: ver inferCountryFromTimezone()
  */
-export function normalizePhone(raw: string): string {
+export function normalizePhone(raw: string, defaultCountry: "US" | "BR" = "US"): string {
   if (!raw) return raw;
   const digits = raw.replace(/\D/g, "");
   if (!digits) return raw;
-  // Se já começa com código de país (10+ dígitos), adiciona +
-  if (digits.length >= 11 && !raw.startsWith("+")) return `+${digits}`;
-  // Se tem 10 dígitos (US sem código), presume +1
-  if (digits.length === 10) return `+1${digits}`;
-  // Fallback: devolve como veio se não conseguir inferir
-  return raw.startsWith("+") ? raw : `+${digits}`;
+  // Já tem `+` na entrada — preserva (assume E.164 válido)
+  if (raw.trim().startsWith("+")) return `+${digits}`;
+  // 12+ dígitos sem `+` — provavelmente já tem country code
+  if (digits.length >= 12) return `+${digits}`;
+  // 10/11 dígitos — depende do default country
+  if (digits.length === 10 || digits.length === 11) {
+    if (defaultCountry === "BR") return `+55${digits}`;
+    return `+1${digits}`;
+  }
+  // Fallback (curto demais, dificilmente válido)
+  return `+${digits}`;
+}
+
+/**
+ * Infere country code (BR/US) da timezone IANA da location.
+ * Brazilian timezones começam com America/Sao_Paulo, America/Fortaleza, etc.
+ * Pra outros casos volta US (default seguro pra mercado dominante).
+ */
+export function inferCountryFromTimezone(tz: string | null | undefined): "US" | "BR" {
+  if (!tz) return "US";
+  const lower = tz.toLowerCase();
+  // Timezones brasileiros conhecidos (IANA)
+  const brTimezones = [
+    "america/sao_paulo", "america/fortaleza", "america/recife",
+    "america/maceio", "america/bahia", "america/araguaina",
+    "america/belem", "america/campo_grande", "america/cuiaba",
+    "america/manaus", "america/porto_velho", "america/boa_vista",
+    "america/rio_branco", "america/eirunepe", "america/santarem",
+    "america/noronha", "brazil/east", "brazil/west", "brazil/acre",
+  ];
+  if (brTimezones.some((b) => lower === b || lower.includes("brazil") || lower.includes("sao_paulo"))) return "BR";
+  return "US";
 }
 
 /**

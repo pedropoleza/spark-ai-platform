@@ -129,9 +129,29 @@ export async function executeTool(
     return { status: "error", message: `Tool desconhecida: ${name}`, retryable: false };
   }
 
+  const risk = entry.def.risk;
+
+  // Test session gate (fix audit Phase 0): se rep está em modo teste,
+  // tools de WRITE retornam mock. Antes, qualquer teste real do Pedro
+  // mexia no CRM/WhatsApp de produção (delete_contact, send_message,
+  // schedule_reminder iam direto pra GHL/WhatsApp).
+  // Tools risk=safe (read-only) seguem normal pra não quebrar análises.
+  if (ctx.testSessionId && risk !== "safe") {
+    console.log(`[Sparkbot:test] mock '${name}' (risk=${risk}, session=${ctx.testSessionId})`);
+    return {
+      status: "ok",
+      data: {
+        simulated: true,
+        tool: name,
+        risk,
+        message: `[Test mode] '${name}' não foi executada de verdade — produção CRM intacta. Args recebidos: ${JSON.stringify(args).slice(0, 200)}`,
+        args_preview: args,
+      },
+    };
+  }
+
   // Gate de confirmação
   const mode = ctx.confirmationMode ?? "medium_and_high";
-  const risk = entry.def.risk;
   const requiresConfirm =
     mode === "always" ||
     (mode === "medium_and_high" && (risk === "medium" || risk === "high")) ||

@@ -211,13 +211,20 @@ export async function POST(request: NextRequest) {
     console.warn("[Sparkbot:send] sparkbot_messages insert crashed:", err instanceof Error ? err.message : err);
   }
 
-  // 6. Heartbeat: marca que rep tá ativo no web (pra canal automático
-  // decidir mandar proativos no web vs WhatsApp). Defensivo — coluna pode
-  // não existir se migration 00042 ainda pendente.
+  // 6. Heartbeat + silence reset.
+  // - web_session_active_at: rep tá ativo no painel (canal preferido proativo)
+  // - last_inbound_at + reset counter: limpa qualquer pausa por silêncio,
+  //   já que o rep falou. Espelha lógica do webhook-handler.ts WhatsApp.
   try {
     await supabase
       .from("rep_identities")
-      .update({ web_session_active_at: new Date().toISOString() })
+      .update({
+        web_session_active_at: new Date().toISOString(),
+        last_inbound_at: new Date().toISOString(),
+        consecutive_proactive_without_reply: 0,
+        proactive_paused_at: null,
+        proactive_warned_at: null,
+      })
       .eq("id", rep.id);
   } catch { /* coluna ausente — sem heartbeat */ }
 

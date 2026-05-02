@@ -19,6 +19,38 @@ function checkRateLimit(contactId: string): boolean {
   entry.count++;
   return entry.count <= RATE_LIMIT_MAX;
 }
+
+// ===== Multi-hub Sparkbot lookup =====
+// Antes: checava env var ASSISTANT_HUB_LOCATION_ID (single hub).
+// Agora: query DB pra ver se a location tem agent type='account_assistant' ativo.
+// Cache em memória 5min — agents raramente mudam, e webhook é hot path.
+const HUB_CACHE_TTL_MS = 5 * 60 * 1000;
+const hubCache = new Map<string, { isHub: boolean; expiresAt: number }>();
+
+async function isSparkbotHub(locationId: string | undefined): Promise<boolean> {
+  if (!locationId) return false;
+  const now = Date.now();
+  const cached = hubCache.get(locationId);
+  if (cached && cached.expiresAt > now) return cached.isHub;
+
+  try {
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("location_id", locationId)
+      .eq("type", "account_assistant")
+      .eq("status", "active")
+      .limit(1)
+      .maybeSingle();
+    const isHub = !!data && !error;
+    hubCache.set(locationId, { isHub, expiresAt: now + HUB_CACHE_TTL_MS });
+    return isHub;
+  } catch (err) {
+    console.warn("[Webhook:isSparkbotHub] lookup falhou — assumindo não é hub:", err instanceof Error ? err.message : err);
+    return false;
+  }
+}
 import { GHLClient } from "@/lib/ghl/client";
 import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
@@ -145,12 +177,17 @@ export async function POST(request: NextRequest) {
     // Reusa o mesmo webhook do GHL Marketplace app — só roteia internamente.
     // Pula STOP/handoff/targeting (específicos de sales/recruitment) e delega
     // pro handler dedicado.
-    const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
-    if (hubLocationId && locationId === hubLocationId) {
+    //
+    // Multi-hub: aceita QUALQUER location que tenha agent ativo
+    // type='account_assistant'. Antes era checado via env var
+    // ASSISTANT_HUB_LOCATION_ID (single hub) — bloqueava agências com mais
+    // de um hub Sparkbot (ex: WhatsApp via Stevo numa location dedicada).
+    // Cache em memória 5min pra evitar query a cada webhook.
+    if (await isSparkbotHub(locationId)) {
       const { handleAssistantInbound } = await import("@/lib/account-assistant/webhook-handler");
       waitUntil(
         handleAssistantInbound({
-          hubLocationId,
+          hubLocationId: locationId,
           contactId,
           conversationId: conversationId || "",
           messageBody: messageBody || "",

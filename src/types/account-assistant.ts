@@ -224,6 +224,7 @@ export type AlertDispatchStatus =
   | "skipped_cooldown"
   | "skipped_quiet_hours"
   | "skipped_disabled"
+  | "skipped_silence" // rep não tá respondendo — silence gate barrou (3+ proativos sem resposta)
   | "failed";
 
 export interface AlertState {

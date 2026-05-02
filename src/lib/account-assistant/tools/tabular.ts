@@ -18,7 +18,8 @@
 
 import type { ToolEntry } from "./types";
 import { getRepGhlUserId } from "./types";
-import { normalizePhone } from "../identity";
+import { normalizePhone, inferCountryFromTimezone } from "../identity";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { RepInput } from "@/types/account-assistant";
 
 const IMPORT_BATCH_SIZE = 10; // chamadas GHL paralelas por batch
@@ -177,6 +178,21 @@ const importContactsFromData: ToolEntry = {
     const tags = Array.isArray(args.tags) ? (args.tags as string[]) : [];
     const targetLocation = args.target_location_id ? String(args.target_location_id) : ctx.locationId;
 
+    // Resolve default country pra normalizePhone via timezone da location.
+    // Sem isso, números BR de 10/11 dígitos viram +1 (US wrong).
+    let defaultCountry: "US" | "BR" = "US";
+    try {
+      const sb = createAdminClient();
+      const { data: locRow } = await sb
+        .from("locations")
+        .select("timezone")
+        .eq("location_id", targetLocation)
+        .maybeSingle();
+      defaultCountry = inferCountryFromTimezone(locRow?.timezone);
+    } catch (err) {
+      console.warn("[Sparkbot:import] location timezone lookup falhou — usando US default:", err instanceof Error ? err.message : err);
+    }
+
     // Owner: 'self' resolve pro ghl_user_id do rep na location ativa.
     // Aceita também o user_id direto (caso o rep peça pra atribuir a outro).
     let assignedTo: string | undefined;
@@ -253,7 +269,7 @@ const importContactsFromData: ToolEntry = {
       }
 
       // Pelo menos um identificador (phone OU email)
-      const normalizedPhone = phone ? normalizePhone(phone) : "";
+      const normalizedPhone = phone ? normalizePhone(phone, defaultCountry) : "";
       const validPhone = normalizedPhone && normalizedPhone.replace(/\D/g, "").length >= 10;
       const validEmail = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 

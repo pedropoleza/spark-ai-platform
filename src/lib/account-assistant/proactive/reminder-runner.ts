@@ -12,6 +12,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { shouldFireCron } from "./cron-evaluator";
+import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
 
 export interface ReminderRunResult {
   fired: number;
@@ -103,18 +104,39 @@ async function fireOne(task: ScheduledTaskRow): Promise<"fired" | "failed" | "sk
     }
   }
 
+  // Silence gate (fix audit Phase 3): se rep não tá respondendo, evita
+  // spam que dispara banimento WhatsApp. Soft warning no 2º, hard no 3º,
+  // pausa no 4º. Só aplica em entregas REAIS (não em test session).
+  const decision = await loadSilenceDecision(supabase, task.rep_id);
+  if (!decision.canSend) {
+    console.log(
+      `[reminder-runner] task ${task.id} skipped (silence gate, reason=${decision.reason}) — ` +
+      `${decision.shouldSetPaused ? "pausando rep" : "rep já pausado"}`,
+    );
+    await recordProactiveSent(supabase, task.rep_id, decision);
+    await advanceTask(task);
+    return "skipped";
+  }
+
+  // Prepend warning prefix se gate sinalizou (2º ou 3º proativo sem resposta)
+  const finalMessage = decision.warningPrefix
+    ? `${decision.warningPrefix}${message}`
+    : message;
+
   // Web UI: insere em sparkbot_messages com channel='system' (proativa).
   // Painel web vai pegar no próximo poll e mostrar como notificação.
   if (channels.includes("web_ui")) {
-    await deliverReminderWeb(task, message, title);
+    await deliverReminderWeb(task, finalMessage, title);
   }
 
   // WhatsApp: V3 enviaria pelo Hub real; por enquanto registra como
   // 'system' channel='whatsapp' pra histórico (e V3 envia depois).
   if (channels.includes("whatsapp")) {
-    await deliverReminderWhatsapp(task, message, title);
+    await deliverReminderWhatsapp(task, finalMessage, title);
   }
 
+  // Persiste o counter increment + warning marker
+  await recordProactiveSent(supabase, task.rep_id, decision);
   await advanceTask(task);
   return "fired";
 }
@@ -245,12 +267,25 @@ async function deliverReminderWhatsapp(
 
       if (!contactId) throw new Error("não consegui resolver contact_id no GHL");
 
-      // Envia via WhatsApp
-      await ghlClient.post("/conversations/messages", {
-        type: "WhatsApp",
-        contactId,
-        message: formattedMessage,
-      });
+      // Envia via canal preferido (SMS via Stevo agora; WhatsApp quando
+      // API liberada). Helper centralizado em outbound-channel.ts.
+      const { pickOutboundChannel, fallbackChannel } = await import("../outbound-channel");
+      const outboundType = pickOutboundChannel();
+      try {
+        await ghlClient.post("/conversations/messages", {
+          type: outboundType,
+          contactId,
+          message: formattedMessage,
+        });
+      } catch (sendErr) {
+        const fb = fallbackChannel(outboundType);
+        console.warn(`[reminder-runner] send ${outboundType} falhou — fallback ${fb}:`, sendErr instanceof Error ? sendErr.message : sendErr);
+        await ghlClient.post("/conversations/messages", {
+          type: fb,
+          contactId,
+          message: formattedMessage,
+        });
+      }
       sentViaWhatsapp = true;
     } catch (err) {
       sendError = err instanceof Error ? err.message : String(err);
