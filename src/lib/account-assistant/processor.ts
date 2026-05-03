@@ -62,6 +62,10 @@ export interface ProcessOutput {
    *  Test endpoint deve persistir em metadata pra próximo turno detectar
    *  loop e responder com fallback explícito. */
   llm_failed?: boolean;
+  /** Erro do model primário (Claude) se houve fallback. Logging diagnóstico. */
+  primary_error?: string;
+  /** Erro do model secundário (Claude Haiku) se também falhou. */
+  secondary_error?: string;
 }
 
 export async function processIncoming(input: ProcessInput): Promise<ProcessOutput> {
@@ -284,6 +288,8 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     tools_executed: result.tool_calls.map((tc) => tc.name),
     tool_calls: result.tool_calls,
     llm_failed: llmFailed,
+    primary_error: result.primary_error,
+    secondary_error: result.secondary_error,
   };
 }
 

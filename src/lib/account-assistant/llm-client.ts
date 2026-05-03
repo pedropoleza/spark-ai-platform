@@ -99,6 +99,10 @@ export interface RunWithToolsOutput {
   cached_tokens: number;
   iterations: number;
   stopped_reason: "end_turn" | "max_iterations" | "error";
+  /** Erro do modelo primário, se houve fallback. Ajuda debug Claude vs OpenAI. */
+  primary_error?: string;
+  /** Erro do secundário Claude, se também falhou e caiu pra OpenAI. */
+  secondary_error?: string;
 }
 
 /**
@@ -117,36 +121,35 @@ export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToo
     try {
       return await runWithClaude({ ...input, model });
     } catch (err) {
+      const primaryErrMsg = err instanceof Error ? err.message : String(err);
       // H1: tenta secundário Anthropic antes de cair pra OpenAI. Diferente
       // capacity pool, mesmo comportamento conservador em compliance/UW.
       console.error(
-        `[LLM] Claude primário (${model}) falhou, tentando ${SECONDARY_CLAUDE_MODEL}:`,
-        err instanceof Error ? err.message : err,
+        `[LLM] Claude primário (${model}) falhou, tentando ${SECONDARY_CLAUDE_MODEL}: ${primaryErrMsg}`,
       );
       try {
-        return await runWithClaude({ ...input, model: SECONDARY_CLAUDE_MODEL });
+        const r = await runWithClaude({ ...input, model: SECONDARY_CLAUDE_MODEL });
+        return { ...r, primary_error: primaryErrMsg };
       } catch (err2) {
+        const secondaryErrMsg = err2 instanceof Error ? err2.message : String(err2);
         if (STRICT_CLAUDE_ONLY) {
           console.error(
-            `[LLM] STRICT_CLAUDE_ONLY=1 — não cai pra OpenAI. Erro Claude secundário:`,
-            err2 instanceof Error ? err2.message : err2,
+            `[LLM] STRICT_CLAUDE_ONLY=1 — não cai pra OpenAI. Erro Claude secundário: ${secondaryErrMsg}`,
           );
-          return llmFailureStub(model);
+          return { ...llmFailureStub(model), primary_error: primaryErrMsg, secondary_error: secondaryErrMsg };
         }
         console.error(
           `[LLM] Claude secundário também falhou, fallback OpenAI ${FALLBACK_MODEL} ` +
           `(ATENÇÃO: stress test mostrou ~85% de regressões de compliance ` +
-          `nesse fallback — investigar causa raiz Claude):`,
-          err2 instanceof Error ? err2.message : err2,
+          `nesse fallback — investigar causa raiz Claude): ${secondaryErrMsg}`,
         );
         try {
-          return await runWithOpenAI({ ...input, model: FALLBACK_MODEL });
+          const r = await runWithOpenAI({ ...input, model: FALLBACK_MODEL });
+          return { ...r, primary_error: primaryErrMsg, secondary_error: secondaryErrMsg };
         } catch (err3) {
-          console.error(
-            `[LLM] OpenAI fallback também falhou:`,
-            err3 instanceof Error ? err3.message : err3,
-          );
-          return llmFailureStub(model);
+          const tertiaryErrMsg = err3 instanceof Error ? err3.message : String(err3);
+          console.error(`[LLM] OpenAI fallback também falhou: ${tertiaryErrMsg}`);
+          return { ...llmFailureStub(model), primary_error: primaryErrMsg, secondary_error: secondaryErrMsg };
         }
       }
     }

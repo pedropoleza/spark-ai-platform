@@ -640,10 +640,21 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
       metadata: {
         model: result.model_used,
         tools: result.tools_executed,
+        // tool_calls completos (input + result) pra debug. Trunca cada
+        // resultado a 800 chars pra não estourar jsonb. Sample só os
+        // primeiros 5 calls — em raros casos LLM faz dezenas.
+        tool_calls: (result.tool_calls || []).slice(0, 5).map((tc) => ({
+          name: tc.name,
+          input: tc.input,
+          result_preview: JSON.stringify(tc.result).slice(0, 800),
+        })),
         prompt_tokens: result.tokens?.prompt,
         completion_tokens: result.tokens?.completion,
         cached_tokens: result.tokens?.cached,
         llm_failed: result.llm_failed,
+        // Erros de fallback Claude→OpenAI pra debug
+        ...(result.primary_error ? { primary_error: result.primary_error.slice(0, 500) } : {}),
+        ...(result.secondary_error ? { secondary_error: result.secondary_error.slice(0, 500) } : {}),
       },
     });
   } catch (err) {
