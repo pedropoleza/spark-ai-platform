@@ -227,26 +227,6 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     .extractMediaAttachments(body);
   const hasUsableAttachment = !!audioUrlInfo?.url || mediaAttachmentsForCheck.length > 0;
 
-  // DIAGNOSTIC LOGGING via sparkbot_webhook_debug (sempre captura).
-  // ID da row é usado pra UPDATE depois com transcribe_status/text/error.
-  let debugRowId: string | null = null;
-  try {
-    const supabaseDebug = createAdminClient();
-    const { data: dbgIns } = await supabaseDebug.from("sparkbot_webhook_debug").insert({
-      hub_location_id: hubLocationId,
-      ghl_message_id: ghlMessageId || null,
-      contact_id: contactId,
-      message_type: messageType || null,
-      message_body_preview: (messageBody || "").slice(0, 200),
-      rep_input_kind: repInput.kind,
-      audio_url_extracted: audioUrlInfo?.url || null,
-      body_raw: body,
-    }).select("id").single();
-    debugRowId = dbgIns?.id || null;
-  } catch (err) {
-    console.warn("[Sparkbot:DEBUG] webhook_debug insert falhou:", err instanceof Error ? err.message : err);
-  }
-
   // PLACEHOLDER REJECT: só se for texto placeholder E sem mídia processável.
   // Se tem attachment, o webhook é "bom" (apenas o body é placeholder do GHL).
   if (isPlaceholderText && repInput.kind === "text" && !hasUsableAttachment) {
@@ -254,14 +234,6 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
       `[Sparkbot] PLACEHOLDER REJECT: msg "${repInput.text}" do rep (contact=${contactId}) — ` +
       `sem attachment, provider sem audio_url/media. Aguardando webhook irmão.`,
     );
-    if (debugRowId) {
-      try {
-        const supabaseDebug = createAdminClient();
-        await supabaseDebug.from("sparkbot_webhook_debug")
-          .update({ rejected_by: "placeholder_no_attachment" })
-          .eq("id", debugRowId);
-      } catch { /* ignora */ }
-    }
     return;
   }
 
@@ -287,35 +259,11 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
           model: transcribed.model,
         };
       }
-      if (debugRowId) {
-        try {
-          const supabaseDebug = createAdminClient();
-          await supabaseDebug.from("sparkbot_webhook_debug")
-            .update({
-              transcribe_attempted: true,
-              transcribe_status: "ok",
-              transcribe_text: transcribed.text.slice(0, 1000),
-            })
-            .eq("id", debugRowId);
-        } catch { /* ignora */ }
-      }
     } else {
       transcribeFailureCode = verboseResult.code;
       console.error(
         `[Sparkbot] transcribe falhou: code=${verboseResult.code} msg=${verboseResult.message}`,
       );
-      if (debugRowId) {
-        try {
-          const supabaseDebug = createAdminClient();
-          await supabaseDebug.from("sparkbot_webhook_debug")
-            .update({
-              transcribe_attempted: true,
-              transcribe_status: verboseResult.code,
-              transcribe_error: verboseResult.message.slice(0, 500),
-            })
-            .eq("id", debugRowId);
-        } catch { /* ignora */ }
-      }
     }
   }
 
