@@ -59,8 +59,17 @@ export interface RepIdentity {
    * Timezone IANA do REP (não da location). Single source of truth pra
    * formatar horário no prompt e calcular ISO 8601 de schedule_reminder.
    * Resolution chain: rep.timezone → location.timezone → 'America/New_York'.
+   * Pode vir do GHL user.timezone (auto-sugestão) ou da tool confirm_rep_timezone
+   * (rep confirmou). Veja `timezone_confirmed_at` pra distinguir.
    */
   timezone?: string | null;
+  /**
+   * Timestamp da confirmação verbal do rep via tool `confirm_rep_timezone`.
+   * NULL = `timezone` é só sugestão automática (GHL user ou location) e o
+   * gate em executeTool bloqueia tools tz-sensitive até rep confirmar.
+   * Resetado quando rep informa novo fuso (viagem etc).
+   */
+  timezone_confirmed_at?: string | null;
   created_at: string;
   updated_at: string;
 }
