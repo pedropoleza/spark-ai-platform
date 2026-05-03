@@ -191,6 +191,39 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   const audioSink: { current: AudioMeta | null } = { current: null };
   let repInput = await extractRepInput({ body, messageBody, audioMetaSink: audioSink });
 
+  // PLACEHOLDER REJECTION (fix bug 2026-05-03):
+  // Quando GHL multi-provider envia áudio/mídia, um dos providers
+  // costuma mandar webhook só com placeholder text ("Audio Message.",
+  // "Image", "Document", etc.) e SEM audio_url/media_url processável.
+  // O outro provider manda o conteúdo real.
+  //
+  // Se aceitarmos o placeholder, o bot responde "Não consigo processar
+  // áudio" enquanto o webhook bom é bloqueado pelo timing-match.
+  //
+  // Fix: detecta placeholder genérico e abortar. O webhook irmão (com
+  // conteúdo real) chegou ou vai chegar em <5s — esse processa.
+  const PLACEHOLDER_TEXTS = new Set([
+    "Audio Message.",
+    "Audio message",
+    "audio message",
+    "Image",
+    "image",
+    "Image message",
+    "Document",
+    "document",
+    "Video",
+    "video",
+    "Sticker",
+    "sticker",
+  ]);
+  if (repInput.kind === "text" && PLACEHOLDER_TEXTS.has(repInput.text.trim())) {
+    console.warn(
+      `[Sparkbot] PLACEHOLDER REJECT: msg "${repInput.text}" do rep (contact=${contactId}) — ` +
+      `provavelmente provider sem audio_url/media. Aguardando webhook irmão com conteúdo real.`,
+    );
+    return;
+  }
+
   // 4. Busca agent Sparkbot na Hub (pra billing + config)
   const supabase = createAdminClient();
 
