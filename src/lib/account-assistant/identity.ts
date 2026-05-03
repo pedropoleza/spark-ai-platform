@@ -123,6 +123,11 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
 
   const matches: GHLUserLink[] = [];
   let displayName: string | null = null;
+  // Fix bug observado em prod 2026-05-03: rep BR levou lembrete em horário NY
+  // porque processor pegava location.timezone, mas a hora correta é a do REP.
+  // Capturamos o timezone do GHL user object (campo IANA) no identify e
+  // armazenamos top-level pra resolver fácil em runtime.
+  let repTimezone: string | null = null;
 
   for (const loc of locations) {
     try {
@@ -134,6 +139,7 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
           firstName?: string;
           lastName?: string;
           phone?: string;
+          timezone?: string;
           roles?: { role?: string };
         }>;
       }>("/users/", { locationId: loc.location_id });
@@ -143,13 +149,19 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
         const userPhone = normalizePhone(u.phone || "");
         if (userPhone === normalizedPhone) {
           const name = [u.firstName, u.lastName].filter(Boolean).join(" ");
+          const tz = (u.timezone || "").trim() || null;
           matches.push({
             location_id: loc.location_id,
             ghl_user_id: u.id,
             location_name: loc.location_name || null,
             role: u.roles?.role || null,
+            timezone: tz,
           });
           if (!displayName && name) displayName = name;
+          // Top-level timezone = primeiro non-null encontrado. Em prática,
+          // GHL user tem 1 timezone único — múltiplas locations devolvem o
+          // mesmo valor. Se vier discrepância, prevalece o primeiro match.
+          if (!repTimezone && tz) repTimezone = tz;
         }
       }
     } catch (err) {
@@ -167,6 +179,7 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
       phone: normalizedPhone,
       display_name: displayName,
       ghl_users: matches,
+      timezone: repTimezone,
       // Se só 1 location, já seta como ativa pra não perguntar
       active_location_id: matches.length === 1 ? matches[0].location_id : null,
     })
@@ -247,6 +260,7 @@ export async function identifyRepByGhlUser(args: {
   let userPhone: string | null = null;
   let userName: string | null = null;
   let userRole: string | null = null;
+  let userTimezone: string | null = null;
   try {
     const client = new GHLClient(companyId, locationId);
     const res = await client.get<{
@@ -255,6 +269,7 @@ export async function identifyRepByGhlUser(args: {
         firstName?: string;
         lastName?: string;
         phone?: string;
+        timezone?: string;
         roles?: { role?: string };
       }>;
     }>("/users/", { locationId });
@@ -264,6 +279,7 @@ export async function identifyRepByGhlUser(args: {
       userPhone = u.phone ? normalizePhone(u.phone) : null;
       userName = [u.firstName, u.lastName].filter(Boolean).join(" ") || null;
       userRole = u.roles?.role || null;
+      userTimezone = (u.timezone || "").trim() || null;
     }
   } catch (err) {
     console.warn(
@@ -291,13 +307,31 @@ export async function identifyRepByGhlUser(args: {
       if (!alreadyHas) {
         const updatedLinks = [
           ...links,
-          { ghl_user_id: ghlUserId, location_id: locationId, location_name: null, role: userRole },
+          {
+            ghl_user_id: ghlUserId,
+            location_id: locationId,
+            location_name: null,
+            role: userRole,
+            timezone: userTimezone,
+          },
         ];
+        // Se rep ainda não tinha timezone top-level, popula agora
+        const updates: Record<string, unknown> = {
+          ghl_users: updatedLinks,
+          updated_at: new Date().toISOString(),
+        };
+        if (!repExisting.timezone && userTimezone) {
+          updates.timezone = userTimezone;
+        }
         await supabase
           .from("rep_identities")
-          .update({ ghl_users: updatedLinks, updated_at: new Date().toISOString() })
+          .update(updates)
           .eq("id", repExisting.id);
-        return { ...repExisting, ghl_users: updatedLinks };
+        return {
+          ...repExisting,
+          ghl_users: updatedLinks,
+          timezone: repExisting.timezone || userTimezone,
+        };
       }
       return repExisting;
     }
@@ -313,8 +347,15 @@ export async function identifyRepByGhlUser(args: {
       phone: phoneOrPlaceholder,
       display_name: userName,
       ghl_users: [
-        { ghl_user_id: ghlUserId, location_id: locationId, location_name: null, role: userRole },
+        {
+          ghl_user_id: ghlUserId,
+          location_id: locationId,
+          location_name: null,
+          role: userRole,
+          timezone: userTimezone,
+        },
       ],
+      timezone: userTimezone,
       active_location_id: locationId,
     })
     .select()

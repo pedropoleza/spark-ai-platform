@@ -13,6 +13,13 @@ export interface GHLUserLink {
   ghl_user_id: string;
   location_name: string | null;
   role: string | null;
+  /**
+   * Timezone IANA do user GHL nessa location (ex: 'America/Sao_Paulo').
+   * Capturado no momento do identify (GHL users API). Pode ser null se a API
+   * não devolver o campo (legado) — caller usa rep.timezone (top-level) como
+   * fallback, ou location.timezone, ou 'America/New_York'.
+   */
+  timezone?: string | null;
 }
 
 /** Perfil adaptativo — o que o Sparkbot aprende sobre o rep ao longo do tempo. */
@@ -48,6 +55,12 @@ export interface RepIdentity {
   terms_accepted_at: string | null;
   unanswered_count: number;
   unanswered_pause_until: string | null;
+  /**
+   * Timezone IANA do REP (não da location). Single source of truth pra
+   * formatar horário no prompt e calcular ISO 8601 de schedule_reminder.
+   * Resolution chain: rep.timezone → location.timezone → 'America/New_York'.
+   */
+  timezone?: string | null;
   created_at: string;
   updated_at: string;
 }

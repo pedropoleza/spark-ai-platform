@@ -284,7 +284,11 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
   }
 
   // 6. Monta prompt: persona + instruction + context
-  const tz = location.timezone || "America/New_York";
+  // Fix bug observado em prod 2026-05-03: timezone do REP, não da location.
+  // Mesma resolution chain do processor: rep.timezone → location.timezone →
+  // 'America/New_York'. Em proativos não fazemos lazy backfill (vem do
+  // identify; se faltar, processor backfila no próximo inbound).
+  const tz = rep.timezone || location.timezone || "America/New_York";
   const locale: "pt-BR" | "en-US" =
     tz.includes("America/") && !tz.includes("Sao_Paulo") && !tz.includes("Fortaleza")
       ? "en-US"

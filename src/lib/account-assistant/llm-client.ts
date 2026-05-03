@@ -332,9 +332,17 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
     const usage = response.usage as any;
     const freshInput = response.usage?.input_tokens || 0;
     const cachedInput = usage?.cache_read_input_tokens || 0;
-    // Normalizar: prompt_tokens = total de input (fresh + cached), igual o
-    // formato da OpenAI. Evita cache % > 100% quando UI divide cached/prompt.
-    totalPromptTokens += freshInput + cachedInput;
+    // Fix bug observado em prod 2026-05-03: cache_creation_input_tokens
+    // (tokens sendo ESCRITOS ao cache no primeiro turn de uma sessão) não
+    // estavam sendo somados, subfaturando ~40K tokens por nova sessão.
+    // Anthropic devolve 3 buckets: input (fresh, fora do cache), cache_read
+    // (lido do cache), cache_creation (escrito agora ao cache pra próximo
+    // turn). Pra prompt_tokens total — análogo ao formato OpenAI — soma os 3.
+    const cacheCreation = usage?.cache_creation_input_tokens || 0;
+    // Normalizar: prompt_tokens = total de input (fresh + cached + creation),
+    // igual o formato da OpenAI. Evita cache % > 100% quando UI divide
+    // cached/prompt e evita underbilling no primeiro turn.
+    totalPromptTokens += freshInput + cachedInput + cacheCreation;
     totalCompletionTokens += response.usage?.output_tokens || 0;
     totalCachedTokens += cachedInput;
 

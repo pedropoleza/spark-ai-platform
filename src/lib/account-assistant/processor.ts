@@ -149,7 +149,37 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     };
   }
 
-  const timezone = location.timezone || "America/New_York";
+  // Fix bug observado em prod 2026-05-03: rep BR levou lembrete em horário NY
+  // porque timezone vinha da location (definida pelo admin da agência), não
+  // do REP. Resolution chain: rep.timezone (GHL user) → location.timezone →
+  // 'America/New_York'. Lazy backfill: se rep ainda não tem timezone (legacy
+  // rows pré-00045), busca do GHL agora e persiste — uma única vez por rep.
+  let repTimezone = rep.timezone || null;
+  if (!repTimezone) {
+    try {
+      const ghlClientForBackfill = new GHLClient(location.company_id, activeLocationId);
+      const res = await ghlClientForBackfill.get<{
+        users?: Array<{ id: string; timezone?: string }>;
+      }>("/users/", { locationId: activeLocationId });
+      const ghlUserId = activeLink.ghl_user_id;
+      const u = (res.users || []).find((x) => x.id === ghlUserId);
+      const tz = (u?.timezone || "").trim();
+      if (tz) {
+        repTimezone = tz;
+        // Persiste pra próximas turns nem precisarem dessa chamada extra
+        await supabase
+          .from("rep_identities")
+          .update({ timezone: tz, updated_at: new Date().toISOString() })
+          .eq("id", rep.id);
+      }
+    } catch (err) {
+      console.warn(
+        `[processor] timezone backfill falhou (não-fatal) pra rep=${rep.id}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+  const timezone = repTimezone || location.timezone || "America/New_York";
   // Locale baseado em timezone (pt-BR pro Brasil, en-US pros EUA)
   const locale = timezone.startsWith("America/") && !timezone.includes("Sao_Paulo") && !timezone.includes("Fortaleza") && !timezone.includes("Recife") && !timezone.includes("Manaus") && !timezone.includes("Belem") && !timezone.includes("Bahia")
     ? "en-US"
