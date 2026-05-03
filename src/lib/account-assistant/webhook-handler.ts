@@ -267,66 +267,81 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
 
   // RE-PROCESSA REPINPUT se tem attachment mas extração inicial não pegou.
   // Caso típico: body="Audio Message." mas attachments=[audio.ogg].
-  // O extractRepInput original viu body="Audio Message." e tratou como text.
-  // Aqui, se temos audio_url ou media attachment confirmado, força reprocesso.
+  // Se temos audio_url, força transcribe explicit usando verbose
+  // (que retorna erro estruturado em vez de null silencioso).
+  let transcribeFailureCode: string | null = null;
   if (audioUrlInfo?.url && repInput.kind === "text") {
     console.log(`[Sparkbot] re-processando como áudio (URL detected: ${audioUrlInfo.url.slice(0, 80)})`);
-    try {
-      const transcribed = await (await import("@/lib/ai/audio-transcriber"))
-        .transcribeAudioFromUrl(audioUrlInfo.url, audioUrlInfo.mimeType);
-      if (transcribed?.text) {
-        repInput = {
-          kind: "audio",
-          transcribed_text: transcribed.text,
-          original_url: audioUrlInfo.url,
+    const { transcribeAudioFromUrlVerbose } = await import("@/lib/ai/audio-transcriber");
+    const verboseResult = await transcribeAudioFromUrlVerbose(audioUrlInfo.url, audioUrlInfo.mimeType);
+    if (verboseResult.ok) {
+      const transcribed = verboseResult.result;
+      repInput = {
+        kind: "audio",
+        transcribed_text: transcribed.text,
+        original_url: audioUrlInfo.url,
+      };
+      if (transcribed.audio_seconds > 0) {
+        audioSink.current = {
+          audio_seconds: transcribed.audio_seconds,
+          model: transcribed.model,
         };
-        if (transcribed.audio_seconds > 0) {
-          audioSink.current = {
-            audio_seconds: transcribed.audio_seconds,
-            model: transcribed.model,
-          };
-        }
-        if (debugRowId) {
-          try {
-            const supabaseDebug = createAdminClient();
-            await supabaseDebug.from("sparkbot_webhook_debug")
-              .update({
-                transcribe_attempted: true,
-                transcribe_status: "ok",
-                transcribe_text: transcribed.text.slice(0, 1000),
-              })
-              .eq("id", debugRowId);
-          } catch { /* ignora */ }
-        }
-      } else {
-        if (debugRowId) {
-          try {
-            const supabaseDebug = createAdminClient();
-            await supabaseDebug.from("sparkbot_webhook_debug")
-              .update({
-                transcribe_attempted: true,
-                transcribe_status: "empty_text_or_null",
-                transcribe_error: "transcribeAudioFromUrl retornou null/empty",
-              })
-              .eq("id", debugRowId);
-          } catch { /* ignora */ }
-        }
       }
-    } catch (err) {
-      console.error("[Sparkbot] re-transcribe failed:", err instanceof Error ? err.message : err);
       if (debugRowId) {
         try {
           const supabaseDebug = createAdminClient();
           await supabaseDebug.from("sparkbot_webhook_debug")
             .update({
               transcribe_attempted: true,
-              transcribe_status: "exception",
-              transcribe_error: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+              transcribe_status: "ok",
+              transcribe_text: transcribed.text.slice(0, 1000),
+            })
+            .eq("id", debugRowId);
+        } catch { /* ignora */ }
+      }
+    } else {
+      transcribeFailureCode = verboseResult.code;
+      console.error(
+        `[Sparkbot] transcribe falhou: code=${verboseResult.code} msg=${verboseResult.message}`,
+      );
+      if (debugRowId) {
+        try {
+          const supabaseDebug = createAdminClient();
+          await supabaseDebug.from("sparkbot_webhook_debug")
+            .update({
+              transcribe_attempted: true,
+              transcribe_status: verboseResult.code,
+              transcribe_error: verboseResult.message.slice(0, 500),
             })
             .eq("id", debugRowId);
         } catch { /* ignora */ }
       }
     }
+  }
+
+  // Mensagem específica ao rep quando transcribe falha por motivo conhecido.
+  // Encurta o ciclo de debug — em vez de bot dizer "Não consigo processar
+  // áudio", admin sabe na hora se é problema de billing, key, etc.
+  if (transcribeFailureCode === "quota_exceeded") {
+    await sendResponseToRep(
+      hubClient, contactId, conversationId, messageType,
+      "⚠️ A OpenAI tá com a quota esgotada — admin precisa recarregar créditos. Manda em texto enquanto isso.",
+    );
+    return;
+  }
+  if (transcribeFailureCode === "invalid_key") {
+    await sendResponseToRep(
+      hubClient, contactId, conversationId, messageType,
+      "⚠️ A API key da OpenAI tá inválida — admin precisa atualizar. Manda em texto enquanto isso.",
+    );
+    return;
+  }
+  if (transcribeFailureCode === "rate_limited") {
+    await sendResponseToRep(
+      hubClient, contactId, conversationId, messageType,
+      "Tô com lentidão pra processar áudio agora. Tenta de novo em 1min ou manda em texto.",
+    );
+    return;
   }
 
   // 4. Busca agent Sparkbot na Hub (pra billing + config)

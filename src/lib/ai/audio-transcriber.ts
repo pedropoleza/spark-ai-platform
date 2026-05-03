@@ -49,54 +49,70 @@ export interface TranscriptionResult {
   model: string;
 }
 
-export async function transcribeAudioFromUrl(
+export type TranscriptionFailureCode =
+  | "fetch_failed"
+  | "too_small"
+  | "too_large"
+  | "empty_text"
+  | "quota_exceeded"
+  | "invalid_key"
+  | "rate_limited"
+  | "unknown";
+
+/**
+ * Versão verbose: retorna union estruturado com causa do erro.
+ * Implementação real (substitui o null-return). O legacy
+ * `transcribeAudioFromUrl` (abaixo) é wrapper que joga o erro fora.
+ */
+export async function transcribeAudioFromUrlVerbose(
   audioUrl: string,
   mimeType?: string
-): Promise<TranscriptionResult | null> {
+): Promise<
+  | { ok: true; result: TranscriptionResult }
+  | { ok: false; code: TranscriptionFailureCode; message: string }
+> {
   const startTime = Date.now();
   console.log(`[Audio] Starting transcription: ${audioUrl.substring(0, 120)}... (mime: ${mimeType || "unknown"})`);
 
-  try {
-    let ext = getExtensionFromUrl(audioUrl);
-    if (!SUPPORTED_FORMATS.includes(ext) && mimeType) {
-      ext = getExtensionFromMime(mimeType);
-    }
-    if (!SUPPORTED_FORMATS.includes(ext)) {
-      ext = "ogg";
-    }
+  let ext = getExtensionFromUrl(audioUrl);
+  if (!SUPPORTED_FORMATS.includes(ext) && mimeType) {
+    ext = getExtensionFromMime(mimeType);
+  }
+  if (!SUPPORTED_FORMATS.includes(ext)) {
+    ext = "ogg";
+  }
 
+  let buffer: Buffer;
+  let contentType = "";
+  try {
     const response = await fetch(audioUrl, { signal: AbortSignal.timeout(30000) });
     if (!response.ok) {
-      console.error(`[Audio] Fetch failed: ${response.status} ${response.statusText}`);
-      return null;
+      const m = `Fetch failed: ${response.status} ${response.statusText}`;
+      console.error(`[Audio] ${m}`);
+      return { ok: false, code: "fetch_failed", message: m };
     }
-
-    const contentType = response.headers.get("content-type") || "";
-    if (contentType && !ext) {
-      ext = getExtensionFromMime(contentType) || "ogg";
-    }
-
+    contentType = response.headers.get("content-type") || "";
+    if (contentType && !ext) ext = getExtensionFromMime(contentType) || "ogg";
     const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    buffer = Buffer.from(arrayBuffer);
     console.log(`[Audio] Downloaded ${buffer.length} bytes (content-type: ${contentType})`);
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    console.error(`[Audio] Fetch threw: ${m}`);
+    return { ok: false, code: "fetch_failed", message: m };
+  }
 
-    if (buffer.length < 100) {
-      console.error("[Audio] File too small, likely empty");
-      return null;
-    }
+  if (buffer.length < 100) {
+    return { ok: false, code: "too_small", message: `${buffer.length} bytes` };
+  }
+  if (buffer.length > MAX_FILE_SIZE) {
+    return { ok: false, code: "too_large", message: `${buffer.length} bytes` };
+  }
 
-    if (buffer.length > MAX_FILE_SIZE) {
-      console.error(`[Audio] File too large: ${buffer.length} bytes`);
-      return null;
-    }
-
+  try {
     const file = await toFile(buffer, `audio.${ext}`, {
       type: mimeType || contentType || `audio/${ext}`,
     });
-
-    // verbose_json devolve `duration` (segundos) — fundamental pra cobrança
-    // de Whisper $0.006/min. Sem isso teríamos que estimar do tamanho do
-    // buffer e ficar errado em ±20%.
     const transcription = await getOpenAIClient().audio.transcriptions.create({
       file,
       model: "whisper-1",
@@ -106,17 +122,42 @@ export async function transcribeAudioFromUrl(
 
     const text = transcription.text?.trim();
     if (!text) {
-      console.log("[Audio] Transcription returned empty text");
-      return null;
+      return { ok: false, code: "empty_text", message: "Whisper retornou texto vazio" };
     }
-
     const audioSeconds = typeof transcription.duration === "number" ? transcription.duration : 0;
-    console.log(`[Audio] Transcribed ${audioSeconds.toFixed(1)}s of audio in ${Date.now() - startTime}ms: "${text.substring(0, 100)}"`);
-    return { text, duration_ms: Date.now() - startTime, audio_seconds: audioSeconds, model: "whisper-1" };
+    console.log(`[Audio] Transcribed ${audioSeconds.toFixed(1)}s in ${Date.now() - startTime}ms: "${text.substring(0, 100)}"`);
+    return {
+      ok: true,
+      result: { text, duration_ms: Date.now() - startTime, audio_seconds: audioSeconds, model: "whisper-1" },
+    };
   } catch (error) {
-    console.error("[Audio] Transcription error:", error instanceof Error ? error.message : error);
-    return null;
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("429") && msg.toLowerCase().includes("quota")) {
+      console.error("[Audio] ⚠️  OPENAI QUOTA EXCEEDED — recarregar créditos:", msg);
+      return { ok: false, code: "quota_exceeded", message: msg.slice(0, 500) };
+    }
+    if (msg.includes("429")) {
+      return { ok: false, code: "rate_limited", message: msg.slice(0, 500) };
+    }
+    if (msg.includes("401") || msg.toLowerCase().includes("invalid api key")) {
+      console.error("[Audio] ⚠️  OPENAI KEY INVÁLIDA:", msg);
+      return { ok: false, code: "invalid_key", message: msg.slice(0, 500) };
+    }
+    console.error("[Audio] Transcription error:", msg);
+    return { ok: false, code: "unknown", message: msg.slice(0, 500) };
   }
+}
+
+/**
+ * Wrapper legacy — retorna null em qualquer falha. Mantido por compat;
+ * novo código deve usar transcribeAudioFromUrlVerbose.
+ */
+export async function transcribeAudioFromUrl(
+  audioUrl: string,
+  mimeType?: string
+): Promise<TranscriptionResult | null> {
+  const r = await transcribeAudioFromUrlVerbose(audioUrl, mimeType);
+  return r.ok ? r.result : null;
 }
 
 /**
