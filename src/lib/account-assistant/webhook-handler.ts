@@ -194,6 +194,42 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   // 4. Busca agent Sparkbot na Hub (pra billing + config)
   const supabase = createAdminClient();
 
+  // Dedup CONTENT-MATCH (fix bug observado em prod 2026-05-03):
+  // Quando o GHL tem WhatsApp Business API + Stevo (Evolution) conectados
+  // ao mesmo tempo, cada msg física do rep cria DOIS webhooks com
+  // ghl_message_id DIFERENTES (cada provider gera seu próprio ID). A
+  // idempotência por ghl_message_id não pega — passa nos 2.
+  //
+  // Defesa: se já tem mensagem do MESMO rep com MESMO conteúdo nos
+  // últimos 15s, é dup física. Skip.
+  // Janela conservadora pra não bloquear rep que digita "oi" 2x rápido
+  // legitimamente.
+  if (repInput.kind === "text" && messageBody.trim().length > 0) {
+    try {
+      const cutoffDup = new Date(Date.now() - 15 * 1000).toISOString();
+      const { data: recentDup } = await supabase
+        .from("sparkbot_messages")
+        .select("id, ghl_message_id")
+        .eq("rep_id", rep.id)
+        .eq("hub_location_id", hubLocationId)
+        .eq("role", "user")
+        .eq("content", messageBody)
+        .gte("created_at", cutoffDup)
+        .limit(1)
+        .maybeSingle();
+      if (recentDup) {
+        console.warn(
+          `[Sparkbot] dedupe CONTENT-MATCH: msg "${messageBody.slice(0, 30)}" do rep ${rep.id} ` +
+          `já processada nos últimos 15s (orig ghl_msg=${recentDup.ghl_message_id}, ` +
+          `current=${ghlMessageId}). Provável GHL multi-provider routing (WhatsApp API + Stevo).`,
+        );
+        return;
+      }
+    } catch (err) {
+      console.warn("[Sparkbot] content-match dedup falhou:", err instanceof Error ? err.message : err);
+    }
+  }
+
   // Sticky tabular cache (fix audit C1): se este turn é só texto OU áudio
   // e o rep mandou um CSV/XLSX nas últimas 30 min, restaura o anexo.
   // Senão LLM perde contexto e pede "reanexa o CSV" — bug visto no Web UI
