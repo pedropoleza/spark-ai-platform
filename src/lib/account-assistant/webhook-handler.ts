@@ -218,50 +218,27 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   ]);
   const isPlaceholderText = repInput.kind === "text" && PLACEHOLDER_TEXTS.has(repInput.text.trim());
 
-  // DIAGNOSTIC LOGGING (temporário): quando placeholder detectado OU msg
-  // text é vazia mas messageType implica áudio, salva o body completo do
-  // webhook em sparkbot_webhook_debug pra Pedro inspecionar formato.
-  // Remove esse bloco quando o suporte ao formato Stevo/Evolution estiver
-  // 100%.
-  const messageTypeUpper = (messageType || "").toUpperCase();
-  const looksLikeAudio = messageTypeUpper.includes("VOICE") ||
-    messageTypeUpper.includes("AUDIO") || messageTypeUpper.includes("PTT");
-  const shouldLogDebug = isPlaceholderText ||
-    (repInput.kind === "text" && repInput.text === "") ||
-    (repInput.kind === "text" && looksLikeAudio);
-  if (shouldLogDebug) {
-    try {
-      const supabaseDebug = createAdminClient();
-      // Salva em sparkbot_messages.metadata como diagnostic_body — não cria
-      // tabela nova, só usa o slot existente. Limita o tamanho pra não
-      // estourar jsonb.
-      const bodyJson = JSON.stringify(body).slice(0, 8000);
-      await supabaseDebug.from("sparkbot_messages").insert({
-        rep_id: rep.id,
-        hub_location_id: hubLocationId,
-        active_location_id: rep.active_location_id || null,
-        role: "user",
-        content: `[DEBUG] webhook body raw — placeholder=${isPlaceholderText}, type=${messageType}`,
-        channel: "system",
-        ghl_message_id: ghlMessageId ? `debug-${ghlMessageId}` : null,
-        metadata: {
-          input_kind: "diagnostic",
-          ghl_contact_id: contactId,
-          message_type: messageType,
-          rep_input_kind: repInput.kind,
-          extracted_text: repInput.kind === "text" ? repInput.text : "(non-text)",
-          body_raw_truncated: bodyJson,
-          diagnostic: true,
-        },
-        read_in_web_at: new Date().toISOString(), // marca lido pra não pollutir badge
-      });
-      console.warn(
-        `[Sparkbot:DEBUG] body raw salvo em sparkbot_messages — diagnostic=true. ` +
-        `Procurar com: SELECT metadata FROM sparkbot_messages WHERE metadata->>'diagnostic'='true' ORDER BY created_at DESC.`,
-      );
-    } catch (err) {
-      console.warn("[Sparkbot:DEBUG] body raw save falhou:", err instanceof Error ? err.message : err);
-    }
+  // DIAGNOSTIC LOGGING (temporário, via tabela dedicada
+  // sparkbot_webhook_debug): captura body raw dos webhooks SEMPRE, pra
+  // investigar porque extractAudioUrl não reconhece o formato real do
+  // Stevo/Evolution + WhatsApp API multi-provider.
+  // Remove esse bloco + drop a tabela quando o suporte ao formato estiver 100%.
+  try {
+    const supabaseDebug = createAdminClient();
+    const audioInfoForDebug = (await import("@/lib/ai/audio-transcriber"))
+      .extractAudioUrl(body);
+    await supabaseDebug.from("sparkbot_webhook_debug").insert({
+      hub_location_id: hubLocationId,
+      ghl_message_id: ghlMessageId || null,
+      contact_id: contactId,
+      message_type: messageType || null,
+      message_body_preview: (messageBody || "").slice(0, 200),
+      rep_input_kind: repInput.kind,
+      audio_url_extracted: audioInfoForDebug?.url || null,
+      body_raw: body,
+    });
+  } catch (err) {
+    console.warn("[Sparkbot:DEBUG] webhook_debug insert falhou:", err instanceof Error ? err.message : err);
   }
 
   if (isPlaceholderText && repInput.kind === "text") {
