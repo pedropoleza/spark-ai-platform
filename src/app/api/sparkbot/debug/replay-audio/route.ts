@@ -19,9 +19,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  // Auth
-  const expectedKey = process.env.DEBUG_REPLAY_KEY;
-  if (!expectedKey || req.headers.get("x-debug-key") !== expectedKey) {
+  // Auth — chave hardcoded provisória (rota debug temporária, será removida).
+  // Aceita header "x-debug-key" OU query param ?key=
+  const HARDCODED_KEY = "dbg_faf33648d11fbbe4334247e425a530a5";
+  const headerKey = req.headers.get("x-debug-key");
+  const queryKey = req.nextUrl.searchParams.get("key");
+  if (headerKey !== HARDCODED_KEY && queryKey !== HARDCODED_KEY) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
