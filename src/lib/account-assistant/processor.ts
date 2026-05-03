@@ -199,7 +199,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     locationName: activeLink.location_name || location.location_name || activeLocationId,
     locationTimezone: timezone,
     locale,
-    confirmationMode: input.config.confirmation_mode || "medium_and_high",
+    confirmationMode: input.config.confirmation_mode || "high_only",
     carrierOverview,
     channel,
   });
@@ -228,7 +228,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     companyId: location.company_id,
     ghlClient,
     testSessionId: input.testSessionId || null,
-    confirmationMode: input.config.confirmation_mode || "medium_and_high",
+    confirmationMode: input.config.confirmation_mode || "high_only",
     // Tools (ex: import_contacts_from_data) acessam rows via ctx.attachment
     // pra economizar tokens vs LLM copiando rows no args.
     attachment: input.input.kind === "tabular" || input.input.kind === "image" || input.input.kind === "document"
@@ -243,7 +243,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     // `confirmed_by_rep` no schema das tools que o gate exige — sem isso
     // o LLM não tem como saber que precisa enviar o flag e fica em loop
     // "Confirma? → sim → bloqueado de novo" (visto em prod 2026-04-30).
-    tools: getAllToolDefinitions(input.config.confirmation_mode || "medium_and_high"),
+    tools: getAllToolDefinitions(input.config.confirmation_mode || "high_only"),
     executor: (name, args) => executeTool(name, args, toolCtx),
     model: input.config.ai_model,
   });

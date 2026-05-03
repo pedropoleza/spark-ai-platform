@@ -93,7 +93,7 @@ function withConfirmationParam(def: ToolDefinition, mode: ConfirmationMode): Too
  * `confirmed_by_rep`, e o LLM fica em loop quando o gate bloqueia.
  */
 export function getAllToolDefinitions(
-  confirmationMode: ConfirmationMode = "medium_and_high",
+  confirmationMode: ConfirmationMode = "high_only",
 ): ToolDefinition[] {
   return ALL_ENTRIES.map((e) => withConfirmationParam(e.def, confirmationMode));
 }
@@ -101,7 +101,7 @@ export function getAllToolDefinitions(
 /** Subset filtrado por nomes (usado pelas regras de proatividade com tools_allowed). */
 export function getToolDefinitions(
   allowedNames?: string[] | null,
-  confirmationMode: ConfirmationMode = "medium_and_high",
+  confirmationMode: ConfirmationMode = "high_only",
 ): ToolDefinition[] {
   const entries = !allowedNames || allowedNames.length === 0
     ? ALL_ENTRIES
@@ -156,7 +156,7 @@ export async function executeTool(
   }
 
   // Gate de confirmação
-  const mode = ctx.confirmationMode ?? "medium_and_high";
+  const mode = ctx.confirmationMode ?? "high_only";
   const requiresConfirm =
     mode === "always" ||
     (mode === "medium_and_high" && (risk === "medium" || risk === "high")) ||

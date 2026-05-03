@@ -147,9 +147,22 @@ async function deliverReminderWeb(
   title: string | undefined,
 ): Promise<void> {
   const supabase = createAdminClient();
-  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  // Multi-hub: lookup do hub real do rep (mesma lógica do whatsapp delivery)
+  const envHubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  const { data: lastInbound } = await supabase
+    .from("sparkbot_messages")
+    .select("hub_location_id")
+    .eq("rep_id", task.rep_id)
+    .eq("role", "user")
+    .not("hub_location_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const hubLocationId =
+    (lastInbound?.hub_location_id as string | null | undefined) ||
+    envHubLocationId;
   if (!hubLocationId) {
-    console.warn("[reminder-runner] ASSISTANT_HUB_LOCATION_ID não configurado — pulando entrega web");
+    console.warn("[reminder-runner] hub não resolvido — pulando entrega web");
     return;
   }
   // Resolve agent_id (sparkbot do Hub)
@@ -197,9 +210,40 @@ async function deliverReminderWhatsapp(
   // silenciosamente, rep vê na próxima vez que abrir o GHL.
 
   const supabase = createAdminClient();
-  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  const envHubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
   const hubCompanyId = process.env.ASSISTANT_HUB_COMPANY_ID?.trim()
     || process.env.NEXT_PUBLIC_GHL_COMPANY_ID?.trim();
+
+  // Fix DEFINITIVO 2026-05-03: ENV ASSISTANT_HUB_LOCATION_ID é single-hub
+  // legacy. Sistema é multi-hub agora — cada rep pode operar em hubs
+  // diferentes. Lookup do hub REAL do rep no sparkbot_messages
+  // (último inbound do rep mostra qual hub ele usa). Stevo só roteia
+  // mensagens NAQUELE hub, então enviar pra hub errada = 200 OK do GHL
+  // mas msg morta sem entrega.
+  //
+  // Resolution chain (ordem de precedência):
+  //   1. WHATSAPP_DELIVERY_LOCATION_ID env (override explícito)
+  //   2. Hub do rep via sparkbot_messages.hub_location_id (real-world)
+  //   3. ASSISTANT_HUB_LOCATION_ID env (single-hub legacy fallback)
+  //   4. task.location_id (dev/staging último recurso)
+  let repActualHub: string | null = null;
+  const { data: lastInbound } = await supabase
+    .from("sparkbot_messages")
+    .select("hub_location_id")
+    .eq("rep_id", task.rep_id)
+    .eq("role", "user")
+    .not("hub_location_id", "is", null)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastInbound?.hub_location_id) {
+    repActualHub = lastInbound.hub_location_id as string;
+  }
+
+  const hubLocationId =
+    process.env.WHATSAPP_DELIVERY_LOCATION_ID?.trim() ||
+    repActualHub ||
+    envHubLocationId;
   if (!hubLocationId) return;
 
   const { data: hubAgent } = await supabase
@@ -219,15 +263,8 @@ async function deliverReminderWhatsapp(
   let sendError: string | null = null;
   if (enabled && hubCompanyId) {
     try {
-      // Resolve qual location usar pra enviar.
-      // Fix bug observado em prod 2026-05-03: antes default era task.location_id
-      // (a active_location do rep) — mas Stevo/Evolution tá conectado na HUB,
-      // não em locations random. GHL aceitava o POST mas a msg ficava sem
-      // provider e nunca saía. Default agora é hub; task.location_id é
-      // último fallback (dev/staging sem hub).
-      const sendLocationId = process.env.WHATSAPP_DELIVERY_LOCATION_ID?.trim()
-        || hubLocationId
-        || task.location_id;
+      // sendLocationId == hubLocationId (resolved acima)
+      const sendLocationId = hubLocationId;
 
       // Resolve rep info pra encontrar phone/contact
       const { data: rep } = await supabase

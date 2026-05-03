@@ -23,7 +23,9 @@ const scheduleReminder: ToolEntry = {
     name: "schedule_reminder",
     description:
       "Agenda uma mensagem proativa do Sparkbot pro rep no horário combinado. Use quando o rep pedir 'me lembra/avisa em X', 'todo dia/sexta às Y, me manda Z'. NÃO confunda com create_task (que cria task no CRM, visível no GHL). Reminder = msg do Sparkbot.\n\nCANAL DE ENTREGA (delivery_channel):\n- Se rep tá no WhatsApp: passe 'whatsapp' (default).\n- Se rep tá no Web UI (painel no GHL): PERGUNTE primeiro 'computador, celular ou ambos?' e mapeie pra 'web_ui'/'whatsapp'/'both' antes de chamar a tool.",
-    risk: "medium",
+    // Decisão Pedro 2026-05-03: lembrete pro próprio rep não tem risco — é
+    // mensagem que ele mesmo pediu, vai pro celular dele. Sem confirmação.
+    risk: "safe",
     parameters: {
       type: "object",
       properties: {
@@ -183,7 +185,8 @@ const cancelReminder: ToolEntry = {
   def: {
     name: "cancel_reminder",
     description: "Cancela um lembrete pendente. Pra recorrentes, para todas as repetições futuras.",
-    risk: "medium",
+    // Pedro 2026-05-03: cancelar lembrete do próprio rep não pede confirmação.
+    risk: "safe",
     parameters: {
       type: "object",
       properties: {

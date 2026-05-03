@@ -258,7 +258,7 @@ export async function POST(request: NextRequest) {
     config: {
       confirmation_mode:
         (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
-        "medium_and_high",
+        "high_only",
       ai_model: agentConfig?.ai_model,
     },
   });
