@@ -40,6 +40,33 @@ export function normalizePhone(raw: string, defaultCountry: "US" | "BR" = "US"):
 }
 
 /**
+ * Gera variantes plausíveis de phone E.164 pra um input não-normalizado.
+ * Usado em identifyRep onde não sabemos o country do rep upfront.
+ *
+ * Estratégia:
+ * - Se já tem `+`: retorna como E.164 (single candidate)
+ * - Se 12+ dígitos: assume country code presente, prepend `+`
+ * - Se 10-11 dígitos: gera 2 candidatos — `+55<digits>` e `+1<digits>`
+ * - Senão: fallback `+<digits>`
+ */
+export function generatePhoneCandidates(raw: string): string[] {
+  if (!raw) return [];
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("+")) {
+    const digits = trimmed.replace(/\D/g, "");
+    return [`+${digits}`];
+  }
+  const digits = trimmed.replace(/\D/g, "");
+  if (!digits) return [];
+  if (digits.length >= 12) return [`+${digits}`];
+  if (digits.length === 10 || digits.length === 11) {
+    // Order: BR primeiro porque mercado-alvo. Mas tenta ambos no lookup.
+    return [`+55${digits}`, `+1${digits}`];
+  }
+  return [`+${digits}`];
+}
+
+/**
  * Infere country code (BR/US) da timezone IANA da location.
  * Brazilian timezones começam com America/Sao_Paulo, America/Fortaleza, etc.
  * Pra outros casos volta US (default seguro pra mercado dominante).
@@ -66,17 +93,26 @@ export function inferCountryFromTimezone(tz: string | null | undefined): "US" | 
  * nenhum match — nesse caso o assistente responde "não autorizado".
  */
 export async function identifyRep(phone: string): Promise<RepIdentity | null> {
-  const normalizedPhone = normalizePhone(phone);
+  // Fix CRITICAL stress test 2026-05-03: webhook chega ANTES de saber o
+  // país. Tenta variações pra cobrir BR + US sem assumir um default.
+  // Phone candidato é a query — gera variantes:
+  //   - Já com `+`: usa direto.
+  //   - 10/11 digits sem `+`: tenta `+1<digits>` E `+55<digits>` em paralelo.
+  //   - Tudo com `+`: assume E.164.
+  const candidates = generatePhoneCandidates(phone);
   const supabase = createAdminClient();
 
-  // 1. Lookup local
-  const { data: existing } = await supabase
-    .from("rep_identities")
-    .select("*")
-    .eq("phone", normalizedPhone)
-    .maybeSingle();
-
-  if (existing) return existing as RepIdentity;
+  // 1. Lookup local — tenta cada candidato
+  let normalizedPhone = candidates[0];
+  for (const candidate of candidates) {
+    const { data: existing } = await supabase
+      .from("rep_identities")
+      .select("*")
+      .eq("phone", candidate)
+      .maybeSingle();
+    if (existing) return existing as RepIdentity;
+    normalizedPhone = candidate; // se nenhum bater, usa o último (mais provável correto)
+  }
 
   // 2. Primeira interação — procura o phone em todas as locations cadastradas
   const { data: locations } = await supabase

@@ -136,7 +136,10 @@ export async function executeTool(
   // mexia no CRM/WhatsApp de produção (delete_contact, send_message,
   // schedule_reminder iam direto pra GHL/WhatsApp).
   // Tools risk=safe (read-only) seguem normal pra não quebrar análises.
-  if (ctx.testSessionId && risk !== "safe") {
+  //
+  // Fix CRITICAL stress test 2026-05-03: testSessionId="" (empty string)
+  // era falsy no `&&` → BYPASS do gate. Agora exige string não-vazia.
+  if (ctx.testSessionId && ctx.testSessionId.length > 0 && risk !== "safe") {
     console.log(`[Sparkbot:test] mock '${name}' (risk=${risk}, session=${ctx.testSessionId})`);
     return {
       status: "ok",

@@ -272,14 +272,16 @@ export async function POST(request: NextRequest) {
 
         const stateAgentIds = (existingStates || []).map((r) => r.agent_id).filter(Boolean);
         if (stateAgentIds.length > 0) {
-          const { data: picked } = await supabaseAdmin
+          // Fix CRITICAL stress test 2026-05-03: maybeSingle() throws quando
+          // .in() retorna 2+ rows (contato com 2 conversation_states ativos
+          // — sales+recruitment). Trocado por array + pick first.
+          const { data: pickedArr } = await supabaseAdmin
             .from("agents")
             .select("id, agent_configs(handoff_messages, auto_pause_on_human_message)")
             .in("id", stateAgentIds)
             .eq("status", "active")
-            .limit(1)
-            .maybeSingle();
-          if (picked) outboundAgent = picked as { id: string; agent_configs: unknown };
+            .limit(1);
+          if (pickedArr && pickedArr[0]) outboundAgent = pickedArr[0] as { id: string; agent_configs: unknown };
         }
 
         // Fallback: exatamente 1 agente ativo na location

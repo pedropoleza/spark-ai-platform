@@ -205,21 +205,37 @@ async function executeAction(
 
     case "reschedule_appointment":
       if (action.start_time) {
-        const existingAppt = await findExistingAppointment(client, ctx.contactId, ctx.locationId);
-        if (existingAppt) {
-          // Deletar o appointment antigo e criar um novo (mais confiavel que PUT)
+        // FIX CRITICAL stress test 2026-05-03: usar appointment_id explícito
+        // se a IA passou. Antes ignorava e re-buscava — em contatos com 2+
+        // appointments futuros (multi-calendar), reagendava o ERRADO.
+        let targetApptId: string | undefined;
+        let targetCalId: string | undefined;
+        let targetTitle: string | undefined;
+        if (action.appointment_id && /^[A-Za-z0-9]{18,}$/.test(String(action.appointment_id))) {
+          targetApptId = String(action.appointment_id);
+          targetCalId = action.calendar_id ? String(action.calendar_id) : undefined;
+          targetTitle = action.title ? String(action.title) : undefined;
+        } else {
+          const existingAppt = await findExistingAppointment(client, ctx.contactId, ctx.locationId);
+          if (existingAppt) {
+            targetApptId = existingAppt.id;
+            targetCalId = existingAppt.calendarId;
+            targetTitle = existingAppt.title;
+          }
+        }
+
+        if (targetApptId) {
           try {
-            await client.delete(`/calendars/events/appointments/${existingAppt.id}`);
+            await client.delete(`/calendars/events/appointments/${targetApptId}`);
           } catch {
             // Se falhar ao deletar, continua e cria novo
           }
-          // Criar novo appointment com o novo horario
           await client.post("/calendars/events/appointments", {
-            calendarId: ctx.calendarId || action.calendar_id || existingAppt.calendarId,
+            calendarId: ctx.calendarId || targetCalId,
             locationId: ctx.locationId,
             contactId: ctx.contactId,
             startTime: action.start_time,
-            title: existingAppt.title || "Reuniao reagendada via AI",
+            title: targetTitle || "Reuniao reagendada via AI",
             meetingLocationType: "phone",
           });
         } else {

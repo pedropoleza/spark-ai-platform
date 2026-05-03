@@ -56,6 +56,25 @@ async function getAnthropicClient() {
   return new Anthropic({ apiKey: key, timeout: 60000, maxRetries: 3 });
 }
 
+/**
+ * Erro especial: LLM falhou DEPOIS de já ter executado tools com side-effects.
+ * NÃO deve cair em fallback (provider secundário re-executaria as tools).
+ *
+ * Fix CRITICAL stress test 2026-05-03: antes, Claude falhava em iteration 3
+ * (depois de já ter chamado send_message_to_contact em iteration 1) → catch
+ * recomeçava com Haiku do zero → Haiku re-chamava send_message → DOUBLE SEND.
+ */
+export class LLMFailureMidLoop extends Error {
+  constructor(
+    public iterationsCompleted: number,
+    public partialResult: Partial<RunWithToolsOutput>,
+    cause: Error,
+  ) {
+    super(`LLM provider failed at iteration ${iterationsCompleted} after ${partialResult.tool_calls?.length || 0} tool calls (no fallback): ${cause.message}`);
+    this.name = "LLMFailureMidLoop";
+  }
+}
+
 export interface LLMContentBlock {
   type: "text" | "image";
   text?: string;
@@ -121,16 +140,51 @@ export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToo
     try {
       return await runWithClaude({ ...input, model });
     } catch (err) {
+      // Fix CRITICAL: LLMFailureMidLoop = falhou DEPOIS de tools terem rodado.
+      // NÃO fazer fallback pra outro provider (re-executaria side-effects).
+      if (err instanceof LLMFailureMidLoop) {
+        const errMsg = err.cause instanceof Error ? err.cause.message : String(err);
+        console.error(`[LLM] Claude falhou após ${err.partialResult.tool_calls?.length || 0} tools — sem fallback: ${err.message}`);
+        return {
+          text: "Tive um problema técnico depois de iniciar algumas ações. Pode confirmar o que foi feito antes de tentar de novo? (algumas tools podem ter rodado com sucesso, outras não)",
+          tool_calls: err.partialResult.tool_calls || [],
+          model_used: err.partialResult.model_used || model,
+          prompt_tokens: err.partialResult.prompt_tokens || 0,
+          completion_tokens: err.partialResult.completion_tokens || 0,
+          cached_tokens: err.partialResult.cached_tokens || 0,
+          iterations: err.partialResult.iterations || 0,
+          stopped_reason: "error" as const,
+          primary_error: errMsg,
+        };
+      }
+
       const primaryErrMsg = err instanceof Error ? err.message : String(err);
       // H1: tenta secundário Anthropic antes de cair pra OpenAI. Diferente
       // capacity pool, mesmo comportamento conservador em compliance/UW.
       console.error(
-        `[LLM] Claude primário (${model}) falhou, tentando ${SECONDARY_CLAUDE_MODEL}: ${primaryErrMsg}`,
+        `[LLM] Claude primário (${model}) falhou (iteration 0, sem tools), tentando ${SECONDARY_CLAUDE_MODEL}: ${primaryErrMsg}`,
       );
       try {
         const r = await runWithClaude({ ...input, model: SECONDARY_CLAUDE_MODEL });
         return { ...r, primary_error: primaryErrMsg };
       } catch (err2) {
+        // Mesmo guard pro secundário
+        if (err2 instanceof LLMFailureMidLoop) {
+          const errMsg = err2.cause instanceof Error ? err2.cause.message : String(err2);
+          console.error(`[LLM] Haiku falhou após ${err2.partialResult.tool_calls?.length || 0} tools — sem fallback: ${err2.message}`);
+          return {
+            text: "Tive um problema técnico depois de iniciar algumas ações. Pode confirmar o que foi feito antes de tentar de novo?",
+            tool_calls: err2.partialResult.tool_calls || [],
+            model_used: err2.partialResult.model_used || SECONDARY_CLAUDE_MODEL,
+            prompt_tokens: err2.partialResult.prompt_tokens || 0,
+            completion_tokens: err2.partialResult.completion_tokens || 0,
+            cached_tokens: err2.partialResult.cached_tokens || 0,
+            iterations: err2.partialResult.iterations || 0,
+            stopped_reason: "error" as const,
+            primary_error: primaryErrMsg,
+            secondary_error: errMsg,
+          };
+        }
         const secondaryErrMsg = err2 instanceof Error ? err2.message : String(err2);
         if (STRICT_CLAUDE_ONLY) {
           console.error(
@@ -139,9 +193,7 @@ export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToo
           return { ...llmFailureStub(model), primary_error: primaryErrMsg, secondary_error: secondaryErrMsg };
         }
         console.error(
-          `[LLM] Claude secundário também falhou, fallback OpenAI ${FALLBACK_MODEL} ` +
-          `(ATENÇÃO: stress test mostrou ~85% de regressões de compliance ` +
-          `nesse fallback — investigar causa raiz Claude): ${secondaryErrMsg}`,
+          `[LLM] Claude secundário também falhou (iteration 0), fallback OpenAI ${FALLBACK_MODEL}: ${secondaryErrMsg}`,
         );
         try {
           const r = await runWithOpenAI({ ...input, model: FALLBACK_MODEL });
@@ -239,19 +291,42 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
   let totalCachedTokens = 0;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const response = await client.messages.create({
-      model: input.model,
-      max_tokens: 2500,
-      system: [
+    let response;
+    try {
+      response = await client.messages.create({
+        model: input.model,
+        max_tokens: 2500,
+        system: [
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { type: "text", text: input.systemPrompt, cache_control: { type: "ephemeral" } } as any,
+        ],
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        { type: "text", text: input.systemPrompt, cache_control: { type: "ephemeral" } } as any,
-      ],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: tools as any,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      messages: messages as any,
-      temperature: 0.3, // mais determinístico pra tool use
-    });
+        tools: tools as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        messages: messages as any,
+        temperature: 0.3, // mais determinístico pra tool use
+      });
+    } catch (err) {
+      // Fix CRITICAL stress test 2026-05-03: se já executamos tools nessa
+      // chamada, NÃO permitir fallback pra outro provider (re-execução).
+      // Throw error especial que runWithTools catch sem fallback.
+      if (tool_calls.length > 0) {
+        throw new LLMFailureMidLoop(
+          i,
+          {
+            tool_calls,
+            model_used: input.model,
+            prompt_tokens: totalPromptTokens,
+            completion_tokens: totalCompletionTokens,
+            cached_tokens: totalCachedTokens,
+            iterations: i,
+            stopped_reason: "error" as const,
+          },
+          err instanceof Error ? err : new Error(String(err)),
+        );
+      }
+      throw err;  // iteration 0, fallback OK
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const usage = response.usage as any;

@@ -14,6 +14,7 @@ import { transcribeAudioFromUrl, extractAudioUrl } from "@/lib/ai/audio-transcri
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickOutboundChannel, fallbackChannel } from "./outbound-channel";
+import { validateExternalUrl } from "@/lib/utils/url-allowlist";
 import type { RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 
@@ -111,12 +112,17 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   const cleanupInFlight = () => { if (ghlMessageId) releaseInFlight(ghlMessageId); };
   try {
 
-  // REACTION detection (fix audit Reaction emoji loops):
+  // REACTION detection (fix audit Reaction emoji loops + recency check):
   // GHL/Stevo enviam reactions com messageType=REACTION e body=emoji puro.
   // 👍 ✅ 👌 etc → "sim" pra LLM tratar como confirmação.
   // 👎 ❌ → "não" (rep abortando uma confirmação pendente).
   // Outros emojis → ignora (return). Senão LLM gera greeting estranho.
-  // Case-insensitive por defesa (GHL às vezes manda "REACTION" outras "Reaction").
+  //
+  // Fix CRITICAL stress test 2026-05-03: REACTION pode ser a uma msg ANTIGA
+  // (rep volta dias depois e reage 👍 a uma confirmação que perdeu o
+  // contexto). Antes, mapeávamos pra "sim" cego e LLM tentava executar a
+  // tool atual com base em histórico errado. Agora exigimos que a última
+  // msg do bot seja recente (< 10min) — senão ignora a reação.
   let messageBody = rawBody;
   const mtUpper = (messageType || "").toUpperCase();
   if (mtUpper === "REACTION" || mtUpper === "TYPE_REACTION") {
@@ -149,6 +155,34 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     } else {
       console.log(`[Sparkbot] REACTION ${emoji} ignorada (não é positiva nem negativa)`);
       return;
+    }
+
+    // FIX CRITICAL stress test 2026-05-03: recency check.
+    // Reaction antiga (rep volta dias depois e reage 👍 a uma msg perdida)
+    // não deve mapear pra "sim" — LLM tentaria executar tool com base em
+    // histórico errado. Exige última msg agent do mesmo contact < 10min.
+    try {
+      const supabaseRecency = createAdminClient();
+      const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      const { data: lastBot } = await supabaseRecency
+        .from("sparkbot_messages")
+        .select("id, created_at")
+        .eq("hub_location_id", hubLocationId)
+        .eq("role", "agent")
+        .filter("metadata->>ghl_contact_id", "eq", contactId)
+        .gte("created_at", cutoff)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!lastBot) {
+        console.warn(
+          `[Sparkbot] REACTION ${emoji} ignorada — sem msg do bot nos últimos 10min ` +
+          `pra contact ${contactId}. Provável reação a msg antiga.`,
+        );
+        return;
+      }
+    } catch (err) {
+      console.warn("[Sparkbot] REACTION recency check falhou (segue):", err instanceof Error ? err.message : err);
     }
   }
 
@@ -279,8 +313,20 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   let transcribeFailureCode: string | null = null;
   if (audioUrlInfo?.url && repInput.kind === "text") {
     console.log(`[Sparkbot] re-processando como áudio (URL detected: ${audioUrlInfo.url.slice(0, 80)})`);
+    // Fix HIGH stress test 2026-05-03: passar BYO key da location se existe.
+    // Antes Pedro pagava Whisper de todas locations mesmo com `usesCustomKey=true`.
+    let byoKey: string | undefined;
+    try {
+      const supabaseByo = createAdminClient();
+      const { data: ls } = await supabaseByo
+        .from("location_settings")
+        .select("openai_api_key")
+        .eq("location_id", hubLocationId)
+        .maybeSingle();
+      byoKey = ls?.openai_api_key || undefined;
+    } catch { /* ignora — usa env */ }
     const { transcribeAudioFromUrlVerbose } = await import("@/lib/ai/audio-transcriber");
-    const verboseResult = await transcribeAudioFromUrlVerbose(audioUrlInfo.url, audioUrlInfo.mimeType);
+    const verboseResult = await transcribeAudioFromUrlVerbose(audioUrlInfo.url, audioUrlInfo.mimeType, byoKey);
     if (verboseResult.ok) {
       const transcribed = verboseResult.result;
       repInput = {
@@ -475,6 +521,10 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
 
   // C4 fix: cobra Whisper se o webhook recebeu áudio. Antes, transcribe
   // rodava mas NUNCA cobrava — Sparkbot WhatsApp Whisper 100% free.
+  // Note: webhook flow não tem testSessionId (test sessions usam
+  // /api/agents/account-assistant/test/route.ts em vez deste handler).
+  // Então sempre cobra. Se algum dia testSessionId for adicionado aqui,
+  // skip billing quando set.
   if (audioSink.current && audioSink.current.audio_seconds > 0) {
     try {
       // BYO key check — se hub location tem própria OPENAI_API_KEY, skipa
@@ -735,6 +785,14 @@ async function extractRepInput(args: {
     // do tipo apropriado.
     for (const att of attachments) {
       try {
+        // SSRF guard (fix CRITICAL stress test 2026-05-03):
+        // attachment.url vem de webhook GHL que pode ser forjado se
+        // GHL_WEBHOOK_SECRET não for strict em prod. Allowlist de hosts.
+        const urlVal = validateExternalUrl(att.url);
+        if (!urlVal.ok) {
+          console.warn(`[Sparkbot] SSRF guard rejected attachment URL: ${urlVal.reason} (${att.url.slice(0, 80)})`);
+          continue;
+        }
         const res = await fetch(att.url, { signal: AbortSignal.timeout(20_000) });
         if (!res.ok) {
           console.warn(`[Sparkbot] failed to fetch attachment ${att.url}: ${res.status}`);

@@ -3,9 +3,9 @@ import OpenAI, { toFile } from "openai";
 const SUPPORTED_FORMATS = ["ogg", "mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm", "opus"];
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
-function getOpenAIClient() {
+function getOpenAIClient(customApiKey?: string) {
   return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: customApiKey || process.env.OPENAI_API_KEY,
     timeout: 60000,
     maxRetries: 1,
   });
@@ -66,7 +66,9 @@ export type TranscriptionFailureCode =
  */
 export async function transcribeAudioFromUrlVerbose(
   audioUrl: string,
-  mimeType?: string
+  mimeType?: string,
+  /** Opcional: BYO OpenAI key da location (skip platform billing). */
+  customApiKey?: string,
 ): Promise<
   | { ok: true; result: TranscriptionResult }
   | { ok: false; code: TranscriptionFailureCode; message: string }
@@ -85,6 +87,13 @@ export async function transcribeAudioFromUrlVerbose(
   let buffer: Buffer;
   let contentType = "";
   try {
+    // SSRF guard (fix CRITICAL stress test 2026-05-03)
+    const { validateExternalUrl } = await import("@/lib/utils/url-allowlist");
+    const urlVal = validateExternalUrl(audioUrl);
+    if (!urlVal.ok) {
+      console.error(`[Audio] SSRF guard rejected URL: ${urlVal.reason}`);
+      return { ok: false, code: "fetch_failed", message: `URL blocked: ${urlVal.reason}` };
+    }
     const response = await fetch(audioUrl, { signal: AbortSignal.timeout(30000) });
     if (!response.ok) {
       const m = `Fetch failed: ${response.status} ${response.statusText}`;
@@ -113,7 +122,7 @@ export async function transcribeAudioFromUrlVerbose(
     const file = await toFile(buffer, `audio.${ext}`, {
       type: mimeType || contentType || `audio/${ext}`,
     });
-    const transcription = await getOpenAIClient().audio.transcriptions.create({
+    const transcription = await getOpenAIClient(customApiKey).audio.transcriptions.create({
       file,
       model: "whisper-1",
       language: "pt",

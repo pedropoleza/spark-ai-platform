@@ -48,12 +48,23 @@ export interface ToolEntry {
  * IDs do GHL são alfanuméricos ~20 chars. Se o LLM mandar algo curto
  * (ex: "2", "pedro"), quase certamente inventou — rejeita antes de bater
  * na API e dá dica pra ele chamar search_contacts primeiro.
+ *
+ * Fix stress test 2026-05-03: regex e length tightened pra rejeitar
+ * "aaaaaaaaaa" (10 same chars), strings só numéricas (phones), padrões de
+ * email parcial, etc. Real GHL IDs são alfanuméricos misturados.
  */
 export function validateGhlId(id: string, entityName: string): ToolResult | null {
-  if (!id || typeof id !== "string" || id.length < 10 || !/^[A-Za-z0-9_-]+$/.test(id)) {
+  const isInvalid =
+    !id ||
+    typeof id !== "string" ||
+    id.length < 18 ||                       // GHL IDs reais sempre >= 18 chars
+    !/^[A-Za-z0-9]+$/.test(id) ||           // sem `_-` (eram permitidos antes — IDs reais não usam)
+    /^[0-9]+$/.test(id) ||                   // tudo numérico = phone, não ID
+    /^(.)\1+$/.test(id);                     // todos chars iguais (aaaaaa…)
+  if (isInvalid) {
     return {
       status: "error",
-      message: `${entityName}_id inválido: "${id}". IDs do GHL têm ~20 chars alfanuméricos (ex: 'ErpM2X8vR1U4IrRTZnKX'). Use search_contacts ou get_contact pra obter o ID real antes de chamar esta tool.`,
+      message: `${entityName}_id inválido: "${id}". IDs do GHL têm ~20 chars alfanuméricos misturados (ex: 'ErpM2X8vR1U4IrRTZnKX'). Use search_contacts ou get_contact pra obter o ID real antes de chamar esta tool.`,
       retryable: false,
     };
   }
@@ -84,14 +95,35 @@ export function getRepGhlUserId(ctx: ToolContext): string | undefined {
 
 /**
  * Wrap padrão pra tools que falham na chamada GHL: converte Error em
- * ToolResult de erro com mensagem expondo o body do GHL (útil pro LLM
- * tentar corrigir).
+ * ToolResult de erro com mensagem útil pro LLM corrigir.
+ *
+ * Fix HIGH stress test 2026-05-03: antes expunhamos `err.message` cru, que
+ * pode incluir detalhes do GHL response (URLs internas, IDs, info de outro
+ * tenant). Agora detecta padrões comuns (404/403/422) e devolve mensagem
+ * resumida. Full message vai pra logs (Vercel) onde só admins acessam.
  */
 export function ghlErrorToResult(err: unknown, action: string): ToolResult {
-  const msg = err instanceof Error ? err.message : "Erro desconhecido";
+  const fullMsg = err instanceof Error ? err.message : "Erro desconhecido";
+  console.warn(`[ghl] ${action} falhou:`, fullMsg);
+
+  // Mapeia padrões pra mensagens redacted que ainda ajudam LLM
+  let safeMsg = `GHL rejeitou ${action}`;
+  if (/\b404\b/.test(fullMsg) || /not\s*found/i.test(fullMsg)) {
+    safeMsg = `${action}: recurso não encontrado no GHL (provavelmente ID inválido ou deletado)`;
+  } else if (/\b403\b/.test(fullMsg) || /forbidden/i.test(fullMsg)) {
+    safeMsg = `${action}: permissão negada (token sem escopo necessário ou recurso de outra location)`;
+  } else if (/\b422\b/.test(fullMsg) || /validation/i.test(fullMsg)) {
+    safeMsg = `${action}: dados inválidos (verifique campos obrigatórios)`;
+  } else if (/\b401\b/.test(fullMsg) || /unauthor/i.test(fullMsg)) {
+    safeMsg = `${action}: token expirado ou inválido (admin recarregar)`;
+  } else if (/\b429\b/.test(fullMsg) || /rate.limit/i.test(fullMsg)) {
+    safeMsg = `${action}: rate limit do GHL — tente em alguns segundos`;
+  } else if (/\b5\d\d\b/.test(fullMsg) || /server.error/i.test(fullMsg)) {
+    safeMsg = `${action}: erro temporário do GHL — tente de novo`;
+  }
   return {
     status: "error",
-    message: `GHL rejeitou ${action}: ${msg}`,
-    retryable: false,
+    message: safeMsg,
+    retryable: /\b(429|5\d\d)\b/.test(fullMsg),
   };
 }

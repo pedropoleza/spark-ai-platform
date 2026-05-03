@@ -226,8 +226,19 @@ const updateContact: ToolEntry = {
       if (a.country) body.country = String(a.country);
     }
     if (Array.isArray(args.custom_fields)) {
+      // Fix CRITICAL stress test 2026-05-03: GHL aceita { id: UUID } OU
+      // { key: slug } — antes hardcodávamos `id: cf.key` e custom fields
+      // referenciados por slug (vindo de list_custom_fields) eram silenciosamente
+      // descartados pelo GHL. Agora detecta formato e mapeia correto.
+      // GHL IDs são alfanuméricos ~20+ chars. Slugs costumam ter underscore ou
+      // chars não-alfanuméricos.
       body.customFields = (args.custom_fields as Array<{ key: string; value: string }>).map(
-        (cf) => ({ id: cf.key, value: cf.value }),
+        (cf) => {
+          const looksLikeGhlId = /^[A-Za-z0-9]{18,}$/.test(cf.key);
+          return looksLikeGhlId
+            ? { id: cf.key, value: cf.value }
+            : { key: cf.key, value: cf.value };
+        },
       );
     }
     if (Object.keys(body).length === 0) {

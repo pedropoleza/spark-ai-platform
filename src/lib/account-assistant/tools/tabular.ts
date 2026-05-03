@@ -178,6 +178,23 @@ const importContactsFromData: ToolEntry = {
     const tags = Array.isArray(args.tags) ? (args.tags as string[]) : [];
     const targetLocation = args.target_location_id ? String(args.target_location_id) : ctx.locationId;
 
+    // FIX CRITICAL stress test 2026-05-03: validar target_location_id está
+    // entre as locations do rep. Antes, prompt injection em CSV cell podia
+    // forçar LLM a passar location_id de OUTRA agência → contatos importados
+    // em tenant errado (CRM hijack).
+    if (args.target_location_id) {
+      const allowedLocations = ctx.rep.ghl_users.map((u) => u.location_id);
+      if (!allowedLocations.includes(targetLocation)) {
+        return {
+          status: "error",
+          message:
+            `target_location_id "${targetLocation}" não está entre as locations autorizadas do rep ` +
+            `(${allowedLocations.join(", ")}). Por segurança, só importo em locations que o rep tem acesso.`,
+          retryable: false,
+        };
+      }
+    }
+
     // Resolve default country pra normalizePhone via timezone da location.
     // Sem isso, números BR de 10/11 dígitos viram +1 (US wrong).
     let defaultCountry: "US" | "BR" = "US";
