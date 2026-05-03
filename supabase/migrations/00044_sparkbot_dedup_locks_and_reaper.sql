@@ -34,8 +34,14 @@ COMMENT ON TABLE sparkbot_dedup_locks IS
 
 -- Cleanup cron (pg_cron extension assumida; se não tiver, comentar)
 -- DELETE locks expirados a cada 5min
+-- FIX re-validação 2026-05-03: cron.schedule não é idempotente — falha em
+-- prod onde o job já foi criado via MCP. Pattern dos migrations 00032/00034:
+-- unschedule existente antes de re-criar.
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
+    IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'sparkbot-dedup-locks-cleanup') THEN
+      PERFORM cron.unschedule('sparkbot-dedup-locks-cleanup');
+    END IF;
     PERFORM cron.schedule(
       'sparkbot-dedup-locks-cleanup',
       '*/5 * * * *',

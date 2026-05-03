@@ -699,6 +699,12 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
       content: result.text || "(sem resposta)",
       channel: "whatsapp",
       metadata: {
+        // FIX 2026-05-03 (re-validação): ghl_contact_id também em role=agent.
+        // O filtro `metadata->>ghl_contact_id` no recency check de REACTION
+        // só funciona se ESTE campo existir nas msgs do agente — antes só
+        // user msgs tinham, fazendo o check sempre retornar null e rejeitar
+        // toda reação como "antiga".
+        ghl_contact_id: contactId,
         model: result.model_used,
         tools: result.tools_executed,
         // tool_calls completos (input + result) pra debug. Trunca cada
