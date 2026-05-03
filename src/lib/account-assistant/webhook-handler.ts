@@ -194,13 +194,21 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   // 4. Busca agent Sparkbot na Hub (pra billing + config)
   const supabase = createAdminClient();
 
-  // Sticky tabular cache (fix audit C1): se este turn é só texto e o rep
-  // mandou um CSV/XLSX nas últimas 30 min, restaura o anexo. Senão LLM
-  // perde contexto e pede "reanexa o CSV" — bug visto no Web UI antes do
-  // fix em send/route.ts; aqui replicamos pra paridade WhatsApp.
+  // Sticky tabular cache (fix audit C1): se este turn é só texto OU áudio
+  // e o rep mandou um CSV/XLSX nas últimas 30 min, restaura o anexo.
+  // Senão LLM perde contexto e pede "reanexa o CSV" — bug visto no Web UI
+  // antes do fix em send/route.ts; aqui replicamos pra paridade WhatsApp.
+  // Audio incluído porque rep no WhatsApp costuma confirmar via voz
+  // ("sim, importa") e quebrar o cache nesse caso é UX ruim (NB-6 do agent
+  // de validação 2026-05-02).
   let restoredFromCache = false;
-  const repTextForRestore = repInput.kind === "text" ? repInput.text : "";
-  if (repInput.kind === "text") {
+  const repTextForRestore =
+    repInput.kind === "text"
+      ? repInput.text
+      : repInput.kind === "audio"
+      ? repInput.transcribed_text
+      : "";
+  if (repInput.kind === "text" || repInput.kind === "audio") {
     try {
       const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
       const { data: cachedRows } = await supabase
