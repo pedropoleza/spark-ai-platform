@@ -218,35 +218,115 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   ]);
   const isPlaceholderText = repInput.kind === "text" && PLACEHOLDER_TEXTS.has(repInput.text.trim());
 
-  // DIAGNOSTIC LOGGING (temporário, via tabela dedicada
-  // sparkbot_webhook_debug): captura body raw dos webhooks SEMPRE, pra
-  // investigar porque extractAudioUrl não reconhece o formato real do
-  // Stevo/Evolution + WhatsApp API multi-provider.
-  // Remove esse bloco + drop a tabela quando o suporte ao formato estiver 100%.
+  // FIX: o webhook do Stevo VEM com body="Audio Message." E COM
+  // attachments=[audio_url] válida. Se rejeitarmos só por placeholder,
+  // perdemos a URL processável. Solução: só rejeita se NÃO tem attachment.
+  const audioUrlInfo = (await import("@/lib/ai/audio-transcriber"))
+    .extractAudioUrl(body);
+  const mediaAttachmentsForCheck = (await import("@/lib/ai/media-extractor"))
+    .extractMediaAttachments(body);
+  const hasUsableAttachment = !!audioUrlInfo?.url || mediaAttachmentsForCheck.length > 0;
+
+  // DIAGNOSTIC LOGGING via sparkbot_webhook_debug (sempre captura).
+  // ID da row é usado pra UPDATE depois com transcribe_status/text/error.
+  let debugRowId: string | null = null;
   try {
     const supabaseDebug = createAdminClient();
-    const audioInfoForDebug = (await import("@/lib/ai/audio-transcriber"))
-      .extractAudioUrl(body);
-    await supabaseDebug.from("sparkbot_webhook_debug").insert({
+    const { data: dbgIns } = await supabaseDebug.from("sparkbot_webhook_debug").insert({
       hub_location_id: hubLocationId,
       ghl_message_id: ghlMessageId || null,
       contact_id: contactId,
       message_type: messageType || null,
       message_body_preview: (messageBody || "").slice(0, 200),
       rep_input_kind: repInput.kind,
-      audio_url_extracted: audioInfoForDebug?.url || null,
+      audio_url_extracted: audioUrlInfo?.url || null,
       body_raw: body,
-    });
+    }).select("id").single();
+    debugRowId = dbgIns?.id || null;
   } catch (err) {
     console.warn("[Sparkbot:DEBUG] webhook_debug insert falhou:", err instanceof Error ? err.message : err);
   }
 
-  if (isPlaceholderText && repInput.kind === "text") {
+  // PLACEHOLDER REJECT: só se for texto placeholder E sem mídia processável.
+  // Se tem attachment, o webhook é "bom" (apenas o body é placeholder do GHL).
+  if (isPlaceholderText && repInput.kind === "text" && !hasUsableAttachment) {
     console.warn(
       `[Sparkbot] PLACEHOLDER REJECT: msg "${repInput.text}" do rep (contact=${contactId}) — ` +
-      `provavelmente provider sem audio_url/media. Aguardando webhook irmão com conteúdo real.`,
+      `sem attachment, provider sem audio_url/media. Aguardando webhook irmão.`,
     );
+    if (debugRowId) {
+      try {
+        const supabaseDebug = createAdminClient();
+        await supabaseDebug.from("sparkbot_webhook_debug")
+          .update({ rejected_by: "placeholder_no_attachment" })
+          .eq("id", debugRowId);
+      } catch { /* ignora */ }
+    }
     return;
+  }
+
+  // RE-PROCESSA REPINPUT se tem attachment mas extração inicial não pegou.
+  // Caso típico: body="Audio Message." mas attachments=[audio.ogg].
+  // O extractRepInput original viu body="Audio Message." e tratou como text.
+  // Aqui, se temos audio_url ou media attachment confirmado, força reprocesso.
+  if (audioUrlInfo?.url && repInput.kind === "text") {
+    console.log(`[Sparkbot] re-processando como áudio (URL detected: ${audioUrlInfo.url.slice(0, 80)})`);
+    try {
+      const transcribed = await (await import("@/lib/ai/audio-transcriber"))
+        .transcribeAudioFromUrl(audioUrlInfo.url, audioUrlInfo.mimeType);
+      if (transcribed?.text) {
+        repInput = {
+          kind: "audio",
+          transcribed_text: transcribed.text,
+          original_url: audioUrlInfo.url,
+        };
+        if (transcribed.audio_seconds > 0) {
+          audioSink.current = {
+            audio_seconds: transcribed.audio_seconds,
+            model: transcribed.model,
+          };
+        }
+        if (debugRowId) {
+          try {
+            const supabaseDebug = createAdminClient();
+            await supabaseDebug.from("sparkbot_webhook_debug")
+              .update({
+                transcribe_attempted: true,
+                transcribe_status: "ok",
+                transcribe_text: transcribed.text.slice(0, 1000),
+              })
+              .eq("id", debugRowId);
+          } catch { /* ignora */ }
+        }
+      } else {
+        if (debugRowId) {
+          try {
+            const supabaseDebug = createAdminClient();
+            await supabaseDebug.from("sparkbot_webhook_debug")
+              .update({
+                transcribe_attempted: true,
+                transcribe_status: "empty_text_or_null",
+                transcribe_error: "transcribeAudioFromUrl retornou null/empty",
+              })
+              .eq("id", debugRowId);
+          } catch { /* ignora */ }
+        }
+      }
+    } catch (err) {
+      console.error("[Sparkbot] re-transcribe failed:", err instanceof Error ? err.message : err);
+      if (debugRowId) {
+        try {
+          const supabaseDebug = createAdminClient();
+          await supabaseDebug.from("sparkbot_webhook_debug")
+            .update({
+              transcribe_attempted: true,
+              transcribe_status: "exception",
+              transcribe_error: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+            })
+            .eq("id", debugRowId);
+        } catch { /* ignora */ }
+      }
+    }
   }
 
   // 4. Busca agent Sparkbot na Hub (pra billing + config)
