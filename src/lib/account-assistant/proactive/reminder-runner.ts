@@ -251,18 +251,47 @@ async function deliverReminderWhatsapp(
       let contactId = search?.contacts?.[0]?.id || search?.results?.[0]?.id;
 
       // Se não achou, cria contact mínimo (pra poder enviar msg)
+      // Fix bug observado em prod 2026-05-03: o /contacts/search/duplicate às
+      // vezes não acha o contato (formato do phone, quirk da API V2), aí o
+      // create devolve 400 com `meta.contactId` apontando pro existente.
+      // Em vez de explodir, extraímos esse ID do erro e usamos.
       if (!contactId) {
-        const created = await ghlClient.post<{ contact: { id: string } }>(
-          "/contacts/",
-          {
-            locationId: sendLocationId,
-            phone: rep.phone,
-            firstName: "Spark Rep",
-            lastName: task.rep_id.slice(0, 8),
-            tags: ["sparkbot-rep"],
-          },
-        );
-        contactId = created.contact?.id;
+        try {
+          const created = await ghlClient.post<{ contact: { id: string } }>(
+            "/contacts/",
+            {
+              locationId: sendLocationId,
+              phone: rep.phone,
+              firstName: "Spark Rep",
+              lastName: task.rep_id.slice(0, 8),
+              tags: ["sparkbot-rep"],
+            },
+          );
+          contactId = created.contact?.id;
+        } catch (createErr) {
+          // GHL devolve 400 com body JSON contendo `meta.contactId` quando o
+          // location bloqueia duplicado. Parse a mensagem do erro pra extrair.
+          const errMsg = createErr instanceof Error ? createErr.message : String(createErr);
+          const jsonMatch = errMsg.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            try {
+              const parsed = JSON.parse(jsonMatch[0]) as {
+                statusCode?: number;
+                message?: string;
+                meta?: { contactId?: string };
+              };
+              if (parsed.statusCode === 400 && parsed.meta?.contactId) {
+                contactId = parsed.meta.contactId;
+                console.log(
+                  `[reminder-runner] contact existente extraído do erro 400 do GHL: ${contactId}`,
+                );
+              }
+            } catch {
+              // JSON não parseou — relança erro original
+            }
+          }
+          if (!contactId) throw createErr;
+        }
       }
 
       if (!contactId) throw new Error("não consegui resolver contact_id no GHL");
