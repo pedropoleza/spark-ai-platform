@@ -219,8 +219,14 @@ async function deliverReminderWhatsapp(
   let sendError: string | null = null;
   if (enabled && hubCompanyId) {
     try {
-      // Resolve qual location usar pra enviar (a do task ou override env)
+      // Resolve qual location usar pra enviar.
+      // Fix bug observado em prod 2026-05-03: antes default era task.location_id
+      // (a active_location do rep) — mas Stevo/Evolution tá conectado na HUB,
+      // não em locations random. GHL aceitava o POST mas a msg ficava sem
+      // provider e nunca saía. Default agora é hub; task.location_id é
+      // último fallback (dev/staging sem hub).
       const sendLocationId = process.env.WHATSAPP_DELIVERY_LOCATION_ID?.trim()
+        || hubLocationId
         || task.location_id;
 
       // Resolve rep info pra encontrar phone/contact
