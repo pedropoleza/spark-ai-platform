@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   }
 
   let audioUrl = String(body.audioUrl || "");
-  let mimeType = String(body.mimeType || "audio/ogg");
+  const mimeType = String(body.mimeType || "audio/ogg");
   const debugRowId = String(body.debugRowId || "");
 
   // Se passou debugRowId, busca audio_url da tabela
