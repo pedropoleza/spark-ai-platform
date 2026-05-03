@@ -230,6 +230,42 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     }
   }
 
+  // Dedup TIMING-MATCH (fix bug observado em prod 2026-05-03 com áudio):
+  // Pra áudio/imagem/PDF, os 2 webhooks do GHL multi-provider podem trazer
+  // CONTEÚDOS DIFERENTES (um transcreve com sucesso, outro vem só com
+  // placeholder "Audio Message."). Content-match não pega.
+  //
+  // Fix: janela curta de 5s — se rep teve QUALQUER user msg nos últimos 5s,
+  // este webhook é o segundo do par. Skip.
+  //
+  // Trade-off: rep humano mandando 2 msgs em <5s vai ter a 2ª bloqueada.
+  // Rare em prática (humanos digitam >2s entre msgs); GHL multi-provider
+  // dispara em <500ms tipicamente. Logamos pra o Pedro saber se afeta.
+  try {
+    const cutoffTiming = new Date(Date.now() - 5 * 1000).toISOString();
+    const { data: recentAny } = await supabase
+      .from("sparkbot_messages")
+      .select("id, ghl_message_id, content, created_at")
+      .eq("rep_id", rep.id)
+      .eq("hub_location_id", hubLocationId)
+      .eq("role", "user")
+      .gte("created_at", cutoffTiming)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (recentAny) {
+      const ageMs = Date.now() - new Date(recentAny.created_at as unknown as string).getTime();
+      console.warn(
+        `[Sparkbot] dedupe TIMING-MATCH: rep ${rep.id} já tem user msg de ${ageMs}ms atrás ` +
+        `(orig content="${(recentAny.content || "").slice(0, 30)}", ghl_msg=${recentAny.ghl_message_id}; ` +
+        `current=${ghlMessageId}). GHL multi-provider routing — 2º webhook bloqueado.`,
+      );
+      return;
+    }
+  } catch (err) {
+    console.warn("[Sparkbot] timing-match dedup falhou:", err instanceof Error ? err.message : err);
+  }
+
   // Sticky tabular cache (fix audit C1): se este turn é só texto OU áudio
   // e o rep mandou um CSV/XLSX nas últimas 30 min, restaura o anexo.
   // Senão LLM perde contexto e pede "reanexa o CSV" — bug visto no Web UI
