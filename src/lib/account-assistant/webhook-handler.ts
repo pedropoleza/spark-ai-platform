@@ -529,8 +529,14 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   }
 
   // Reverte pra ordem cronológica (oldest first) e mapeia pra ConversationTurn.
+  // FILTRA mensagens com content vazio — Claude rejeita com 400
+  // "user messages must have non-empty content" e cai inteiro o turn pra
+  // OpenAI fallback. Bug observado em prod 2026-05-03: webhooks WhatsApp
+  // API multi-provider chegavam com body="" e era persistido vazio,
+  // poluindo o histórico pra sempre.
   const conversationHistory: ConversationTurn[] = priorMsgs
     .reverse()
+    .filter((m) => (m.content || "").trim().length > 0)
     .map((m) => ({
       role: m.role === "user" ? "user" : "assistant",
       content: m.content,
@@ -545,7 +551,12 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     if (restoredFromCache) {
       return repTextForRestore || "(sem texto)";
     }
-    if (repInput.kind === "text") return repInput.text;
+    // FIX 2026-05-03: NUNCA persistir content="" — Claude rejeita
+    // history com 400. Webhook com body vazio e transcribe falho
+    // viravam content="" e poluíam o histórico pra sempre.
+    if (repInput.kind === "text") {
+      return repInput.text.trim() || "[mensagem vazia]";
+    }
     if (repInput.kind === "audio") return `🎤 "${repInput.transcribed_text}"`;
     if (repInput.kind === "image") return repInput.caption || "[imagem]";
     if (repInput.kind === "document") {
