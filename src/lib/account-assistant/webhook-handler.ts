@@ -19,6 +19,28 @@ import type { ConversationTurn } from "@/lib/ai/openai-client";
 
 const SPARKBOT_HISTORY_TURNS = 30;
 
+/**
+ * Mutex em memória pra dedup concorrente dentro de uma única lambda.
+ * Não substitui a UNIQUE constraint (multi-lambda) mas evita 2× Whisper
+ * quando GHL faz dup-burst em <1s (caso raro mas mostrável).
+ * TTL: 60s — depois disso a UNIQUE constraint cobre.
+ */
+const inFlightMessages = new Map<string, number>();
+const IN_FLIGHT_TTL_MS = 60_000;
+function tryClaimInFlight(ghlMessageId: string): boolean {
+  const now = Date.now();
+  // GC entries expiradas
+  for (const [k, expiresAt] of inFlightMessages) {
+    if (expiresAt < now) inFlightMessages.delete(k);
+  }
+  if (inFlightMessages.has(ghlMessageId)) return false;
+  inFlightMessages.set(ghlMessageId, now + IN_FLIGHT_TTL_MS);
+  return true;
+}
+function releaseInFlight(ghlMessageId: string): void {
+  inFlightMessages.delete(ghlMessageId);
+}
+
 /** Acumulador de telemetria de áudio extraído (pra billing posterior). */
 interface AudioMeta {
   audio_seconds: number;
@@ -51,11 +73,23 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     return;
   }
 
-  // Idempotency (fix audit C3): GHL retry de webhook com mesmo messageId
-  // não pode reprocessar (2x Whisper bill, 2x LLM, 2x resposta enviada).
-  // Query upfront — se já existe, skip.
+  // Idempotency (fix audit C3 + concurrent retry):
+  // GHL retry de webhook com mesmo messageId não pode reprocessar
+  // (2x Whisper bill, 2x LLM, 2x resposta enviada).
+  //
+  // Tripla defesa:
+  //   1. Mutex em memória — bloqueia race concorrente DENTRO da mesma lambda
+  //      (ex: GHL dup-burst em <1s). Esse cobre o caso "Whisper duplicate"
+  //      que o SELECT-then-process não cobria.
+  //   2. SELECT upfront — pega retries sequenciais (cold start em outra lambda).
+  //   3. UNIQUE constraint na INSERT do user_msg — última defesa, capturada
+  //      via error.code === "23505" (Postgres unique_violation).
   const ghlMessageId = (body.messageId || body.message_id || body.id) as string | undefined;
   if (ghlMessageId) {
+    if (!tryClaimInFlight(ghlMessageId)) {
+      console.log(`[Sparkbot] dedupe in-flight: ${ghlMessageId} já sendo processado, skipping`);
+      return;
+    }
     try {
       const supabaseEarly = createAdminClient();
       const { data: existing } = await supabaseEarly
@@ -64,27 +98,56 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
         .eq("ghl_message_id", ghlMessageId)
         .maybeSingle();
       if (existing) {
-        console.log(`[Sparkbot] dedupe: ghl_message_id ${ghlMessageId} já processado, skipping`);
+        console.log(`[Sparkbot] dedupe SELECT: ghl_message_id ${ghlMessageId} já processado, skipping`);
+        releaseInFlight(ghlMessageId);
         return;
       }
     } catch (err) {
-      console.warn("[Sparkbot] idempotency lookup falhou — segue (pior caso: 2x):", err instanceof Error ? err.message : err);
+      console.warn("[Sparkbot] idempotency lookup falhou — segue (UNIQUE constraint pega):", err instanceof Error ? err.message : err);
     }
   }
+  // Garantia: liberar in-flight ao sair da função, qualquer caminho.
+  // try/finally wrapping abaixo cobre exceções E early returns.
+  const cleanupInFlight = () => { if (ghlMessageId) releaseInFlight(ghlMessageId); };
+  try {
 
   // REACTION detection (fix audit Reaction emoji loops):
   // GHL/Stevo enviam reactions com messageType=REACTION e body=emoji puro.
-  // 👍 ✅ 👌 → "sim" pra LLM tratar como confirmação.
+  // 👍 ✅ 👌 etc → "sim" pra LLM tratar como confirmação.
+  // 👎 ❌ → "não" (rep abortando uma confirmação pendente).
   // Outros emojis → ignora (return). Senão LLM gera greeting estranho.
+  // Case-insensitive por defesa (GHL às vezes manda "REACTION" outras "Reaction").
   let messageBody = rawBody;
-  if (messageType === "REACTION" || messageType === "Reaction") {
-    const emoji = (rawBody || "").trim();
-    const positiveReactions = ["👍", "✅", "👌", "🆗", "✔️", "✓"];
-    if (positiveReactions.includes(emoji)) {
+  const mtUpper = (messageType || "").toUpperCase();
+  if (mtUpper === "REACTION" || mtUpper === "TYPE_REACTION") {
+    // Body pode vir como literal emoji ou JSON-wrapped (Stevo varia).
+    // Tenta extrair emoji se for JSON; senão trim direto.
+    let emoji = (rawBody || "").trim();
+    try {
+      const maybeJson = JSON.parse(rawBody);
+      if (typeof maybeJson === "object" && maybeJson) {
+        const candidate = (maybeJson as Record<string, unknown>).reaction
+          || (maybeJson as Record<string, unknown>).emoji
+          || (maybeJson as Record<string, unknown>).text;
+        if (typeof candidate === "string") emoji = candidate.trim();
+      }
+    } catch { /* não é JSON, segue com rawBody */ }
+
+    // Strip variation selectors (U+FE00..FE0F) e skin tone modifiers
+    // (U+1F3FB..1F3FF) pra matchear ✔️ vs ✔ e 👍🏼 vs 👍.
+    const norm = emoji.replace(/[\u{FE00}-\u{FE0F}\u{1F3FB}-\u{1F3FF}]/gu, "");
+
+    const positiveReactions = ["👍", "✅", "👌", "🆗", "✔", "✓", "💯", "🙏", "👏", "❤"];
+    const negativeReactions = ["👎", "❌", "🚫"];
+
+    if (positiveReactions.some((p) => norm.includes(p))) {
       messageBody = "sim";
-      console.log(`[Sparkbot] REACTION ${emoji} mapeado pra "sim" (confirmation)`);
+      console.log(`[Sparkbot] REACTION ${emoji} mapeado pra "sim" (confirmação positiva)`);
+    } else if (negativeReactions.some((n) => norm.includes(n))) {
+      messageBody = "não, cancela";
+      console.log(`[Sparkbot] REACTION ${emoji} mapeado pra "não" (cancela ação pendente)`);
     } else {
-      console.log(`[Sparkbot] REACTION ${emoji} ignorado (não é positiva)`);
+      console.log(`[Sparkbot] REACTION ${emoji} ignorada (não é positiva nem negativa)`);
       return;
     }
   }
@@ -135,6 +198,8 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   // mandou um CSV/XLSX nas últimas 30 min, restaura o anexo. Senão LLM
   // perde contexto e pede "reanexa o CSV" — bug visto no Web UI antes do
   // fix em send/route.ts; aqui replicamos pra paridade WhatsApp.
+  let restoredFromCache = false;
+  const repTextForRestore = repInput.kind === "text" ? repInput.text : "";
   if (repInput.kind === "text") {
     try {
       const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
@@ -148,14 +213,22 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
         .order("created_at", { ascending: false })
         .limit(10);
       const cachedRow = (cachedRows || []).find((m) => {
-        const meta = m.metadata as { attachment_full?: { kind?: string } } | null;
-        return meta?.attachment_full?.kind === "tabular";
+        const meta = m.metadata as { attachment_full?: { kind?: string; tabular?: { rows?: unknown[]; filename?: string } } } | null;
+        // Validação completa: kind=tabular E rows é array E filename existe.
+        // Antes era só `kind === "tabular"` — corrupção em metadata.attachment_full
+        // crashava no acesso a .tabular.filename downstream.
+        return (
+          meta?.attachment_full?.kind === "tabular" &&
+          Array.isArray(meta.attachment_full.tabular?.rows) &&
+          typeof meta.attachment_full.tabular?.filename === "string"
+        );
       });
       if (cachedRow) {
         const meta = cachedRow.metadata as { attachment_full?: RepInput };
         if (meta.attachment_full && meta.attachment_full.kind === "tabular") {
           // Preserva o texto do rep como caption pro contexto da turn
-          repInput = { ...meta.attachment_full, caption: repInput.text };
+          repInput = { ...meta.attachment_full, caption: repTextForRestore };
+          restoredFromCache = true;
           console.log(`[Sparkbot] anexo tabular restaurado do cache (rep=${rep.id}, idade=${Math.round((Date.now() - new Date(cachedRow.created_at as unknown as string).getTime()) / 1000)}s)`);
         }
       }
@@ -249,50 +322,57 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
 
   // Persiste a msg do rep ANTES de processar (assim se LLM crashar, o
   // próximo turno ainda tem o histórico completo).
-  const userMsgContent =
-    repInput.kind === "text"
-      ? repInput.text
-      : repInput.kind === "audio"
-      ? `🎤 "${repInput.transcribed_text}"`
-      : repInput.kind === "image"
-      ? repInput.caption || "[imagem]"
-      : repInput.kind === "document"
-      ? `📎 ${repInput.filename}${repInput.extracted_text ? `\n${repInput.extracted_text.substring(0, 500)}` : ""}`
-      : repInput.kind === "tabular"
-      ? `📊 ${repInput.tabular.filename} (${repInput.tabular.total_rows} linhas)${repInput.caption ? `\n${repInput.caption}` : ""}`
-      : "(input)";
+  // Quando restoredFromCache: NÃO repete o ícone tabular no histórico —
+  // o conteúdo é só o texto do rep (ex: "sim"), pra histórico não virar
+  // "📊 file.csv" em toda turn dentro de 30min.
+  const userMsgContent = (() => {
+    if (restoredFromCache) {
+      return repTextForRestore || "(sem texto)";
+    }
+    if (repInput.kind === "text") return repInput.text;
+    if (repInput.kind === "audio") return `🎤 "${repInput.transcribed_text}"`;
+    if (repInput.kind === "image") return repInput.caption || "[imagem]";
+    if (repInput.kind === "document") {
+      return `📎 ${repInput.filename}${repInput.extracted_text ? `\n${repInput.extracted_text.substring(0, 500)}` : ""}`;
+    }
+    if (repInput.kind === "tabular") {
+      return `📊 ${repInput.tabular.filename} (${repInput.tabular.total_rows} linhas)${repInput.caption ? `\n${repInput.caption}` : ""}`;
+    }
+    return "(input)";
+  })();
 
   // Defensivo: tabela pode não existir; não queremos quebrar webhook.
   // Cache da tabular pra sticky attachment (TTL 30min, mesma lógica do
-  // send/route.ts). Só salva se for tabular nesta turn original (não
-  // restaurada do cache — senão duplica metadados).
-  const shouldCacheTabular =
-    repInput.kind === "tabular" &&
-    !((body as { __sparkbot_restored?: boolean }).__sparkbot_restored);
-  try {
-    await supabase.from("sparkbot_messages").insert({
-      rep_id: rep.id,
-      hub_location_id: hubLocationId,
-      agent_id: hubAgent.id,
-      active_location_id: rep.active_location_id || null,
-      role: "user",
-      content: userMsgContent,
-      channel: "whatsapp",
-      ghl_message_id: ghlMessageId || null,
-      metadata: {
-        input_kind: repInput.kind,
-        ghl_contact_id: contactId,
-        ...(shouldCacheTabular ? { attachment_full: repInput } : {}),
-      },
-    });
-  } catch (err) {
-    // Idempotency: UNIQUE violation on ghl_message_id é normal em retry
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("uniq_sparkbot_messages_ghl_msg_id") || msg.includes("23505")) {
-      console.log(`[Sparkbot] dedupe via UNIQUE: ghl_message_id ${ghlMessageId} já inserido — skipping`);
+  // send/route.ts). Só salva se for tabular nesta turn original (NÃO
+  // restaurada do cache — senão duplicaria a metadata em cascata).
+  const shouldCacheTabular = repInput.kind === "tabular" && !restoredFromCache;
+  // Supabase JS NÃO faz throw em insert errors — devolve { error }.
+  // O try/catch antigo era dead code; agora capturamos o `error.code`
+  // explicitamente. 23505 = unique_violation (Postgres).
+  const insertResult = await supabase.from("sparkbot_messages").insert({
+    rep_id: rep.id,
+    hub_location_id: hubLocationId,
+    agent_id: hubAgent.id,
+    active_location_id: rep.active_location_id || null,
+    role: "user",
+    content: userMsgContent,
+    channel: "whatsapp",
+    ghl_message_id: ghlMessageId || null,
+    metadata: {
+      input_kind: repInput.kind,
+      ghl_contact_id: contactId,
+      ...(restoredFromCache ? { attachment_restored_from_cache: true } : {}),
+      ...(shouldCacheTabular ? { attachment_full: repInput } : {}),
+    },
+  });
+  if (insertResult.error) {
+    // Idempotency: UNIQUE violation on ghl_message_id é dedup signal
+    if (insertResult.error.code === "23505") {
+      console.log(`[Sparkbot] dedupe via UNIQUE constraint: ghl_message_id ${ghlMessageId} já inserido — skipping`);
+      cleanupInFlight();
       return;
     }
-    console.warn("[Sparkbot] sparkbot_messages insert (user) failed:", msg);
+    console.warn("[Sparkbot] sparkbot_messages insert (user) failed:", insertResult.error.message);
   }
 
   // Silence reset (fix audit Phase 3): qualquer inbound do rep limpa
@@ -371,6 +451,11 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     },
     success: true,
   });
+
+  } finally {
+    // Cleanup do in-flight mutex, qualquer caminho de saída
+    cleanupInFlight();
+  }
 }
 
 /**

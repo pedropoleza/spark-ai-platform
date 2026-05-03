@@ -116,6 +116,16 @@ export async function recordProactiveSent(
 /**
  * Helper combo: lê estado, decide, retorna decision. Caller passa pra
  * recordProactiveSent depois de tentar mandar.
+ *
+ * Fail-mode importante: se o rep_identity NÃO EXISTE (PGRST116 do
+ * postgrest), retornamos `canSend: false` com reason='already_paused'
+ * pra que NÃO mandemos proativo pra rep órfão (FK CASCADE não rolou,
+ * row deletado manualmente, etc). Antes era fail-open ("assumindo rep
+ * ativo") o que era um silent gate bypass — flag pelo agente de
+ * validação 2026-05-02.
+ *
+ * Outras falhas de DB (network, timeout) seguem fail-open com warn —
+ * pior caso 1 proativo extra, vs blackout total se Supabase pisca.
  */
 export async function loadSilenceDecision(
   supabase: SupabaseClient,
@@ -128,9 +138,17 @@ export async function loadSilenceDecision(
     )
     .eq("id", repId)
     .single();
+
+  // PGRST116 = "no rows returned" — rep órfão, recusa silenciosamente
+  if (error && error.code === "PGRST116") {
+    console.error(
+      `[SilenceGate] rep_identity ${repId} não existe (PGRST116) — recusando proativo (orphan ref)`,
+    );
+    return { canSend: false, reason: "already_paused", shouldSetPaused: false };
+  }
+
   if (error || !rep) {
-    // Conservador: se não conseguiu ler, assume rep ativo (counter=0).
-    // Pior caso: manda 1 proativo extra.
+    // Erro transient (network, timeout, etc.) — fail-open com warn.
     console.warn(
       "[SilenceGate] read falhou — assumindo rep ativo:",
       error?.message,

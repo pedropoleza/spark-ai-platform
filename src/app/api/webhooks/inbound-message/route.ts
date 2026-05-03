@@ -691,6 +691,10 @@ function isRealMessage(messageType: string, direction: string): boolean {
     "INSTAGRAM", "TYPE_INSTAGRAM", "IG", "TYPE_IG",
     "EMAIL", "TYPE_EMAIL", "FB", "TYPE_FB", "FACEBOOK", "TYPE_FACEBOOK",
     "LIVE_CHAT", "TYPE_LIVE_CHAT", "CUSTOM", "TYPE_CUSTOM", "GMB", "TYPE_GMB",
+    // REACTION: rep curte com 👍✅ pra confirmar. Sparkbot mapeia pra "sim".
+    // Adicionado explícito em validTypes pra não depender da regra fallback
+    // "direction=inbound returns true" — defense in depth.
+    "REACTION", "TYPE_REACTION",
   ];
 
   if (validTypes.includes(mt)) return true;
