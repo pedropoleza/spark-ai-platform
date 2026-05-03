@@ -186,6 +186,41 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     return;
   }
 
+  // CONTENT DEDUP LOCK (fix race 22ms 2026-05-03):
+  // Quando 2 webhooks multi-provider chegam em <100ms, ambos fazem o
+  // SELECT antes do INSERT — content-match falha. Solução: tabela
+  // sparkbot_dedup_locks com UNIQUE PK. Quem entrar primeiro cria o
+  // lock; o segundo recebe 23505 e aborta. TTL 60s (auto-expira).
+  //
+  // Key: rep_id + content + minute_bucket (mesmo minuto = mesma janela).
+  // Pra audio/imagem, usa kind+messageType pra reduzir falso-match.
+  if (messageBody && messageBody.length > 0) {
+    const minuteBucket = Math.floor(Date.now() / 60000); // minuto atual UNIX
+    const dedupKey = `${rep.id}|${minuteBucket}|${messageBody.slice(0, 200)}`;
+    const supabaseDedup = createAdminClient();
+    const lockRes = await supabaseDedup
+      .from("sparkbot_dedup_locks")
+      .insert({
+        dedup_key: dedupKey,
+        rep_id: rep.id,
+        content_preview: messageBody.slice(0, 100),
+      })
+      .select("dedup_key")
+      .maybeSingle();
+    if (lockRes.error) {
+      // 23505 = unique_violation — outro webhook ganhou o lock
+      if (lockRes.error.code === "23505") {
+        console.warn(
+          `[Sparkbot] CONTENT DEDUP LOCK: rep ${rep.id} msg "${messageBody.slice(0, 30)}" ` +
+          `já claim'd em <60s (${ghlMessageId}). Skipping.`,
+        );
+        return;
+      }
+      // Outro erro — não bloqueia (defensivo)
+      console.warn("[Sparkbot] dedup lock insert falhou (não-bloqueante):", lockRes.error.message);
+    }
+  }
+
   // 3. Extrai input multimodal — captura audio_seconds em audioSink pra
   //    cobrança Whisper posterior (depois de hubAgent ser conhecido).
   const audioSink: { current: AudioMeta | null } = { current: null };
@@ -716,6 +751,39 @@ async function extractRepInput(args: {
 }
 
 /**
+ * Splitter: bot pode escrever resposta com `---` em linha sozinha pra
+ * sinalizar break entre mensagens. No WhatsApp, vira múltiplas bolhas
+ * (mais legível que bolha gigante). Web UI ignora — renderiza como hr.
+ *
+ * Limita a 3 partes por turn pra evitar spam. Cada parte recebe trim.
+ * Linhas com só `---` ou `***` (qualquer comprimento >= 3) são separadores.
+ */
+function splitResponseIntoMessages(text: string): string[] {
+  if (!text) return [];
+  // Regex: linha contendo APENAS 3+ dashes/asterisks (pode ter espaços ao redor)
+  const SPLITTER_REGEX = /^\s*[-*]{3,}\s*$/m;
+  const parts = text
+    .split(/\r?\n/)
+    .reduce<string[][]>((acc, line) => {
+      if (SPLITTER_REGEX.test(line)) {
+        if (acc.length === 0) acc.push([]);
+        acc.push([]);
+      } else {
+        if (acc.length === 0) acc.push([]);
+        acc[acc.length - 1].push(line);
+      }
+      return acc;
+    }, [])
+    .map((lines) => lines.join("\n").trim())
+    .filter((s) => s.length > 0);
+
+  // Sem splitter → retorna msg única
+  if (parts.length === 0) return [text.trim()].filter((s) => s.length > 0);
+  // Cap em 3 partes
+  return parts.slice(0, 3);
+}
+
+/**
  * Envia resposta pro rep via GHL.
  *
  * Default agora é SMS (Stevo/Evolution roteia pro WhatsApp do rep) porque
@@ -724,8 +792,29 @@ async function extractRepInput(args: {
  *
  * Mantém fallback pra outro canal em caso de falha (ex: SMS provider down →
  * tenta WhatsApp; ou WhatsApp 24h-window fechada → tenta SMS).
+ *
+ * Suporta SPLITTER: se text contém linhas `---`, manda múltiplas mensagens
+ * separadas (delay 300ms entre) — cada uma vira uma bolha distinta no
+ * WhatsApp. Bot decide via system prompt (channel='whatsapp' instructions).
  */
 async function sendResponseToRep(
+  client: GHLClient,
+  contactId: string,
+  conversationId: string,
+  incomingType: string,
+  text: string,
+): Promise<void> {
+  const messages = splitResponseIntoMessages(text);
+  for (let i = 0; i < messages.length; i++) {
+    if (i > 0) {
+      // Delay entre mensagens — garante ordem visual no WhatsApp
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    await sendSingleMessageToRep(client, contactId, conversationId, incomingType, messages[i]);
+  }
+}
+
+async function sendSingleMessageToRep(
   client: GHLClient,
   contactId: string,
   conversationId: string,
