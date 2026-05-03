@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
     stages.get = { error: err instanceof Error ? err.message : String(err) };
   }
 
-  // 3. Roda transcribeAudioFromUrl propriamente
+  // 3. Roda transcribeAudioFromUrl (helper)
   try {
     const transStart = Date.now();
     const result = await transcribeAudioFromUrl(audioUrl, mimeType);
@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
         ok: false,
         result: "null",
         wall_ms: Date.now() - transStart,
-        note: "transcribeAudioFromUrl retornou null — ver logs Vercel pra detalhe (response.ok=false, file too small/large, ou Whisper retornou empty)",
+        note: "helper retornou null",
       };
     }
   } catch (err) {
@@ -131,6 +131,41 @@ export async function POST(req: NextRequest) {
       ok: false,
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack?.slice(0, 800) : undefined,
+    };
+  }
+
+  // 4. Whisper RAW — chama OpenAI direto pra ver response completo
+  try {
+    const rawStart = Date.now();
+    const getRes2 = await fetch(audioUrl, { signal: AbortSignal.timeout(20000) });
+    const buf = Buffer.from(await getRes2.arrayBuffer());
+    const { default: OpenAI } = await import("openai");
+    const { toFile } = await import("openai");
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const file = await toFile(buf, "audio.ogg", { type: mimeType || "audio/ogg" });
+    const transcription = await openai.audio.transcriptions.create({
+      file,
+      model: "whisper-1",
+      language: "pt",
+      response_format: "verbose_json",
+    });
+    stages.whisper_raw = {
+      ok: true,
+      duration_ms: Date.now() - rawStart,
+      text: typeof transcription === "object" && "text" in transcription
+        ? String((transcription as { text?: unknown }).text || "").slice(0, 1000)
+        : null,
+      duration_audio: typeof transcription === "object" && "duration" in transcription
+        ? (transcription as { duration?: unknown }).duration
+        : null,
+      raw_response_keys: Object.keys(transcription as object),
+      raw_response: JSON.stringify(transcription).slice(0, 2000),
+    };
+  } catch (err) {
+    stages.whisper_raw = {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack?.slice(0, 1200) : undefined,
     };
   }
 
