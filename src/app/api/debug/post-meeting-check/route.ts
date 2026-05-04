@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
   const onlyLocationId = url.searchParams.get("location_id");
   const calendarId = url.searchParams.get("calendar_id");
   const listCalendars = url.searchParams.get("list_calendars") === "1";
+  const appointmentId = url.searchParams.get("appointment_id");
 
   const supabase = createAdminClient();
   const { data: rep } = await supabase
@@ -81,6 +82,23 @@ export async function GET(request: NextRequest) {
 
     try {
       const ghlClient = new GHLClient(location.company_id, locationId);
+
+      // Modo appointment_id: pega o appointment cru com todos os campos
+      // (createdAt, timezone, dateAdded, etc). Útil pra debugar problemas
+      // de timezone — comparar com o que o GHL retorna em /calendars/events.
+      if (appointmentId) {
+        const apptRes = await ghlClient.get<{
+          appointment?: Record<string, unknown>;
+        }>(`/calendars/events/appointments/${appointmentId}`);
+        results.push({
+          location_id: locationId,
+          ghl_user_id: ghlUserId,
+          company_id: location.company_id,
+          server_now: new Date().toISOString(),
+          appointment_raw: apptRes.appointment,
+        });
+        continue;
+      }
 
       // Modo list_calendars: retorna lista de calendars da location pra
       // identificar onde o appointment foi criado.
