@@ -100,22 +100,47 @@ export function getRepGhlUserId(ctx: ToolContext): string | undefined {
 }
 
 /**
- * Wrap padrão pra tools que falham na chamada GHL: converte Error em
- * ToolResult de erro com mensagem útil pro LLM corrigir.
+ * Wrap padrão pra tools que falham na chamada Spark Leads (GHL API): converte
+ * Error em ToolResult de erro com mensagem útil pro LLM corrigir.
  *
  * Fix HIGH stress test 2026-05-03: antes expunhamos `err.message` cru, que
- * pode incluir detalhes do GHL response (URLs internas, IDs, info de outro
+ * pode incluir detalhes do response (URLs internas, IDs, info de outro
  * tenant). Agora detecta padrões comuns (404/403/422) e devolve mensagem
  * resumida. Full message vai pra logs (Vercel) onde só admins acessam.
+ *
+ * Pedro 2026-05-04: também detecta "duplicated contacts" (caso comum quando
+ * rep tenta criar contato com phone/email que já existe em outra location)
+ * — extrai contactId existente do response body pra LLM oferecer atualizar.
+ * Plus: mensagens user-facing usam "Spark Leads", não "GHL".
  */
 export function ghlErrorToResult(err: unknown, action: string): ToolResult {
   const fullMsg = err instanceof Error ? err.message : "Erro desconhecido";
   console.warn(`[ghl] ${action} falhou:`, fullMsg);
 
+  // Caso especial: duplicate contacts (400 com meta.contactId no body).
+  // Extrai contactId existente pra LLM oferecer update em vez de create.
+  if (/duplicated\s+contacts/i.test(fullMsg) || /duplicate\s+key/i.test(fullMsg)) {
+    const match = fullMsg.match(/"contactId"\s*:\s*"([A-Za-z0-9]{18,})"/);
+    const existingId = match ? match[1] : null;
+    const nameMatch = fullMsg.match(/"contactName"\s*:\s*"([^"]+)"/);
+    const existingName = nameMatch ? nameMatch[1] : null;
+    return {
+      status: "error",
+      message:
+        `Esse contato já existe no Spark Leads` +
+        (existingName ? ` (${existingName})` : "") +
+        (existingId ? ` — ID: ${existingId}.` : ".") +
+        ` Pra atualizar dados, use update_contact com esse contact_id.` +
+        ` Pra adicionar tags, use add_tag.` +
+        ` Pra criar nota nele, use create_note.`,
+      retryable: false,
+    };
+  }
+
   // Mapeia padrões pra mensagens redacted que ainda ajudam LLM
-  let safeMsg = `GHL rejeitou ${action}`;
+  let safeMsg = `Spark Leads rejeitou ${action}`;
   if (/\b404\b/.test(fullMsg) || /not\s*found/i.test(fullMsg)) {
-    safeMsg = `${action}: recurso não encontrado no GHL (provavelmente ID inválido ou deletado)`;
+    safeMsg = `${action}: recurso não encontrado no Spark Leads (provavelmente ID inválido ou deletado)`;
   } else if (/\b403\b/.test(fullMsg) || /forbidden/i.test(fullMsg)) {
     safeMsg = `${action}: permissão negada (token sem escopo necessário ou recurso de outra location)`;
   } else if (/\b422\b/.test(fullMsg) || /validation/i.test(fullMsg)) {
@@ -123,9 +148,9 @@ export function ghlErrorToResult(err: unknown, action: string): ToolResult {
   } else if (/\b401\b/.test(fullMsg) || /unauthor/i.test(fullMsg)) {
     safeMsg = `${action}: token expirado ou inválido (admin recarregar)`;
   } else if (/\b429\b/.test(fullMsg) || /rate.limit/i.test(fullMsg)) {
-    safeMsg = `${action}: rate limit do GHL — tente em alguns segundos`;
+    safeMsg = `${action}: rate limit do Spark Leads — tente em alguns segundos`;
   } else if (/\b5\d\d\b/.test(fullMsg) || /server.error/i.test(fullMsg)) {
-    safeMsg = `${action}: erro temporário do GHL — tente de novo`;
+    safeMsg = `${action}: erro temporário do Spark Leads — tente de novo`;
   }
   return {
     status: "error",
