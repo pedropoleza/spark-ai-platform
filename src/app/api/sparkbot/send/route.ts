@@ -70,16 +70,18 @@ export async function POST(request: NextRequest) {
 
   const { data: hubAgent } = await supabase
     .from("agents")
-    .select("id, agent_configs(confirmation_mode, ai_model)")
+    .select("id")
     .eq("location_id", hubLocationId)
     .eq("type", "account_assistant")
     .eq("status", "active")
     .maybeSingle();
   if (!hubAgent) return json({ ok: false, reason: "no_sparkbot_agent" }, { status: 404 });
 
-  const agentConfig = Array.isArray(hubAgent.agent_configs)
-    ? hubAgent.agent_configs[0]
-    : hubAgent.agent_configs;
+  const { data: agentConfig } = await supabase
+    .from("agent_configs")
+    .select("*")
+    .eq("agent_id", hubAgent.id)
+    .maybeSingle();
 
   // 4. Histórico unificado: lê últimos N turns de sparkbot_messages
   // (mesma lógica do webhook handler — bot lembra do WhatsApp aqui)
@@ -260,6 +262,20 @@ export async function POST(request: NextRequest) {
         (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
         "high_only",
       ai_model: agentConfig?.ai_model,
+      fallback_model: agentConfig?.fallback_model || null,
+      custom_instructions: agentConfig?.custom_instructions || null,
+      knowledge_base_instructions: agentConfig?.knowledge_base_instructions || null,
+      disabled_tools: Array.isArray(agentConfig?.disabled_tools) ? agentConfig.disabled_tools : [],
+      enabled_kbs: Array.isArray(agentConfig?.enabled_kbs)
+        ? agentConfig.enabled_kbs
+        : ["national_life_group", "agency_brazillionaires"],
+      tone_creativity: agentConfig?.tone_creativity ?? null,
+      tone_formality: agentConfig?.tone_formality ?? null,
+      tone_naturalness: agentConfig?.tone_naturalness ?? null,
+      tone_aggressiveness: agentConfig?.tone_aggressiveness ?? null,
+      enable_audio_transcription: agentConfig?.enable_audio_transcription ?? true,
+      enable_image_analysis: agentConfig?.enable_image_analysis ?? true,
+      enable_pdf_reading: agentConfig?.enable_pdf_reading ?? true,
     },
   });
   const durationMs = Date.now() - startTs;

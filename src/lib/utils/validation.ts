@@ -190,6 +190,25 @@ export const updateAgentConfigSchema = z.object({
     on_error: z.boolean(),
     notification_email: z.string(),
   }).nullable().optional(),
+  // Sparkbot-specific configs (added 2026-05-03 — Pedro Sprint 1)
+  confirmation_mode: z.enum(["always", "medium_and_high", "high_only"]).nullable().optional(),
+  no_response_threshold: z.number().int().min(1).max(20).nullable().optional(),
+  quiet_hours: z.object({
+    enabled: z.boolean(),
+    start: z.string(),       // "HH:MM"
+    end: z.string(),         // "HH:MM"
+    timezone: z.string(),
+    days: z.array(z.number().int().min(0).max(6)),
+  }).nullable().optional(),
+  allowed_ghl_users: z.array(z.object({
+    ghl_user_id: z.string(),
+    name: z.string(),
+    phone: z.string().optional(),
+  })).nullable().optional(),
+  daily_proactive_limit: z.number().int().min(0).max(100).nullable().optional(),
+  fallback_model: z.string().min(1).max(100).nullable().optional(),
+  disabled_tools: z.array(z.string().min(1).max(80)).max(60).nullable().optional(),
+  enabled_kbs: z.array(z.enum(["national_life_group", "agency_brazillionaires"])).nullable().optional(),
 });
 
 // Feedback

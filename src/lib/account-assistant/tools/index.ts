@@ -91,21 +91,33 @@ function withConfirmationParam(def: ToolDefinition, mode: ConfirmationMode): Too
  * `confirmationMode` é OPCIONAL pra preservar callers legados, mas SEMPRE
  * deve ser passado em produção: sem ele, schemas saem sem
  * `confirmed_by_rep`, e o LLM fica em loop quando o gate bloqueia.
+ *
+ * `disabledNames` (2026-05-03): admin pode banir tools específicas via
+ * agent_configs.disabled_tools. Bypass complete — LLM nem vê o schema.
  */
 export function getAllToolDefinitions(
   confirmationMode: ConfirmationMode = "high_only",
+  disabledNames?: string[],
 ): ToolDefinition[] {
-  return ALL_ENTRIES.map((e) => withConfirmationParam(e.def, confirmationMode));
+  const disabled = new Set(disabledNames || []);
+  return ALL_ENTRIES
+    .filter((e) => !disabled.has(e.def.name))
+    .map((e) => withConfirmationParam(e.def, confirmationMode));
 }
 
 /** Subset filtrado por nomes (usado pelas regras de proatividade com tools_allowed). */
 export function getToolDefinitions(
   allowedNames?: string[] | null,
   confirmationMode: ConfirmationMode = "high_only",
+  disabledNames?: string[],
 ): ToolDefinition[] {
-  const entries = !allowedNames || allowedNames.length === 0
-    ? ALL_ENTRIES
-    : ALL_ENTRIES.filter((e) => new Set(allowedNames).has(e.def.name));
+  const disabled = new Set(disabledNames || []);
+  const allowed = allowedNames && allowedNames.length > 0 ? new Set(allowedNames) : null;
+  const entries = ALL_ENTRIES.filter((e) => {
+    if (disabled.has(e.def.name)) return false;
+    if (allowed && !allowed.has(e.def.name)) return false;
+    return true;
+  });
   return entries.map((e) => withConfirmationParam(e.def, confirmationMode));
 }
 

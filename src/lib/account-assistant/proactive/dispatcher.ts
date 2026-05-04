@@ -226,13 +226,19 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
   const supabase = createAdminClient();
 
   // 2. Resolve agent + config (pra quiet_hours + ai_model fallback)
+  // Fetch separadas — supabase-js type inference quebra com selects longos
+  // de relação aninhada.
   const { data: agent } = await supabase
     .from("agents")
-    .select("id, location_id, agent_configs(quiet_hours, ai_model, confirmation_mode)")
+    .select("id, location_id")
     .eq("id", rule.agent_id)
     .maybeSingle();
   if (!agent) return { status: "failed", message: "Agent não encontrado" };
-  const agentConfig = Array.isArray(agent.agent_configs) ? agent.agent_configs[0] : agent.agent_configs;
+  const { data: agentConfig } = await supabase
+    .from("agent_configs")
+    .select("*")
+    .eq("agent_id", agent.id)
+    .maybeSingle();
 
   // 3. Quiet hours
   if (!forceFire && isInQuietHours(agentConfig?.quiet_hours)) {
@@ -266,6 +272,35 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     return { status: "skipped_silence", message: "Rep silenciado (sem resposta recente)" };
   }
 
+  // Daily proactive limit (admin-configurável 2026-05-03):
+  // Conta quantos proativos foram disparados pra este rep nas últimas 24h.
+  // Se atingiu o limite, skip. 0 = desativado. Reminders criados pelo
+  // próprio rep (schedule_reminder) NÃO contam — só proativos por regras.
+  // Conta via assistant_alert_state (status=sent) que tem 1 row por
+  // (rep, rule, target) com last_fired_at — perfect pra count janela 24h.
+  const dailyLimit =
+    typeof agentConfig?.daily_proactive_limit === "number" && agentConfig.daily_proactive_limit > 0
+      ? agentConfig.daily_proactive_limit
+      : 0;
+  if (dailyLimit > 0 && mode === "real" && !forceFire) {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { count } = await supabase
+      .from("assistant_alert_state")
+      .select("id", { count: "exact", head: true })
+      .eq("rep_id", rep.id)
+      .eq("status", "sent")
+      .gte("last_fired_at", since);
+    const sentCount = count ?? 0;
+    if (sentCount >= dailyLimit) {
+      console.log(
+        `[dispatcher] rep ${rep.id} atingiu daily_proactive_limit=${dailyLimit} ` +
+        `(${sentCount} envios em 24h) — pulando rule ${rule.name}`,
+      );
+      await finalizeDispatch(alertStateId, "skipped_silence"); // reusa enum existente
+      return { status: "skipped_silence", message: `Limite diário atingido (${sentCount}/${dailyLimit})` };
+    }
+  }
+
   // 5. Resolve location ativa do rep + GHL client
   const activeLocationId = rep.active_location_id || rep.ghl_users[0]?.location_id;
   if (!activeLocationId) {
@@ -294,11 +329,35 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
       ? "en-US"
       : "pt-BR";
 
-  // Tier 1 carregado em paralelo — graceful fallback se falhar.
-  const carrierOverview = await loadCarrierTier1("national_life_group").catch((err) => {
-    console.warn("[dispatcher] loadCarrierTier1 falhou (não-fatal):", err);
-    return "";
-  });
+  // Tier 1 + KB items carregados em paralelo — graceful fallback se falhar.
+  const loadKbItems = async (): Promise<Array<{
+    title: string; type: "text" | "file" | "url"; content: string;
+    file_name: string | null; file_url: string | null;
+    description: string | null; usage_instructions: string | null;
+  }>> => {
+    try {
+      const r = await supabase
+        .from("knowledge_base")
+        .select("title,type,content,file_name,file_url,description,usage_instructions")
+        .eq("agent_id", rule.agent_id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      return (r.data || []) as Array<{
+        title: string; type: "text" | "file" | "url"; content: string;
+        file_name: string | null; file_url: string | null;
+        description: string | null; usage_instructions: string | null;
+      }>;
+    } catch {
+      return [];
+    }
+  };
+  const [carrierOverview, kbItems] = await Promise.all([
+    loadCarrierTier1("national_life_group").catch((err) => {
+      console.warn("[dispatcher] loadCarrierTier1 falhou (não-fatal):", err);
+      return "";
+    }),
+    loadKbItems(),
+  ]);
 
   const systemPrompt = [
     buildSparkbotSystemPrompt({
@@ -308,8 +367,17 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
       locale,
       confirmationMode:
         (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
-        "medium_and_high",
+        "high_only",
       carrierOverview,
+      customInstructions: agentConfig?.custom_instructions ?? null,
+      kbInstructions: agentConfig?.knowledge_base_instructions ?? null,
+      kbItems,
+      tones: {
+        creativity: agentConfig?.tone_creativity ?? null,
+        formality: agentConfig?.tone_formality ?? null,
+        naturalness: agentConfig?.tone_naturalness ?? null,
+        aggressiveness: agentConfig?.tone_aggressiveness ?? null,
+      },
     }),
     "",
     "# MODO PROATIVO ATIVADO",
@@ -335,24 +403,30 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
 
   // 7. LLM call com tool-calling
   const ghlClient = new GHLClient(location.company_id, activeLocationId);
+  const cm = (agentConfig?.confirmation_mode as
+    | "always"
+    | "medium_and_high"
+    | "high_only") || "high_only";
+  const disabledTools = Array.isArray(agentConfig?.disabled_tools)
+    ? agentConfig.disabled_tools as string[]
+    : [];
+  const enabledKbs = Array.isArray(agentConfig?.enabled_kbs)
+    ? agentConfig.enabled_kbs as string[]
+    : ["national_life_group", "agency_brazillionaires"];
   const toolCtx: ToolContext = {
     rep,
     locationId: activeLocationId,
     companyId: location.company_id,
     ghlClient,
     testSessionId: testSessionId || null,
-    confirmationMode:
-      (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
-      "medium_and_high",
+    confirmationMode: cm,
+    enabledKbs,
   };
 
   // Passa confirmation_mode pra injetar `confirmed_by_rep` nos schemas das
   // tools com gate ativo — senão o LLM cai em loop quando precisa confirmar.
-  const toolDefs = getToolDefinitions(
-    rule.tools_allowed,
-    (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
-      "medium_and_high",
-  );
+  // Disabled tools removidas do schema completamente (LLM nem vê).
+  const toolDefs = getToolDefinitions(rule.tools_allowed, cm, disabledTools);
 
   const initialUserMessage: LLMMessage = {
     role: "user",
@@ -366,6 +440,7 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     tools: toolDefs,
     executor: (name, args) => executeTool(name, args, toolCtx),
     model: rule.ai_model || agentConfig?.ai_model || "claude-haiku-4-5-20251001",
+    fallbackModel: agentConfig?.fallback_model ?? null,
   });
   const durationMs = Date.now() - startTs;
 

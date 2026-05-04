@@ -111,7 +111,7 @@ const queryCarrierKnowledge: ToolEntry = {
       required: ["question", "kb"],
     },
   },
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
     const question = String(args.question || "").trim();
     if (!question) {
       return { status: "error", message: "question vazia", retryable: false };
@@ -119,6 +119,19 @@ const queryCarrierKnowledge: ToolEntry = {
     // Aceita `kb` (novo, preferred) ou `carrier` (backwards-compat).
     // Default agency_brazillionaires (cobre maioria das queries operacionais).
     const carrier = String(args.kb || args.carrier || "agency_brazillionaires");
+
+    // Filtro de enabled_kbs (admin pode desligar uma das KBs em prod).
+    // Default: ambas habilitadas (sem ctx.enabledKbs setado = sem restrição).
+    if (ctx.enabledKbs && ctx.enabledKbs.length > 0 && !ctx.enabledKbs.includes(carrier)) {
+      return {
+        status: "error",
+        message:
+          `KB '${carrier}' está desabilitada nesta location. ` +
+          `KBs habilitadas: ${ctx.enabledKbs.join(", ")}. ` +
+          `Use uma dessas ou diga ao rep que essa info não está disponível.`,
+        retryable: false,
+      };
+    }
     const categoryHint = args.category_hint ? String(args.category_hint) : null;
     const state = args.state ? String(args.state).toUpperCase() : null;
     const topK = Math.min(Math.max(Number(args.top_k) || 5, 1), 8);

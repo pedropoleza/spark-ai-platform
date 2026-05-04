@@ -498,9 +498,11 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
       console.warn("[Sparkbot] sticky cache lookup falhou:", err instanceof Error ? err.message : err);
     }
   }
+  // Fetch separadas (agent + config) — supabase-js type inference quebra com
+  // strings longas em select com relação aninhada.
   const { data: hubAgent } = await supabase
     .from("agents")
-    .select("id, agent_configs(confirmation_mode, ai_model)")
+    .select("id")
     .eq("location_id", hubLocationId)
     .eq("type", "account_assistant")
     .eq("status", "active")
@@ -515,9 +517,35 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     return;
   }
 
-  const agentConfig = Array.isArray(hubAgent.agent_configs)
-    ? hubAgent.agent_configs[0]
-    : hubAgent.agent_configs;
+  const { data: agentConfig } = await supabase
+    .from("agent_configs")
+    .select("*")
+    .eq("agent_id", hubAgent.id)
+    .maybeSingle();
+
+  // Whitelist enforcement (admin-configurável 2026-05-03):
+  // Se admin populou allowed_ghl_users, só esses ghl_user_ids podem usar.
+  // Lista vazia = sem whitelist (default — todos os reps com terms aceitos
+  // podem usar). Rejeita explicitamente em vez de silenciar pra rep saber.
+  const whitelist: Array<{ ghl_user_id?: string; phone?: string }> = Array.isArray(
+    agentConfig?.allowed_ghl_users,
+  )
+    ? agentConfig.allowed_ghl_users
+    : [];
+  if (whitelist.length > 0) {
+    const allowedIds = new Set(whitelist.map((w) => w.ghl_user_id).filter(Boolean));
+    const repHasAllowedUser = rep.ghl_users.some((u) => allowedIds.has(u.ghl_user_id));
+    if (!repHasAllowedUser) {
+      console.log(
+        `[Sparkbot] rep ${rep.id} (phone=${rep.phone}) não está na whitelist da hub ${hubLocationId} — rejeitado.`,
+      );
+      await sendResponseToRep(
+        hubClient, contactId, conversationId, messageType,
+        "Você não tá autorizado a usar o Sparkbot nesta agência. Fala com o admin pra ser adicionado à whitelist.",
+      );
+      return;
+    }
+  }
 
   // C4 fix: cobra Whisper se o webhook recebeu áudio. Antes, transcribe
   // rodava mas NUNCA cobrava — Sparkbot WhatsApp Whisper 100% free.
@@ -678,9 +706,23 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     channel: "whatsapp",
     config: {
       confirmation_mode:
-        (agentConfig?.confirmation_mode as "always" | "high_only" | "high_only") ||
+        (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
         "high_only",
       ai_model: agentConfig?.ai_model,
+      fallback_model: agentConfig?.fallback_model || null,
+      custom_instructions: agentConfig?.custom_instructions || null,
+      knowledge_base_instructions: agentConfig?.knowledge_base_instructions || null,
+      disabled_tools: Array.isArray(agentConfig?.disabled_tools) ? agentConfig.disabled_tools : [],
+      enabled_kbs: Array.isArray(agentConfig?.enabled_kbs)
+        ? agentConfig.enabled_kbs
+        : ["national_life_group", "agency_brazillionaires"],
+      tone_creativity: agentConfig?.tone_creativity ?? null,
+      tone_formality: agentConfig?.tone_formality ?? null,
+      tone_naturalness: agentConfig?.tone_naturalness ?? null,
+      tone_aggressiveness: agentConfig?.tone_aggressiveness ?? null,
+      enable_audio_transcription: agentConfig?.enable_audio_transcription ?? true,
+      enable_image_analysis: agentConfig?.enable_image_analysis ?? true,
+      enable_pdf_reading: agentConfig?.enable_pdf_reading ?? true,
     },
   });
 

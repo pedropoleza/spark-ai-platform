@@ -35,6 +35,12 @@ export interface ToolContext {
    * que o LLM perca rows na hora de copiar 500 linhas como string).
    */
   attachment?: RepInput | null;
+  /**
+   * KBs habilitadas pelo admin nesta location. Usado pelo
+   * query_carrier_knowledge pra rejeitar consultas a KB desabilitada.
+   * Default no caller (processor/dispatcher): ambas habilitadas.
+   */
+  enabledKbs?: string[];
 }
 
 export type ToolHandler = (ctx: ToolContext, args: Record<string, unknown>) => Promise<ToolResult>;

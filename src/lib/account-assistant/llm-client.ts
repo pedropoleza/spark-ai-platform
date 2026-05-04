@@ -103,6 +103,13 @@ export interface RunWithToolsInput {
   tools: ToolDefinition[];
   executor: ToolCallExecutor;
   model?: string;
+  /**
+   * Modelo secundário pra fallback se o primário falhar (rate-limit, 5xx
+   * sem tool calls). Default Claude Haiku 4.5 (mesmo provider, capacity
+   * pool diferente). Configurável via agent_configs.fallback_model.
+   * Se não-Claude, ainda tenta. Se vazio/null, mantém Haiku 4.5.
+   */
+  fallbackModel?: string | null;
 }
 
 export interface RunWithToolsOutput {
@@ -159,13 +166,19 @@ export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToo
       }
 
       const primaryErrMsg = err instanceof Error ? err.message : String(err);
-      // H1: tenta secundário Anthropic antes de cair pra OpenAI. Diferente
-      // capacity pool, mesmo comportamento conservador em compliance/UW.
+      // H1: tenta secundário antes de cair pra OpenAI. Configurável via
+      // input.fallbackModel (admin pode escolher Haiku, GPT-4.1 etc).
+      // Default Haiku 4.5 (mesmo provider Anthropic, capacity pool diferente).
+      // Detecta provider pelo prefixo do nome do modelo.
+      const secondary = input.fallbackModel?.trim() || SECONDARY_CLAUDE_MODEL;
+      const secondaryIsClaude = secondary.startsWith("claude-");
       console.error(
-        `[LLM] Claude primário (${model}) falhou (iteration 0, sem tools), tentando ${SECONDARY_CLAUDE_MODEL}: ${primaryErrMsg}`,
+        `[LLM] Claude primário (${model}) falhou (iteration 0, sem tools), tentando ${secondary}: ${primaryErrMsg}`,
       );
       try {
-        const r = await runWithClaude({ ...input, model: SECONDARY_CLAUDE_MODEL });
+        const r = secondaryIsClaude
+          ? await runWithClaude({ ...input, model: secondary })
+          : await runWithOpenAI({ ...input, model: secondary });
         return { ...r, primary_error: primaryErrMsg };
       } catch (err2) {
         // Mesmo guard pro secundário

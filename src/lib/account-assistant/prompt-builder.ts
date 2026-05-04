@@ -11,6 +11,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { RepIdentity, RepProfile } from "@/types/account-assistant";
+import type { KnowledgeBaseItem } from "@/lib/ai/prompt-builder";
 
 interface BuildPromptArgs {
   rep: RepIdentity;
@@ -25,6 +26,23 @@ interface BuildPromptArgs {
    * Usado pra adaptar regras de schedule_reminder (perguntar canal no web).
    */
   channel?: "whatsapp" | "web_ui";
+  /**
+   * Configs adicionadas em 2026-05-03 (Pedro Sprint 1):
+   *   - customInstructions: texto livre que admin coloca em "Instruções customizadas"
+   *   - kbInstructions: texto que admin coloca em "Instruções da base de conhecimento"
+   *   - kbItems: array de items da knowledge_base table (text/file/url)
+   *   - tones: 4 sliders (1-10) que ajustam comportamento geral
+   * Tudo opcional — undefined = comportamento default sem injeção.
+   */
+  customInstructions?: string | null;
+  kbInstructions?: string | null;
+  kbItems?: KnowledgeBaseItem[];
+  tones?: {
+    creativity?: number | null;
+    formality?: number | null;
+    naturalness?: number | null;
+    aggressiveness?: number | null;
+  };
 }
 
 /**
@@ -33,7 +51,11 @@ interface BuildPromptArgs {
  * em runtime context na user message).
  */
 export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
-  const { rep, locationName, locationTimezone, locale, confirmationMode, carrierOverview, channel = "whatsapp" } = args;
+  const {
+    rep, locationName, locationTimezone, locale, confirmationMode, carrierOverview,
+    channel = "whatsapp",
+    customInstructions, kbInstructions, kbItems, tones,
+  } = args;
   // Fix observado em prod 2026-05-03: o texto pra medium_and_high antes
   // dizia que medium "executa E informa 'feito'" — isso conflitava com o
   // GATE em código (que bloqueia medium sem confirmed_by_rep) e confundia
@@ -311,9 +333,135 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "",
     "Se forçado a escolher entre soar prestativo e soar honesto: ESCOLHA HONESTO. Rep prefere",
     "'não sei, consulte X' do que info errada que ele repete pro cliente.",
+    "",
+    // Sliders de tom configurados pelo admin (1-10) — gera linhas instrutivas
+    buildTonesSection(tones),
+    "",
+    // Knowledge base genérica (igual sales/recruitment) — admin upload de
+    // texto/arquivo/URL via UI de "Knowledge Base". Diferente da Carrier KB
+    // (que tem embeddings). Esta vai inline no prompt.
+    buildKnowledgeBaseSection(kbInstructions, kbItems),
+    "",
+    // Instruções customizadas do admin (textarea livre) — vão NO FINAL pra
+    // ter prioridade sobre comportamento default em caso de conflito.
+    buildCustomInstructionsSection(customInstructions),
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+/**
+ * Renderiza diretivas de tom a partir dos sliders 0-100 do admin.
+ * Valores médios (~40-60) não geram linha. Extremos (≤30 ou ≥70) geram
+ * orientação. Mapeia: creativity, formality, naturalness, aggressiveness.
+ */
+function buildTonesSection(
+  tones: BuildPromptArgs["tones"] | undefined,
+): string {
+  if (!tones) return "";
+  const lines: string[] = [];
+
+  const cre = tones.creativity ?? null;
+  if (cre !== null) {
+    if (cre <= 30) lines.push("- Tom: muito factual e direto. Sem analogias ou floreio.");
+    else if (cre >= 70) lines.push("- Tom: criativo e flexível. Pode usar analogias e exemplos pra explicar.");
+  }
+
+  const form = tones.formality ?? null;
+  if (form !== null) {
+    if (form <= 30) lines.push("- Tom: super coloquial. Use 'vc', gírias normais, sem 'você' formal.");
+    else if (form >= 70) lines.push("- Tom: formal e profissional. Use 'você', sem gírias ou abreviações.");
+  }
+
+  const nat = tones.naturalness ?? null;
+  if (nat !== null) {
+    if (nat <= 30) lines.push("- Tom: estruturado, frases completas, sem hesitações.");
+    else if (nat >= 70) lines.push("- Tom: bem natural, pode usar 'tipo', 'né', 'então' como gente fala.");
+  }
+
+  const agg = tones.aggressiveness ?? null;
+  if (agg !== null) {
+    if (agg <= 30) lines.push("- Tom: gentil e paciente. Sem urgência forçada.");
+    else if (agg >= 70) lines.push("- Tom: assertivo e direto ao ponto. Sem rodeios.");
+  }
+
+  if (lines.length === 0) return "";
+  return ["# TOM CONFIGURADO PELO ADMIN", ...lines].join("\n");
+}
+
+/**
+ * Renderiza seção de Knowledge Base (texto livre + items) — mesmo formato
+ * do prompt-builder dos outros agentes (sales/recruitment), pra Sparkbot
+ * reconhecer documentos custom que o admin subiu.
+ *
+ * GLOBAL_CAP 12000 chars total, PER_ITEM 4000. Se passar, lista N items
+ * adicionais omitidos.
+ */
+function buildKnowledgeBaseSection(
+  generalInstructions: string | null | undefined,
+  kbItems: KnowledgeBaseItem[] | undefined,
+): string {
+  const inst = (generalInstructions || "").trim();
+  if ((!kbItems || kbItems.length === 0) && !inst) return "";
+
+  const GLOBAL_CAP = 12000;
+  const PER_ITEM_CAP = 4000;
+  let remaining = GLOBAL_CAP;
+  const renderedItems: string[] = [];
+  const items = kbItems || [];
+
+  for (let i = 0; i < items.length; i++) {
+    if (remaining <= 0) {
+      renderedItems.push(`[... ${items.length - i} item(ns) adicionais omitido(s) por limite de contexto]`);
+      break;
+    }
+    const item = items[i];
+    const title = (item.title || "Sem titulo").substring(0, 100);
+    let typeLabel = "texto";
+    let sourceLabel = "";
+    if (item.type === "file") {
+      typeLabel = "arquivo";
+      if (item.file_name) sourceLabel = ` | Fonte: ${item.file_name.substring(0, 120)}`;
+    } else if (item.type === "url") {
+      typeLabel = "url";
+      if (item.file_url) sourceLabel = ` | Fonte: ${item.file_url.substring(0, 200)}`;
+    }
+    const itemCap = Math.min(PER_ITEM_CAP, remaining);
+    let content = (item.content || "").trim();
+    let truncated = false;
+    if (content.length > itemCap) {
+      content = content.substring(0, itemCap);
+      truncated = true;
+    }
+    remaining -= content.length;
+
+    const header = `[ITEM ${i + 1}] Tipo: ${typeLabel} | Titulo: "${title}"${sourceLabel}`;
+    const desc = item.description ? `Descricao: ${item.description.substring(0, 500)}` : "";
+    const usage = item.usage_instructions ? `Como usar: ${item.usage_instructions.substring(0, 800)}` : "";
+    const meta = [desc, usage].filter(Boolean).join("\n");
+    const body = content || "(vazio)";
+    const suffix = truncated ? "\n[...conteudo truncado]" : "";
+    renderedItems.push(`${header}${meta ? "\n" + meta : ""}\nConteudo:\n${body}${suffix}`);
+  }
+
+  const generalBlock = inst
+    ? `\n### INSTRUÇÕES GERAIS DA BASE (definidas pelo admin)\n${inst.substring(0, 4000)}\n`
+    : "";
+  const itemsBlock = renderedItems.length > 0
+    ? `\n### ITENS DA BASE\n\n${renderedItems.join("\n\n")}`
+    : "\n(Nenhum item cadastrado — siga as instruções gerais acima)";
+
+  return `# BASE DE CONHECIMENTO CUSTOM (admin)\nUse estas informações como referência adicional. Se o rep perguntar algo coberto aqui, responda com base neste conteúdo. Diferente da Carrier KB (que vc consulta via tool query_carrier_knowledge), esta base já está visível pra vc neste prompt — não precisa chamar tool nenhuma pra acessá-la.${generalBlock}${itemsBlock}`;
+}
+
+/**
+ * Texto livre que o admin coloca em "Instruções customizadas" — vai com
+ * PRIORIDADE no final do prompt, sobrescrevendo defaults se conflitar.
+ */
+function buildCustomInstructionsSection(custom: string | null | undefined): string {
+  const text = (custom || "").trim();
+  if (!text) return "";
+  return `# INSTRUÇÕES DO ADMINISTRADOR (seguir com PRIORIDADE)\n${text.substring(0, 3000)}`;
 }
 
 /**

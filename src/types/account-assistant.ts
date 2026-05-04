@@ -42,6 +42,12 @@ export interface RepProfile {
     weekend_alerts?: boolean;
     pre_meeting_briefing?: boolean;
   };
+  /**
+   * Quiet hours pessoais do rep (override por-rep do quiet_hours do agent).
+   * Quando setado, dispatcher respeita PRIMEIRO o do rep, depois cai no do agent.
+   * Ex: { enabled: true, start: "21:00", end: "08:00", days: [0,1,2,3,4,5,6] }
+   */
+  quiet_hours_personal?: QuietHoursConfig;
   notes?: string[];                // free-form observações
 }
 
@@ -196,6 +202,24 @@ export interface AccountAssistantConfigExtras {
   no_response_threshold: number;
   quiet_hours: QuietHoursConfig | Record<string, never>;
   alert_toggles: Record<string, boolean>; // placeholder V2 (deprecated em favor de proactive_rules)
+  // Configs adicionadas em 2026-05-03 (migration 00047 + reuso de campos):
+  custom_instructions?: string | null;
+  knowledge_base_instructions?: string | null;
+  daily_proactive_limit?: number;       // 0 = desabilitado
+  fallback_model?: string | null;
+  disabled_tools?: string[];            // tool names
+  enabled_kbs?: string[];                // ['national_life_group', 'agency_brazillionaires']
+  // Multimodal switches (já existiam em agent_configs, agora são respeitados)
+  enable_audio_transcription?: boolean;
+  enable_image_analysis?: boolean;
+  enable_pdf_reading?: boolean;
+  // Tones (já existiam, reusados)
+  tone_creativity?: number | null;       // 1-10
+  tone_formality?: number | null;        // 1-10
+  tone_naturalness?: number | null;      // 1-10
+  tone_aggressiveness?: number | null;   // 1-10
+  // Comportamento de mensagens
+  debounce_seconds?: number | null;
 }
 
 // =====================================================

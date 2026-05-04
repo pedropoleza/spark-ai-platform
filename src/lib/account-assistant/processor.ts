@@ -43,6 +43,19 @@ export interface ProcessInput {
   config: {
     confirmation_mode?: "always" | "medium_and_high" | "high_only";
     ai_model?: string;
+    // Configs adicionadas em 2026-05-03 (Sprint 1 — Pedro pediu pra expor)
+    fallback_model?: string | null;
+    custom_instructions?: string | null;
+    knowledge_base_instructions?: string | null;
+    disabled_tools?: string[];
+    enabled_kbs?: string[];
+    tone_creativity?: number | null;
+    tone_formality?: number | null;
+    tone_naturalness?: number | null;
+    tone_aggressiveness?: number | null;
+    enable_audio_transcription?: boolean;
+    enable_image_analysis?: boolean;
+    enable_pdf_reading?: boolean;
   };
 }
 
@@ -188,10 +201,40 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // 4. Build prompt + messages.
   // Carrier Tier 1 carregado em paralelo — chunks priority='always' (~5KB).
   // Se KB vazia ou fail, fica string vazia e seção é omitida.
-  const carrierOverview = await loadCarrierTier1("national_life_group").catch((err) => {
-    console.warn("[processor] loadCarrierTier1 falhou (não-fatal):", err);
-    return "";
-  });
+  // Carrier KB Tier 1 + Knowledge Base genérica (admin uploads) em paralelo.
+  // KB items filtrados por agent_id — RLS deny anon protege. Falha = lista vazia.
+  const loadKbItems = async (): Promise<Array<{
+    title: string; type: "text" | "file" | "url"; content: string;
+    file_name: string | null; file_url: string | null;
+    description: string | null; usage_instructions: string | null;
+  }>> => {
+    try {
+      const r = await supabase
+        .from("knowledge_base")
+        .select("title,type,content,file_name,file_url,description,usage_instructions")
+        .eq("agent_id", input.agentId)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      return (r.data || []) as Array<{
+        title: string; type: "text" | "file" | "url"; content: string;
+        file_name: string | null; file_url: string | null;
+        description: string | null; usage_instructions: string | null;
+      }>;
+    } catch (err) {
+      console.warn(
+        "[processor] knowledge_base load falhou (não-fatal):",
+        err instanceof Error ? err.message : err,
+      );
+      return [];
+    }
+  };
+  const [carrierOverview, kbItems] = await Promise.all([
+    loadCarrierTier1("national_life_group").catch((err) => {
+      console.warn("[processor] loadCarrierTier1 falhou (não-fatal):", err);
+      return "";
+    }),
+    loadKbItems(),
+  ]);
 
   const channel = input.channel || "whatsapp";
   const systemPrompt = buildSparkbotSystemPrompt({
@@ -202,6 +245,15 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     confirmationMode: input.config.confirmation_mode || "high_only",
     carrierOverview,
     channel,
+    customInstructions: input.config.custom_instructions ?? null,
+    kbInstructions: input.config.knowledge_base_instructions ?? null,
+    kbItems,
+    tones: {
+      creativity: input.config.tone_creativity ?? null,
+      formality: input.config.tone_formality ?? null,
+      naturalness: input.config.tone_naturalness ?? null,
+      aggressiveness: input.config.tone_aggressiveness ?? null,
+    },
   });
 
   const runtimeContext = buildSparkbotRuntimeContext({
@@ -234,6 +286,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     attachment: input.input.kind === "tabular" || input.input.kind === "image" || input.input.kind === "document"
       ? input.input
       : null,
+    enabledKbs: input.config.enabled_kbs,
   };
 
   const result = await runWithTools({
@@ -243,9 +296,13 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     // `confirmed_by_rep` no schema das tools que o gate exige — sem isso
     // o LLM não tem como saber que precisa enviar o flag e fica em loop
     // "Confirma? → sim → bloqueado de novo" (visto em prod 2026-04-30).
-    tools: getAllToolDefinitions(input.config.confirmation_mode || "high_only"),
+    tools: getAllToolDefinitions(
+      input.config.confirmation_mode || "high_only",
+      input.config.disabled_tools,
+    ),
     executor: (name, args) => executeTool(name, args, toolCtx),
     model: input.config.ai_model,
+    fallbackModel: input.config.fallback_model,
   });
 
   // 5b. Detectar falhas consecutivas de LLM (parse error / max iterations).
