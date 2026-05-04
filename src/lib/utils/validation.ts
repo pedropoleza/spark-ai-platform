@@ -191,18 +191,22 @@ export const updateAgentConfigSchema = z.object({
     notification_email: z.string(),
   }).nullable().optional(),
   // Sparkbot-specific configs (added 2026-05-03 — Pedro Sprint 1)
+  // IMPORTANTE: schemas precisam aceitar PARCIAIS — sales/recruitment salvam
+  // a config inteira (loaded de SELECT *), incluindo `quiet_hours: {}`
+  // legacy. Se exigirmos campos required dentro do objeto, save de
+  // recruitment quebra com "expected boolean, received undefined".
   confirmation_mode: z.enum(["always", "medium_and_high", "high_only"]).nullable().optional(),
   no_response_threshold: z.number().int().min(1).max(20).nullable().optional(),
   quiet_hours: z.object({
-    enabled: z.boolean(),
-    start: z.string(),       // "HH:MM"
-    end: z.string(),         // "HH:MM"
-    timezone: z.string(),
-    days: z.array(z.number().int().min(0).max(6)),
+    enabled: z.boolean().optional(),
+    start: z.string().optional(),       // "HH:MM"
+    end: z.string().optional(),         // "HH:MM"
+    timezone: z.string().optional(),
+    days: z.array(z.number().int().min(0).max(6)).optional(),
   }).nullable().optional(),
   allowed_ghl_users: z.array(z.object({
-    ghl_user_id: z.string(),
-    name: z.string(),
+    ghl_user_id: z.string().optional(),
+    name: z.string().optional(),
     phone: z.string().optional(),
   })).nullable().optional(),
   daily_proactive_limit: z.number().int().min(0).max(100).nullable().optional(),
