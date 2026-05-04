@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
-import { getSession } from "@/lib/auth/sso";
+import { isAuthorizedCron } from "@/lib/utils/cron-auth";
 import type { RepIdentity } from "@/types/account-assistant";
 
 export const maxDuration = 60;
@@ -17,8 +17,7 @@ export const maxDuration = 60;
  * Auth: SSO session (admin only). Remover quando bug estiver resolvido.
  */
 export async function GET(request: NextRequest) {
-  const session = await getSession();
-  if (!session) {
+  if (!isAuthorizedCron(request)) {
     return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
   }
   const url = new URL(request.url);
