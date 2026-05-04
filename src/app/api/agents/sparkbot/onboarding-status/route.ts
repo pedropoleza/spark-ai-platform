@@ -119,22 +119,27 @@ export async function GET() {
     });
   }
 
-  // Busca última msg do rep (pra mostrar timestamp no UI)
+  // Busca última msg DO REP (role='user'). Pedro 2026-05-04: precisa ser
+  // role='user' explicitamente — msgs `role='agent'` incluem onboarding
+  // seed automático (quando admin abre painel pela primeira vez), e isso
+  // NÃO conta como "rep interagiu". Wizard só some quando rep manda msg
+  // de verdade (WhatsApp ou Web UI compose).
   const supabase = createAdminClient();
-  const { data: lastMsg } = await supabase
+  const { data: lastUserMsg } = await supabase
     .from("sparkbot_messages")
     .select("id, created_at")
     .eq("rep_id", rep.id)
+    .eq("role", "user")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   return NextResponse.json({
     ok: true,
-    first_time: !lastMsg,
+    first_time: !lastUserMsg,
     whatsapp_number: whatsappNumber,
     rep_id: rep.id,
-    has_messages: !!lastMsg,
-    last_msg_at: lastMsg?.created_at || null,
+    has_messages: !!lastUserMsg,
+    last_msg_at: lastUserMsg?.created_at || null,
   });
 }
