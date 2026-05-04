@@ -1,7 +1,7 @@
 /**
  * Registry consolidado de todas as tools do Sparkbot.
  *
- * 38 tools no total, organizadas por categoria. A IA recebe a lista
+ * 45 tools no total, organizadas por categoria. A IA recebe a lista
  * inteira (ou um subset filtrado pelas regras de proatividade).
  */
 
@@ -20,6 +20,7 @@ import { REMINDERS_TOOLS } from "./reminders";
 import { CARRIER_KB_TOOLS } from "./carrier_kb";
 import { TABULAR_TOOLS } from "./tabular";
 import { IDENTITY_TOOLS } from "./identity";
+import { BULK_MESSAGES_TOOLS } from "./bulk-messages";
 
 const ALL_ENTRIES: ToolEntry[] = [
   ...CONTACTS_TOOLS,
@@ -34,6 +35,7 @@ const ALL_ENTRIES: ToolEntry[] = [
   ...CARRIER_KB_TOOLS,
   ...TABULAR_TOOLS,
   ...IDENTITY_TOOLS,
+  ...BULK_MESSAGES_TOOLS,
 ];
 
 export const TOOL_REGISTRY: Record<string, ToolEntry> = Object.fromEntries(

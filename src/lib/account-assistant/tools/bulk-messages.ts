@@ -1,0 +1,794 @@
+/**
+ * Tools de Disparo em Massa (Bulk Messages) do SparkBot.
+ *
+ * Pedro 2026-05-04: rep pede "manda msg pra todos com tag X". Não temos
+ * drip mode no Spark Leads workflows direto, então o bot mimica o fluxo:
+ *   1. Filtra contatos por tag (search GHL)
+ *   2. Calcula scheduled_at de cada um (drip + jitter, default 90s ± 30s)
+ *   3. Cria bulk_message_jobs + bulk_message_recipients no DB
+ *   4. Cron processa fila no MAX_PER_TICK (5/tick), respeitando quiet_hours
+ *   5. Variação por contato via Haiku (default 'light') pra evitar pattern
+ *      detection do WhatsApp
+ *
+ * Tools (7):
+ *   - preview_bulk_message  (safe) — calcula count + ETA + 2 exemplos variados
+ *   - schedule_bulk_message (high) — cria o job de fato
+ *   - list_bulk_jobs        (safe) — jobs do rep + status
+ *   - get_bulk_job_progress (safe) — detalhes de 1 job
+ *   - pause_bulk_job        (med)  — pausa execução
+ *   - resume_bulk_job       (med)  — retoma de paused
+ *   - cancel_bulk_job       (high) — cancela definitivamente
+ *
+ * Cap diário: agent_configs.daily_bulk_message_cap (default 100/dia/location).
+ * Conta TODAS as recipients criadas nas últimas 24h pra location. Se exceder,
+ * preview/schedule rejeitam.
+ */
+
+import type { ToolEntry } from "./types";
+import { ghlErrorToResult, validateGhlId } from "./types";
+import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  generatePreviewVariations,
+  interpolateTemplate,
+} from "../proactive/bulk-message-variator";
+
+interface ContactSummary {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  tags: string[];
+}
+
+/**
+ * Busca contatos da location ativa, paginando, e filtra client-side
+ * por tag. GHL v2 não tem filtro server-side de tag confiável em
+ * /contacts/ — fetch all + filter funciona pra locations < 1000 contatos
+ * (típico do mercado SparkBot).
+ *
+ * Limite duro: 500 contatos lidos por chamada (5 pages * 100 limit).
+ * Se a location tiver mais, retorna o que conseguiu — admin avisa rep.
+ */
+async function fetchContactsByTag(
+  ghlClient: import("@/lib/ghl/client").GHLClient,
+  locationId: string,
+  tag: string,
+): Promise<{ contacts: ContactSummary[]; truncated: boolean }> {
+  const tagLower = tag.toLowerCase();
+  const all: ContactSummary[] = [];
+  const PER_PAGE = 100;
+  const MAX_PAGES = 5;
+  let truncated = false;
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const res = await ghlClient.get<{
+      contacts?: Array<{
+        id: string;
+        firstName?: string;
+        lastName?: string;
+        name?: string;
+        phone?: string;
+        tags?: string[];
+      }>;
+    }>("/contacts/", {
+      locationId,
+      limit: String(PER_PAGE),
+      page: String(page),
+    });
+    const contacts = res.contacts || [];
+    if (contacts.length === 0) break;
+
+    for (const c of contacts) {
+      const tags = (c.tags || []).map((t) => String(t).toLowerCase());
+      if (!tags.includes(tagLower)) continue;
+      all.push({
+        id: c.id,
+        name:
+          c.name ||
+          [c.firstName, c.lastName].filter(Boolean).join(" ") ||
+          null,
+        phone: c.phone || null,
+        tags: c.tags || [],
+      });
+    }
+
+    // Se retornou menos que PER_PAGE, é a última página
+    if (contacts.length < PER_PAGE) break;
+    if (page === MAX_PAGES) truncated = true;
+  }
+
+  return { contacts: all, truncated };
+}
+
+/**
+ * Conta quantas recipients foram criadas nas últimas 24h pra esta location.
+ * Usado pra enforcement do daily_bulk_message_cap.
+ */
+async function countRecipientsLast24h(locationId: string): Promise<number> {
+  const supabase = createAdminClient();
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: jobs } = await supabase
+    .from("bulk_message_jobs")
+    .select("id")
+    .eq("location_id", locationId)
+    .gte("created_at", cutoff);
+  if (!jobs || jobs.length === 0) return 0;
+  const jobIds = jobs.map((j) => j.id);
+  const { count } = await supabase
+    .from("bulk_message_recipients")
+    .select("id", { count: "exact", head: true })
+    .in("job_id", jobIds)
+    .gte("created_at", cutoff);
+  return count ?? 0;
+}
+
+async function getDailyCap(agentId: string | null): Promise<number | null> {
+  if (!agentId) return 100;
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("agent_configs")
+    .select("daily_bulk_message_cap")
+    .eq("agent_id", agentId)
+    .maybeSingle();
+  if (!data) return 100;
+  return data.daily_bulk_message_cap ?? null;
+}
+
+/**
+ * Calcula scheduled_at sequencial pra cada recipient com jitter.
+ * baseStart é o timestamp do primeiro envio.
+ */
+function computeScheduledAts(
+  count: number,
+  baseStart: Date,
+  intervalSeconds: number,
+  jitterSeconds: number,
+): Date[] {
+  const result: Date[] = [];
+  for (let i = 0; i < count; i++) {
+    const offset = i * intervalSeconds;
+    const jitter = jitterSeconds > 0
+      ? (Math.random() * 2 - 1) * jitterSeconds // [-jitter, +jitter]
+      : 0;
+    const ts = new Date(baseStart.getTime() + (offset + jitter) * 1000);
+    result.push(ts);
+  }
+  return result;
+}
+
+async function resolveAgentId(
+  locationId: string,
+): Promise<string | null> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("agents")
+    .select("id")
+    .eq("location_id", locationId)
+    .eq("type", "account_assistant")
+    .eq("status", "active")
+    .maybeSingle();
+  return data?.id ?? null;
+}
+
+// =====================================================================
+// Tool: preview_bulk_message
+// =====================================================================
+const previewBulkMessage: ToolEntry = {
+  def: {
+    name: "preview_bulk_message",
+    description:
+      "Calcula PREVIEW de um disparo em massa SEM criar nada: total de contatos com a tag, ETA total, 2 exemplos variados, cap restante. Use SEMPRE antes de schedule_bulk_message — bot mostra preview pro rep, rep confirma, AÍ chama schedule_bulk_message.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        filter_tag: {
+          type: "string",
+          description: "Tag exata pra filtrar contatos (ex: 'Direct Agent').",
+        },
+        message_template: {
+          type: "string",
+          description:
+            "Texto base. Pode usar {first_name}, {name}, {full_name} pra interpolar.",
+        },
+        variation_mode: {
+          type: "string",
+          enum: ["none", "light", "medium"],
+          description:
+            "Modo de variação por contato. 'light' default = recomendado (sutilezas, evita ban). 'none' = exato igual.",
+        },
+        interval_seconds: {
+          type: "number",
+          description: "Segundos médios entre msgs. Default 90. Min 30, max 600.",
+        },
+        jitter_seconds: {
+          type: "number",
+          description: "Variação aleatória ± segundos. Default 30. Min 0, max 120.",
+        },
+      },
+      required: ["filter_tag", "message_template"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const filterTag = String(args.filter_tag || "").trim();
+    const messageTemplate = String(args.message_template || "").trim();
+    if (!filterTag) {
+      return { status: "error", message: "filter_tag obrigatória", retryable: false };
+    }
+    if (!messageTemplate) {
+      return { status: "error", message: "message_template obrigatória", retryable: false };
+    }
+    const variationMode = (
+      ["none", "light", "medium"].includes(String(args.variation_mode))
+        ? String(args.variation_mode)
+        : "light"
+    ) as "none" | "light" | "medium";
+    const intervalSeconds = Math.min(600, Math.max(30, Number(args.interval_seconds) || 90));
+    const jitterSeconds = Math.min(120, Math.max(0, Number(args.jitter_seconds) || 30));
+
+    try {
+      const { contacts, truncated } = await fetchContactsByTag(
+        ctx.ghlClient,
+        ctx.locationId,
+        filterTag,
+      );
+      if (contacts.length === 0) {
+        return {
+          status: "not_found",
+          message: `Nenhum contato com tag '${filterTag}' encontrado na location.`,
+        };
+      }
+
+      const agentId = await resolveAgentId(ctx.locationId);
+      const cap = await getDailyCap(agentId);
+      const usedToday = await countRecipientsLast24h(ctx.locationId);
+      const remaining = cap === null ? Infinity : Math.max(0, cap - usedToday);
+      const willEnqueue = Math.min(contacts.length, remaining === Infinity ? contacts.length : remaining);
+
+      // Estimativa de janela total (interval médio * count)
+      const totalSeconds = willEnqueue * intervalSeconds;
+      const eta = new Date(Date.now() + totalSeconds * 1000);
+
+      // 2 exemplos variados pegando 2 contatos aleatórios
+      const sampleNames = contacts
+        .filter((c) => c.name)
+        .slice(0, 4)
+        .map((c) => c.name as string);
+      const examples = await generatePreviewVariations(
+        messageTemplate,
+        variationMode,
+        sampleNames,
+        2,
+      );
+
+      return {
+        status: "ok",
+        data: {
+          tag: filterTag,
+          total_contacts_with_tag: contacts.length,
+          will_enqueue: willEnqueue,
+          truncated_search: truncated,
+          daily_cap: cap,
+          used_today: usedToday,
+          remaining_cap: cap === null ? null : remaining,
+          would_exceed_cap: cap !== null && contacts.length > remaining,
+          interval_seconds: intervalSeconds,
+          jitter_seconds: jitterSeconds,
+          variation_mode: variationMode,
+          estimated_total_minutes: Math.round(totalSeconds / 60),
+          estimated_completion_at: eta.toISOString(),
+          examples,
+          sample_contacts: contacts.slice(0, 3).map((c) => ({
+            id: c.id,
+            name: c.name,
+            phone: c.phone,
+          })),
+        },
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "preview de disparo em massa");
+    }
+  },
+};
+
+// =====================================================================
+// Tool: schedule_bulk_message
+// =====================================================================
+const scheduleBulkMessage: ToolEntry = {
+  def: {
+    name: "schedule_bulk_message",
+    description:
+      "Agenda disparo em massa pra contatos filtrados por tag, com drip mode (envio espaçado pra evitar ban WhatsApp) e variação leve por contato.\n\nFLUXO OBRIGATÓRIO: SEMPRE chame preview_bulk_message PRIMEIRO, mostre os números pro rep ('vou disparar pra X contatos, ETA Y, exemplos: ...'), pergunte 'Confirma?', e SÓ DEPOIS rechame esta tool com confirmed_by_rep:true.\n\nCanais:\n- 'whatsapp_web_sms' = via WhatsApp Web / SMS (Stevo/Evolution) — DEFAULT, suporta TODOS os contatos.\n- 'whatsapp_api' = WhatsApp API oficial (só funciona se rep tem WhatsApp Business API ativo).\n\nAnti-ban: drip 90s ± 30s (configurável), variação 'light' por contato (Haiku). Quiet_hours (ex: 22-7h) respeitadas — pausa e retoma.",
+    risk: "high",
+    parameters: {
+      type: "object",
+      properties: {
+        filter_tag: {
+          type: "string",
+          description: "Tag exata pra filtrar (ex: 'Direct Agent').",
+        },
+        message_template: {
+          type: "string",
+          description:
+            "Texto base. Pode usar {first_name}, {name}, {full_name}.",
+        },
+        variation_mode: {
+          type: "string",
+          enum: ["none", "light", "medium"],
+          description: "'light' default. 'none' = exato igual. 'medium' = parafraseia.",
+        },
+        interval_seconds: {
+          type: "number",
+          description: "Segundos médios entre msgs. Default 90. Min 30, max 600.",
+        },
+        jitter_seconds: {
+          type: "number",
+          description: "Variação aleatória ± segundos. Default 30. Min 0, max 120.",
+        },
+        delivery_channel: {
+          type: "string",
+          enum: ["whatsapp_web_sms", "whatsapp_api"],
+          description: "Canal de envio. Default 'whatsapp_web_sms' (Stevo).",
+        },
+        start_at: {
+          type: "string",
+          description:
+            "ISO 8601. Quando começar primeiro envio. Default = agora.",
+        },
+      },
+      required: ["filter_tag", "message_template"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const filterTag = String(args.filter_tag || "").trim();
+    const messageTemplate = String(args.message_template || "").trim();
+    if (!filterTag) {
+      return { status: "error", message: "filter_tag obrigatória", retryable: false };
+    }
+    if (!messageTemplate) {
+      return { status: "error", message: "message_template obrigatória", retryable: false };
+    }
+    const variationMode = (
+      ["none", "light", "medium"].includes(String(args.variation_mode))
+        ? String(args.variation_mode)
+        : "light"
+    ) as "none" | "light" | "medium";
+    const intervalSeconds = Math.min(600, Math.max(30, Number(args.interval_seconds) || 90));
+    const jitterSeconds = Math.min(120, Math.max(0, Number(args.jitter_seconds) || 30));
+    const deliveryChannel = (
+      ["whatsapp_web_sms", "whatsapp_api"].includes(String(args.delivery_channel))
+        ? String(args.delivery_channel)
+        : "whatsapp_web_sms"
+    ) as "whatsapp_web_sms" | "whatsapp_api";
+    const startAt = args.start_at ? new Date(String(args.start_at)) : new Date();
+    if (isNaN(startAt.getTime())) {
+      return { status: "error", message: "start_at inválido (use ISO 8601)", retryable: false };
+    }
+
+    try {
+      const { contacts } = await fetchContactsByTag(
+        ctx.ghlClient,
+        ctx.locationId,
+        filterTag,
+      );
+      if (contacts.length === 0) {
+        return {
+          status: "not_found",
+          message: `Nenhum contato com tag '${filterTag}' encontrado.`,
+        };
+      }
+
+      const agentId = await resolveAgentId(ctx.locationId);
+      const cap = await getDailyCap(agentId);
+      const usedToday = await countRecipientsLast24h(ctx.locationId);
+      const remaining = cap === null ? Infinity : Math.max(0, cap - usedToday);
+
+      let willEnqueue = contacts.length;
+      let cappedNote: string | null = null;
+      if (cap !== null && contacts.length > remaining) {
+        if (remaining === 0) {
+          return {
+            status: "error",
+            message: `Cap diário de ${cap} msgs atingido (${usedToday} já enfileiradas/enviadas nas últimas 24h). Tente amanhã ou aumente daily_bulk_message_cap.`,
+            retryable: false,
+          };
+        }
+        willEnqueue = remaining;
+        cappedNote = `Cap diário cortou em ${remaining} (eram ${contacts.length} contatos). ${contacts.length - remaining} ficaram de fora.`;
+      }
+
+      const selected = contacts.slice(0, willEnqueue);
+      const supabase = createAdminClient();
+
+      // Cria header job
+      const { data: job, error: jobErr } = await supabase
+        .from("bulk_message_jobs")
+        .insert({
+          rep_id: ctx.rep.id,
+          location_id: ctx.locationId,
+          agent_id: agentId,
+          filter_config: { tag: filterTag },
+          message_template: messageTemplate,
+          variation_mode: variationMode,
+          interval_seconds: intervalSeconds,
+          jitter_seconds: jitterSeconds,
+          delivery_channel: deliveryChannel,
+          respect_quiet_hours: true,
+          status: "running",
+          total_contacts: willEnqueue,
+          start_at: startAt.toISOString(),
+        })
+        .select("id, start_at")
+        .single();
+      if (jobErr || !job) {
+        return {
+          status: "error",
+          message: `Falha ao criar job: ${jobErr?.message || "unknown"}`,
+          retryable: false,
+        };
+      }
+
+      // Calcula scheduled_at de cada recipient
+      const scheduleAts = computeScheduledAts(
+        selected.length,
+        startAt,
+        intervalSeconds,
+        jitterSeconds,
+      );
+
+      const recipientRows = selected.map((c, i) => ({
+        job_id: job.id,
+        contact_id: c.id,
+        contact_name: c.name,
+        contact_phone: c.phone,
+        scheduled_at: scheduleAts[i].toISOString(),
+        status: "pending",
+      }));
+
+      // Insert batch (Supabase aceita até ~1000 rows por insert)
+      const { error: recErr } = await supabase
+        .from("bulk_message_recipients")
+        .insert(recipientRows);
+      if (recErr) {
+        // Roll back: cancela job
+        await supabase
+          .from("bulk_message_jobs")
+          .update({ status: "failed" })
+          .eq("id", job.id);
+        return {
+          status: "error",
+          message: `Falha ao criar recipients: ${recErr.message}`,
+          retryable: false,
+        };
+      }
+
+      // Atualiza estimated_completion_at
+      const last = scheduleAts[scheduleAts.length - 1];
+      await supabase
+        .from("bulk_message_jobs")
+        .update({ estimated_completion_at: last.toISOString() })
+        .eq("id", job.id);
+
+      return {
+        status: "ok",
+        data: {
+          job_id: job.id,
+          enqueued: willEnqueue,
+          first_send_at: scheduleAts[0].toISOString(),
+          last_send_at: last.toISOString(),
+          interval_seconds: intervalSeconds,
+          jitter_seconds: jitterSeconds,
+          variation_mode: variationMode,
+          delivery_channel: deliveryChannel,
+          capped_note: cappedNote,
+        },
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "criação de disparo em massa");
+    }
+  },
+};
+
+// =====================================================================
+// Tool: list_bulk_jobs
+// =====================================================================
+const listBulkJobs: ToolEntry = {
+  def: {
+    name: "list_bulk_jobs",
+    description:
+      "Lista os disparos em massa do rep — running, pausados, completados (últimos 7 dias).",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["running", "paused", "completed", "cancelled", "failed", "all"],
+          description: "Filtra por status. Default 'all'.",
+        },
+        limit: {
+          type: "number",
+          description: "Max resultados. Default 10, max 30.",
+        },
+      },
+    },
+  },
+  handler: async (ctx, args) => {
+    const supabase = createAdminClient();
+    const limit = Math.min(30, Math.max(1, Number(args.limit) || 10));
+    const filterStatus = String(args.status || "all");
+
+    let query = supabase
+      .from("bulk_message_jobs")
+      .select(
+        "id, status, filter_config, message_template, total_contacts, sent_count, failed_count, skipped_count, created_at, start_at, estimated_completion_at, completed_at",
+      )
+      .eq("rep_id", ctx.rep.id)
+      .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (filterStatus !== "all") {
+      query = query.eq("status", filterStatus);
+    }
+    const { data, error } = await query;
+    if (error) {
+      return { status: "error", message: `Falha: ${error.message}`, retryable: false };
+    }
+    return {
+      status: "ok",
+      data: (data || []).map((j) => ({
+        job_id: j.id,
+        status: j.status,
+        tag: (j.filter_config as { tag?: string })?.tag || null,
+        template_preview: String(j.message_template).slice(0, 60),
+        total: j.total_contacts,
+        sent: j.sent_count,
+        failed: j.failed_count,
+        skipped: j.skipped_count,
+        progress_percent:
+          j.total_contacts > 0
+            ? Math.round(((j.sent_count + j.failed_count + j.skipped_count) / j.total_contacts) * 100)
+            : 0,
+        created_at: j.created_at,
+        start_at: j.start_at,
+        eta_completion: j.estimated_completion_at,
+        completed_at: j.completed_at,
+      })),
+    };
+  },
+};
+
+// =====================================================================
+// Tool: get_bulk_job_progress
+// =====================================================================
+const getBulkJobProgress: ToolEntry = {
+  def: {
+    name: "get_bulk_job_progress",
+    description:
+      "Detalhes + progresso de UM disparo em massa pelo job_id (use list_bulk_jobs pra obter).",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        job_id: { type: "string" },
+      },
+      required: ["job_id"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const jobId = String(args.job_id || "");
+    if (!jobId) return { status: "error", message: "job_id obrigatório", retryable: false };
+
+    const supabase = createAdminClient();
+    const { data: job } = await supabase
+      .from("bulk_message_jobs")
+      .select("*")
+      .eq("id", jobId)
+      .eq("rep_id", ctx.rep.id) // segurança: só vê próprios
+      .maybeSingle();
+    if (!job) return { status: "not_found", message: "Job não encontrado" };
+
+    // Conta sample failed pra mostrar errors
+    const { data: failed } = await supabase
+      .from("bulk_message_recipients")
+      .select("contact_name, error_message")
+      .eq("job_id", jobId)
+      .eq("status", "failed")
+      .limit(5);
+
+    return {
+      status: "ok",
+      data: {
+        job_id: job.id,
+        status: job.status,
+        tag: (job.filter_config as { tag?: string })?.tag || null,
+        message_template: job.message_template,
+        variation_mode: job.variation_mode,
+        interval_seconds: job.interval_seconds,
+        jitter_seconds: job.jitter_seconds,
+        delivery_channel: job.delivery_channel,
+        total: job.total_contacts,
+        sent: job.sent_count,
+        failed: job.failed_count,
+        skipped: job.skipped_count,
+        pending: job.total_contacts - job.sent_count - job.failed_count - job.skipped_count,
+        progress_percent:
+          job.total_contacts > 0
+            ? Math.round(((job.sent_count + job.failed_count + job.skipped_count) / job.total_contacts) * 100)
+            : 0,
+        created_at: job.created_at,
+        start_at: job.start_at,
+        eta_completion: job.estimated_completion_at,
+        completed_at: job.completed_at,
+        failed_samples: (failed || []).map((f) => ({
+          contact: f.contact_name,
+          error: f.error_message,
+        })),
+      },
+    };
+  },
+};
+
+// =====================================================================
+// Tool: pause_bulk_job
+// =====================================================================
+const pauseBulkJob: ToolEntry = {
+  def: {
+    name: "pause_bulk_job",
+    description:
+      "Pausa um disparo em massa em andamento. Recipients pendentes ficam parados até resume_bulk_job.",
+    risk: "medium",
+    parameters: {
+      type: "object",
+      properties: { job_id: { type: "string" } },
+      required: ["job_id"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const jobId = String(args.job_id || "");
+    if (!jobId) return { status: "error", message: "job_id obrigatório", retryable: false };
+    const supabase = createAdminClient();
+    const { data: job } = await supabase
+      .from("bulk_message_jobs")
+      .select("id, status, rep_id")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (!job) return { status: "not_found", message: "Job não encontrado" };
+    if (job.rep_id !== ctx.rep.id) {
+      return { status: "error", message: "Job não pertence a você", retryable: false };
+    }
+    if (job.status !== "running") {
+      return {
+        status: "error",
+        message: `Job está '${job.status}', só pode pausar 'running'`,
+        retryable: false,
+      };
+    }
+    await supabase
+      .from("bulk_message_jobs")
+      .update({ status: "paused" })
+      .eq("id", jobId);
+    return { status: "ok", data: { job_id: jobId, status: "paused" } };
+  },
+};
+
+// =====================================================================
+// Tool: resume_bulk_job
+// =====================================================================
+const resumeBulkJob: ToolEntry = {
+  def: {
+    name: "resume_bulk_job",
+    description:
+      "Retoma um disparo em massa que estava pausado. Recipients pending continuam de onde pararam.",
+    risk: "medium",
+    parameters: {
+      type: "object",
+      properties: { job_id: { type: "string" } },
+      required: ["job_id"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const jobId = String(args.job_id || "");
+    if (!jobId) return { status: "error", message: "job_id obrigatório", retryable: false };
+    const supabase = createAdminClient();
+    const { data: job } = await supabase
+      .from("bulk_message_jobs")
+      .select("id, status, rep_id")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (!job) return { status: "not_found", message: "Job não encontrado" };
+    if (job.rep_id !== ctx.rep.id) {
+      return { status: "error", message: "Job não pertence a você", retryable: false };
+    }
+    if (job.status !== "paused") {
+      return {
+        status: "error",
+        message: `Job está '${job.status}', só pode retomar 'paused'`,
+        retryable: false,
+      };
+    }
+    await supabase
+      .from("bulk_message_jobs")
+      .update({ status: "running" })
+      .eq("id", jobId);
+    return { status: "ok", data: { job_id: jobId, status: "running" } };
+  },
+};
+
+// =====================================================================
+// Tool: cancel_bulk_job
+// =====================================================================
+const cancelBulkJob: ToolEntry = {
+  def: {
+    name: "cancel_bulk_job",
+    description:
+      "⚠️ AÇÃO IRREVERSÍVEL: Cancela um disparo em massa. Recipients pending nunca serão enviados (já-enviadas ficam). Sempre confirma antes.",
+    risk: "high",
+    parameters: {
+      type: "object",
+      properties: { job_id: { type: "string" } },
+      required: ["job_id"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const jobId = String(args.job_id || "");
+    if (!jobId) return { status: "error", message: "job_id obrigatório", retryable: false };
+    const supabase = createAdminClient();
+    const { data: job } = await supabase
+      .from("bulk_message_jobs")
+      .select("id, status, rep_id, sent_count")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (!job) return { status: "not_found", message: "Job não encontrado" };
+    if (job.rep_id !== ctx.rep.id) {
+      return { status: "error", message: "Job não pertence a você", retryable: false };
+    }
+    if (job.status === "completed" || job.status === "cancelled") {
+      return {
+        status: "error",
+        message: `Job já está '${job.status}'`,
+        retryable: false,
+      };
+    }
+    // Marca job cancelled + recipients pending como cancelled.
+    // Faço 2 calls: 1) count pending atual; 2) update them. Não dá pra usar
+    // .select("id", {count}) depois de .update no supabase-js v2.
+    await supabase
+      .from("bulk_message_jobs")
+      .update({ status: "cancelled", completed_at: new Date().toISOString() })
+      .eq("id", jobId);
+    const { count: pendingBefore } = await supabase
+      .from("bulk_message_recipients")
+      .select("id", { count: "exact", head: true })
+      .eq("job_id", jobId)
+      .eq("status", "pending");
+    await supabase
+      .from("bulk_message_recipients")
+      .update({ status: "cancelled", error_message: "job cancelled by rep" })
+      .eq("job_id", jobId)
+      .eq("status", "pending");
+
+    return {
+      status: "ok",
+      data: {
+        job_id: jobId,
+        status: "cancelled",
+        already_sent: job.sent_count,
+        pending_cancelled: pendingBefore ?? 0,
+      },
+    };
+  },
+};
+
+// Helpers que usam validateGhlId apenas pra silenciar import
+void validateGhlId;
+void interpolateTemplate;
+
+export const BULK_MESSAGES_TOOLS: ToolEntry[] = [
+  previewBulkMessage,
+  scheduleBulkMessage,
+  listBulkJobs,
+  getBulkJobProgress,
+  pauseBulkJob,
+  resumeBulkJob,
+  cancelBulkJob,
+];

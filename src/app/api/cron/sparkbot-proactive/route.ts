@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { shouldFireCron } from "@/lib/account-assistant/proactive/cron-evaluator";
 import { fireScheduledReminders } from "@/lib/account-assistant/proactive/reminder-runner";
+import { fireBulkRecipients } from "@/lib/account-assistant/proactive/bulk-message-runner";
 import { dispatchRule } from "@/lib/account-assistant/proactive/dispatcher";
 import { GHLClient } from "@/lib/ghl/client";
 import { isAuthorizedCron } from "@/lib/utils/cron-auth";
@@ -97,6 +98,11 @@ export async function GET(request: NextRequest) {
   // Processa lembretes agendados (assistant_scheduled_tasks com next_run_at <= now)
   const reminderResult = await fireScheduledReminders();
 
+  // Processa fila de disparo em massa (bulk_message_recipients pending).
+  // MAX_PER_TICK=5 dentro do runner — pra job de 100 contatos a 90s drip,
+  // praticamente sempre processa 0-1 por tick exceto após pausa/quiet_hours.
+  const bulkResult = await fireBulkRecipients();
+
   const durationMs = Date.now() - startTs;
   return NextResponse.json({
     ok: true,
@@ -105,6 +111,10 @@ export async function GET(request: NextRequest) {
     rules_skipped: skippedCount,
     reminders_fired: reminderResult.fired,
     reminders_failed: reminderResult.failed,
+    bulk_fired: bulkResult.fired,
+    bulk_failed: bulkResult.failed,
+    bulk_skipped: bulkResult.skipped,
+    bulk_jobs_completed: bulkResult.jobs_completed,
     duration_ms: durationMs,
   });
 }

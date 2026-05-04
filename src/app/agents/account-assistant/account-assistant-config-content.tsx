@@ -648,8 +648,8 @@ export function AccountAssistantConfigContent() {
                 <p className="font-medium mb-1">Como o rep usa em prod</p>
                 <p className="text-xs text-gray-600">
                   Agente manda WhatsApp pro número dedicado do SparkBot (Stevo/Evolution
-                  rotea SMS → WhatsApp). Primeira msg recebe termos de uso. Depois
-                  pode pedir ações em texto/áudio/foto/doc. Ações executam no GHL
+                  rotea WhatsApp Web / SMS). Primeira msg recebe termos de uso. Depois
+                  pode pedir ações em texto/áudio/foto/doc. Ações executam no Spark Leads
                   da location ativa do rep.
                 </p>
               </div>

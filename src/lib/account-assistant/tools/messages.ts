@@ -113,7 +113,8 @@ const sendMessageToContact: ToolEntry = {
         channel: {
           type: "string",
           enum: ["SMS", "WhatsApp", "Email", "IG"],
-          description: "Canal. Default SMS.",
+          description:
+            "Canal de envio. Default 'SMS' (= WhatsApp Web / SMS via Stevo/Evolution — funciona pra TODOS os contatos). 'WhatsApp' = WhatsApp API oficial (só funciona se o rep tem WhatsApp Business API ativo). 'Email' / 'IG' = canais alternativos.",
         },
         subject: { type: "string", description: "Subject (apenas pra Email)." },
       },

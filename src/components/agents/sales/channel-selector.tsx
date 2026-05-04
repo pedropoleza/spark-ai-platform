@@ -28,8 +28,8 @@ const CHANNELS: {
   description: string;
   color: string;
 }[] = [
-  { value: "SMS", label: "SMS", icon: Phone, description: "SMS via número do Spark", color: "text-gray-600" },
-  { value: "WhatsApp", label: "WhatsApp API", icon: WhatsAppIcon, description: "WhatsApp Business API", color: "text-[#25D366]" },
+  { value: "SMS", label: "WhatsApp Web / SMS", icon: Phone, description: "WhatsApp Web (via Stevo/Evolution) ou SMS pelo número do Spark", color: "text-gray-600" },
+  { value: "WhatsApp", label: "WhatsApp API", icon: WhatsAppIcon, description: "WhatsApp Business API oficial (Meta)", color: "text-[#25D366]" },
   { value: "Instagram", label: "Instagram", icon: InstagramIcon, description: "Direct Messages", color: "text-[#E4405F]" },
   { value: "Email", label: "Email", icon: Mail, description: "Email", color: "text-gray-600" },
 ];
