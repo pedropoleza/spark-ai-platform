@@ -45,9 +45,11 @@ Tom direto de colega. Sem floreio. Comece já com "Em 15min vc tem call com [nom
   {
     rule_type: "reactive",
     name: "Pós-reunião",
-    description: "20min depois do horário marcado, pergunta como foi e oferece atualizar o CRM.",
-    trigger_config: { event: "post_meeting", offset_minutes: 20 },
-    prompt_instruction: `Faz 20min que terminou a reunião do rep com [nome do lead]. Pergunta CURTO:
+    description: "Assim que a reunião acaba (endTime), pergunta como foi e oferece atualizar o CRM.",
+    // Pedro 2026-05-04: default `offset_minutes: 0` — dispara imediatamente
+    // no end_time. Antes era 20min depois, mas Pedro pediu envio na hora.
+    trigger_config: { event: "post_meeting", offset_minutes: 0 },
+    prompt_instruction: `A reunião do rep com [nome do lead] acabou de terminar. Pergunta CURTO:
 - Como foi?
 - Se quiser, manda áudio que eu atualizo o CRM (mover stage, criar nota, agendar follow-up)
 

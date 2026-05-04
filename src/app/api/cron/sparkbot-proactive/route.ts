@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { shouldFireCron } from "@/lib/account-assistant/proactive/cron-evaluator";
 import { fireScheduledReminders } from "@/lib/account-assistant/proactive/reminder-runner";
+import { dispatchRule } from "@/lib/account-assistant/proactive/dispatcher";
+import { GHLClient } from "@/lib/ghl/client";
 import { isAuthorizedCron } from "@/lib/utils/cron-auth";
 import type { ProactiveRule, RepIdentity, ScheduledTrigger } from "@/types/account-assistant";
 
@@ -159,13 +161,155 @@ async function getRepTimezone(
 
 /**
  * Processa reactive rules que precisam de polling (não dependem de webhook).
- * Em V2 simulated, só rastreia que detectou condição. Em V3, dispara.
+ *
+ * Implementado 2026-05-04:
+ *   - `post_meeting`: pra cada rep elegível, query GHL appointments cujo
+ *     endTime caiu na janela [now-30min, now+offset_ms]. Pra cada match
+ *     dispara via dispatchRule(mode='real', targetId=appointment.id). O
+ *     atomic claim em assistant_alert_state (UNIQUE rep+rule+target)
+ *     impede duplicate disparos pro mesmo appointment.
+ *
+ * Outros eventos (`task_due_soon`, `task_overdue`, `contact_inactive`,
+ * `inbound_unanswered`, etc) ainda são stub — precisam polling específico
+ * por endpoint do Spark Leads. Logam debug e retornam 0/0.
  */
 async function processReactivePolling(rule: ProactiveRule): Promise<{ fired: number; skipped: number }> {
-  // Stub simplificado — implementação detalhada por tipo de evento fica
-  // pra quando V3 ativar (dispatch real via WhatsApp).
-  // Em V2, scheduled e reactive cron são apenas logados como skipped_disabled
-  // pra mostrar no histórico que detectaram condição mas ainda não enviam.
-  void rule;
+  const trigger = rule.trigger_config as Record<string, unknown> | null;
+  const event = typeof trigger?.event === "string" ? trigger.event : null;
+  if (event === "post_meeting") {
+    return processPostMeetingPolling(rule);
+  }
+  // Outros eventos: ainda não implementados em V2. Não loga warning ruidoso
+  // — só registra debug pra histórico e segue.
+  console.log(`[cron] reactive event '${event}' ainda não implementado (rule=${rule.name})`);
   return { fired: 0, skipped: 0 };
+}
+
+/**
+ * Polling do evento `post_meeting`: detecta appointments cujo endTime
+ * acabou de cair na janela alvo. Janela:
+ *   [now() - GRACE_MINUTES, now() + offset_minutes]
+ *
+ * - GRACE de 30min cobre cron travado / restart Vercel — se reunião
+ *   acabou faz 25min e nunca disparamos, ainda dispara.
+ * - offset_minutes da rule (default 0 = imediato; 20 = espera 20min após).
+ *
+ * Anti-duplicate: assistant_alert_state UNIQUE(rep_id, rule_id, target_id)
+ * via tryClaimDispatchSlot — mesmo appointment nunca dispara 2x.
+ *
+ * Não dispara pra status `cancelled`/`noshow`/`invalid` (reunião não
+ * aconteceu, post_meeting não faz sentido).
+ */
+async function processPostMeetingPolling(
+  rule: ProactiveRule,
+): Promise<{ fired: number; skipped: number }> {
+  const supabase = createAdminClient();
+  const trigger = rule.trigger_config as Record<string, unknown>;
+  const offsetMinutes =
+    typeof trigger?.offset_minutes === "number" ? trigger.offset_minutes : 0;
+  const offsetMs = offsetMinutes * 60_000;
+  const GRACE_MS = 30 * 60_000;
+  const now = Date.now();
+  const windowStart = now - GRACE_MS;
+  const windowEnd = now + offsetMs;
+
+  const reps = await getEligibleReps(supabase, rule);
+  let fired = 0;
+  let skipped = 0;
+
+  for (const rep of reps) {
+    const activeLocationId = rep.active_location_id || rep.ghl_users[0]?.location_id;
+    if (!activeLocationId) {
+      skipped++;
+      continue;
+    }
+    const repGhlUserId = rep.ghl_users.find(
+      (u) => u.location_id === activeLocationId,
+    )?.ghl_user_id;
+    if (!repGhlUserId) {
+      // Rep sem ghl_user_id na location ativa — não dá pra filtrar appointments
+      skipped++;
+      continue;
+    }
+
+    const { data: location } = await supabase
+      .from("locations")
+      .select("location_id, company_id")
+      .eq("location_id", activeLocationId)
+      .maybeSingle();
+    if (!location) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      const ghlClient = new GHLClient(location.company_id, activeLocationId);
+      // Query +/- 1h da janela alvo pra cobrir reuniões longas (que começaram
+      // antes da janela mas terminam dentro). API retorna eventos cujo período
+      // [start, end] intercepta [queryStart, queryEnd].
+      const queryStart = windowStart - 60 * 60_000;
+      const queryEnd = windowEnd + 60_000;
+      const res = await ghlClient.get<{
+        events?: Array<{
+          id: string;
+          title?: string;
+          startTime: string;
+          endTime: string;
+          contactId?: string;
+          appointmentStatus?: string;
+          assignedUserId?: string;
+        }>;
+      }>("/calendars/events", {
+        locationId: activeLocationId,
+        startTime: String(queryStart),
+        endTime: String(queryEnd),
+        userId: repGhlUserId,
+      });
+
+      for (const event of res.events || []) {
+        const endMs = new Date(event.endTime).getTime();
+        if (isNaN(endMs)) continue;
+        // Filtro fino: só appointments cujo endTime caiu DENTRO da janela alvo
+        if (endMs < windowStart || endMs > windowEnd) continue;
+        const status = (event.appointmentStatus || "scheduled").toLowerCase();
+        if (
+          status === "cancelled" ||
+          status === "noshow" ||
+          status === "no-show" ||
+          status === "invalid"
+        ) {
+          skipped++;
+          continue;
+        }
+
+        // Dispara via dispatcher mode='real'. Cooldown atomic via UNIQUE
+        // (rep_id, rule_id, target_id=appointment.id) impede 2x mesmo appt.
+        const result = await dispatchRule({
+          rule,
+          rep,
+          targetId: event.id,
+          contextData: {
+            event: "post_meeting",
+            appointment_id: event.id,
+            title: event.title || null,
+            start_time: event.startTime,
+            end_time: event.endTime,
+            contact_id: event.contactId || null,
+            status,
+          },
+          mode: "real",
+        });
+        if (result.status === "sent") fired++;
+        else skipped++;
+      }
+    } catch (err) {
+      console.warn(
+        `[cron] post_meeting polling falhou pra rep ${rep.id}:`,
+        err instanceof Error ? err.message : err,
+      );
+      skipped++;
+    }
+  }
+
+  return { fired, skipped };
 }

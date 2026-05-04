@@ -196,199 +196,27 @@ async function deliverReminderWhatsapp(
   message: string,
   title: string | undefined,
 ): Promise<void> {
-  // C1 fix: tenta enviar WhatsApp real via GHL conversations/messages.
-  // Antes deste fix, lembretes WhatsApp NUNCA chegavam no celular — só
-  // marcavam pending_v3_send que ninguém consumia.
-  //
-  // Comportamento controlado por env vars:
-  //   - WHATSAPP_DELIVERY_ENABLED=1 (default 0): tenta envio real via GHL
-  //   - WHATSAPP_DELIVERY_LOCATION_ID: location pra usar pra enviar (se rep
-  //     tem múltiplas, fixa essa); fallback pra task.location_id
-  //
-  // Se delivery falha (ou flag off), faz FALLBACK pro web: insere msg
-  // como channel='system' (badge no painel) — assim lembrete não some
-  // silenciosamente, rep vê na próxima vez que abrir o GHL.
-
+  // Refatorado 2026-05-04: extraído pra whatsapp-delivery.ts pra reutilizar
+  // entre lembretes (esta função) e regras proativas (dispatcher mode='real').
+  // Comportamento e env vars iguais (WHATSAPP_DELIVERY_ENABLED, etc).
   const supabase = createAdminClient();
-  const envHubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
-  const hubCompanyId = process.env.ASSISTANT_HUB_COMPANY_ID?.trim()
-    || process.env.NEXT_PUBLIC_GHL_COMPANY_ID?.trim();
-
-  // Fix DEFINITIVO 2026-05-03: ENV ASSISTANT_HUB_LOCATION_ID é single-hub
-  // legacy. Sistema é multi-hub agora — cada rep pode operar em hubs
-  // diferentes. Lookup do hub REAL do rep no sparkbot_messages
-  // (último inbound do rep mostra qual hub ele usa). Stevo só roteia
-  // mensagens NAQUELE hub, então enviar pra hub errada = 200 OK do GHL
-  // mas msg morta sem entrega.
-  //
-  // Resolution chain (ordem de precedência):
-  //   1. WHATSAPP_DELIVERY_LOCATION_ID env (override explícito)
-  //   2. Hub do rep via sparkbot_messages.hub_location_id (real-world)
-  //   3. ASSISTANT_HUB_LOCATION_ID env (single-hub legacy fallback)
-  //   4. task.location_id (dev/staging último recurso)
-  let repActualHub: string | null = null;
-  const { data: lastInbound } = await supabase
-    .from("sparkbot_messages")
-    .select("hub_location_id")
-    .eq("rep_id", task.rep_id)
-    .eq("role", "user")
-    .not("hub_location_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
+  const { data: rep } = await supabase
+    .from("rep_identities")
+    .select("id, phone")
+    .eq("id", task.rep_id)
     .maybeSingle();
-  if (lastInbound?.hub_location_id) {
-    repActualHub = lastInbound.hub_location_id as string;
+  if (!rep) {
+    console.warn(`[reminder-runner] rep ${task.rep_id} não encontrado — pulando entrega`);
+    return;
   }
-
-  const hubLocationId =
-    process.env.WHATSAPP_DELIVERY_LOCATION_ID?.trim() ||
-    repActualHub ||
-    envHubLocationId;
-  if (!hubLocationId) return;
-
-  const { data: hubAgent } = await supabase
-    .from("agents")
-    .select("id")
-    .eq("location_id", hubLocationId)
-    .eq("type", "account_assistant")
-    .eq("status", "active")
-    .maybeSingle();
-  if (!hubAgent) return;
 
   const formattedMessage = `🔔 ${title || "Lembrete"}\n\n${message}`;
-  const enabled = process.env.WHATSAPP_DELIVERY_ENABLED === "1";
-
-  // Tenta envio WhatsApp real
-  let sentViaWhatsapp = false;
-  let sendError: string | null = null;
-  if (enabled && hubCompanyId) {
-    try {
-      // sendLocationId == hubLocationId (resolved acima)
-      const sendLocationId = hubLocationId;
-
-      // Resolve rep info pra encontrar phone/contact
-      const { data: rep } = await supabase
-        .from("rep_identities")
-        .select("phone, ghl_users")
-        .eq("id", task.rep_id)
-        .maybeSingle();
-
-      if (!rep || !rep.phone || rep.phone.startsWith("webonly:")) {
-        throw new Error(`rep ${task.rep_id} sem phone real (web-only)`);
-      }
-
-      // Busca contact_id do rep no GHL pela phone (ou ghl_user_id)
-      const { GHLClient } = await import("@/lib/ghl/client");
-      const ghlClient = new GHLClient(hubCompanyId, sendLocationId);
-
-      // Busca contact pelo phone (pode existir como contact regular ou criar)
-      type ContactSearchResult = {
-        contacts?: Array<{ id: string; phone?: string }>;
-        results?: Array<{ id: string; phone?: string }>;
-      };
-      const search = await ghlClient.get<ContactSearchResult>(
-        "/contacts/search/duplicate",
-        { locationId: sendLocationId, number: rep.phone },
-      ).catch(() => null);
-
-      let contactId = search?.contacts?.[0]?.id || search?.results?.[0]?.id;
-
-      // Se não achou, cria contact mínimo (pra poder enviar msg)
-      // Fix bug observado em prod 2026-05-03: o /contacts/search/duplicate às
-      // vezes não acha o contato (formato do phone, quirk da API V2), aí o
-      // create devolve 400 com `meta.contactId` apontando pro existente.
-      // Em vez de explodir, extraímos esse ID do erro e usamos.
-      if (!contactId) {
-        try {
-          const created = await ghlClient.post<{ contact: { id: string } }>(
-            "/contacts/",
-            {
-              locationId: sendLocationId,
-              phone: rep.phone,
-              firstName: "Spark Rep",
-              lastName: task.rep_id.slice(0, 8),
-              tags: ["sparkbot-rep"],
-            },
-          );
-          contactId = created.contact?.id;
-        } catch (createErr) {
-          // GHL devolve 400 com body JSON contendo `meta.contactId` quando o
-          // location bloqueia duplicado. Parse a mensagem do erro pra extrair.
-          const errMsg = createErr instanceof Error ? createErr.message : String(createErr);
-          const jsonMatch = errMsg.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              const parsed = JSON.parse(jsonMatch[0]) as {
-                statusCode?: number;
-                message?: string;
-                meta?: { contactId?: string };
-              };
-              if (parsed.statusCode === 400 && parsed.meta?.contactId) {
-                contactId = parsed.meta.contactId;
-                console.log(
-                  `[reminder-runner] contact existente extraído do erro 400 do GHL: ${contactId}`,
-                );
-              }
-            } catch {
-              // JSON não parseou — relança erro original
-            }
-          }
-          if (!contactId) throw createErr;
-        }
-      }
-
-      if (!contactId) throw new Error("não consegui resolver contact_id no GHL");
-
-      // Envia via canal preferido (SMS via Stevo agora; WhatsApp quando
-      // API liberada). Helper centralizado em outbound-channel.ts.
-      const { pickOutboundChannel, fallbackChannel } = await import("../outbound-channel");
-      const outboundType = pickOutboundChannel();
-      try {
-        await ghlClient.post("/conversations/messages", {
-          type: outboundType,
-          contactId,
-          message: formattedMessage,
-        });
-      } catch (sendErr) {
-        const fb = fallbackChannel(outboundType);
-        console.warn(`[reminder-runner] send ${outboundType} falhou — fallback ${fb}:`, sendErr instanceof Error ? sendErr.message : sendErr);
-        await ghlClient.post("/conversations/messages", {
-          type: fb,
-          contactId,
-          message: formattedMessage,
-        });
-      }
-      sentViaWhatsapp = true;
-    } catch (err) {
-      sendError = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[reminder-runner] WhatsApp delivery falhou pra task ${task.id}, ` +
-        `fallback pro painel web: ${sendError}`,
-      );
-    }
-  }
-
-  // Insere registro em sparkbot_messages.
-  // - Se enviou via WhatsApp: read_in_web_at=now (não badge no web)
-  // - Se falhou OU flag desabilitada: read_in_web_at=null (badge no web pra
-  //   rep não perder o lembrete)
-  await supabase.from("sparkbot_messages").insert({
-    rep_id: task.rep_id,
-    hub_location_id: hubLocationId,
-    agent_id: hubAgent.id,
-    active_location_id: task.location_id,
-    role: "agent",
-    content: formattedMessage,
-    channel: sentViaWhatsapp ? "whatsapp" : "system",
-    read_in_web_at: sentViaWhatsapp ? new Date().toISOString() : null,
-    metadata: {
-      reminder_id: task.id,
-      task_type: task.task_type,
-      source: "scheduled_reminder",
-      whatsapp_sent: sentViaWhatsapp,
-      whatsapp_send_error: sendError,
-      whatsapp_delivery_enabled: enabled,
-    },
+  const { deliverProactiveMessage } = await import("./whatsapp-delivery");
+  await deliverProactiveMessage(rep, formattedMessage, {
+    activeLocationId: task.location_id,
+    source: "scheduled_reminder",
+    reminderId: task.id,
+    kind: task.task_type,
   });
 }
 

@@ -479,9 +479,27 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
         .eq("id", testSessionId);
     }
   } else {
-    // mode === 'real' — V3+ envia via GHL Hub WhatsApp ao contato do rep no Hub
-    // Por ora, não implementado em V2 (vai junto com migração WhatsApp).
-    console.warn("[dispatcher] mode='real' ainda não implementado — V3 plug");
+    // mode === 'real' — envia via WhatsApp/SMS no Hub do rep usando o
+    // mesmo helper que o reminder-runner. Implementado 2026-05-04 quando
+    // ativamos `post_meeting` reactive rule pra disparar imediato.
+    //
+    // O helper persiste em sparkbot_messages (com fallback pro painel web
+    // se WHATSAPP_DELIVERY_ENABLED=0 ou send falhar). O alert_state é
+    // finalizado abaixo independente do canal de entrega — billing roda
+    // mesmo se entrega caiu pro web (ainda houve LLM call).
+    const { deliverProactiveMessage } = await import("./whatsapp-delivery");
+    await deliverProactiveMessage(rep, llmResult.text, {
+      activeLocationId,
+      source: "proactive_rule",
+      kind: rule.name,
+      extraMetadata: {
+        rule_id: rule.id,
+        alert_type: rule.name,
+        target_id: targetId,
+        model: llmResult.model_used,
+        tools: llmResult.tool_calls.map((t) => t.name),
+      },
+    });
   }
 
   // 9. Billing
