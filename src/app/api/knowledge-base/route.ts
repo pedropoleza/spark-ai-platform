@@ -1,6 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+
+/**
+ * Resolve location_id efetivo pra um agent. Sparkbot (account_assistant) é
+ * global — sua KB pertence à location do agent_id, não à location do admin
+ * logado. Outros agents têm KB scoped à location do admin (segurança
+ * multi-tenant).
+ *
+ * Fix audit 2026-05-03: antes filtrava sempre por session.locationId. Pra
+ * Sparkbot, admin de OUTRA location veria KB vazia mesmo o agent existindo.
+ */
+async function resolveKbLocation(agentId: string, sessionLocationId: string): Promise<string> {
+  const admin = createAdminClient();
+  const { data: agent } = await admin
+    .from("agents")
+    .select("type, location_id")
+    .eq("id", agentId)
+    .maybeSingle();
+  if (agent?.type === "account_assistant" && agent.location_id) {
+    return agent.location_id;
+  }
+  return sessionLocationId;
+}
 
 // GET /api/knowledge-base?agent_id=xxx
 export async function GET(request: NextRequest) {
@@ -14,12 +37,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "agent_id obrigatorio" }, { status: 400 });
   }
 
+  const locationId = await resolveKbLocation(agentId, session.locationId);
   const supabase = createServerClient();
   const { data } = await supabase
     .from("knowledge_base")
     .select("*")
     .eq("agent_id", agentId)
-    .eq("location_id", session.locationId)
+    .eq("location_id", locationId)
     .order("created_at", { ascending: false });
 
   return NextResponse.json({ items: data || [] });
@@ -77,12 +101,13 @@ export async function POST(request: NextRequest) {
 
     const tokenEstimate = Math.ceil(content.length / 4);
 
+    const locationIdForFile = await resolveKbLocation(agentId, session.locationId);
     const supabase = createServerClient();
     const { data, error } = await supabase
       .from("knowledge_base")
       .insert({
         agent_id: agentId,
-        location_id: session.locationId,
+        location_id: locationIdForFile,
         type: "file",
         title,
         content,
@@ -132,12 +157,13 @@ export async function POST(request: NextRequest) {
 
     const tokenEstimate = Math.ceil(finalContent.length / 4);
 
+    const locationIdForBody = await resolveKbLocation(agent_id, session.locationId);
     const supabase = createServerClient();
     const { data, error } = await supabase
       .from("knowledge_base")
       .insert({
         agent_id,
-        location_id: session.locationId,
+        location_id: locationIdForBody,
         type,
         title,
         content: finalContent,
@@ -179,13 +205,14 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Nada para atualizar" }, { status: 400 });
   }
 
+  const locationIdForPatch = await resolveKbLocation(agent_id, session.locationId);
   const supabase = createServerClient();
   const { data, error } = await supabase
     .from("knowledge_base")
     .update(updates)
     .eq("id", id)
     .eq("agent_id", agent_id)
-    .eq("location_id", session.locationId)
+    .eq("location_id", locationIdForPatch)
     .select()
     .single();
 
@@ -209,13 +236,14 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "id e agent_id obrigatorios" }, { status: 400 });
   }
 
+  const locationIdForDel = await resolveKbLocation(agentId, session.locationId);
   const supabase = createServerClient();
   await supabase
     .from("knowledge_base")
     .delete()
     .eq("id", id)
     .eq("agent_id", agentId)
-    .eq("location_id", session.locationId);
+    .eq("location_id", locationIdForDel);
 
   return NextResponse.json({ success: true });
 }

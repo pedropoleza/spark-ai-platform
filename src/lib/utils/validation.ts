@@ -107,15 +107,17 @@ export const updateAgentConfigSchema = z.object({
   working_hours: workingHoursSchema.nullable().optional(),
   follow_up_config: followUpConfigSchema.nullable().optional(),
   post_booking: z.object({
-    behavior: z.enum(["stop_and_handoff", "continue_until_appointment"]),
-    handoff_message: z.string(),
-    allow_reschedule: z.boolean(),
+    // Defensivo: ainda que default seja sempre completo, fica .optional()
+    // pra não quebrar se admin manda partial via PATCH-style.
+    behavior: z.enum(["stop_and_handoff", "continue_until_appointment"]).optional(),
+    handoff_message: z.string().optional(),
+    allow_reschedule: z.boolean().optional(),
   }).nullable().optional(),
   timezone_config: z.object({
-    use_location_default: z.boolean(),
-    custom_timezone: z.string(),
-    confirm_before_booking: z.boolean(),
-    auto_detect_from_state: z.boolean(),
+    use_location_default: z.boolean().optional(),
+    custom_timezone: z.string().optional(),
+    confirm_before_booking: z.boolean().optional(),
+    auto_detect_from_state: z.boolean().optional(),
   }).nullable().optional(),
   automations: z.array(z.object({
     id: z.string(),
@@ -184,11 +186,14 @@ export const updateAgentConfigSchema = z.object({
   enable_pdf_reading: z.boolean().nullable().optional(),
   enable_summary_notes: z.boolean().nullable().optional(),
   notifications: z.object({
-    on_qualified: z.boolean(),
-    on_booked: z.boolean(),
-    on_handed_off: z.boolean(),
-    on_error: z.boolean(),
-    notification_email: z.string(),
+    // Mesmo padrão do quiet_hours (fixed 2026-05-03): legacy DB pode ter
+    // notifications: {} ou parcial. Sales/recruitment carregam SELECT *
+    // e re-mandam tudo no PUT. Required interno = quebra save.
+    on_qualified: z.boolean().optional(),
+    on_booked: z.boolean().optional(),
+    on_handed_off: z.boolean().optional(),
+    on_error: z.boolean().optional(),
+    notification_email: z.string().optional(),
   }).nullable().optional(),
   // Sparkbot-specific configs (added 2026-05-03 — Pedro Sprint 1)
   // IMPORTANTE: schemas precisam aceitar PARCIAIS — sales/recruitment salvam

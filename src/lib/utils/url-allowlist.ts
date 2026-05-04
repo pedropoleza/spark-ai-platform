@@ -27,6 +27,13 @@ const ALLOWED_HOST_PATTERNS: RegExp[] = [
   // Twilio
   /api\.twilio\.com$/i,
   /\.twilio\.com$/i,
+  /media\.twiliocdn\.com$/i,           // MediaContentUrlN (audio/MMS) — raiz CDN
+  /\.twiliocdn\.com$/i,                 // shards regionais
+  // Meta / WhatsApp Cloud API (raro: direct media delivery sem GHL/Stevo
+  // intermediary). Adicionado preventivamente — fix audit 2026-05-03.
+  /lookaside\.fbsbx\.com$/i,
+  /mmg\.whatsapp\.net$/i,
+  /\.whatsapp\.net$/i,
   // Firebase / Google storage
   /firebasestorage\.googleapis\.com$/i,
   /storage\.googleapis\.com$/i,
