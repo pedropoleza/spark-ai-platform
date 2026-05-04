@@ -9,7 +9,7 @@ const searchContacts: ToolEntry = {
   def: {
     name: "search_contacts",
     description:
-      "Busca contatos (leads/clientes) por nome, email ou telefone. Retorna até 20 resultados com id real do GHL. Use SEMPRE antes de qualquer ação que precise de contact_id.",
+      "Busca contatos (leads/clientes) por nome, email ou telefone. Retorna até 20 resultados com id real do Spark Leads. Use SEMPRE antes de qualquer ação que precise de contact_id.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -113,7 +113,7 @@ const createContact: ToolEntry = {
   def: {
     name: "create_contact",
     description:
-      "Cria contato novo na location ativa. GHL faz dedup automático por email/phone. Use quando o rep pedir 'cria um novo lead/cliente'.",
+      "Cria contato novo na location ativa. Spark Leads faz dedup automático por email/phone. Use quando o rep pedir 'cria um novo lead/cliente'.",
     risk: "medium",
     parameters: {
       type: "object",
@@ -128,7 +128,7 @@ const createContact: ToolEntry = {
         assigned_to: {
           type: "string",
           description:
-            "GHL user ID do dono/owner. Se o rep pedir 'me coloca como owner', " +
+            "User ID do Spark Leads pra dono/owner. Se o rep pedir 'me coloca como owner', " +
             "use o ghl_user_id dele na location ativa.",
         },
       },
@@ -166,7 +166,7 @@ const updateContact: ToolEntry = {
   def: {
     name: "update_contact",
     description:
-      "Atualiza um ou mais campos do contato. Aceita standard fields (firstName, lastName, email, phone, address1, city, state, postalCode, country, companyName, dateOfBirth), owner via assigned_to (GHL user ID), ou custom fields via custom_fields[].",
+      "Atualiza um ou mais campos do contato. Aceita standard fields (firstName, lastName, email, phone, address1, city, state, postalCode, country, companyName, dateOfBirth), owner via assigned_to (Spark Leads user ID), ou custom fields via custom_fields[].",
     risk: "medium",
     parameters: {
       type: "object",
@@ -188,7 +188,7 @@ const updateContact: ToolEntry = {
         assigned_to: {
           type: "string",
           description:
-            "GHL user ID do dono/owner do contato (campo `assignedTo` na API GHL). " +
+            "User ID do Spark Leads pra dono/owner do contato (campo `assignedTo` na API). " +
             "Se o rep pedir 'me coloca como owner', use ctx.rep.ghl_users[active].ghl_user_id.",
         },
         custom_fields: {

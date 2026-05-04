@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
       const u = res.user || {};
       phone = u.phone || u.phoneNumber || u.mobile || u.phone_number || null;
     } catch (err) {
-      console.error("[sparkbot test] failed to fetch GHL user:", err instanceof Error ? err.message : err);
+      console.error("[sparkbot test] failed to fetch Spark Leads user:", err instanceof Error ? err.message : err);
       ghlUserRaw = { error: err instanceof Error ? err.message : String(err) };
     }
   }
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
   if (!phone) {
     return NextResponse.json(
       {
-        error: "Não consegui achar teu phone no GHL. Passa rep_phone no body ou configura phone no teu user no GHL.",
+        error: "Não consegui achar teu phone no Spark Leads. Passa rep_phone no body ou configura phone no teu user no Spark Leads.",
         code: "no_phone",
         debug: {
           session_user_id: session.userId,

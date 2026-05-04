@@ -45,7 +45,7 @@ const features = [
     key: "summary" as const,
     icon: StickyNote,
     label: "Notas de resumo automáticas",
-    description: "Ao encerrar um atendimento, a IA gera uma nota profissional no contato do GHL com resumo, dados coletados e próximos passos.",
+    description: "Ao encerrar um atendimento, a IA gera uma nota profissional no contato do Spark Leads com resumo, dados coletados e próximos passos.",
     cost: "~$0.001/nota",
     model: "GPT/Claude",
   },

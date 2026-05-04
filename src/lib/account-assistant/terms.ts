@@ -8,7 +8,7 @@ export const TERMS_OF_USE_TEXT = `Oi! Sou o SparkBot, o assistente da sua conta.
 Antes de começar, só pra você saber como funciona:
 
 1. ACESSO AO SEU CRM
-Consigo consultar e modificar dados dos seus contatos, oportunidades, tarefas e agenda no GoHighLevel — sempre respeitando as permissões que você já tem por lá.
+Consigo consultar e modificar dados dos seus contatos, oportunidades, tarefas e agenda no Spark Leads — sempre respeitando as permissões que você já tem por lá.
 
 2. O QUE EU FAÇO
 Executo ações que você me pedir em linguagem natural (texto, áudio, foto ou documento). Exemplos: "adiciona nota no João", "cria tarefa pra ligar amanhã", "quais opportunities tão abertas?".
@@ -85,7 +85,7 @@ export function buildOnboardingMessage(humanLocation: string | null): string {
     "Algumas coisas que eu posso fazer:\n" +
     "• \"me lembra em 30min de ligar pro João\" — agendo lembrete\n" +
     "• \"que appointments tenho hoje?\" — lista do CRM\n" +
-    "• \"cria nota no Pedro Silva: cliente quer Term\" — no GHL\n" +
+    "• \"cria nota no Pedro Silva: cliente quer Term\" — no Spark Leads\n" +
     "• \"qual o cap do FlexLife em FL?\" — consulto na NLG\n\n" +
     "Manda áudio, foto ou doc também — eu processo. Qualquer dúvida, é só perguntar."
   );

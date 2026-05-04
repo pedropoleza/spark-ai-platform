@@ -88,7 +88,7 @@ const ACTION_LABELS: Record<string, string> = {
   book_appointment: "Agendamento criado",
   reschedule_appointment: "Reagendamento",
   move_pipeline: "Pipeline movido",
-  sync_standard_fields: "Sincronização GHL",
+  sync_standard_fields: "Sincronização Spark Leads",
   sync_custom_fields: "Custom fields sincronizados",
   critical_error: "Erro crítico",
   reaction_send_text: "Reação: texto enviado",

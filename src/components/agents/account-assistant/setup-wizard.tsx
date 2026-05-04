@@ -157,7 +157,7 @@ export function SetupWizard() {
               <p className="text-sm text-gray-600 mt-1">
                 Pra começar, manda uma mensagem (qualquer texto, áudio ou foto) pro
                 número do SparkBot no WhatsApp. Bot identifica você pelo seu phone
-                cadastrado no GHL e responde com instruções.
+                cadastrado no Spark Leads e responde com instruções.
               </p>
             </div>
 
@@ -202,7 +202,7 @@ export function SetupWizard() {
               </div>
               {status.reason_no_phone && (
                 <p className="text-amber-700">
-                  ⚠️ Seu phone não está cadastrado no GHL ainda. Cadastra em
+                  ⚠️ Seu phone não está cadastrado no Spark Leads ainda. Cadastra em
                   Settings → My Profile pra que o bot consiga te identificar quando
                   você mandar mensagem.
                 </p>

@@ -22,7 +22,7 @@ const scheduleReminder: ToolEntry = {
   def: {
     name: "schedule_reminder",
     description:
-      "Agenda uma mensagem proativa do Sparkbot pro rep no horário combinado. Use quando o rep pedir 'me lembra/avisa em X', 'todo dia/sexta às Y, me manda Z'. NÃO confunda com create_task (que cria task no CRM, visível no GHL). Reminder = msg do Sparkbot.\n\nCANAL DE ENTREGA (delivery_channel):\n- Se rep tá no WhatsApp: passe 'whatsapp' (default).\n- Se rep tá no Web UI (painel no GHL): PERGUNTE primeiro 'computador, celular ou ambos?' e mapeie pra 'web_ui'/'whatsapp'/'both' antes de chamar a tool.",
+      "Agenda uma mensagem proativa do SparkBot pro rep no horário combinado. Use quando o rep pedir 'me lembra/avisa em X', 'todo dia/sexta às Y, me manda Z'. NÃO confunda com create_task (que cria task no CRM, visível no Spark Leads). Reminder = msg do SparkBot.\n\nCANAL DE ENTREGA (delivery_channel):\n- Se rep tá no WhatsApp: passe 'whatsapp' (default).\n- Se rep tá no Web UI (painel no Spark Leads): PERGUNTE primeiro 'computador, celular ou ambos?' e mapeie pra 'web_ui'/'whatsapp'/'both' antes de chamar a tool.",
     // Decisão Pedro 2026-05-03: lembrete pro próprio rep não tem risco — é
     // mensagem que ele mesmo pediu, vai pro celular dele. Sem confirmação.
     risk: "safe",
@@ -52,7 +52,7 @@ const scheduleReminder: ToolEntry = {
           type: "string",
           enum: ["whatsapp", "web_ui", "both"],
           description:
-            "Onde entregar o lembrete. 'whatsapp' = WhatsApp do rep (default p/ requests vindos do WhatsApp). 'web_ui' = só no painel do GHL (computador). 'both' = nos dois lugares. Pra requests vindos do Web UI, PERGUNTE ao rep antes de chamar.",
+            "Onde entregar o lembrete. 'whatsapp' = WhatsApp do rep (default p/ requests vindos do WhatsApp). 'web_ui' = só no painel do Spark Leads (computador). 'both' = nos dois lugares. Pra requests vindos do Web UI, PERGUNTE ao rep antes de chamar.",
         },
       },
       required: ["message", "remind_at"],

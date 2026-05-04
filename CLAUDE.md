@@ -25,6 +25,16 @@ Stack mental: prefere **velocidade > rigor inicial**, mas reage rápido quando r
 - Padrão de **decision codes**: `H1 (review 2026-04-28)`, `C4 fix:`, `P0 (review 2026-04-28)`, `NB-6 do agent de validação 2026-05-02`. Veja `docs/DECISIONS.md` pro mapping completo.
 - Quando fix de bug observado em prod, anota data: `// Fix bug observado em prod 2026-05-03: ...`.
 
+### Naming user-facing: Spark Leads, NUNCA "GHL" / "GoHighLevel"
+**Regra inviolável** (Pedro reiterou 2026-05-04): em qualquer string que rep ou admin VEJA — UI labels, error messages, system prompts, tool descriptions, terms of service — usa "**Spark Leads**" (ou "Spark" curto) pra se referir ao CRM. NUNCA "GHL" nem "GoHighLevel".
+- ✅ OK manter "GHL" em: comentários técnicos, var/type/function names (`GHLClient`, `ghl_user_id`, `ghl_users`), env var names (`GHL_API_BASE`), `console.log/warn/error` (dev-only), file paths (`@/lib/ghl/*`).
+- ❌ NÃO em: tool descriptions (LLM repassa), system prompts, error msgs que rep vê, UI labels, termos de uso, badges.
+
+Quando criar nova string user-facing, escolhe um:
+- "Spark Leads" — nome completo do CRM
+- "Spark" — curto, dentro de contextos onde já é claro
+- "no Spark Leads" / "do Spark Leads" — referindo dados/operação no CRM
+
 ### Estrutura
 - Path aliases `@/...` em todos os imports — zero `../../../`.
 - Tipos compartilhados em `src/types/{ai,agent,ghl,account-assistant}.ts`.

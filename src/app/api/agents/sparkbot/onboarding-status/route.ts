@@ -29,9 +29,26 @@ export async function GET() {
 
   const whatsappNumber = process.env.SPARKBOT_WHATSAPP_NUMBER?.trim() || "+18134079657";
 
-  // Resolve phone do admin via API GHL (mesmo padrão do test/route.ts).
-  // Sem phone, marca first_time=true (sem rep existente, óbvio).
+  // Resolve phone do admin via API. Tenta 2 endpoints (single user vs lista
+  // por location) — diferentes versões/permissões da API podem responder
+  // shapes diferentes. Sem phone, marca first_time=true.
+  //
+  // Pedro 2026-05-04: bug observado — `/users/{id}` não retornava phone do
+  // Manuela mesmo phone cadastrado no profile dela. Fallback pra
+  // `/users/?locationId=X` resolve.
   let phone: string | null = null;
+  type GhlUser = {
+    id?: string;
+    phone?: string;
+    phoneNumber?: string;
+    mobile?: string;
+    phone_number?: string;
+  };
+  const extractPhone = (u: GhlUser | undefined | null): string | null => {
+    if (!u) return null;
+    const raw = u.phone || u.phoneNumber || u.mobile || u.phone_number || null;
+    return raw ? normalizePhone(raw) : null;
+  };
   try {
     const supabase = createAdminClient();
     const { data: location } = await supabase
@@ -41,12 +58,34 @@ export async function GET() {
       .maybeSingle();
     if (location) {
       const client = new GHLClient(location.company_id, session.locationId);
-      const res = await client.get<{
-        user?: { phone?: string; phoneNumber?: string; mobile?: string; phone_number?: string };
-      }>(`/users/${session.userId}`);
-      const u = res.user || {};
-      const rawPhone = u.phone || u.phoneNumber || u.mobile || u.phone_number || null;
-      phone = rawPhone ? normalizePhone(rawPhone) : null;
+
+      // Tentativa 1: /users/{id}
+      try {
+        const res = await client.get<{ user?: GhlUser }>(`/users/${session.userId}`);
+        phone = extractPhone(res.user);
+      } catch (e1) {
+        console.warn(
+          "[onboarding-status] /users/{id} falhou:",
+          e1 instanceof Error ? e1.message : e1,
+        );
+      }
+
+      // Tentativa 2: /users/?locationId=X (se primeira não achou)
+      if (!phone) {
+        try {
+          const res2 = await client.get<{ users?: GhlUser[] }>(
+            "/users/",
+            { locationId: session.locationId },
+          );
+          const u = (res2.users || []).find((x) => x.id === session.userId);
+          phone = extractPhone(u);
+        } catch (e2) {
+          console.warn(
+            "[onboarding-status] /users/?locationId falhou:",
+            e2 instanceof Error ? e2.message : e2,
+          );
+        }
+      }
     }
   } catch (err) {
     console.warn(

@@ -104,7 +104,7 @@ const importContactsFromData: ToolEntry = {
   def: {
     name: "import_contacts_from_data",
     description:
-      "Importa contatos em massa pro GHL/Spark CRM a partir da planilha anexada à turn atual.\n\n" +
+      "Importa contatos em massa pro Spark Leads a partir da planilha anexada à turn atual.\n\n" +
       "FLUXO RECOMENDADO:\n" +
       "1. Use analyze_tabular_data primeiro pra ver columns e detectar phone/email.\n" +
       "2. Sugira o column_mapping ao rep ('vou mapear Name→firstName, Phone→phone... confirma?').\n" +
@@ -121,7 +121,7 @@ const importContactsFromData: ToolEntry = {
       properties: {
         column_mapping: {
           type: "object",
-          description: "Mapping coluna CSV/XLSX → campo GHL. Ex: {first_name: 'Nome', phone: 'Telefone'}",
+          description: "Mapping coluna CSV/XLSX → campo Spark Leads. Ex: {first_name: 'Nome', phone: 'Telefone'}",
           properties: {
             first_name: { type: "string", description: "Coluna com primeiro nome" },
             last_name: { type: "string", description: "Coluna com sobrenome" },
@@ -146,7 +146,7 @@ const importContactsFromData: ToolEntry = {
         assigned_to: {
           type: "string",
           description:
-            "OPCIONAL. GHL user ID do dono pra TODOS os contatos importados. " +
+            "OPCIONAL. User ID do Spark Leads pro dono de TODOS os contatos importados. " +
             "Se o rep pedir 'me coloca como owner' / 'meu user como owner', use 'self' " +
             "(a tool resolve automaticamente pro ghl_user_id do rep na location ativa). " +
             "Pode também passar o user_id direto se for outro user.",
@@ -221,8 +221,8 @@ const importContactsFromData: ToolEntry = {
           return {
             status: "error",
             message:
-              "Não achei seu ghl_user_id na location ativa pra setar como owner. " +
-              "Verifique se você tá cadastrado no GHL desta location.",
+              "Não achei seu user ID na location ativa pra setar como owner. " +
+              "Verifique se você tá cadastrado no Spark Leads desta location.",
             retryable: false,
           };
         }

@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
   }
   if (!phone) {
     return errorResponse(
-      "Não consegui achar teu phone no GHL. Use o campo override no UI.",
+      "Não consegui achar teu phone no Spark Leads. Use o campo override no UI.",
       400, "no_phone",
     );
   }

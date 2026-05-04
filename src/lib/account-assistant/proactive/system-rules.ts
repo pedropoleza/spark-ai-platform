@@ -167,7 +167,7 @@ Tom de colega que tá feliz pelo amigo. Sem floreio corporativo.`,
   {
     rule_type: "reactive",
     name: "Novo lead atribuído",
-    description: "Quando contato é criado/atribuído ao rep no GHL.",
+    description: "Quando contato é criado/atribuído ao rep no Spark Leads.",
     trigger_config: { event: "contact_assigned_to_rep" },
     prompt_instruction: `Um novo lead [nome] foi atribuído ao rep agora. Mostra: nome, source (se houver), tags. Pergunta: quer que eu agende já uma task de primeiro contato? (use create_task se sim).`,
     tools_allowed: ["get_contact", "create_task"],
