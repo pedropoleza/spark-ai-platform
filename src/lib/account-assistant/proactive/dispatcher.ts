@@ -44,6 +44,14 @@ export interface DispatchInput {
   testSessionId?: string;
   /** Bypass cooldown/quiet-hours (usado pelo botão "Simular agora"). */
   forceFire?: boolean;
+  /**
+   * Override da location ativa do rep pra esse dispatch. Usado por triggers
+   * que detectam evento numa location ESPECÍFICA (ex: post_meeting num
+   * appointment de location não-ativa). Quando setado, tools rodam contra
+   * essa location (get_contact busca lá), billing também vai pra ela.
+   * Se omitido, usa rep.active_location_id como antes.
+   */
+  overrideLocationId?: string;
 }
 
 export interface DispatchResult {
@@ -215,7 +223,7 @@ async function recordSkip(
 }
 
 export async function dispatchRule(input: DispatchInput): Promise<DispatchResult> {
-  const { rule, rep, targetId = null, contextData, mode, testSessionId, forceFire } = input;
+  const { rule, rep, targetId = null, contextData, mode, testSessionId, forceFire, overrideLocationId } = input;
 
   // 1. Enabled
   if (!rule.enabled && !forceFire) {
@@ -301,8 +309,14 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     }
   }
 
-  // 5. Resolve location ativa do rep + GHL client
-  const activeLocationId = rep.active_location_id || rep.ghl_users[0]?.location_id;
+  // 5. Resolve location ativa do rep + GHL client.
+  // Se overrideLocationId foi passado (ex: post_meeting numa location
+  // não-ativa do rep), usa ele — assim tools (get_contact, etc) rodam
+  // na location certa onde o evento aconteceu.
+  const activeLocationId =
+    overrideLocationId ||
+    rep.active_location_id ||
+    rep.ghl_users[0]?.location_id;
   if (!activeLocationId) {
     await finalizeDispatch(alertStateId, "failed");
     return { status: "failed", message: "Rep sem active_location_id" };

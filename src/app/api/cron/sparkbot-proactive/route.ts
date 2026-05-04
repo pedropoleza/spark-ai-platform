@@ -218,96 +218,107 @@ async function processPostMeetingPolling(
   let skipped = 0;
 
   for (const rep of reps) {
-    const activeLocationId = rep.active_location_id || rep.ghl_users[0]?.location_id;
-    if (!activeLocationId) {
-      skipped++;
-      continue;
-    }
-    const repGhlUserId = rep.ghl_users.find(
-      (u) => u.location_id === activeLocationId,
-    )?.ghl_user_id;
-    if (!repGhlUserId) {
-      // Rep sem ghl_user_id na location ativa — não dá pra filtrar appointments
-      skipped++;
-      continue;
-    }
-
-    const { data: location } = await supabase
-      .from("locations")
-      .select("location_id, company_id")
-      .eq("location_id", activeLocationId)
-      .maybeSingle();
-    if (!location) {
-      skipped++;
-      continue;
-    }
-
-    try {
-      const ghlClient = new GHLClient(location.company_id, activeLocationId);
-      // Query +/- 1h da janela alvo pra cobrir reuniões longas (que começaram
-      // antes da janela mas terminam dentro). API retorna eventos cujo período
-      // [start, end] intercepta [queryStart, queryEnd].
-      const queryStart = windowStart - 60 * 60_000;
-      const queryEnd = windowEnd + 60_000;
-      const res = await ghlClient.get<{
-        events?: Array<{
-          id: string;
-          title?: string;
-          startTime: string;
-          endTime: string;
-          contactId?: string;
-          appointmentStatus?: string;
-          assignedUserId?: string;
-        }>;
-      }>("/calendars/events", {
-        locationId: activeLocationId,
-        startTime: String(queryStart),
-        endTime: String(queryEnd),
-        userId: repGhlUserId,
-      });
-
-      for (const event of res.events || []) {
-        const endMs = new Date(event.endTime).getTime();
-        if (isNaN(endMs)) continue;
-        // Filtro fino: só appointments cujo endTime caiu DENTRO da janela alvo
-        if (endMs < windowStart || endMs > windowEnd) continue;
-        const status = (event.appointmentStatus || "scheduled").toLowerCase();
-        if (
-          status === "cancelled" ||
-          status === "noshow" ||
-          status === "no-show" ||
-          status === "invalid"
-        ) {
-          skipped++;
-          continue;
-        }
-
-        // Dispara via dispatcher mode='real'. Cooldown atomic via UNIQUE
-        // (rep_id, rule_id, target_id=appointment.id) impede 2x mesmo appt.
-        const result = await dispatchRule({
-          rule,
-          rep,
-          targetId: event.id,
-          contextData: {
-            event: "post_meeting",
-            appointment_id: event.id,
-            title: event.title || null,
-            start_time: event.startTime,
-            end_time: event.endTime,
-            contact_id: event.contactId || null,
-            status,
-          },
-          mode: "real",
-        });
-        if (result.status === "sent") fired++;
-        else skipped++;
+    // Itera TODAS as locations do rep, não só active_location_id. Reps
+    // multi-location (ex: agency owner com 6 sub-accounts) podem ter
+    // appointments em qualquer location — o cron precisa olhar em todas.
+    // De-duplica por location_id (caso ghl_users[] tenha entries dup).
+    const locationsByRep = new Map<string, string>(); // location_id → ghl_user_id
+    for (const u of rep.ghl_users || []) {
+      if (u?.location_id && u?.ghl_user_id && !locationsByRep.has(u.location_id)) {
+        locationsByRep.set(u.location_id, u.ghl_user_id);
       }
-    } catch (err) {
-      console.warn(
-        `[cron] post_meeting polling falhou pra rep ${rep.id}:`,
-        err instanceof Error ? err.message : err,
-      );
+    }
+    if (locationsByRep.size === 0) {
       skipped++;
+      continue;
+    }
+
+    for (const [locationId, ghlUserId] of locationsByRep) {
+      const { data: location } = await supabase
+        .from("locations")
+        .select("location_id, company_id")
+        .eq("location_id", locationId)
+        .maybeSingle();
+      if (!location) {
+        // Location não está sincronizada na tabela — sem company_id não
+        // dá pra montar GHLClient. Pula silenciosamente.
+        skipped++;
+        continue;
+      }
+
+      try {
+        const ghlClient = new GHLClient(location.company_id, locationId);
+        // Query +/- 1h da janela alvo pra cobrir reuniões longas (que
+        // começaram antes da janela mas terminam dentro). API retorna
+        // eventos cujo [start, end] intercepta [queryStart, queryEnd].
+        const queryStart = windowStart - 60 * 60_000;
+        const queryEnd = windowEnd + 60_000;
+        const res = await ghlClient.get<{
+          events?: Array<{
+            id: string;
+            title?: string;
+            startTime: string;
+            endTime: string;
+            contactId?: string;
+            appointmentStatus?: string;
+            assignedUserId?: string;
+          }>;
+        }>("/calendars/events", {
+          locationId,
+          startTime: String(queryStart),
+          endTime: String(queryEnd),
+          userId: ghlUserId,
+        });
+
+        for (const event of res.events || []) {
+          const endMs = new Date(event.endTime).getTime();
+          if (isNaN(endMs)) continue;
+          // Filtro fino: só appointments cujo endTime caiu DENTRO da janela
+          if (endMs < windowStart || endMs > windowEnd) continue;
+          const status = (event.appointmentStatus || "scheduled").toLowerCase();
+          if (
+            status === "cancelled" ||
+            status === "noshow" ||
+            status === "no-show" ||
+            status === "invalid"
+          ) {
+            skipped++;
+            continue;
+          }
+
+          // Dispara via dispatcher mode='real'. overrideLocationId garante
+          // que tools (get_contact, etc) rodem contra a location onde o
+          // appointment está — não a active_location do rep. Sem isso,
+          // get_contact buscaria em location errada e falharia.
+          // Cooldown atomic via UNIQUE (rep_id, rule_id, target_id=appt.id).
+          const result = await dispatchRule({
+            rule,
+            rep,
+            targetId: event.id,
+            overrideLocationId: locationId,
+            contextData: {
+              event: "post_meeting",
+              appointment_id: event.id,
+              title: event.title || null,
+              start_time: event.startTime,
+              end_time: event.endTime,
+              contact_id: event.contactId || null,
+              meeting_location_id: locationId,
+              status,
+            },
+            mode: "real",
+          });
+          if (result.status === "sent") fired++;
+          else skipped++;
+        }
+      } catch (err) {
+        console.warn(
+          `[cron] post_meeting polling falhou pra rep ${rep.id} ` +
+            `na location ${locationId}:`,
+          err instanceof Error ? err.message : err,
+        );
+        skipped++;
+      }
     }
   }
 
