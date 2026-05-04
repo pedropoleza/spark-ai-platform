@@ -26,6 +26,8 @@ export async function GET(request: NextRequest) {
   const hoursWindow = parseInt(url.searchParams.get("hours") || "0") || 0;
   const noUserFilter = url.searchParams.get("no_user_filter") === "1";
   const onlyLocationId = url.searchParams.get("location_id");
+  const calendarId = url.searchParams.get("calendar_id");
+  const listCalendars = url.searchParams.get("list_calendars") === "1";
 
   const supabase = createAdminClient();
   const { data: rep } = await supabase
@@ -79,6 +81,45 @@ export async function GET(request: NextRequest) {
 
     try {
       const ghlClient = new GHLClient(location.company_id, locationId);
+
+      // Modo list_calendars: retorna lista de calendars da location pra
+      // identificar onde o appointment foi criado.
+      if (listCalendars) {
+        const calRes = await ghlClient.get<{
+          calendars?: Array<{
+            id: string;
+            name?: string;
+            description?: string;
+            isActive?: boolean;
+            teamMembers?: Array<{ userId?: string }>;
+          }>;
+        }>("/calendars/", { locationId });
+        results.push({
+          location_id: locationId,
+          ghl_user_id: ghlUserId,
+          company_id: location.company_id,
+          calendars: (calRes.calendars || []).map((c) => ({
+            id: c.id,
+            name: c.name,
+            is_active: c.isActive,
+            team_members: c.teamMembers?.map((tm) => tm.userId) || [],
+          })),
+        });
+        continue;
+      }
+
+      // Query parâmetros: ou userId (default) ou calendarId (override)
+      const queryParams: Record<string, string> = {
+        locationId,
+        startTime: String(queryStart),
+        endTime: String(queryEnd),
+      };
+      if (calendarId) {
+        queryParams.calendarId = calendarId;
+      } else if (!noUserFilter) {
+        queryParams.userId = ghlUserId;
+      }
+
       const res = await ghlClient.get<{
         events?: Array<{
           id: string;
@@ -89,12 +130,7 @@ export async function GET(request: NextRequest) {
           appointmentStatus?: string;
           assignedUserId?: string;
         }>;
-      }>("/calendars/events", {
-        locationId,
-        startTime: String(queryStart),
-        endTime: String(queryEnd),
-        ...(noUserFilter ? {} : { userId: ghlUserId }),
-      });
+      }>("/calendars/events", queryParams);
 
       const events = res.events || [];
       const annotated = events.map((event) => {
