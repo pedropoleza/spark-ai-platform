@@ -1,9 +1,9 @@
 /**
- * Termos de uso do Sparkbot. Enviados automaticamente no primeiro contato
+ * Termos de uso do SparkBot. Enviados automaticamente no primeiro contato
  * do rep. Ele só começa a usar após aceitar explicitamente.
  */
 
-export const TERMS_OF_USE_TEXT = `Oi! Sou o Sparkbot, o assistente da sua conta.
+export const TERMS_OF_USE_TEXT = `Oi! Sou o SparkBot, o assistente da sua conta.
 
 Antes de começar, só pra você saber como funciona:
 
@@ -56,10 +56,86 @@ export function parseTermsResponse(text: string): "accept" | "reject" | "unclear
 export const TERMS_REMINDER_TEXT =
   'Pra começarmos, me manda "aceito" (ou "não" pra encerrar). Depois posso te ajudar.';
 
-/** Mensagem após aceite. */
+/** Mensagem após aceite (legado — fallback se location.timezone não disponível). */
 export const TERMS_ACCEPTED_TEXT =
-  "Beleza. Pode me pedir o que precisar — texto, áudio, foto ou documento funcionam.";
+  "Beleza, termos aceitos. ✓\n\nPode me pedir o que precisar — texto, áudio, foto ou documento funcionam.";
 
 /** Mensagem após rejeição. */
 export const TERMS_REJECTED_TEXT =
   "Entendi. Se mudar de ideia é só me chamar de novo. Tchau!";
+
+/**
+ * Mensagem composta após aceite que ALÉM de confirmar termos, já confirma
+ * o fuso (lido da location do GHL) e mostra um guia rápido de exemplos.
+ *
+ * Pedro 2026-05-04: ao invés de perguntar fuso pro rep no onboarding, lê
+ * direto da configuração da sub-account no GHL. Rep só precisa confirmar
+ * se quiser mudar ("tô em SP agora" futuro).
+ *
+ * `humanLocation`: ex "Florida (EDT)" — formatado por `formatTimezoneHumanFriendly`.
+ * Se null, omite seção de fuso (caller usa TERMS_ACCEPTED_TEXT).
+ */
+export function buildOnboardingMessage(humanLocation: string | null): string {
+  const fusoBlock = humanLocation
+    ? `\n\nVi que tua conta tá em *${humanLocation}* — vou usar esse fuso pra agendamentos.\nSe tu mudar de cidade, é só me avisar ("tô em SP agora") que eu ajusto.\n\n`
+    : "\n\n";
+  return (
+    "Beleza, termos aceitos. ✓" +
+    fusoBlock +
+    "Algumas coisas que eu posso fazer:\n" +
+    "• \"me lembra em 30min de ligar pro João\" — agendo lembrete\n" +
+    "• \"que appointments tenho hoje?\" — lista do CRM\n" +
+    "• \"cria nota no Pedro Silva: cliente quer Term\" — no GHL\n" +
+    "• \"qual o cap do FlexLife em FL?\" — consulto na NLG\n\n" +
+    "Manda áudio, foto ou doc também — eu processo. Qualquer dúvida, é só perguntar."
+  );
+}
+
+/**
+ * Mapa cidade-amigável pros IANA timezones mais comuns no mercado da Brazillionaires
+ * (agentes brasileiros nos EUA). Fallback usa última parte do IANA.
+ */
+const TZ_CITY_MAP: Record<string, string> = {
+  "America/New_York": "Florida",       // pode ser NY mas Brazillionaires opera em FL
+  "America/Sao_Paulo": "São Paulo",
+  "America/Los_Angeles": "Los Angeles",
+  "America/Chicago": "Chicago",
+  "America/Denver": "Denver",
+  "America/Phoenix": "Phoenix",
+  "America/Anchorage": "Anchorage",
+  "America/Honolulu": "Honolulu",
+  "Pacific/Honolulu": "Honolulu",
+  "America/Fortaleza": "Fortaleza",
+  "America/Recife": "Recife",
+  "America/Manaus": "Manaus",
+  "America/Bahia": "Salvador",
+  "America/Belem": "Belém",
+};
+
+/**
+ * "America/New_York" → "Florida (EDT)"
+ * "America/Sao_Paulo" → "São Paulo (BRT)"
+ * Usa Intl.DateTimeFormat pra pegar a abbreviation correta na data atual
+ * (EDT vs EST muda com DST).
+ */
+export function formatTimezoneHumanFriendly(iana: string | null | undefined): string | null {
+  if (!iana) return null;
+  let city = TZ_CITY_MAP[iana];
+  if (!city) {
+    // Fallback: pega "Sao_Paulo" do "America/Sao_Paulo" e troca _ por space
+    const lastPart = iana.split("/").pop();
+    city = lastPart ? lastPart.replace(/_/g, " ") : iana;
+  }
+  let abbrev = "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: iana,
+      timeZoneName: "short",
+    }).formatToParts(new Date());
+    const tz = parts.find((p) => p.type === "timeZoneName")?.value;
+    abbrev = tz ? ` (${tz})` : "";
+  } catch {
+    // IANA inválido — segue só com city name
+  }
+  return `${city}${abbrev}`;
+}

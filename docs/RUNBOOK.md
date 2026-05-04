@@ -237,3 +237,89 @@ ORDER BY start_time DESC LIMIT 20;
 - Bug OpenAI: dashboard OpenAI status
 - Bug Anthropic: status.anthropic.com
 - Bug Stevo/Evolution: a ser definido (suporte do Stevo)
+
+---
+
+## 💰 Billing (SparkBot)
+
+### Markup atual
+- **10%** sobre vendor cost (Anthropic/OpenAI/Voyage/Whisper). Definido em
+  `src/lib/billing/pricing.ts:MARKUP_PERCENTAGE`. Pra ajustar: editar +
+  rebuild + deploy.
+
+### Hard cap mensal por sub-account
+- Default **$100/mês** por location. Configurável via
+  `agent_configs.monthly_spend_cap_usd`. NULL = sem cap.
+- Lógica: `isMonthlyCapReached` em `lib/billing/charge.ts` soma
+  `total_charge_usd` da location no mês corrente, compara com cap.
+- Comportamento ao atingir: `cap_blocked=true` em usage_records, charge
+  skipado, bot CONTINUA respondendo (custo vira do Pedro até reset
+  mensal ou aumento manual do cap).
+
+### Como aumentar cap pra um rep específico
+```sql
+-- Find agent_id da sub-account
+SELECT a.id, a.location_id, ac.monthly_spend_cap_usd
+FROM agents a
+JOIN agent_configs ac ON ac.agent_id = a.id
+WHERE a.type = 'account_assistant' AND a.location_id = '<LOCATION_ID>';
+
+-- Subir cap (ou setar NULL pra sem cap)
+UPDATE agent_configs SET monthly_spend_cap_usd = 500
+WHERE agent_id = '<AGENT_ID>';
+```
+
+### Como ver gasto do mês por sub-account
+```sql
+SELECT location_id,
+       SUM(total_charge_usd) AS spent_usd,
+       SUM(CASE WHEN cap_blocked THEN total_charge_usd ELSE 0 END) AS blocked_usd
+FROM usage_records
+WHERE created_at >= date_trunc('month', NOW())
+  AND charged_to_wallet = true
+GROUP BY location_id
+ORDER BY spent_usd DESC;
+```
+
+### Internal team (não cobrar)
+- Reps na env `INTERNAL_TEAM_PHONES` (CSV de phones E.164) ou com role
+  `agency`/`agency_owner` em `ghl_users[]`, ou com 5+ ghl_users → flag
+  `is_internal=true` em `rep_identities`. Aplicado dinamicamente em
+  cada turn via `syncRepInternalFlag`.
+- Pra forçar manualmente:
+  ```sql
+  UPDATE rep_identities SET is_internal = true
+  WHERE phone IN ('+17867717077', '+15555555555');
+  ```
+
+---
+
+## 🚦 SparkBot — onboarding de novo agente
+
+1. **Pre-requisito**: agente cadastrado como GHL user em alguma sub-account
+   da Brazillionaires com phone E.164 (ex: `+17867717077`).
+2. **Ativação via custom menu link**: agente clica no menu da sub-account
+   dele → carrega `loader.js` → autentica via Firebase JWKS → JWT do app.
+3. **Primeira mensagem WhatsApp** (alternativa): manda `oi` pro número
+   `+1 (813) 407-9657` → bot identifica via phone → terms → confirm fuso
+   da location → guia rápido.
+4. **Pos-aceite**: bot lê `location.timezone` do GHL e auto-confirma fuso.
+   Se rep quer mudar: "to em SP agora" → bot chama `confirm_rep_timezone`.
+
+### Onde está o número WhatsApp do SparkBot
+- **+1 (813) 407-9657** — Hub `RBFxlEQZobaDjlF2i5px` (Stevo conectado).
+  Hub legacy `Cjc1RonkhwcnrMp3vAqt` ainda existe mas não é a "principal".
+
+---
+
+## 🌐 CORS allowlist
+
+`src/lib/utils/cors.ts` controla quais origens podem bater nos endpoints
+`/api/sparkbot/*`. Pra adicionar nova origem (ex: novo white-label):
+```typescript
+const ALLOWED_ORIGIN_PATTERNS: RegExp[] = [
+  // ...
+  /^https:\/\/(?:[a-z0-9-]+\.)*MEU-NOVO-DOMINIO\.com$/i,
+];
+```
+Em DEV (`NODE_ENV !== production`), tudo passa.

@@ -18,8 +18,10 @@ import {
   TERMS_REJECTED_TEXT,
   TERMS_REMINDER_TEXT,
   parseTermsResponse,
+  buildOnboardingMessage,
+  formatTimezoneHumanFriendly,
 } from "./terms";
-import { acceptTerms, setActiveLocation } from "./identity";
+import { acceptTerms, setActiveLocation, syncRepInternalFlag } from "./identity";
 import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "./prompt-builder";
 import { runWithTools, type LLMMessage } from "./llm-client";
 import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
@@ -90,7 +92,11 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     const parsed = parseTermsResponse(userText);
     if (parsed === "accept") {
       await acceptTerms(rep.id);
-      return { text: TERMS_ACCEPTED_TEXT, should_send: true };
+      // Onboarding 2026-05-04: ao aceitar termos, AUTO-confirma fuso lendo
+      // location.timezone do GHL (sem perguntar pro rep). Mostra guia
+      // rápido na mesma mensagem. Reduz fricção pra ~zero.
+      const onboardingText = await runOnboardingAfterTerms(rep);
+      return { text: onboardingText, should_send: true };
     }
     if (parsed === "reject") {
       return { text: TERMS_REJECTED_TEXT, should_send: true };
@@ -343,8 +349,11 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     }
   }
 
-  // 6. Billing
+  // 6. Billing — internal team (agency owner/admins) NÃO é cobrado.
+  // syncRepInternalFlag detecta via env phones / role agency / heurística
+  // de muitas locations. Idempotente, atualiza DB só se valor mudou.
   if (result.prompt_tokens > 0) {
+    const isInternal = await syncRepInternalFlag(rep).catch(() => rep.is_internal === true);
     try {
       await trackAndCharge({
         locationId: activeLocationId,
@@ -356,7 +365,10 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
         promptTokens: result.prompt_tokens,
         completionTokens: result.completion_tokens,
         cachedTokens: result.cached_tokens,
-        usesCustomKey: false,
+        // Internal team usa "custom key" semantics: tracked em usage_records
+        // mas NÃO cobrado do wallet. Audit trail mantido pra Pedro ver custo
+        // mesmo internal em Supabase queries.
+        usesCustomKey: isInternal,
       });
     } catch (err) {
       console.error("[Sparkbot] Billing failed (non-blocking):", err instanceof Error ? err.message : err);
@@ -378,6 +390,59 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     primary_error: result.primary_error,
     secondary_error: result.secondary_error,
   };
+}
+
+/**
+ * Roda o onboarding pós-aceite dos termos: tenta resolver a location ativa
+ * do rep, ler timezone dela (do GHL via tabela locations), salvar em
+ * rep_identities como fuso confirmado, e devolver mensagem composta com
+ * guia rápido. Falha graciosa se algo der errado — devolve TERMS_ACCEPTED_TEXT.
+ *
+ * Não confunda com a "lazy backfill" de timezone que existe no main flow
+ * (linhas ~155): essa é pra sessions normais (rep antigo); esta é dedicada
+ * ao onboarding inicial e roda APENAS uma vez.
+ */
+async function runOnboardingAfterTerms(rep: RepIdentity): Promise<string> {
+  try {
+    const supabase = createAdminClient();
+    // Resolve location ativa: usa active_location_id se existe, ou primeira ghl_user
+    const locationId = rep.active_location_id || rep.ghl_users[0]?.location_id;
+    if (!locationId) return TERMS_ACCEPTED_TEXT;
+
+    // Lê timezone direto da tabela locations (sincronizada via webhook OAuth
+    // install do GHL). Não fazemos GET /users/* aqui — economiza chamada e
+    // evita falha por permissão/token.
+    const { data: location } = await supabase
+      .from("locations")
+      .select("timezone")
+      .eq("location_id", locationId)
+      .maybeSingle();
+
+    const tz = (location?.timezone || "").trim() || null;
+    const human = formatTimezoneHumanFriendly(tz);
+
+    // Persist fuso como confirmado (rep não precisou perguntar — vai ser
+    // tratado como source-of-truth pra agendamentos. Se ele quiser mudar,
+    // diz "to em SP agora" → confirm_rep_timezone vira override).
+    if (tz) {
+      await supabase
+        .from("rep_identities")
+        .update({
+          timezone: tz,
+          timezone_confirmed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", rep.id);
+    }
+
+    return buildOnboardingMessage(human);
+  } catch (err) {
+    console.warn(
+      "[processor] runOnboardingAfterTerms falhou (não-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+    return TERMS_ACCEPTED_TEXT;
+  }
 }
 
 /** Extrai texto de qualquer forma de RepInput (pra parsing de termos etc). */

@@ -75,19 +75,43 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
     return;
   }
 
-  // Se usa chave propria, nao cobra
+  // Se usa chave propria (BYO API key) OU é internal team, nao cobra wallet.
+  // Audit trail mantido em usage_records (charged_to_wallet=true só pra
+  // marcar "tratado" e não voltar no cron de retry).
   if (params.usesCustomKey) {
     if (record) {
       await supabase
         .from("usage_records")
-        .update({ charged_to_wallet: true, charged_at: new Date().toISOString() })
+        .update({ charged_to_wallet: true })
         .eq("id", record.id);
     }
     return;
   }
 
-  // Cobrar do wallet via GHL Marketplace API
+  // Hard cap mensal (Pedro 2026-05-04): se atingiu cap da location, marca
+  // cap_blocked=true e SKIP charge. Bot continua respondendo (UX preservada),
+  // mas custo fica com Pedro até reset mensal ou liberação manual.
   if (cost.totalChargeUsd > 0 && record) {
+    const capCheck = await isMonthlyCapReached(
+      params.agentId,
+      params.locationId,
+      cost.totalChargeUsd,
+    ).catch(() => ({ blocked: false, cap: 0, spentSoFar: 0 }));
+
+    if (capCheck.blocked) {
+      console.warn(
+        `[Billing] Cap atingido pra location=${params.locationId}: ` +
+        `spent=$${capCheck.spentSoFar.toFixed(2)} + newCharge=$${cost.totalChargeUsd.toFixed(4)} ` +
+        `> cap=$${capCheck.cap.toFixed(2)}. Skipping charge.`,
+      );
+      await supabase
+        .from("usage_records")
+        .update({ cap_blocked: true })
+        .eq("id", record.id);
+      return;
+    }
+
+    // Cobrar do wallet via GHL Marketplace API
     try {
       const ghlChargeId = await chargeWallet(
         params.companyId,
@@ -101,8 +125,7 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
         .from("usage_records")
         .update({
           charged_to_wallet: true,
-          charged_at: new Date().toISOString(),
-          ghl_charge_id: ghlChargeId ?? null,
+          wallet_charge_id: ghlChargeId ?? null,
         })
         .eq("id", record.id);
     } catch (error) {
@@ -190,6 +213,65 @@ export async function checkWalletBalance(
   // Quando implementar, ler /marketplace/billing/balance e comparar com
   // mediana de spend mensal pra decidir.
   return true;
+}
+
+/**
+ * Verifica se a sub-account atingiu o hard cap mensal de gasto. Lookup:
+ *   1. agent_configs.monthly_spend_cap_usd da location (default $100)
+ *   2. SUM(total_charge_usd) das usage_records dessa location no mês corrente
+ *
+ * Retorna true se DEVE BLOQUEAR (atingiu o cap). False = pode cobrar.
+ *
+ * Pedro 2026-05-04: usado pra blindar conta do agency owner em caso de
+ * runaway (loop, abuso, bug). Bot CONTINUA RESPONDENDO mesmo com cap
+ * atingido — apenas para de cobrar (Pedro come o custo até reset mensal).
+ * Future: pode evoluir pra notificar admin via webhook quando atingir 80%.
+ */
+export async function isMonthlyCapReached(
+  agentId: string,
+  locationId: string,
+  newChargeUsd: number,
+): Promise<{ blocked: boolean; cap: number; spentSoFar: number }> {
+  const supabase = createAdminClient();
+
+  // 1. Lê cap da config (default 100). Se NULL explicitamente, sem cap.
+  const { data: agentConfig } = await supabase
+    .from("agent_configs")
+    .select("monthly_spend_cap_usd")
+    .eq("agent_id", agentId)
+    .maybeSingle();
+
+  const cap = agentConfig?.monthly_spend_cap_usd;
+  if (cap === null || cap === undefined) {
+    return { blocked: false, cap: Number.POSITIVE_INFINITY, spentSoFar: 0 };
+  }
+  const capUsd = Number(cap);
+  if (!Number.isFinite(capUsd) || capUsd <= 0) {
+    return { blocked: false, cap: capUsd, spentSoFar: 0 };
+  }
+
+  // 2. SUM total_charge_usd dessa location no mês corrente
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+
+  const { data: rows } = await supabase
+    .from("usage_records")
+    .select("total_charge_usd")
+    .eq("location_id", locationId)
+    .gte("created_at", startOfMonth.toISOString())
+    .eq("charged_to_wallet", true); // só conta o que foi cobrado de verdade
+
+  const spent = (rows || []).reduce(
+    (acc, r) => acc + (Number(r.total_charge_usd) || 0),
+    0,
+  );
+
+  return {
+    blocked: spent + newChargeUsd > capUsd,
+    cap: capUsd,
+    spentSoFar: spent,
+  };
 }
 
 /**
@@ -292,8 +374,7 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
         .from("usage_records")
         .update({
           charged_to_wallet: true,
-          charged_at: new Date().toISOString(),
-          ghl_charge_id: ghlChargeId ?? null,
+          wallet_charge_id: ghlChargeId ?? null,
         })
         .in("id", group.ids);
 

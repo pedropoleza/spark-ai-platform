@@ -10,6 +10,59 @@ Histórico organizado por feature/bugfix. Versionamento semântico informal — 
 
 ---
 
+## [v0.5.0] — 2026-05-04 — Pre-launch (Brazillionaires production-ready)
+
+Pacote one-shot pra deixar SparkBot pronto pros agentes brasileiros nos
+EUA da Brazillionaires (sub-accounts dentro da agency do Pedro). Foco em
+adoção, não margem.
+
+### Added
+- **Onboarding inline pós-aceite dos termos** (H16): rep aceita → bot lê
+  `location.timezone` direto do GHL → auto-confirma o fuso → manda guia
+  rápido com 4 exemplos de uso, tudo numa msg. Antes era 3 turnos
+  (terms → fuso → uso). Agente pode mudar fuso depois ("to em SP agora").
+  Files: `processor.ts:runOnboardingAfterTerms`, `terms.ts:buildOnboardingMessage`,
+  `terms.ts:formatTimezoneHumanFriendly` (mapping IANA→Cidade+abrev).
+- **Internal team flag** (H17): agency owner/admins NÃO são cobrados.
+  Detecção em camadas: (1) env `INTERNAL_TEAM_PHONES` lista, (2) role
+  `agency`/`agency_owner` em ghl_users, (3) heurística "5+ ghl_users".
+  Migration 00048 adiciona `is_internal` em rep_identities.
+  `trackAndCharge` skipa `chargeWallet` mas mantém audit trail
+  (`usesCustomKey: true`).
+- **Hard cap mensal de gasto** (H18): default $100/sub-account/mês.
+  Quando atingido, `cap_blocked=true` em usage_records, charge skipado,
+  bot continua respondendo (UX preservada). Coluna
+  `monthly_spend_cap_usd` em agent_configs. Migration 00049 + helper
+  `isMonthlyCapReached` em billing/charge.ts. NULL = sem cap.
+
+### Changed
+- **Markup 20% → 10%** (Pedro 2026-05-04): foco em adoção. Cobre fees
+  escondidos (GHL marketplace ~5%, Stripe se mudar). Pode subir depois.
+- **CORS allowlist** (H19): novo `lib/utils/cors.ts` com regex allowlist
+  (gohighlevel.com, leadconnectorhq.com, msgsndr.com, sparkleads.pro,
+  próprio app + preview deploys, localhost dev). Aplicado em 6 endpoints
+  `/api/sparkbot/*`. Antes era `Allow-Origin: *`. Inclui `Vary: Origin`.
+- **Iframe sandbox** (H20): atributo `sandbox` no iframe injetado pelo
+  loader.js — `allow-scripts allow-same-origin allow-forms allow-popups
+  allow-modals`. Limita capabilities mantendo UX (mic, fetch, links).
+- **Strings user-facing renomeadas Sparkbot → SparkBot**: title pages,
+  card titles, error messages. Variable/type names mantidos (sparkbot_*
+  no DB e código).
+
+### Fixed
+- **`charged_at` e `ghl_charge_id` em billing/charge.ts**: colunas não
+  existem na tabela `usage_records` (Postgres rejeitaria, PostgREST
+  silenciosamente droppa). Removido `charged_at` (created_at já cobre);
+  trocado `ghl_charge_id` → `wallet_charge_id` (existing column).
+
+### Schema
+- Migration 00048: `rep_identities.is_internal boolean DEFAULT false`
+- Migration 00049: `agent_configs.monthly_spend_cap_usd numeric DEFAULT 100`,
+  `usage_records.cap_blocked boolean DEFAULT false`,
+  `idx_usage_records_location_month` index.
+
+---
+
 ## [v0.4.2] — 2026-05-03 — Audio fixes + multi-provider dedup completo
 
 ### Fixed

@@ -104,7 +104,7 @@ export function AccountAssistantConfigContent() {
   const loadAgent = useCallback(async () => {
     try {
       const res = await fetch("/api/agents/sparkbot");
-      if (!res.ok) throw new Error("Falha ao carregar Sparkbot");
+      if (!res.ok) throw new Error("Falha ao carregar SparkBot");
       const data = await res.json();
       if (!data.agent) {
         setLoading(false);
@@ -197,7 +197,7 @@ export function AccountAssistantConfigContent() {
 
   if (loading) {
     return (
-      <PageWrapper title="Sparkbot" subtitle="Account Assistant">
+      <PageWrapper title="SparkBot" subtitle="Account Assistant">
         <div className="flex justify-center py-10">
           <Loader2 className="w-6 h-6 animate-spin text-gray-500" />
         </div>
@@ -207,11 +207,11 @@ export function AccountAssistantConfigContent() {
 
   if (!agent) {
     return (
-      <PageWrapper title="Sparkbot" subtitle="Account Assistant">
+      <PageWrapper title="SparkBot" subtitle="Account Assistant">
         <Card>
           <CardContent className="p-8 text-center">
             <Info className="w-10 h-10 mx-auto text-gray-400 mb-3" />
-            <p className="text-sm text-gray-700 font-medium mb-1">Sparkbot não configurado</p>
+            <p className="text-sm text-gray-700 font-medium mb-1">SparkBot não configurado</p>
             <p className="text-xs text-gray-500 max-w-md mx-auto">
               O admin ainda não criou o agent tipo <code>account_assistant</code> na location
               Hub. Peça pro Pedro (admin da plataforma) provisionar.
@@ -223,7 +223,7 @@ export function AccountAssistantConfigContent() {
   }
 
   return (
-    <PageWrapper title="Sparkbot" subtitle="Copiloto de produtividade pro rep comercial">
+    <PageWrapper title="SparkBot" subtitle="Copiloto de produtividade pro agente">
       <Tabs defaultValue="test" className="space-y-4">
         <TabsList>
           <TabsTrigger value="test">Teste</TabsTrigger>
@@ -619,11 +619,11 @@ export function AccountAssistantConfigContent() {
         <TabsContent value="about" className="space-y-3">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Sobre o Sparkbot</CardTitle>
+              <CardTitle className="text-base">Sobre o SparkBot</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-gray-700">
               <p>
-                O Sparkbot é um copiloto de produtividade pro rep comercial humano —
+                O SparkBot é um copiloto de produtividade pro agente humano —
                 diferente do Agente de Vendas e do Agente de Recrutamento, que conversam
                 com leads.
               </p>
@@ -641,7 +641,7 @@ export function AccountAssistantConfigContent() {
               <div>
                 <p className="font-medium mb-1">Como o rep usa em prod</p>
                 <p className="text-xs text-gray-600">
-                  Rep manda WhatsApp pro número dedicado do Sparkbot (Stevo/Evolution
+                  Agente manda WhatsApp pro número dedicado do SparkBot (Stevo/Evolution
                   rotea SMS → WhatsApp). Primeira msg recebe termos de uso. Depois
                   pode pedir ações em texto/áudio/foto/doc. Ações executam no GHL
                   da location ativa do rep.

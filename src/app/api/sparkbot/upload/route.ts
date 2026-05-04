@@ -20,25 +20,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { processFile, FileProcessError, FILE_LIMITS } from "@/lib/account-assistant/file-processor";
+import { corsHeadersFor } from "@/lib/utils/cors";
 
 export const maxDuration = 30;
 
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
-
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeadersFor(request, "POST, OPTIONS"),
+  });
 }
-
-const json = (data: Record<string, unknown>, init: ResponseInit = {}) =>
-  NextResponse.json(data, { ...init, headers: { ...CORS_HEADERS, ...(init.headers || {}) } });
 
 const MAX_UPLOAD_SIZE = Math.max(...Object.values(FILE_LIMITS));
 
 export async function POST(request: NextRequest) {
+  const corsHeaders = corsHeadersFor(request, "POST, OPTIONS");
+  const json = (data: Record<string, unknown>, init: ResponseInit = {}) =>
+    NextResponse.json(data, { ...init, headers: { ...corsHeaders, ...(init.headers || {}) } });
   const tok = await verifySparkbotWebToken(request.headers.get("authorization"));
   if (!tok) return json({ ok: false, reason: "unauthorized" }, { status: 401 });
 

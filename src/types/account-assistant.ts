@@ -76,6 +76,11 @@ export interface RepIdentity {
    * Resetado quando rep informa novo fuso (viagem etc).
    */
   timezone_confirmed_at?: string | null;
+  /**
+   * Quando true, SparkBot processa requests mas NÃO cobra o wallet GHL.
+   * Usado pra agency owner/admins. Veja migration 00048.
+   */
+  is_internal?: boolean;
   created_at: string;
   updated_at: string;
 }

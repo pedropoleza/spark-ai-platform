@@ -232,6 +232,64 @@ export async function setActiveLocation(repId: string, locationId: string): Prom
 }
 
 /**
+ * Detecta se o rep é "internal" (agency owner / admin) — não deve ser cobrado
+ * pelo uso do SparkBot. Heurística em camadas (curto-circuita na primeira
+ * que bater):
+ *
+ *   1. **Env var `INTERNAL_TEAM_PHONES`** — lista CSV de phones em E.164.
+ *      Mais robusto. Pedro adiciona phones do team via Vercel env. Ex:
+ *      `INTERNAL_TEAM_PHONES="+17867717077,+15555555555"`.
+ *
+ *   2. **GHL user.type == 'agency'** — se algum dos `ghl_users[]` tiver
+ *      `userType` ou `roles.type` === 'agency', considera internal. (Esse
+ *      campo é populado em identifyRep quando o GHL retorna.)
+ *
+ *   3. **Heurística "muitas locations"** — rep com acesso a 5+ sub-accounts
+ *      é provável agency-level (pra Brazillionaires que tem 61 locations,
+ *      isso bate só pro Pedro/admins).
+ *
+ * Se nenhuma bate, assume não-internal (cobra normal).
+ */
+export function detectIsInternal(rep: RepIdentity): boolean {
+  // Camada 1: env list
+  const envList = (process.env.INTERNAL_TEAM_PHONES || "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (envList.length > 0 && rep.phone && envList.includes(rep.phone)) {
+    return true;
+  }
+
+  // Camada 2: role type no ghl_users (capturado durante identify se GHL retornar)
+  const hasAgencyRole = rep.ghl_users.some((u) => {
+    const role = (u.role || "").toLowerCase();
+    return role === "agency" || role === "agency_owner" || role === "agency_admin";
+  });
+  if (hasAgencyRole) return true;
+
+  // Camada 3: heurística — muitas locations
+  if (rep.ghl_users.length >= 5) return true;
+
+  return false;
+}
+
+/**
+ * Sincroniza `is_internal` no rep_identities baseado na detecção atual.
+ * Idempotente — só faz UPDATE se valor mudou.
+ */
+export async function syncRepInternalFlag(rep: RepIdentity): Promise<boolean> {
+  const detected = detectIsInternal(rep);
+  if (rep.is_internal === detected) return detected; // sem mudança
+
+  const supabase = createAdminClient();
+  await supabase
+    .from("rep_identities")
+    .update({ is_internal: detected, updated_at: new Date().toISOString() })
+    .eq("id", rep.id);
+  return detected;
+}
+
+/**
  * Identifica rep pelo ghl_user_id (usado pelo Web UI no GHL onde não temos
  * phone direto, só user_id). Se não existir, busca o user no GHL pra obter
  * phone e cria o registro. Igual identifyRep mas começando do user_id.

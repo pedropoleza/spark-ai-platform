@@ -385,6 +385,12 @@ const LOADER_SOURCE = `(function () {
     iframe.src = APP_URL + "/embed/sparkbot?token=" + encodeURIComponent(STATE.token) +
                  "&repName=" + encodeURIComponent(STATE.repName);
     iframe.allow = "microphone; clipboard-write; notifications";
+    // Sandbox attribute (Pedro 2026-05-04): isola execução do iframe.
+    // - allow-scripts: necessário (Next.js + interatividade)
+    // - allow-same-origin: necessário (fetch ao próprio app, localStorage)
+    // - allow-forms + allow-popups: pra UX (link wa.me, copy etc)
+    // - allow-modals: pra dialogs do Next/UI
+    iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-modals");
 
     panel.appendChild(close);
     panel.appendChild(iframe);

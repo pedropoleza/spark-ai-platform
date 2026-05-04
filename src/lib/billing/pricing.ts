@@ -58,7 +58,10 @@ const AUDIO_PRICING: Record<string, number> = {
   "whisper-1": 0.006 / 60,
 };
 
-const MARKUP_PERCENTAGE = 0.20; // 20%
+// Pedro 2026-05-04: ajustado pra 10% — foco em adoção, não margem. Cobre
+// fees escondidos (GHL marketplace fee ~5%, Stripe se mudar, etc) com
+// pequena margem operacional. Pode subir depois se necessário.
+const MARKUP_PERCENTAGE = 0.10; // 10%
 
 export interface UsageCost {
   model: string;

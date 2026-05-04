@@ -95,6 +95,19 @@ Em ordem de precedência:
 - Hub é qualquer location com agent ativo `type='account_assistant'`.
 - **Não usar mais env var `ASSISTANT_HUB_LOCATION_ID` pra detectar hub** — só pra fallback de cron/billing.
 
+### SparkBot Onboarding (Pedro 2026-05-04)
+- Nome user-facing: **SparkBot** (camelCase). Variable/type names podem manter `sparkbot_*` no DB e código.
+- Ao aceitar termos, bot lê `location.timezone` do GHL e auto-confirma fuso. NUNCA pergunta fuso pro rep upfront.
+- `runOnboardingAfterTerms` em processor.ts encadeia: terms → confirm fuso silencioso → guia rápido com 4 exemplos.
+- Helper `formatTimezoneHumanFriendly` mapeia IANA → "Cidade (Abrev)" (ex: "Florida (EDT)").
+- Agente pode mudar fuso depois ("to em SP agora") via tool `confirm_rep_timezone`.
+
+### SparkBot Billing (Pedro 2026-05-04)
+- **Markup**: 10% (em `pricing.ts:MARKUP_PERCENTAGE`). Foco em adoção, não margem.
+- **Hard cap mensal**: default $100/sub-account em `agent_configs.monthly_spend_cap_usd`. NULL = sem cap.
+- **Internal team**: `is_internal=true` em rep_identities. Detecção em camadas: env `INTERNAL_TEAM_PHONES` → role `agency`/`agency_owner` → heurística "5+ ghl_users". Skipa charge mas mantém audit.
+- **Cap atingido**: `cap_blocked=true` em usage_records, charge skipado, bot CONTINUA respondendo (UX preservada).
+
 ---
 
 ## Anti-patterns conhecidos (não cair de novo)

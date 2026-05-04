@@ -16,24 +16,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { processIncoming } from "@/lib/account-assistant/processor";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
+import { corsHeadersFor } from "@/lib/utils/cors";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import type { RepInput } from "@/types/account-assistant";
 
 export const maxDuration = 60;
 
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
-
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeadersFor(request, "POST, OPTIONS"),
+  });
 }
 
 export async function POST(request: NextRequest) {
+  const corsHeaders = corsHeadersFor(request, "POST, OPTIONS");
   const json = (data: Record<string, unknown>, init: ResponseInit = {}) =>
-    NextResponse.json(data, { ...init, headers: { ...CORS_HEADERS, ...(init.headers || {}) } });
+    NextResponse.json(data, { ...init, headers: { ...corsHeaders, ...(init.headers || {}) } });
 
   // 1. Auth
   const tok = await verifySparkbotWebToken(request.headers.get("authorization"));

@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateGHLUser, upsertLocation } from "@/lib/auth/sso";
 import { identifyRepByGhlUser, acceptTerms } from "@/lib/account-assistant/identity";
 import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
+import { corsHeadersFor } from "@/lib/utils/cors";
 import { importJWK, jwtVerify, type JWK } from "jose";
 
 export const maxDuration = 30;
@@ -172,20 +173,17 @@ async function verifyFirebaseIdToken(idToken: string): Promise<VerifyResult> {
   };
 }
 
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  "Access-Control-Max-Age": "86400",
-};
-
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeadersFor(request, "POST, OPTIONS"),
+  });
 }
 
 export async function POST(request: NextRequest) {
+  const corsHeaders = corsHeadersFor(request, "POST, OPTIONS");
   const json = (data: Record<string, unknown>, init: ResponseInit = {}) =>
-    NextResponse.json(data, { ...init, headers: { ...CORS_HEADERS, ...(init.headers || {}) } });
+    NextResponse.json(data, { ...init, headers: { ...corsHeaders, ...(init.headers || {}) } });
 
   try {
     const body = await request.json();

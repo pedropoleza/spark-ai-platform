@@ -427,9 +427,9 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
         <Card className="flex flex-col h-[600px]">
           <CardHeader className="pb-3 flex-row items-center justify-between">
             <div>
-              <CardTitle className="text-base">Teste o Sparkbot</CardTitle>
+              <CardTitle className="text-base">Teste o SparkBot</CardTitle>
               <CardDescription>
-                Conversa simulando você como rep. Sessão persistida — refresh não perde contexto.
+                Conversa simulando você como agente. Sessão persistida — refresh não perde contexto.
               </CardDescription>
             </div>
             <Button variant="outline" size="sm" onClick={handleReset} disabled={messages.length === 0 && !sessionId}>

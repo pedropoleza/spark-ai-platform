@@ -4,7 +4,7 @@
  * estilos do dashboard de vazarem.
  */
 export const metadata = {
-  title: "Sparkbot",
+  title: "SparkBot",
   robots: "noindex",
 };
 
