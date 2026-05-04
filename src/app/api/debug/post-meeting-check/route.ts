@@ -23,6 +23,9 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const repId =
     url.searchParams.get("rep_id") || "1eeb02cc-1a48-4b56-b177-52dcbca07ac2";
+  const hoursWindow = parseInt(url.searchParams.get("hours") || "0") || 0;
+  const noUserFilter = url.searchParams.get("no_user_filter") === "1";
+  const onlyLocationId = url.searchParams.get("location_id");
 
   const supabase = createAdminClient();
   const { data: rep } = await supabase
@@ -41,8 +44,14 @@ export async function GET(request: NextRequest) {
   const now = Date.now();
   const windowStart = now - GRACE_MS;
   const windowEnd = now + offsetMs;
-  const queryStart = windowStart - 60 * 60_000;
-  const queryEnd = windowEnd + 60_000;
+  // Se hoursWindow setado, expande pra capturar appointments mais distantes
+  // (debug: "criei mas o filtro não pegou — o que tem na location?")
+  const queryStart = hoursWindow > 0
+    ? now - hoursWindow * 60 * 60_000
+    : windowStart - 60 * 60_000;
+  const queryEnd = hoursWindow > 0
+    ? now + hoursWindow * 60 * 60_000
+    : windowEnd + 60_000;
 
   const locationsByRep = new Map<string, string>();
   for (const u of r.ghl_users || []) {
@@ -53,6 +62,7 @@ export async function GET(request: NextRequest) {
 
   const results: Array<Record<string, unknown>> = [];
   for (const [locationId, ghlUserId] of locationsByRep) {
+    if (onlyLocationId && locationId !== onlyLocationId) continue;
     const { data: location } = await supabase
       .from("locations")
       .select("location_id, company_id")
@@ -83,7 +93,7 @@ export async function GET(request: NextRequest) {
         locationId,
         startTime: String(queryStart),
         endTime: String(queryEnd),
-        userId: ghlUserId,
+        ...(noUserFilter ? {} : { userId: ghlUserId }),
       });
 
       const events = res.events || [];
