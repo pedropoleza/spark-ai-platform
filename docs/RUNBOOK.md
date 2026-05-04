@@ -296,19 +296,31 @@ ORDER BY spent_usd DESC;
 
 ## 🚦 SparkBot — onboarding de novo agente
 
+### UX atual (v0.5.1)
 1. **Pre-requisito**: agente cadastrado como GHL user em alguma sub-account
-   da Brazillionaires com phone E.164 (ex: `+17867717077`).
-2. **Ativação via custom menu link**: agente clica no menu da sub-account
-   dele → carrega `loader.js` → autentica via Firebase JWKS → JWT do app.
-3. **Primeira mensagem WhatsApp** (alternativa): manda `oi` pro número
-   `+1 (813) 407-9657` → bot identifica via phone → terms → confirm fuso
-   da location → guia rápido.
+   com phone E.164 (ex: `+17867717077`). Phone configurável via Settings →
+   My Profile no GHL deles.
+2. **Setup Wizard no AI Hub** (`/agents/account-assistant`): se admin
+   nunca interagiu, aparece card em destaque com QR code do WhatsApp.
+   Polling 5s detecta primeira msg.
+3. **Primeira mensagem WhatsApp**: agente clica no QR / link wa.me →
+   abre WhatsApp com mensagem pré-preenchida → manda → bot identifica via
+   phone → termos → confirm fuso da `location.timezone` → guia rápido.
 4. **Pos-aceite**: bot lê `location.timezone` do GHL e auto-confirma fuso.
    Se rep quer mudar: "to em SP agora" → bot chama `confirm_rep_timezone`.
 
 ### Onde está o número WhatsApp do SparkBot
 - **+1 (813) 407-9657** — Hub `RBFxlEQZobaDjlF2i5px` (Stevo conectado).
-  Hub legacy `Cjc1RonkhwcnrMp3vAqt` ainda existe mas não é a "principal".
+  Configurável via env `SPARKBOT_WHATSAPP_NUMBER`.
+- Hub legacy `Cjc1RonkhwcnrMp3vAqt` ainda existe mas não é a "principal".
+
+### Debug: botão SparkBot não aparece em alguma sub-account
+1. Abre browser console (F12) na sub-account, filtra por "Sparkbot"
+2. Procura erros tipo `check-admin:1 Failed (500)` → backend issue
+3. Confere postgres log via MCP get_logs — `duplicate key value` indica
+   rep_identity dedup bug (já fixado em H21 deploy d1d6180)
+4. Confere se Custom JS está injetado em Agency Settings → Custom JS
+5. `Ctrl+Shift+R` pra hard reload se loader.js cacheado
 
 ---
 

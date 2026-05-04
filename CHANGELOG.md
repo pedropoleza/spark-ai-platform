@@ -10,6 +10,37 @@ Histórico organizado por feature/bugfix. Versionamento semântico informal — 
 
 ---
 
+## [v0.5.1] — 2026-05-04 — Setup Wizard + dedup rep_identities (H21/H22)
+
+### Fixed
+- **CRITICAL: check-admin 500 em sub-accounts novas** (H21):
+  identifyRepByGhlUser caía em UNIQUE violation quando GHL API não
+  retornava phone. Causa: tentava INSERT com placeholder `webonly:<id>`
+  já existente. Fix: lookup em camadas — (3a) por ghl_user_id em qualquer
+  rep, (3b) por phone OR placeholder. Append link se achou.
+- **Botão SparkBot não aparecia em sub-accounts novas**: consequência
+  do bug acima — loader.js dependia de check-admin retornar ok=true pra
+  injectar o ícone.
+- **Cleanup DB**: rep duplicado `84ab5b5b...` (criado quando GHL não
+  retornou phone) merged ao Pedro principal `1eeb02cc...` (11 msgs
+  transferidas + duplicado deletado).
+
+### Added
+- **Setup Wizard no AI Hub** (H22):
+  - Card destaque acima das tabs em `/agents/account-assistant`
+  - QR code dinâmico do número WhatsApp + link wa.me com mensagem
+    pré-preenchida "Olá SparkBot, vamos começar!"
+  - Botões "Abrir WhatsApp" + "Copiar link"
+  - Polling 5s do endpoint `/api/agents/sparkbot/onboarding-status`
+  - Auto-some quando primeira msg detectada (transição mostra
+    "✅ Ativado!" por 3s antes de remover)
+  - Aviso se admin não tem phone cadastrado no GHL
+- Lib `qrcode` + `@types/qrcode` no package.json
+- Endpoint `/api/agents/sparkbot/onboarding-status` (GET, SSO auth)
+- Env `SPARKBOT_WHATSAPP_NUMBER` (default `+18134079657`)
+
+---
+
 ## [v0.5.0] — 2026-05-04 — Pre-launch (Brazillionaires production-ready)
 
 Pacote one-shot pra deixar SparkBot pronto pros agentes brasileiros nos
