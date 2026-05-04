@@ -20,7 +20,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { validateGHLUser, upsertLocation } from "@/lib/auth/sso";
 import { identifyRepByGhlUser, acceptTerms } from "@/lib/account-assistant/identity";
 import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
+import { seedWebOnboardingMessage } from "@/lib/account-assistant/onboarding";
 import { corsHeadersFor } from "@/lib/utils/cors";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { importJWK, jwtVerify, type JWK } from "jose";
 
 export const maxDuration = 30;
@@ -319,6 +321,40 @@ export async function POST(request: NextRequest) {
     // do app; no app GHL é UX redundante.)
     if (!rep.terms_accepted_at) {
       await acceptTerms(rep.id);
+    }
+
+    // Onboarding seed (Pedro 2026-05-04): mostra msg de boas-vindas no painel
+    // se o rep ainda não viu uma. Detecta via metadata source='web_onboarding'
+    // em sparkbot_messages (não por terms_accepted_at — porque check antigo
+    // pulava reps que aceitaram termos antes do feature existir).
+    const supabase = createAdminClient();
+    const { data: prevOnboarding } = await supabase
+      .from("sparkbot_messages")
+      .select("id")
+      .eq("rep_id", rep.id)
+      .eq("metadata->>source", "web_onboarding")
+      .limit(1)
+      .maybeSingle();
+
+    if (!prevOnboarding) {
+      // Resolve hubAgent.id pra inserir msg. Hub principal via env, com
+      // fallback pra própria location se ela tem agent ativo.
+      const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim() || locationId;
+      const { data: hubAgent } = await supabase
+        .from("agents")
+        .select("id")
+        .eq("location_id", hubLocationId)
+        .eq("type", "account_assistant")
+        .eq("status", "active")
+        .maybeSingle();
+
+      if (hubAgent?.id) {
+        await seedWebOnboardingMessage({
+          rep: { ...rep, terms_accepted_at: rep.terms_accepted_at || new Date().toISOString() },
+          hubLocationId,
+          hubAgentId: hubAgent.id,
+        });
+      }
     }
 
     // Emite JWT temporário (1h) — Custom JS guarda em sessionStorage
