@@ -346,16 +346,39 @@ export async function identifyRepByGhlUser(args: {
     );
   }
 
-  // 3. Se já existir um rep com o mesmo phone (ex: cadastrado via WhatsApp),
-  // appenda esse user_id em ghl_users em vez de criar novo (mantém histórico
-  // unificado entre canais).
-  if (userPhone) {
-    const { data: byPhone } = await supabase
-      .from("rep_identities")
-      .select("*")
-      .eq("phone", userPhone)
-      .maybeSingle();
+  // 3. Antes de criar novo rep, tenta deduplicar via 2 lookups em camadas:
+  //
+  //   3a. Por `ghl_user_id` em QUALQUER location de qualquer rep — cobre
+  //       o caso de Pedro que tem várias sub-accounts e abre uma nova:
+  //       o ghl_user_id que ele usa nesse location pode JÁ existir em outro
+  //       rep_identity (ex: mesmo user_id em Spark Leads + Ideal English).
+  //
+  //   3b. Por phone (real ou placeholder `webonly:<ghlUserId>`) — cobre
+  //       o caso de WhatsApp-first rep que depois abre Web UI, ou re-abre
+  //       Web UI quando GHL não devolveu phone na primeira vez.
+  //
+  // Fix CRITICAL bug observado em prod 2026-05-04: sem o lookup 3a, GHL
+  // que não retorna phone fazia code cair em step 4 (insert com
+  // `webonly:<ghlUserId>` placeholder), violando unique constraint quando
+  // já existia rep_identity com esse exato placeholder.
+  const repExistingViaUserId = await supabase
+    .from("rep_identities")
+    .select("*")
+    .filter("ghl_users", "cs", JSON.stringify([{ ghl_user_id: ghlUserId }]))
+    .limit(1)
+    .maybeSingle();
 
+  const lookupPhone = userPhone || `webonly:${ghlUserId}`;
+  const repExistingViaPhone = repExistingViaUserId.data
+    ? null
+    : (await supabase
+        .from("rep_identities")
+        .select("*")
+        .eq("phone", lookupPhone)
+        .maybeSingle()).data;
+
+  const byPhone = repExistingViaUserId.data || repExistingViaPhone;
+  {
     if (byPhone) {
       const repExisting = byPhone as RepIdentity;
       const links = (repExisting.ghl_users || []) as GHLUserLink[];
