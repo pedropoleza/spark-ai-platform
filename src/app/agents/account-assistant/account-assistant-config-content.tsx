@@ -14,6 +14,7 @@ import { Loader2, Save, Info } from "lucide-react";
 import { SparkbotTester } from "@/components/agents/account-assistant/sparkbot-tester";
 import { ProactiveRulesPanel } from "@/components/agents/account-assistant/proactive-rules-panel";
 import { KnowledgeBaseEditor } from "@/components/agents/sales/knowledge-base-editor";
+import { SetupWizard } from "@/components/agents/account-assistant/setup-wizard";
 
 interface SparkbotAgent {
   id: string;
@@ -224,6 +225,11 @@ export function AccountAssistantConfigContent() {
 
   return (
     <PageWrapper title="SparkBot" subtitle="Copiloto de produtividade pro agente">
+      {/* Setup Wizard em destaque — só renderiza se admin nunca interagiu
+          com o bot. Auto-some quando primeira msg detectada. */}
+      <div className="mb-4">
+        <SetupWizard />
+      </div>
       <Tabs defaultValue="test" className="space-y-4">
         <TabsList>
           <TabsTrigger value="test">Teste</TabsTrigger>
