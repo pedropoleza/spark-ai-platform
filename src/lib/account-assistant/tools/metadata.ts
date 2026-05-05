@@ -75,13 +75,22 @@ const listUsers: ToolEntry = {
           roles?: { role?: string };
         }>;
       }>("/users/", { locationId: ctx.locationId });
+      const users = res.users || [];
+      if (users.length === 0) {
+        return {
+          status: "not_found",
+          message: "Nenhum user nesta location ainda.",
+        };
+      }
+      // Fix Track 3 #11 (review 2026-05-05): redução de PII — remove `phone`
+      // do retorno. Use case típico (resolve assigned_to) só precisa de
+      // id+name+role. Phone vazaria pro LLM e potencialmente pro histórico.
       return {
         status: "ok",
-        data: (res.users || []).map((u) => ({
+        data: users.map((u) => ({
           id: u.id,
           name: u.name || [u.firstName, u.lastName].filter(Boolean).join(" "),
           email: u.email,
-          phone: u.phone,
           role: u.roles?.role,
         })),
       };

@@ -11,7 +11,8 @@ import { validateGhlId, ghlErrorToResult } from "./types";
 const searchConversations: ToolEntry = {
   def: {
     name: "search_conversations",
-    description: "Busca a conversa de um contato (uma só por contato). Use pra obter conversation_id.",
+    description:
+      "Lista conversas de um contato no Spark Leads. Pode haver MÚLTIPLAS (1 por canal: SMS, WhatsApp, Email, IG). Cada item tem `type` indicando o canal — use o type apropriado pra escolher conversation_id certo. Use pra obter conversation_id antes de chamar get_conversation_history.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -31,14 +32,27 @@ const searchConversations: ToolEntry = {
           unreadCount?: number; type?: string;
         }>;
       }>("/conversations/search", { locationId: ctx.locationId, contactId });
+      // Fix Track 3 CRITICAL #1 (review 2026-05-05): defesa em profundidade —
+      // filtra resultado garantindo que contactId bate com requested. GHL
+      // pode retornar conversas cross-tenant em edge cases (especialmente
+      // após merge/migration); filtro client-side previne vazamento.
+      const conversations = (res.conversations || []).filter(
+        (c) => c.contactId === contactId,
+      );
+      if (conversations.length === 0) {
+        return {
+          status: "not_found",
+          message: `Nenhuma conversa encontrada pro contato ${contactId} nessa location.`,
+        };
+      }
       return {
         status: "ok",
-        data: (res.conversations || []).map((c) => ({
+        data: conversations.map((c) => ({
           id: c.id,
           contact_id: c.contactId,
           last_message_at: c.lastMessageDate,
           unread_count: c.unreadCount || 0,
-          type: c.type,
+          type: c.type || "unknown",
         })),
       };
     } catch (err) {

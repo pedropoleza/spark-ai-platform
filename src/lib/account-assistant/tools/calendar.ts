@@ -66,9 +66,18 @@ const listAppointments: ToolEntry = {
         endTime: String(endTs),
         ...(allUsers || !repUserId ? {} : { userId: repUserId }),
       });
+      const events = res.events || [];
+      // Fix Track 3 HIGH-8 (review 2026-05-05): retorna not_found pra empty
+      // em vez de status:ok+data:[] (semântica clara pro LLM).
+      if (events.length === 0) {
+        return {
+          status: "not_found",
+          message: `Nenhum appointment ${when === "today" ? "hoje" : `em '${when}'`} pra ${allUsers ? "esta location" : "você"}.`,
+        };
+      }
       return {
         status: "ok",
-        data: (res.events || []).map((e) => ({
+        data: events.map((e) => ({
           id: e.id, title: e.title || "(sem título)",
           start: e.startTime, end: e.endTime,
           contact_id: e.contactId || null,
@@ -134,6 +143,23 @@ const getFreeSlots: ToolEntry = {
     if (endDateInvalid) return endDateInvalid;
     const startMs = new Date(String(args.start_date)).getTime();
     const endMs = new Date(String(args.end_date)).getTime();
+
+    // Fix Track 3 #14 (review 2026-05-05): validar end > start + max 7 dias.
+    if (endMs <= startMs) {
+      return {
+        status: "error",
+        message: "end_date deve ser DEPOIS de start_date.",
+        retryable: false,
+      };
+    }
+    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+    if (endMs - startMs > SEVEN_DAYS_MS) {
+      return {
+        status: "error",
+        message: "Janela máxima é 7 dias. Use uma window menor e chame de novo se precisar mais.",
+        retryable: false,
+      };
+    }
 
     try {
       const res = await ctx.ghlClient.get<Record<string, { slots?: string[] }>>(

@@ -283,11 +283,15 @@ const deleteContact: ToolEntry = {
 const getContactNotes: ToolEntry = {
   def: {
     name: "get_contact_notes",
-    description: "Lista todas as notas de um contato, mais recentes primeiro.",
+    description:
+      "Lista as notas mais recentes de um contato (até 50). Se rep precisa de notas mais antigas, peça pra ele abrir no Spark Leads diretamente.",
     risk: "safe",
     parameters: {
       type: "object",
-      properties: { contact_id: { type: "string" } },
+      properties: {
+        contact_id: { type: "string" },
+        limit: { type: "number", description: "Max notas (default 30, max 50).", default: 30 },
+      },
       required: ["contact_id"],
     },
   },
@@ -295,20 +299,32 @@ const getContactNotes: ToolEntry = {
     const contactId = String(args.contact_id || "");
     const invalid = validateGhlId(contactId, "contact");
     if (invalid) return invalid;
+    // Fix Track 3 HIGH-5 (review 2026-05-05): adicionado limit configurável
+    // + meta `truncated` pro LLM saber se há mais notas.
+    const limit = Math.min(Math.max(Number(args.limit) || 30, 1), 50);
 
     try {
       const res = await ctx.ghlClient.get<{
         notes?: Array<{ id: string; body: string; userId?: string; dateAdded?: string }>;
       }>(`/contacts/${contactId}/notes`);
-      const notes = (res.notes || []).slice(0, 30);
+      const allNotes = res.notes || [];
+      if (allNotes.length === 0) {
+        return { status: "not_found", message: "Contato sem notas ainda." };
+      }
+      const notes = allNotes.slice(0, limit);
       return {
         status: "ok",
-        data: notes.map((n) => ({
-          id: n.id,
-          body: n.body,
-          author_id: n.userId,
-          created_at: n.dateAdded,
-        })),
+        data: {
+          notes: notes.map((n) => ({
+            id: n.id,
+            body: n.body,
+            author_id: n.userId,
+            created_at: n.dateAdded,
+          })),
+          truncated: allNotes.length > limit,
+          total_in_crm: allNotes.length,
+          returned: notes.length,
+        },
       };
     } catch (err) {
       return ghlErrorToResult(err, "listagem de notas");
