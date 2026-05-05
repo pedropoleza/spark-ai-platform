@@ -33,25 +33,15 @@ const listAppointments: ToolEntry = {
   handler: async (ctx, args) => {
     const when = String(args.when || "today");
     const allUsers = args.all_users === true;
-    const now = new Date();
-    let startTs: number, endTs: number;
-    if (when === "today") {
-      const s = new Date(now); s.setHours(0, 0, 0, 0);
-      const e = new Date(now); e.setHours(23, 59, 59, 999);
-      startTs = s.getTime(); endTs = e.getTime();
-    } else if (when === "tomorrow") {
-      const s = new Date(now); s.setDate(s.getDate() + 1); s.setHours(0, 0, 0, 0);
-      const e = new Date(s); e.setHours(23, 59, 59, 999);
-      startTs = s.getTime(); endTs = e.getTime();
-    } else if (when === "next_week") {
-      const s = new Date(now); s.setDate(s.getDate() + 7); s.setHours(0, 0, 0, 0);
-      const e = new Date(s); e.setDate(e.getDate() + 7); e.setHours(23, 59, 59, 999);
-      startTs = s.getTime(); endTs = e.getTime();
-    } else {
-      startTs = now.getTime();
-      const e = new Date(now); e.setDate(e.getDate() + 7);
-      endTs = e.getTime();
-    }
+    // Fix LOW-1 (audit 2026-05-05): antes setHours operava em UTC do
+    // servidor Vercel — pra rep BR, slot 23h BRT (= 02h UTC dia seguinte)
+    // virava "amanhã" pro bot. Agora usa computeWindowInTz igual
+    // list_my_free_slots.
+    const repTimezoneRaw = ctx.rep.timezone || "America/New_York";
+    const { startMs: startTs, endMs: endTs } = computeWindowInTz(
+      when,
+      repTimezoneRaw,
+    );
     const repUserId = getRepGhlUserId(ctx);
 
     try {
@@ -168,7 +158,9 @@ const getFreeSlots: ToolEntry = {
       // hours, Google Calendar synced, conflicts internos).
       // Pra "rep livre cross-calendar" use list_my_free_slots (separate tool).
       const res = await ctx.ghlClient.get<Record<string, { slots?: string[] }>>(
-        `/calendars/${calendarId}/free-slots`,
+        // Fix HIGH-6 (audit 2026-05-05): encodeURIComponent defesa em
+        // profundidade pra ID corrompido escapar pra path injection.
+        `/calendars/${encodeURIComponent(calendarId)}/free-slots`,
         {
           startDate: String(startMs),
           endDate: String(endMs),
@@ -372,20 +364,46 @@ const listMyFreeSlots: ToolEntry = {
       const eventCalendars = allCalendars.slice(0, 30);
       const truncatedCalendars = allCalendars.length > 30;
 
+      // Fix CRIT-2 + CRIT-5 (audit 2026-05-05): distingue:
+      //  - eventsFailed: erro transient (5xx/network/timeout) — calendar
+      //    EXISTE mas falha temporária. Bot deve avisar parcial.
+      //  - eventsMissingField: 200 OK mas payload sem campo `events`
+      //    (silent corruption do GHL — antes contava como sucesso "0 events"
+      //    e bot reportava livre com falsa confiança).
+      //  - eventsNotFound (404): calendar não existe (deletado entre
+      //    /calendars/ e a chamada). Não conta como "failed" pra warning.
       let eventsFailed = 0;
+      let eventsMissingField = 0;
+      let eventsNotFound = 0;
+      type EventCalendarResult = {
+        calendar: typeof eventCalendars[0];
+        events: Array<{
+          id?: string;
+          startTime: string;
+          endTime: string;
+          appointmentStatus?: string;
+          assignedUserId?: string;
+          title?: string;
+        }>;
+        ok: boolean;
+      };
       const [freeSlotsResults, eventsResults] = await Promise.all([
         Promise.all(
           userCalendars.map((c) =>
             ctx.ghlClient
-              .get<Record<string, { slots?: string[] }>>(
-                `/calendars/${c.id}/free-slots`,
+              .get<Record<string, unknown>>(
+                `/calendars/${encodeURIComponent(c.id)}/free-slots`,
                 {
                   startDate: String(startMs),
                   endDate: String(endMs),
                   userId: repUserId,
                 },
               )
-              .then((res) => ({ calendar: c, raw: res, ok: true }))
+              .then((res) => ({
+                calendar: c,
+                raw: res as Record<string, { slots?: string[] }>,
+                ok: true,
+              }))
               .catch(() => ({
                 calendar: c,
                 raw: {} as Record<string, { slots?: string[] }>,
@@ -393,11 +411,12 @@ const listMyFreeSlots: ToolEntry = {
               })),
           ),
         ),
-        Promise.all(
+        Promise.all<EventCalendarResult>(
           eventCalendars.map((c) =>
             ctx.ghlClient
               .get<{
                 events?: Array<{
+                  id?: string;
                   startTime: string;
                   endTime: string;
                   appointmentStatus?: string;
@@ -410,40 +429,77 @@ const listMyFreeSlots: ToolEntry = {
                 startTime: String(startMs),
                 endTime: String(endMs),
               })
-              .then((res) => ({ calendar: c, events: res.events || [] }))
-              .catch(() => {
-                eventsFailed++;
-                return { calendar: c, events: [] };
+              .then((res) => {
+                if (!Array.isArray(res?.events)) {
+                  // 200 OK mas payload sem events array — silent GHL corruption
+                  eventsMissingField++;
+                  return { calendar: c, events: [], ok: false };
+                }
+                return { calendar: c, events: res.events, ok: true };
+              })
+              .catch((err: unknown) => {
+                const msg = err instanceof Error ? err.message : String(err);
+                if (/GHL API 404|not.found/i.test(msg)) {
+                  // Calendar deletado — não conta como falha de availability
+                  eventsNotFound++;
+                } else {
+                  eventsFailed++;
+                }
+                return { calendar: c, events: [], ok: false };
               }),
           ),
         ),
       ]);
 
-      // 1. UNION dos free slots — track per-slot duration + sources
-      type SlotMeta = { duration_min: number; sources: Set<string> };
+      // 1. UNION dos free slots — track per-source duration + sources
+      // Fix HIGH-4 (audit 2026-05-05): antes usava `Math.max` da duration
+      // pra conflict check — calendar A 30min retornando 14h ficava bloqueado
+      // por conflict 14:30 (porque calendar B retornava 60min e conflitava).
+      // Agora track duration POR SOURCE; conflict só remove slot se TODAS as
+      // sources conflitarem (mais permissivo, evita esconder livre legítimo).
+      // Fix LOW-3: slot format defensivo — string corrupta vira [].
+      // Fix LOW-4: validate date-shape antes de tratar key como slots map.
+      // Fix MED-2: slotDuration validation (rejeita 0/null/negative).
+      type SlotMeta = { sources: Map<string, number> }; // calId → durationMin
       const unionByDate: Record<string, Map<string, SlotMeta>> = {};
       const validCalendarNames: string[] = [];
       const userCalendarsResponded = new Set<string>();
+      const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
       for (const r of freeSlotsResults) {
         if (!r.ok) continue;
         userCalendarsResponded.add(r.calendar.id);
         validCalendarNames.push(r.calendar.name || r.calendar.id);
-        const durRaw = r.calendar.slotDuration || 30;
-        const durMin = r.calendar.slotDurationUnit === "hours" ? durRaw * 60 : durRaw;
+        const rawDur =
+          typeof r.calendar.slotDuration === "number" &&
+          r.calendar.slotDuration > 0
+            ? r.calendar.slotDuration
+            : 30;
+        const durMin =
+          r.calendar.slotDurationUnit === "hours" ? rawDur * 60 : rawDur;
         for (const [key, value] of Object.entries(r.raw)) {
-          if (key === "traceId" || !value) continue;
-          const slots = Array.isArray(value) ? (value as unknown as string[]) : value.slots || [];
+          if (!value || !DATE_KEY.test(key)) continue;
+          let slots: string[] = [];
+          if (Array.isArray(value)) {
+            slots = (value as unknown[]).filter(
+              (s): s is string => typeof s === "string",
+            );
+          } else if (
+            typeof value === "object" &&
+            Array.isArray((value as { slots?: unknown }).slots)
+          ) {
+            slots = ((value as { slots: unknown[] }).slots).filter(
+              (s): s is string => typeof s === "string",
+            );
+          }
           if (slots.length === 0) continue;
           if (!unionByDate[key]) unionByDate[key] = new Map();
           for (const s of slots) {
             const existing = unionByDate[key].get(s);
             if (existing) {
-              existing.sources.add(r.calendar.id);
-              existing.duration_min = Math.max(existing.duration_min, durMin);
+              existing.sources.set(r.calendar.id, durMin);
             } else {
               unionByDate[key].set(s, {
-                duration_min: durMin,
-                sources: new Set([r.calendar.id]),
+                sources: new Map([[r.calendar.id, durMin]]),
               });
             }
           }
@@ -451,18 +507,39 @@ const listMyFreeSlots: ToolEntry = {
       }
 
       // 2. Coleta events onde rep é assignedUser (cross-calendar coverage)
+      // Fix MED-5 (audit 2026-05-05): inverter pra positive list — evita
+      // API drift quando GHL adicionar status novo (ex: "tentative") que
+      // bot deveria respeitar como conflict mas exclude-list não conhecia.
+      // Status confiáveis que CONTAM como conflict (resto = ignora).
+      // Fix MED-4: rejeita event com endTime <= startTime (data corrupta
+      // virava conflict universal — slotStart < hugeEnd && slotEnd > smallStart
+      // sempre true → bot escondia o dia todo).
+      // Fix MED-3: dedup por event.id (mesmo event aparecia 2x se rep é
+      // assignee em 2 calendars colaborativos — conflicts_found inflado).
+      const COUNTS_AS_CONFLICT = new Set([
+        "scheduled", "confirmed", "showed", "rescheduled", "checked-in",
+        "checked_in", "new", "open",
+      ]);
+      const seenEventIds = new Set<string>();
       const conflicts: Array<{ start: number; end: number; title?: string }> = [];
       for (const r of eventsResults) {
         for (const event of r.events) {
           if (event.assignedUserId !== repUserId) continue;
           const status = (event.appointmentStatus || "scheduled").toLowerCase();
-          if (
-            status === "cancelled" || status === "noshow" ||
-            status === "no-show" || status === "invalid"
-          ) continue;
+          if (!COUNTS_AS_CONFLICT.has(status)) continue;
           const eStart = new Date(event.startTime).getTime();
           const eEnd = new Date(event.endTime).getTime();
           if (isNaN(eStart) || isNaN(eEnd)) continue;
+          if (eEnd <= eStart) {
+            console.warn(
+              `[list_my_free_slots] Event ${event.id || "?"} tem endTime<=startTime (start=${event.startTime}, end=${event.endTime}) — ignorado.`,
+            );
+            continue;
+          }
+          if (event.id) {
+            if (seenEventIds.has(event.id)) continue;
+            seenEventIds.add(event.id);
+          }
           conflicts.push({ start: eStart, end: eEnd, title: event.title });
         }
       }
@@ -480,11 +557,19 @@ const listMyFreeSlots: ToolEntry = {
       for (const r of freeSlotsResults) {
         if (!r.ok) continue;
         const hasAnySlots = Object.entries(r.raw).some(([key, value]) => {
-          if (key === "traceId" || !value) return false;
-          const slots = Array.isArray(value)
-            ? (value as unknown as string[])
-            : value.slots || [];
-          return slots.length > 0;
+          if (!value || !DATE_KEY.test(key)) return false;
+          if (Array.isArray(value)) {
+            return (value as unknown[]).some((s) => typeof s === "string");
+          }
+          if (
+            typeof value === "object" &&
+            Array.isArray((value as { slots?: unknown }).slots)
+          ) {
+            return ((value as { slots: unknown[] }).slots).some(
+              (s) => typeof s === "string",
+            );
+          }
+          return false;
         });
         if (!hasAnySlots) silentCalendars.add(r.calendar.id);
       }
@@ -540,7 +625,20 @@ const listMyFreeSlots: ToolEntry = {
           for (const range of block.hours) {
             const openMin = range.openHour * 60 + range.openMinute;
             const closeMin = range.closeHour * 60 + range.closeMinute;
-            if (slotMinOfDay >= openMin && slotMinOfDay < closeMin) return true;
+            // Fix MED-1 (audit 2026-05-05): suporta overnight ranges
+            // (ex: call center 22:00 → 02:00). closeMin <= openMin =
+            // overnight: aberto de openMin até fim do dia OU início do
+            // dia até closeMin. Sem isso, calendars noturnos eram tratados
+            // como NUNCA abertos → INTERSECT escondia tudo.
+            if (closeMin <= openMin) {
+              if (slotMinOfDay >= openMin || slotMinOfDay < closeMin) {
+                return true;
+              }
+            } else {
+              if (slotMinOfDay >= openMin && slotMinOfDay < closeMin) {
+                return true;
+              }
+            }
           }
         }
         return false;
@@ -557,12 +655,21 @@ const listMyFreeSlots: ToolEntry = {
         const ok: string[] = [];
         for (const [slotIso, meta] of sorted) {
           const slotStart = new Date(slotIso).getTime();
-          const slotEnd = slotStart + meta.duration_min * 60_000;
+          if (isNaN(slotStart)) continue;
 
-          const hasConflict = conflicts.some(
-            (c) => slotStart < c.end && slotEnd > c.start,
-          );
-          if (hasConflict) {
+          // Fix HIGH-4: per-source conflict check. Slot só é removido
+          // se TODAS as durations diferentes conflitam. Calendar A 30min
+          // pode ter slot 14:00-14:30 livre mesmo se calendar B 60min
+          // (14:00-15:00) conflita com event 14:30. Min duration mais
+          // permissiva, evita esconder livre legítimo.
+          const sourcesArr = Array.from(meta.sources.entries()); // [calId, dur]
+          const allSourcesConflict = sourcesArr.every(([, durMin]) => {
+            const slotEnd = slotStart + durMin * 60_000;
+            return conflicts.some(
+              (c) => slotStart < c.end && slotEnd > c.start,
+            );
+          });
+          if (allSourcesConflict) {
             removedConflict++;
             continue;
           }
@@ -583,8 +690,13 @@ const listMyFreeSlots: ToolEntry = {
                 !silentCalendars.has(c.id) &&
                 calendarHasOpenHoursAt(c, slotStart, repTimezone),
             );
-            const calsReturning = meta.sources.size;
-            const missingCount = calsWithBH.length - calsReturning;
+            // Fix MED-9: count only sources that estão tb em calsWithBH
+            // (silent calendar como source não conta no baseline).
+            const calsWithBHIds = new Set(calsWithBH.map((c) => c.id));
+            const calsReturningWithBH = sourcesArr.filter(([id]) =>
+              calsWithBHIds.has(id),
+            ).length;
+            const missingCount = calsWithBH.length - calsReturningWithBH;
             const missingRatio =
               calsWithBH.length > 0 ? missingCount / calsWithBH.length : 0;
             if (
@@ -597,7 +709,7 @@ const listMyFreeSlots: ToolEntry = {
               removedSuspectBlock++;
               if (suspectBlockExamples.length < 3) {
                 suspectBlockExamples.push(
-                  `${slotIso} (esperado em ${calsWithBH.length}, retornou em ${calsReturning}; missing: ${missing.slice(0, 2).join(", ")})`,
+                  `${slotIso} (esperado em ${calsWithBH.length}, retornou em ${calsReturningWithBH}; missing: ${missing.slice(0, 2).join(", ")})`,
                 );
               }
               continue;
@@ -614,16 +726,21 @@ const listMyFreeSlots: ToolEntry = {
         0,
       );
 
-      // Fix MEDIUM bug 2026-05-05 (validation re-review): se TODOS os
-      // event calendars falharam, status:ok era enganoso — bot apresentava
-      // slots como livres sem ter conseguido detectar conflicts. Agora
-      // status muda pra "degraded" e warning fica crítico (LLM tem que
-      // confirmar com rep antes de marcar).
-      const allEventsFailed =
-        eventCalendars.length > 0 && eventsFailed === eventCalendars.length;
+      // Fix MEDIUM bug 2026-05-05 (validation re-review) + CRIT-2 (audit):
+      // se TODOS os event calendars falharam OU retornaram payload corrompido,
+      // status:ok era enganoso — bot apresentava slots como livres sem ter
+      // conseguido detectar conflicts. Agora status muda pra "degraded" e
+      // warning fica crítico (LLM tem que confirmar com rep antes de marcar).
+      // Inclui missing field (silent GHL corruption — 200 OK sem events array).
+      // 404s (calendar deletado) NÃO contam como degradation.
+      const eventsBadResults = eventsFailed + eventsMissingField;
+      const allEventsBad =
+        eventCalendars.length > 0 &&
+        eventsBadResults > 0 &&
+        eventsBadResults + eventsNotFound === eventCalendars.length;
 
       return {
-        status: allEventsFailed ? "degraded" : "ok",
+        status: allEventsBad ? "degraded" : "ok",
         data: {
           slots_by_date: filteredByDate,
           total_slots: totalSlots,
@@ -633,11 +750,13 @@ const listMyFreeSlots: ToolEntry = {
           slots_removed_conflicts: removedConflict,
           slots_removed_suspect_block: removedSuspectBlock,
           suspect_block_examples: suspectBlockExamples,
-          partial: eventsFailed > 0 || truncatedCalendars,
+          partial: eventsBadResults > 0 || truncatedCalendars,
           partial_calendars_failed: eventsFailed,
+          partial_calendars_missing_field: eventsMissingField,
+          partial_calendars_not_found: eventsNotFound,
           partial_total_event_calendars: eventCalendars.length,
           truncated_calendars: truncatedCalendars,
-          all_events_failed: allEventsFailed,
+          all_events_failed: allEventsBad,
           silent_calendars: Array.from(silentCalendars).map(
             (id) =>
               userCalendars.find((c) => c.id === id)?.name || id,
@@ -651,10 +770,10 @@ const listMyFreeSlots: ToolEntry = {
             "USER-CENTRIC: UNION /free-slots dos rep's calendars (com userId p/ round-robin) MENOS events cross-calendar onde assignedUserId=rep. INTERSECT-conservador remove slots suspeitos de Google block (slot ausente de calendar com business hours coverage).",
           warning_google_calendar:
             "Best-effort detection de Google Calendar blocks via INTERSECT. Pode escapar se rep tem agenda Google pessoal NÃO integrada — confirma no Spark Leads UI antes de marcar.",
-          warning_partial: allEventsFailed
-            ? `⚠️ CRÍTICO: TODOS os ${eventCalendars.length} calendars falharam ao retornar events — NÃO consegui detectar conflicts cross-calendar nem appointments existentes. Trate slots como POSSIVELMENTE livres apenas, e CONFIRME com rep + Spark Leads UI ANTES de marcar.`
-            : eventsFailed > 0
-              ? `${eventsFailed} de ${eventCalendars.length} calendars falharam ao retornar events — alguns conflicts podem ter sido perdidos. Confirma com rep antes de marcar slot crítico.`
+          warning_partial: allEventsBad
+            ? `⚠️ CRÍTICO: TODOS os ${eventCalendars.length} calendars falharam (failed=${eventsFailed}, missing_field=${eventsMissingField}, not_found=${eventsNotFound}) — NÃO consegui detectar conflicts cross-calendar nem appointments existentes. Trate slots como POSSIVELMENTE livres apenas, e CONFIRME com rep + Spark Leads UI ANTES de marcar.`
+            : eventsBadResults > 0
+              ? `${eventsBadResults} de ${eventCalendars.length} calendars falharam ao retornar events (failed=${eventsFailed}, missing_field=${eventsMissingField}) — alguns conflicts podem ter sido perdidos. Confirma com rep antes de marcar slot crítico.`
               : null,
         },
       };
@@ -690,7 +809,7 @@ const getAppointment: ToolEntry = {
           address?: string; meetingLocationType?: string;
           notes?: string; createdAt?: string; updatedAt?: string;
         };
-      }>(`/calendars/events/appointments/${appointmentId}`);
+      }>(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`);
       if (!res.appointment) return { status: "not_found", message: "Appointment não encontrado" };
       const a = res.appointment;
       return {
@@ -801,7 +920,7 @@ const createAppointment: ToolEntry = {
             calendar?: {
               teamMembers?: Array<{ userId?: string; isPrimary?: boolean }>;
             };
-          }>(`/calendars/${calendarId}`);
+          }>(`/calendars/${encodeURIComponent(calendarId)}`);
           const others = (calRes.calendar?.teamMembers || [])
             .map((tm) => tm.userId)
             .filter((id): id is string => !!id && id !== String(args.assigned_user_id));
@@ -960,7 +1079,7 @@ const updateAppointment: ToolEntry = {
     }
 
     try {
-      await ctx.ghlClient.put(`/calendars/events/appointments/${appointmentId}`, body);
+      await ctx.ghlClient.put(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`, body);
       return { status: "ok", data: { appointment_id: appointmentId, updated: Object.keys(body) } };
     } catch (err) {
       return ghlErrorToResult(err, "atualização de appointment");
@@ -985,7 +1104,7 @@ const deleteAppointment: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      await ctx.ghlClient.delete(`/calendars/events/appointments/${appointmentId}`);
+      await ctx.ghlClient.delete(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`);
       return { status: "ok", data: { deleted: appointmentId } };
     } catch (err) {
       return ghlErrorToResult(err, "deleção de appointment");
