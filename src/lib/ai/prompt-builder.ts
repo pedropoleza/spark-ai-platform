@@ -896,12 +896,18 @@ export function buildResponseJsonSchema(ctx: PromptContext) {
               {
                 type: "object",
                 additionalProperties: false,
-                required: ["type", "calendar_id", "start_time"],
+                // Fix bug observado em prod 2026-05-05: OpenAI strict mode
+                // exige que `required` inclua TODAS as keys de `properties`.
+                // Antes title era opcional mas listado em properties → 400
+                // "Invalid schema for response_format ... Missing 'title'".
+                // Agora title é obrigatório mas nullable — LLM passa null se
+                // não quiser título customizado.
+                required: ["type", "calendar_id", "start_time", "title"],
                 properties: {
                   type: { type: "string", enum: ["book_appointment"] },
                   calendar_id: { type: "string" },
                   start_time: { type: "string", description: "ISO 8601 com offset" },
-                  title: { type: "string" },
+                  title: { type: ["string", "null"] },
                 },
               },
               {
