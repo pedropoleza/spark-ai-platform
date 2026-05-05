@@ -203,14 +203,27 @@ const getFreeSlots: ToolEntry = {
  * Antes usava setHours() que opera em UTC (timezone do servidor Vercel).
  * Pra rep em EDT (UTC-4), "today" via UTC perdia 4h de cada lado.
  * Agora usa Intl.DateTimeFormat pra obter boundaries certos.
+ *
+ * Fix HIGH bug 2026-05-05 (validation re-review): tz inválido (ex: rep
+ * passa "BRT" em vez de "America/Sao_Paulo") causava RangeError. Agora
+ * valida com try/catch e usa fallback "America/New_York" (default da
+ * Brazillionaires US-based).
  */
 function computeWindowInTz(
   when: string,
   timezone: string,
-): { startMs: number; endMs: number } {
+): { startMs: number; endMs: number; tzUsed: string } {
+  // Valida tz — Intl.DateTimeFormat lança RangeError pra tz inválido
+  let tzUsed = timezone;
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: tzUsed });
+  } catch {
+    tzUsed = "America/New_York";
+  }
+
   // Pega "today" no timezone do rep
   const fmt = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
+    timeZone: tzUsed,
     year: "numeric", month: "2-digit", day: "2-digit",
   });
   const todayStr = fmt.format(new Date()); // "2026-05-05"
@@ -222,7 +235,7 @@ function computeWindowInTz(
     // Calcula offset do rep tz pra esse dia
     const sample = new Date(utcMidnight);
     const tzFmt = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
+      timeZone: tzUsed,
       hour12: false,
       year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit",
@@ -261,7 +274,7 @@ function computeWindowInTz(
 
   const startMs = startOfDayInTz(startStr);
   const endMs = startOfDayInTz(endStr) - 1; // último ms do dia anterior
-  return { startMs, endMs };
+  return { startMs, endMs, tzUsed };
 }
 
 const listMyFreeSlots: ToolEntry = {
@@ -296,8 +309,15 @@ const listMyFreeSlots: ToolEntry = {
     // Antes setHours operava em UTC do servidor Vercel — pra rep em EDT,
     // window cobria parte do dia errado (perdia late-night EDT, incluía
     // night anterior). Agora calcula boundaries no timezone do rep.
-    const repTimezone = ctx.rep.timezone || "America/New_York";
-    const { startMs, endMs } = computeWindowInTz(when, repTimezone);
+    //
+    // computeWindowInTz valida tz e retorna `tzUsed` (fallback NY se inválido).
+    // Usar tzUsed downstream pra evitar passar tz inválido pra
+    // calendarHasOpenHoursAt e pro warning do payload.
+    const repTimezoneRaw = ctx.rep.timezone || "America/New_York";
+    const { startMs, endMs, tzUsed: repTimezone } = computeWindowInTz(
+      when,
+      repTimezoneRaw,
+    );
 
     try {
       // Lista TODOS os calendars da location — necessário pra cross-calendar
@@ -435,15 +455,48 @@ const listMyFreeSlots: ToolEntry = {
       // INTERSECT-conservador (B4/I2 best-effort): se slot tá em business
       // hours de N calendars do rep mas só K < N retornaram, K-N escondeu
       // — provável Google Calendar block escapando.
+      //
+      // Fix CRITICAL bug 2026-05-05 (validation re-review): antes usava
+      // getUTC* mas openHours/daysOfTheWeek estão em LOCAL time do calendar.
+      // Pra rep em EDT (UTC-4), slot 14:00 EDT = 18:00 UTC. Lendo getUTCHours
+      // a função comparava 18 com close=18 → fora do BH → INTERSECT-conservador
+      // virava no-op. Agora usa Intl.DateTimeFormat com tz pra extrair local
+      // weekday/hour/minute corretos.
       function calendarHasOpenHoursAt(
         cal: typeof userCalendars[0],
         slotMs: number,
+        tz: string,
       ): boolean {
         if (!cal.openHours || cal.openHours.length === 0) return true;
-        const d = new Date(slotMs);
-        const wd = d.getUTCDay();
-        const hh = d.getUTCHours();
-        const mm = d.getUTCMinutes();
+        // Extrai weekday/hour/minute no TIMEZONE do rep (não em UTC).
+        // Assumimos calendar opera no mesmo tz da location/rep — case típico
+        // (Brazillionaires reps em EDT/CDT/PDT, calendars criados na location).
+        let wd: number, hh: number, mm: number;
+        try {
+          const fmt = new Intl.DateTimeFormat("en-US", {
+            timeZone: tz,
+            hour12: false,
+            weekday: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          const parts = fmt.formatToParts(new Date(slotMs));
+          const get = (t: string) =>
+            parts.find((p) => p.type === t)?.value || "";
+          const wdMap: Record<string, number> = {
+            Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+          };
+          wd = wdMap[get("weekday")] ?? -1;
+          hh = parseInt(get("hour"), 10);
+          mm = parseInt(get("minute"), 10);
+          // "24" pode aparecer pra meia-noite no en-US hour12:false — normaliza
+          if (hh === 24) hh = 0;
+        } catch {
+          // Fail-safe: tz inválido, assume aberto pra não bloquear false-positive
+          return true;
+        }
+        if (wd < 0 || isNaN(hh) || isNaN(mm)) return true;
+
         const slotMinOfDay = hh * 60 + mm;
         for (const block of cal.openHours) {
           if (!block.daysOfTheWeek.includes(wd)) continue;
@@ -482,7 +535,7 @@ const listMyFreeSlots: ToolEntry = {
             const calsWithBH = userCalendars.filter(
               (c) =>
                 userCalendarsResponded.has(c.id) &&
-                calendarHasOpenHoursAt(c, slotStart),
+                calendarHasOpenHoursAt(c, slotStart, repTimezone),
             );
             const calsReturning = meta.sources.size;
             if (
@@ -512,8 +565,16 @@ const listMyFreeSlots: ToolEntry = {
         0,
       );
 
+      // Fix MEDIUM bug 2026-05-05 (validation re-review): se TODOS os
+      // event calendars falharam, status:ok era enganoso — bot apresentava
+      // slots como livres sem ter conseguido detectar conflicts. Agora
+      // status muda pra "degraded" e warning fica crítico (LLM tem que
+      // confirmar com rep antes de marcar).
+      const allEventsFailed =
+        eventCalendars.length > 0 && eventsFailed === eventCalendars.length;
+
       return {
-        status: "ok",
+        status: allEventsFailed ? "degraded" : "ok",
         data: {
           slots_by_date: filteredByDate,
           total_slots: totalSlots,
@@ -525,7 +586,9 @@ const listMyFreeSlots: ToolEntry = {
           suspect_block_examples: suspectBlockExamples,
           partial: eventsFailed > 0 || truncatedCalendars,
           partial_calendars_failed: eventsFailed,
+          partial_total_event_calendars: eventCalendars.length,
           truncated_calendars: truncatedCalendars,
+          all_events_failed: allEventsFailed,
           window: {
             start: new Date(startMs).toISOString(),
             end: new Date(endMs).toISOString(),
@@ -534,10 +597,11 @@ const listMyFreeSlots: ToolEntry = {
           source:
             "USER-CENTRIC: UNION /free-slots dos rep's calendars (com userId p/ round-robin) MENOS events cross-calendar onde assignedUserId=rep. INTERSECT-conservador remove slots suspeitos de Google block (slot ausente de calendar com business hours coverage).",
           warning_google_calendar:
-            "Best-effort detection de Google Calendar blocks via INTERSECT. Pode escapar se rep tem agenda Google pessoal NÃO integrada — confirma no GHL UI antes de marcar.",
-          warning_partial:
-            eventsFailed > 0
-              ? `${eventsFailed} calendars falharam ao retornar events — alguns conflicts podem ter sido perdidos.`
+            "Best-effort detection de Google Calendar blocks via INTERSECT. Pode escapar se rep tem agenda Google pessoal NÃO integrada — confirma no Spark Leads UI antes de marcar.",
+          warning_partial: allEventsFailed
+            ? `⚠️ CRÍTICO: TODOS os ${eventCalendars.length} calendars falharam ao retornar events — NÃO consegui detectar conflicts cross-calendar nem appointments existentes. Trate slots como POSSIVELMENTE livres apenas, e CONFIRME com rep + Spark Leads UI ANTES de marcar.`
+            : eventsFailed > 0
+              ? `${eventsFailed} de ${eventCalendars.length} calendars falharam ao retornar events — alguns conflicts podem ter sido perdidos. Confirma com rep antes de marcar slot crítico.`
               : null,
         },
       };

@@ -191,7 +191,15 @@ export type ToolResult =
       candidates: Array<{ id: string; label: string; metadata?: Record<string, unknown> }>;
     }
   | { status: "not_found"; message: string }
-  | { status: "error"; message: string; retryable: boolean };
+  | { status: "error"; message: string; retryable: boolean }
+  /**
+   * Status "degraded" (review 2026-05-05): tool executou parcialmente mas
+   * faltou info crítica (ex: list_my_free_slots conseguiu /free-slots mas
+   * TODOS os event lookups falharam — não pôde detectar conflicts). LLM
+   * deve usar com cautela e sempre confirmar com rep antes de ação
+   * irreversível baseada nesses dados.
+   */
+  | { status: "degraded"; data: unknown; degradation_reason?: string };
 
 /** Config do Account Assistant (extensão da AgentConfig). */
 export interface AssistantWhitelistEntry {
