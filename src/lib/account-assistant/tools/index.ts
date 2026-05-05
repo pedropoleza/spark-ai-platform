@@ -8,6 +8,7 @@
 import type { ToolDefinition } from "@/types/account-assistant";
 import type { ToolResult } from "@/types/account-assistant";
 import type { ToolContext, ToolEntry } from "./types";
+import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 import { CONTACTS_TOOLS } from "./contacts";
 import { NOTES_TOOLS } from "./notes";
 import { TASKS_TOOLS } from "./tasks";
@@ -195,7 +196,40 @@ export async function executeTool(
     confirmed_by_rep?: boolean;
   };
   void _confirmed;
-  return entry.handler(ctx, handlerArgs);
+  const result = await entry.handler(ctx, handlerArgs);
+
+  // Auto-registra erros não-retryable como signals pro painel admin
+  // (Pedro 2026-05-04). Filtros pra não poluir:
+  //  - Só status='error'
+  //  - Não-retryable (pra rate limit/5xx, signal não tem valor)
+  //  - Mensagem é a chave de clustering — erros idênticos viram 1 row.
+  // Tools 'safe' read-only que falham por validação (ex: search sem hit)
+  // não viram signal — só erros que indicam algo PROBLEMÁTICO.
+  if (
+    result.status === "error" &&
+    result.retryable !== true &&
+    !result.message?.includes("não encontrado") &&
+    !result.message?.includes("not found") &&
+    !result.message?.includes("Nenhum") &&
+    !/inválid/i.test(result.message || "")
+  ) {
+    recordSignalAsync({
+      type: "error",
+      title: `${name}: ${(result.message || "").slice(0, 100)}`,
+      description: result.message || undefined,
+      severity: entry.def.risk === "high" ? "high" : "medium",
+      source: "bot_auto",
+      metadata: {
+        tool: name,
+        risk: entry.def.risk,
+        rep_id: ctx.rep.id,
+        location_id: ctx.locationId,
+        args_preview: JSON.stringify(handlerArgs).slice(0, 300),
+      },
+    });
+  }
+
+  return result;
 }
 
 /** Frase humana pra prompt de confirmação. Best-effort. */

@@ -15,6 +15,7 @@
 
 import type { ToolEntry } from "./types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 
 /**
  * Valida IANA timezone usando Intl.DateTimeFormat. Inválido (typo, vazio,
@@ -273,8 +274,64 @@ const switchActiveLocation: ToolEntry = {
   },
 };
 
+// =====================================================================
+// Tool: report_missed_capability
+// =====================================================================
+const reportMissedCapability: ToolEntry = {
+  def: {
+    name: "report_missed_capability",
+    description:
+      "Registra que o rep pediu algo que você NÃO consegue fazer hoje (feature ausente, integração faltando, regra de negócio bloqueando). Pedro recebe esse log no painel admin e prioriza implementação por contagem de pedidos repetidos.\n\nCHAME ANTES de responder ao rep dizendo 'não tenho essa funcionalidade', 'não consigo fazer X', 'isso não é possível ainda'. Não chame se a tool falhou por bug ou erro técnico (essa parte é registrada automaticamente). Só pra GAPS DE CAPACIDADE — coisas que precisam ser BUILT.\n\nExemplos de quando chamar:\n- Rep pede integração com outro CRM (Pipedrive, HubSpot)\n- Rep pede analytics que não temos (relatório customizado)\n- Rep pede ação que requer feature nova (ex: agendamento recorrente complexo, multi-language detection)\n- Rep pede automação que tools atuais não cobrem\n\nNÃO chame:\n- Pra erro técnico (helper já registra automático)\n- Pra coisa que VOCÊ pode fazer mas escolheu não fazer (ex: 'vou fazer mais tarde')\n- Pra dúvida que pode ser respondida com query_carrier_knowledge",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        what_rep_wanted: {
+          type: "string",
+          description:
+            "RESUMO em 1 linha do que o rep pediu (max ~80 chars). Use formato sintético tipo 'integração com Pipedrive', 'relatório semanal por email', 'agendamento recorrente customizado'. NÃO transcreva a frase do rep — sintetize a CAPACIDADE faltante.",
+        },
+        why_failed: {
+          type: "string",
+          description:
+            "Por que não dá pra fazer hoje (1-2 frases). Ex: 'GHL não expõe endpoint pra isso', 'tool create_X não existe no catálogo', 'feature precisa de OAuth com plataforma X'.",
+        },
+      },
+      required: ["what_rep_wanted", "why_failed"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const what = String(args.what_rep_wanted || "").trim();
+    const why = String(args.why_failed || "").trim();
+    if (!what) {
+      return { status: "error", message: "what_rep_wanted obrigatório", retryable: false };
+    }
+    recordSignalAsync({
+      type: "missed_capability",
+      title: what,
+      description: why,
+      severity: "medium",
+      source: "bot_auto",
+      metadata: {
+        rep_id: ctx.rep.id,
+        rep_phone: ctx.rep.phone,
+        location_id: ctx.locationId,
+        why_failed: why,
+      },
+    });
+    return {
+      status: "ok",
+      data: {
+        registered: true,
+        message: "Pedido registrado pro Pedro priorizar.",
+      },
+    };
+  },
+};
+
 export const IDENTITY_TOOLS: ToolEntry[] = [
   confirmRepTimezone,
   listMyLocations,
   switchActiveLocation,
+  reportMissedCapability,
 ];
