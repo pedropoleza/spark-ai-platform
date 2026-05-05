@@ -119,5 +119,71 @@ export async function GET(request: NextRequest) {
     out.events_error = err instanceof Error ? err.message : String(err);
   }
 
+  // 5. Endpoint alternativo: /calendars/events/appointments (filter contactId? no)
+  // 6. /calendars/events com groupId (categoria de calendars)
+  // Try `/calendars/events?groupId=xxx`
+  // 7. Events ALL — sem filtros
+  try {
+    const eventsAll = await ghl.get<Record<string, unknown>>("/calendars/events", {
+      locationId,
+      startTime: String(startMs),
+      endTime: String(endMs),
+    });
+    out.events_no_filter = eventsAll;
+  } catch (err) {
+    out.events_no_filter_error = err instanceof Error ? err.message : String(err);
+  }
+
+  // 8. /calendars/groups (talvez calendars sejam organizados por groupId)
+  try {
+    const groupsRes = await ghl.get<Record<string, unknown>>("/calendars/groups", { locationId });
+    out.groups_raw = groupsRes;
+  } catch (err) {
+    out.groups_error = err instanceof Error ? err.message : String(err);
+  }
+
+  // 9. Try /calendars/events com userIds (plural)
+  if (userId) {
+    try {
+      const eventsByUsers = await ghl.get<Record<string, unknown>>("/calendars/events", {
+        locationId,
+        startTime: String(startMs),
+        endTime: String(endMs),
+        userIds: userId,
+      });
+      out.events_by_userids = eventsByUsers;
+    } catch (err) {
+      out.events_by_userids_error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  // 10. Iterar TODOS os calendars do user e ver se alguém retorna events
+  if (userId) {
+    const calendarsArray = (out.calendars as Array<{ id: string; name: string; team_members: string[] }>) || [];
+    const userCalendars = calendarsArray.filter((c) => c.team_members.includes(userId));
+    const eventsPerCalendar: Record<string, { count: number; sample: unknown[] }> = {};
+    for (const cal of userCalendars) {
+      try {
+        const r = await ghl.get<{ events?: unknown[] }>("/calendars/events", {
+          locationId,
+          startTime: String(startMs),
+          endTime: String(endMs),
+          calendarId: cal.id,
+        });
+        const events = r.events || [];
+        eventsPerCalendar[cal.name] = {
+          count: events.length,
+          sample: events.slice(0, 3),
+        };
+      } catch (err) {
+        eventsPerCalendar[cal.name] = {
+          count: -1,
+          sample: [`error: ${err instanceof Error ? err.message : String(err)}`],
+        };
+      }
+    }
+    out.events_per_calendar = eventsPerCalendar;
+  }
+
   return NextResponse.json({ ok: true, ...out });
 }
