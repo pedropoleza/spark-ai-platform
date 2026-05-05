@@ -103,27 +103,95 @@ export function getRepGhlUserId(ctx: ToolContext): string | undefined {
  * Wrap padrão pra tools que falham na chamada Spark Leads (GHL API): converte
  * Error em ToolResult de erro com mensagem útil pro LLM corrigir.
  *
- * Fix HIGH stress test 2026-05-03: antes expunhamos `err.message` cru, que
- * pode incluir detalhes do response (URLs internas, IDs, info de outro
- * tenant). Agora detecta padrões comuns (404/403/422) e devolve mensagem
- * resumida. Full message vai pra logs (Vercel) onde só admins acessam.
+ * Histórico de evolução:
+ * - Stress test 2026-05-03: antes expunhamos err.message CRU, vazando URLs
+ *   internas + IDs de outros tenants. Mascaramos pra "Spark Leads rejeitou X".
+ * - Pedro 2026-05-04 (fix duplicate contact): extrai meta.contactId do
+ *   400 pra LLM oferecer update_contact em vez de criar.
+ * - Pedro 2026-05-04 (Marcela slot): mascarar tudo era ruim — LLM não
+ *   sabe se é look-busy, slot ocupado, validação, permissão. Agora
+ *   EXTRAI o `message` do JSON do GHL e expõe SANITIZADO (sem URLs,
+ *   traceIds, IDs internos) pro LLM. LLM pode reagir inteligentemente
+ *   ("slot indisponível? oferece outro horário"; "validation? ajusta o
+ *   campo"; etc). Mensagem real do GHL é o single source of truth.
  *
- * Pedro 2026-05-04: também detecta "duplicated contacts" (caso comum quando
- * rep tenta criar contato com phone/email que já existe em outra location)
- * — extrai contactId existente do response body pra LLM oferecer atualizar.
- * Plus: mensagens user-facing usam "Spark Leads", não "GHL".
+ * Sanitização: remove URLs, traceIds, GHL location/company IDs (pra não
+ * vazar info inter-tenant). Mantém status code + message + relevant meta.
  */
+
+/**
+ * Limpa mensagem do GHL antes de expor pro LLM. Remove campos sensíveis
+ * mas mantém info útil pro LLM tomar decisão.
+ */
+function sanitizeGhlMessage(rawMsg: string): string {
+  return rawMsg
+    // URLs (http/https)
+    .replace(/https?:\/\/[^\s,)"]+/g, "[url]")
+    // traceId, sessionId, requestId
+    .replace(/"(traceId|sessionId|requestId|x-request-id)"\s*:\s*"[^"]+"/gi, '"$1":"[redacted]"')
+    // locationId, companyId, accountId (info inter-tenant)
+    .replace(/"(locationId|companyId|accountId|tenantId)"\s*:\s*"[^"]+"/gi, '"$1":"[redacted]"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extrai status code + mensagem semântica do erro thrown por GHLClient.
+ * Formato típico: `GHL API 400: {"message":"X","statusCode":400,"meta":{...},"traceId":"..."}`
+ *
+ * Returns { statusCode, message, meta } onde meta tem `contactId`/`contactName`/`field`
+ * etc preservados (sanitização já foi aplicada).
+ */
+function extractGhlError(fullMsg: string): {
+  statusCode: number | null;
+  message: string | null;
+  meta: Record<string, unknown> | null;
+} {
+  const codeMatch = fullMsg.match(/GHL API (\d{3}):/);
+  const statusCode = codeMatch ? parseInt(codeMatch[1]) : null;
+
+  const jsonMatch = fullMsg.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return { statusCode, message: null, meta: null };
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      message?: string | string[];
+      meta?: Record<string, unknown>;
+    };
+    let msg: string | null = null;
+    if (typeof parsed.message === "string") msg = parsed.message;
+    else if (Array.isArray(parsed.message)) msg = parsed.message.join("; ");
+    return {
+      statusCode,
+      message: msg,
+      meta: parsed.meta ?? null,
+    };
+  } catch {
+    return { statusCode, message: null, meta: null };
+  }
+}
+
 export function ghlErrorToResult(err: unknown, action: string): ToolResult {
   const fullMsg = err instanceof Error ? err.message : "Erro desconhecido";
   console.warn(`[ghl] ${action} falhou:`, fullMsg);
 
-  // Caso especial: duplicate contacts (400 com meta.contactId no body).
-  // Extrai contactId existente pra LLM oferecer update em vez de create.
-  if (/duplicated\s+contacts/i.test(fullMsg) || /duplicate\s+key/i.test(fullMsg)) {
-    const match = fullMsg.match(/"contactId"\s*:\s*"([A-Za-z0-9]{18,})"/);
-    const existingId = match ? match[1] : null;
-    const nameMatch = fullMsg.match(/"contactName"\s*:\s*"([^"]+)"/);
-    const existingName = nameMatch ? nameMatch[1] : null;
+  const { statusCode, message: ghlMsg, meta } = extractGhlError(fullMsg);
+
+  // Caso especial mantido: duplicate contacts (400 com meta.contactId).
+  // Extrai contactId pra LLM oferecer update_contact em vez de create.
+  if (
+    /duplicated\s+contacts/i.test(fullMsg) ||
+    /duplicate\s+key/i.test(fullMsg) ||
+    (meta?.contactId && /duplicat/i.test(ghlMsg || ""))
+  ) {
+    const existingId =
+      (meta?.contactId as string) ||
+      fullMsg.match(/"contactId"\s*:\s*"([A-Za-z0-9]{18,})"/)?.[1] ||
+      null;
+    const existingName =
+      (meta?.contactName as string) ||
+      fullMsg.match(/"contactName"\s*:\s*"([^"]+)"/)?.[1] ||
+      null;
     return {
       status: "error",
       message:
@@ -137,24 +205,52 @@ export function ghlErrorToResult(err: unknown, action: string): ToolResult {
     };
   }
 
-  // Mapeia padrões pra mensagens redacted que ainda ajudam LLM
+  // Caminho principal: SE temos mensagem do GHL, expõe sanitizada pro LLM.
+  // Fix Pedro 2026-05-04: antes mascarávamos pra "Spark Leads rejeitou X" —
+  // LLM não tinha como tomar decisão. Agora bot vê "The slot you have
+  // selected is no longer available" e pode oferecer outro horário, ou
+  // "phone is invalid" e pode pedir pro rep corrigir.
+  if (ghlMsg) {
+    const sanitized = sanitizeGhlMessage(ghlMsg);
+    const codeStr = statusCode ? ` (código ${statusCode})` : "";
+    const metaHints: string[] = [];
+    if (meta?.field) metaHints.push(`campo: ${String(meta.field)}`);
+    if (meta?.matchingField) metaHints.push(`campo conflitante: ${String(meta.matchingField)}`);
+    const metaStr = metaHints.length > 0 ? ` [${metaHints.join(", ")}]` : "";
+    return {
+      status: "error",
+      message: `${action} falhou: ${sanitized}${metaStr}${codeStr}`,
+      retryable:
+        statusCode === 429 ||
+        (statusCode !== null && statusCode >= 500 && statusCode < 600),
+    };
+  }
+
+  // Fallback: sem mensagem extraída do JSON, usa mapeamento por status code.
+  // Mantém comportamento legado pros casos onde o erro não veio em JSON
+  // (ex: network errors, timeout, response não-JSON do gateway).
   let safeMsg = `Spark Leads rejeitou ${action}`;
-  if (/\b404\b/.test(fullMsg) || /not\s*found/i.test(fullMsg)) {
+  if (statusCode === 404 || /not\s*found/i.test(fullMsg)) {
     safeMsg = `${action}: recurso não encontrado no Spark Leads (provavelmente ID inválido ou deletado)`;
-  } else if (/\b403\b/.test(fullMsg) || /forbidden/i.test(fullMsg)) {
+  } else if (statusCode === 403 || /forbidden/i.test(fullMsg)) {
     safeMsg = `${action}: permissão negada (token sem escopo necessário ou recurso de outra location)`;
-  } else if (/\b422\b/.test(fullMsg) || /validation/i.test(fullMsg)) {
+  } else if (statusCode === 422 || /validation/i.test(fullMsg)) {
     safeMsg = `${action}: dados inválidos (verifique campos obrigatórios)`;
-  } else if (/\b401\b/.test(fullMsg) || /unauthor/i.test(fullMsg)) {
+  } else if (statusCode === 401 || /unauthor/i.test(fullMsg)) {
     safeMsg = `${action}: token expirado ou inválido (admin recarregar)`;
-  } else if (/\b429\b/.test(fullMsg) || /rate.limit/i.test(fullMsg)) {
+  } else if (statusCode === 429 || /rate.limit/i.test(fullMsg)) {
     safeMsg = `${action}: rate limit do Spark Leads — tente em alguns segundos`;
-  } else if (/\b5\d\d\b/.test(fullMsg) || /server.error/i.test(fullMsg)) {
+  } else if (
+    (statusCode !== null && statusCode >= 500 && statusCode < 600) ||
+    /server.error/i.test(fullMsg)
+  ) {
     safeMsg = `${action}: erro temporário do Spark Leads — tente de novo`;
   }
   return {
     status: "error",
     message: safeMsg,
-    retryable: /\b(429|5\d\d)\b/.test(fullMsg),
+    retryable:
+      statusCode === 429 ||
+      (statusCode !== null && statusCode >= 500 && statusCode < 600),
   };
 }
