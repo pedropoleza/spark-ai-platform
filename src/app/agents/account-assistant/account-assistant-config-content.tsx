@@ -697,7 +697,7 @@ function ProactivityTab({ agentId }: { agentId: string }) {
             className="text-xs mt-1"
           />
           <p className="text-[10px] text-gray-400 mt-1">
-            Se teu user GHL não tiver phone cadastrado, use isso pra a simulação saber qual rep você é.
+            Se teu user Spark Leads não tiver phone cadastrado, use isso pra a simulação saber qual rep você é.
           </p>
         </CardContent>
       </Card>

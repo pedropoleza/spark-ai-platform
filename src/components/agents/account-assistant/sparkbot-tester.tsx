@@ -720,7 +720,7 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Phone do rep (override)</CardTitle>
             <CardDescription>
-              Use se teu user GHL não tem phone cadastrado.
+              Use se teu user Spark Leads não tem phone cadastrado.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -776,7 +776,7 @@ export function SparkbotTester({ agentId }: SparkbotTesterProps) {
           <CardContent className="space-y-2 text-xs text-gray-600">
             <p>Esta aba simula você como rep no WhatsApp.</p>
             <p>A sessão é persistida: o Sparkbot lembra do contexto entre msgs. Refresh não perde nada.</p>
-            <p>Ações que o bot executar <strong>são reais no GHL</strong> (cria nota, task, etc).</p>
+            <p>Ações que o bot executar <strong>são reais no Spark Leads</strong> (cria nota, task, etc).</p>
             <p>Use &ldquo;Nova sessão&rdquo; pra começar do zero.</p>
           </CardContent>
         </Card>

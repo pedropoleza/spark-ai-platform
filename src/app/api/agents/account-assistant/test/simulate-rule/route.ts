@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
 
   const rep = await identifyRep(normalizePhone(phone));
   if (!rep) {
-    return errorResponse(`Nenhum user GHL com phone ${phone}`, 404, "rep_not_found");
+    return errorResponse(`Nenhum user Spark Leads com phone ${phone}`, 404, "rep_not_found");
   }
   if (!rep.terms_accepted_at) {
     await acceptTerms(rep.id);

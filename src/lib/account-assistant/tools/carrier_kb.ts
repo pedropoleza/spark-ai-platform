@@ -186,8 +186,12 @@ const queryCarrierKnowledge: ToolEntry = {
         data: {
           chunks: [],
           carrier,
+          // Fix Track 3 + Track 9 (review 2026-05-05): mensagem mentia "≥ 0.6"
+          // mas SQL gate é 0.4. Bot repassava "threshold 0.6" pro rep como
+          // se fosse fonte de verdade — sintoma de over-confidence em zona
+          // cinza. Agora bate com SQL.
           message:
-            "Nenhum chunk com similarity ≥ 0.6 encontrado. Diga ao rep: 'não tenho info confiável sobre isso. Sugestões: (1) Sales Desk NLG 800-906-3310, (2) Underwriting Guide Cat 62797 no portal, (3) seu wholesaler/IMO'.",
+            "Nenhum chunk com similarity ≥ 0.4 encontrado pra essa pergunta. Diga ao rep: 'não tenho info confiável sobre isso na KB. Sugestões: (1) Sales Desk NLG 800-906-3310, (2) Underwriting Guide Cat 62797 no portal, (3) seu wholesaler/IMO'.",
         },
       };
     }

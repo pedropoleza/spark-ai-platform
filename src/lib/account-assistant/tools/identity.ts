@@ -307,7 +307,7 @@ const reportMissedCapability: ToolEntry = {
         why_failed: {
           type: "string",
           description:
-            "Por que não dá pra fazer hoje (1-2 frases). Ex: 'GHL não expõe endpoint pra isso', 'tool create_X não existe no catálogo', 'feature precisa de OAuth com plataforma X'.",
+            "Por que não dá pra fazer hoje (1-2 frases). Ex: 'Spark Leads não expõe endpoint pra isso', 'tool create_X não existe no catálogo', 'feature precisa de OAuth com plataforma X'.",
         },
       },
       required: ["what_rep_wanted", "why_failed"],

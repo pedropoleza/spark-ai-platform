@@ -329,7 +329,7 @@ export function RecruitmentConfigContent() {
                       <Badge variant="default" className="text-[10px]">Recomendado</Badge>
                     </div>
                     <p className="text-xs text-gray-600 leading-relaxed">
-                      Quando ativo, a IA pausa automaticamente em qualquer contato no momento em que você (ou outro humano) enviar uma mensagem manual pelo GHL. Sem precisar cadastrar texto fixo. As respostas da própria IA são ignoradas pela detecção.
+                      Quando ativo, a IA pausa automaticamente em qualquer contato no momento em que você (ou outro humano) enviar uma mensagem manual pelo Spark Leads. Sem precisar cadastrar texto fixo. As respostas da própria IA são ignoradas pela detecção.
                     </p>
                   </div>
                   <Switch

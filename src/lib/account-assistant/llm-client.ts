@@ -28,7 +28,12 @@ const MAX_ITERATIONS = 6;
 // Setting de env STRICT_CLAUDE_ONLY=1 desativa fallback OpenAI por completo
 // (testes mostraram que OpenAI fallback é fonte de regressões em compliance).
 const SECONDARY_CLAUDE_MODEL = "claude-haiku-4-5";
-const STRICT_CLAUDE_ONLY = process.env.STRICT_CLAUDE_ONLY === "1";
+// Fix Track 12 C3 (review 2026-05-05): antes era const lido em module-load.
+// Lambdas warm não captavam mudanças de env sem cold-start (~15min de drift).
+// Agora função chamada por request — flip do env propaga em <30s.
+function isStrictClaudeOnly(): boolean {
+  return process.env.STRICT_CLAUDE_ONLY === "1";
+}
 
 // Cap defensivo no payload de tool result que vai pro LLM. Tools tipo
 // get_conversation_history podem retornar MB se conversa for longa,
@@ -199,7 +204,7 @@ export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToo
           };
         }
         const secondaryErrMsg = err2 instanceof Error ? err2.message : String(err2);
-        if (STRICT_CLAUDE_ONLY) {
+        if (isStrictClaudeOnly()) {
           console.error(
             `[LLM] STRICT_CLAUDE_ONLY=1 — não cai pra OpenAI. Erro Claude secundário: ${secondaryErrMsg}`,
           );

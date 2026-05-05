@@ -214,7 +214,7 @@ const createAppointment: ToolEntry = {
   def: {
     name: "create_appointment",
     description:
-      "⚠️ AGENDA reunião pra um contato no calendário. AFETA o lead — sempre confirma com o rep ANTES. Use get_free_slots pra escolher horário válido.\n\nObservação importante: pra calendars **round-robin/collective/group** (com vários team members), NÃO passe `assigned_user_id` — deixe o GHL escolher automaticamente. Pra calendars **personal/service** (1 user só), opcional. Default: não passar (mais seguro pra qualquer tipo de calendar).",
+      "⚠️ AGENDA reunião pra um contato no calendário. AFETA o lead — sempre confirma com o rep ANTES. Use get_free_slots pra escolher horário válido.\n\nObservação importante: pra calendars **round-robin/collective/group** (com vários team members), NÃO passe `assigned_user_id` — deixe o Spark Leads escolher automaticamente. Pra calendars **personal/service** (1 user só), opcional. Default: não passar (mais seguro pra qualquer tipo de calendar).",
     risk: "high",
     parameters: {
       type: "object",
@@ -229,7 +229,7 @@ const createAppointment: ToolEntry = {
         assigned_user_id: {
           type: "string",
           description:
-            "OPCIONAL. ID do user GHL a quem atribuir a reunião. Use APENAS se o rep pedir explicitamente OU se for um calendar personal de 1 user específico. Pra round-robin/collective/group, OMITA — GHL escolhe automaticamente baseado em disponibilidade.",
+            "OPCIONAL. ID do user a quem atribuir a reunião. Use APENAS se o rep pedir explicitamente OU se for um calendar personal de 1 user específico. Pra round-robin/collective/group, OMITA — Spark Leads escolhe automaticamente baseado em disponibilidade.",
         },
       },
       required: ["calendar_id", "contact_id", "start_time", "end_time"],

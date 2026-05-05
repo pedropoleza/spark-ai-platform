@@ -78,8 +78,8 @@ export function HandoffMessagesEditor({ messages, onChange }: HandoffMessagesEdi
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-400">
-        Cadastre mensagens prontas que você envia manualmente ao cliente (pelo Spark
-        ou pelo GHL) para encerrar o atendimento da IA. Quando a mensagem cadastrada
+        Cadastre mensagens prontas que você envia manualmente ao cliente
+        (pelo Spark Leads) para encerrar o atendimento da IA. Quando a mensagem cadastrada
         aqui for detectada no envio saindo, a IA pausa automaticamente para aquele
         contato específico — outros contatos continuam sendo atendidos normalmente.
       </p>

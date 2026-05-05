@@ -70,7 +70,7 @@ export function validateGhlId(id: string, entityName: string): ToolResult | null
   if (isInvalid) {
     return {
       status: "error",
-      message: `${entityName}_id inválido: "${id}". IDs do GHL têm ~20 chars alfanuméricos misturados (ex: 'ErpM2X8vR1U4IrRTZnKX'). Use search_contacts ou get_contact pra obter o ID real antes de chamar esta tool.`,
+      message: `${entityName}_id inválido: "${id}". IDs do Spark Leads têm ~20 chars alfanuméricos misturados (ex: 'ErpM2X8vR1U4IrRTZnKX'). Use search_contacts ou get_contact pra obter o ID real antes de chamar esta tool.`,
       retryable: false,
     };
   }

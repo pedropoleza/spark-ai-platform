@@ -70,7 +70,7 @@ Sem pressão. Se ele responder com áudio depois, você vai entender o conteúdo
     trigger_config: { event: "appointment_no_show" },
     prompt_instruction: `O lead [nome] não apareceu na reunião marcada. Avisa o rep e ofereça opções:
 - Mandar mensagem pessoal de remarcação (se aceitar, peça confirmação antes de send_message_to_contact)
-- Disparar sequence de remarcação automática (rep faz manual no GHL)
+- Disparar sequence de remarcação automática (rep faz manual no Spark Leads)
 - Marcar como cancelado e seguir em frente
 
 Curto, sem drama.`,

@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
   const rep = await identifyRep(normalizePhone(phone));
   if (!rep) {
     return errorResponse(
-      `Nenhum user GHL com phone ${phone} em nenhuma location.`,
+      `Nenhum user Spark Leads com phone ${phone} em nenhuma location.`,
       404,
       "rep_not_found",
     );

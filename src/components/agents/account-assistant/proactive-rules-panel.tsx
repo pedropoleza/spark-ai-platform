@@ -489,7 +489,7 @@ function SimulateRuleModal({
           <Label className="text-sm">Contexto (mock data pra IA usar)</Label>
           <p className="text-xs text-gray-500">
             Edite o JSON conforme o cenário que quer testar. Ex: trocar appointment_id por um real
-            do seu GHL pra IA usar tools com dados reais.
+            do seu Spark Leads pra IA usar tools com dados reais.
           </p>
           <Textarea
             value={mockContext}
