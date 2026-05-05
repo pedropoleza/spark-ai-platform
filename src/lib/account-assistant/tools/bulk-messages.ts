@@ -155,6 +155,81 @@ function computeScheduledAts(
   return result;
 }
 
+/**
+ * Track 7 C4 fix (review 2026-05-05): se start_at cair dentro de quiet_hours
+ * configurado pro agent, desloca pro próximo `quiet_end`. Antes, recipients
+ * ficavam em loop pending→sending→pending até quiet acabar, depois disparavam
+ * em rajada de 30s = ban WhatsApp.
+ *
+ * Espelha lógica de `isInQuietHours` em dispatcher.ts/bulk-message-runner.ts.
+ */
+async function adjustStartAtForQuietHours(
+  agentId: string | null,
+  startAt: Date,
+): Promise<Date> {
+  if (!agentId) return startAt;
+  const supabase = createAdminClient();
+  const { data: config } = await supabase
+    .from("agent_configs")
+    .select("quiet_hours")
+    .eq("agent_id", agentId)
+    .maybeSingle();
+  type QuietHours = {
+    enabled?: boolean;
+    timezone?: string;
+    start?: string;
+    end?: string;
+    days?: number[];
+  };
+  const qh = (config?.quiet_hours || null) as QuietHours | null;
+  if (!qh || !qh.enabled) return startAt;
+  const tz = qh.timezone || "America/New_York";
+  const start = qh.start || "22:00";
+  const end = qh.end || "07:00";
+  const days = qh.days || [0, 1, 2, 3, 4, 5, 6];
+
+  try {
+    // Itera minuto a minuto até achar slot fora de quiet (max 24h)
+    const cursor = new Date(startAt);
+    const maxIter = 24 * 60;
+    for (let i = 0; i < maxIter; i++) {
+      const fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        hour12: false,
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const parts = fmt.formatToParts(cursor);
+      const get = (t: string) => parts.find((p) => p.type === t)?.value || "";
+      const wkMap: Record<string, number> = {
+        Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+      };
+      const weekday = wkMap[get("weekday")] ?? 0;
+      const hr = parseInt(get("hour")) || 0;
+      const mi = parseInt(get("minute")) || 0;
+      const nowMin = hr * 60 + mi;
+      const [sH, sM] = start.split(":").map(Number);
+      const [eH, eM] = end.split(":").map(Number);
+      const startMin = sH * 60 + sM;
+      const endMin = eH * 60 + eM;
+      let inQuiet: boolean;
+      if (!days.includes(weekday)) {
+        inQuiet = false;
+      } else if (startMin > endMin) {
+        inQuiet = nowMin >= startMin || nowMin <= endMin;
+      } else {
+        inQuiet = nowMin >= startMin && nowMin <= endMin;
+      }
+      if (!inQuiet) return cursor;
+      cursor.setMinutes(cursor.getMinutes() + 1);
+    }
+    return startAt; // fallback se não achar
+  } catch {
+    return startAt;
+  }
+}
+
 async function resolveAgentId(
   locationId: string,
 ): Promise<string | null> {
@@ -365,7 +440,9 @@ const scheduleBulkMessage: ToolEntry = {
     }
 
     try {
-      const { contacts } = await fetchContactsByTag(
+      // Fix Track 7 H1 (review 2026-05-05): include `truncated` no warning
+      // pro rep saber que paginação cortou em 500 silenciosamente.
+      const { contacts, truncated } = await fetchContactsByTag(
         ctx.ghlClient,
         ctx.locationId,
         filterTag,
@@ -383,7 +460,12 @@ const scheduleBulkMessage: ToolEntry = {
       const remaining = cap === null ? Infinity : Math.max(0, cap - usedToday);
 
       let willEnqueue = contacts.length;
-      let cappedNote: string | null = null;
+      const noteParts: string[] = [];
+      if (truncated) {
+        noteParts.push(
+          `⚠️ Lista truncada em ${contacts.length} contatos (paginação parou em 500 — pode haver mais com essa tag). Avise rep.`,
+        );
+      }
       if (cap !== null && contacts.length > remaining) {
         if (remaining === 0) {
           return {
@@ -393,7 +475,22 @@ const scheduleBulkMessage: ToolEntry = {
           };
         }
         willEnqueue = remaining;
-        cappedNote = `Cap diário cortou em ${remaining} (eram ${contacts.length} contatos). ${contacts.length - remaining} ficaram de fora.`;
+        noteParts.push(
+          `Cap diário cortou em ${remaining} (eram ${contacts.length}). ${contacts.length - remaining} ficaram de fora.`,
+        );
+      }
+      const cappedNote: string | null = noteParts.length > 0 ? noteParts.join(" ") : null;
+
+      // Fix Track 7 C4 (review 2026-05-05): se job criado dentro de janela
+      // quiet, deslocar start_at pro próximo quiet_end. Antes: recipients
+      // ficavam pending, runner revertia em loop até quiet acabar, dispatch
+      // de 100 msgs em rajada de 30s = ban WhatsApp. Agora: scheduled_at
+      // começa fora do quiet — drip natural.
+      const adjustedStartAt = await adjustStartAtForQuietHours(agentId, startAt);
+      if (adjustedStartAt.getTime() !== startAt.getTime()) {
+        noteParts.push(
+          `Start ajustado pra ${adjustedStartAt.toISOString()} (quiet hours).`,
+        );
       }
 
       const selected = contacts.slice(0, willEnqueue);
@@ -415,7 +512,7 @@ const scheduleBulkMessage: ToolEntry = {
           respect_quiet_hours: true,
           status: "running",
           total_contacts: willEnqueue,
-          start_at: startAt.toISOString(),
+          start_at: adjustedStartAt.toISOString(),
         })
         .select("id, start_at")
         .single();
@@ -430,7 +527,7 @@ const scheduleBulkMessage: ToolEntry = {
       // Calcula scheduled_at de cada recipient
       const scheduleAts = computeScheduledAts(
         selected.length,
-        startAt,
+        adjustedStartAt,
         intervalSeconds,
         jitterSeconds,
       );
@@ -479,7 +576,11 @@ const scheduleBulkMessage: ToolEntry = {
           jitter_seconds: jitterSeconds,
           variation_mode: variationMode,
           delivery_channel: deliveryChannel,
-          capped_note: cappedNote,
+          truncated_search: truncated,
+          adjusted_start: adjustedStartAt.getTime() !== startAt.getTime()
+            ? adjustedStartAt.toISOString()
+            : null,
+          notes: cappedNote,
         },
       };
     } catch (err) {

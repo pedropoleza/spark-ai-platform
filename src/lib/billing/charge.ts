@@ -255,12 +255,18 @@ export async function isMonthlyCapReached(
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
 
+  // Fix Track 10 C2 (review 2026-05-05): antes filtrava só `charged_to_wallet=true`.
+  // Mas trackAndCharge pode falhar transient (GHL 5xx) deixando record com
+  // `charged_to_wallet=false` mas tracked → usage_records já existe. Esses
+  // contam pro cap mensal logicamente, senão rep pode acumular $500 em
+  // pending e cap nunca disparar. Solução: contar TODOS tracked com
+  // total_charge_usd > 0 (exceto cap_blocked que já são fora do cap).
   const { data: rows } = await supabase
     .from("usage_records")
     .select("total_charge_usd")
     .eq("location_id", locationId)
     .gte("created_at", startOfMonth.toISOString())
-    .eq("charged_to_wallet", true); // só conta o que foi cobrado de verdade
+    .gt("total_charge_usd", 0);
 
   const spent = (rows || []).reduce(
     (acc, r) => acc + (Number(r.total_charge_usd) || 0),
@@ -312,13 +318,18 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
     }
   }
 
-  // Atomic claim: UPDATE pega rows livres e marca com nosso token
+  // Atomic claim: UPDATE pega rows livres e marca com nosso token.
+  // Fix Track 10 H4 (review 2026-05-05): adicionado `cap_blocked.eq.false`
+  // — antes, records cap_blocked ficavam sendo retentados em loop pelo
+  // cron (filtro só excluía charged=true). Agora cron pula records
+  // que já bateram cap (esperam reset mensal ou cap aumentado).
   const claimToken = (globalThis.crypto as Crypto).randomUUID();
   const { data: claimed } = await supabase
     .from("usage_records")
     .update({ claim_token: claimToken, claimed_at: new Date().toISOString() })
     .eq("charged_to_wallet", false)
     .eq("uses_custom_key", false)
+    .eq("cap_blocked", false)
     .gt("total_charge_usd", 0)
     .is("claim_token", null)
     .select("*")

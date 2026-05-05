@@ -410,7 +410,11 @@ const updateAppointment: ToolEntry = {
         appointment_id: { type: "string" },
         start_time: { type: "string", description: "ISO 8601 novo horário." },
         end_time: { type: "string", description: "ISO 8601 novo fim." },
-        appointment_status: { type: "string", description: "Ex: 'confirmed', 'showed', 'noshow', 'cancelled'." },
+        appointment_status: {
+          type: "string",
+          enum: ["confirmed", "showed", "noshow", "cancelled", "invalid"],
+          description: "Status do appointment. Use APENAS valores enumerados.",
+        },
       },
       required: ["appointment_id"],
     },
@@ -431,7 +435,19 @@ const updateAppointment: ToolEntry = {
       if (endInvalid) return endInvalid;
       body.endTime = new Date(String(args.end_time)).toISOString();
     }
-    if (args.appointment_status) body.appointmentStatus = String(args.appointment_status);
+    if (args.appointment_status) {
+      // Fix Track 4 HIGH-3: enforcement em código além do schema enum.
+      const VALID_APPT_STATUS = ["confirmed", "showed", "noshow", "cancelled", "invalid"];
+      const status = String(args.appointment_status);
+      if (!VALID_APPT_STATUS.includes(status)) {
+        return {
+          status: "error",
+          message: `appointment_status inválido. Use ${VALID_APPT_STATUS.join("|")}.`,
+          retryable: false,
+        };
+      }
+      body.appointmentStatus = status;
+    }
     if (Object.keys(body).length === 0) {
       return { status: "error", message: "Nenhum campo pra atualizar", retryable: false };
     }

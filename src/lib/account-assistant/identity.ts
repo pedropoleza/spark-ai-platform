@@ -103,7 +103,12 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
   const supabase = createAdminClient();
 
   // 1. Lookup local — tenta cada candidato
-  let normalizedPhone = candidates[0];
+  // Fix Track 10 H11 (review 2026-05-05): preserva PRIMEIRO candidato como
+  // default em vez de "último testado". generatePhoneCandidates retorna
+  // [+55..., +1...] pra phones BR (priorizando BR já que mercado é BR-EUA).
+  // Antes, se nenhum candidato existisse no DB, normalizedPhone virava o
+  // ÚLTIMO testado (+1...) → rep BR criado com phone US errado.
+  const normalizedPhone = candidates[0];
   for (const candidate of candidates) {
     const { data: existing } = await supabase
       .from("rep_identities")
@@ -111,7 +116,6 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
       .eq("phone", candidate)
       .maybeSingle();
     if (existing) return existing as RepIdentity;
-    normalizedPhone = candidate; // se nenhum bater, usa o último (mais provável correto)
   }
 
   // 2. Primeira interação — procura o phone em todas as locations cadastradas

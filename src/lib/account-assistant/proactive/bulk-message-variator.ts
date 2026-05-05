@@ -87,7 +87,11 @@ export async function generateVariation(
 
   try {
     const { default: Anthropic } = await import("@anthropic-ai/sdk");
-    const client = new Anthropic({ apiKey, timeout: 30000, maxRetries: 2 });
+    // Fix Track 7 H2 (review 2026-05-05): timeout cumulativo era 30s × 5
+    // recipients = 150s, excedendo Vercel maxDuration=60s. Lambda morria,
+    // recipients ficavam status='sending' órfão. Agora 8s + zero retry —
+    // Haiku ou responde rápido ou cai no fallback (template direto).
+    const client = new Anthropic({ apiKey, timeout: 8000, maxRetries: 0 });
     const systemPrompt = VARIATION_SYSTEM_PROMPTS[mode];
 
     const response = await client.messages.create({

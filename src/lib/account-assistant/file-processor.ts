@@ -34,9 +34,13 @@ export const PDF_MAX_TEXT_CHARS = 50_000; // truncate texto extraído
 // ============================================================
 // Tipo de detecção
 // ============================================================
-export type FileKind = "image" | "pdf" | "csv" | "xlsx" | "unknown";
+export type FileKind = "image" | "pdf" | "csv" | "xlsx" | "heic" | "unknown";
 
+// Fix Track 8 H-MM-6 (review 2026-05-05): adicionado image/heic + image/heif
+// pra iPhones (~40% dos reps). Ainda não converte automaticamente — só
+// rejeita com mensagem clara. Conversion via heic-convert lib é nice-to-have.
 const IMAGE_MIMES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+const HEIC_MIMES = ["image/heic", "image/heif"];
 const CSV_MIMES = ["text/csv", "application/csv", "text/plain"];
 const XLSX_MIMES = [
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -51,6 +55,10 @@ const XLSX_MIMES = [
 export function detectFileKind(mime: string | undefined, filename: string | undefined): FileKind {
   const m = (mime || "").toLowerCase();
   const fn = (filename || "").toLowerCase();
+  // HEIC/HEIF (iPhone default) — detecta separado pra dar mensagem clara
+  if (HEIC_MIMES.some((x) => m.startsWith(x)) || fn.endsWith(".heic") || fn.endsWith(".heif")) {
+    return "heic";
+  }
   if (IMAGE_MIMES.some((x) => m.startsWith(x))) return "image";
   if (m === "application/pdf") return "pdf";
   if (XLSX_MIMES.some((x) => m === x)) return "xlsx";
@@ -247,6 +255,15 @@ export async function processFile(input: ProcessFileInput): Promise<ProcessFileR
   const kind = input.kindHint || detectFileKind(input.mime, input.filename);
   if (kind === "unknown") {
     throw new FileProcessError("unsupported_type", `Tipo não suportado: ${input.mime || input.filename}`);
+  }
+  // Fix Track 8 H-MM-6: HEIC do iPhone — Claude/GPT-4 Vision não aceitam.
+  // Antes silently rejeitado em "unknown" → rep não sabia. Agora mensagem
+  // explícita pra rep mudar formato no celular.
+  if (kind === "heic") {
+    throw new FileProcessError(
+      "heic_not_supported",
+      "Foto em formato HEIC do iPhone não é suportada ainda. Pra resolver: Settings > Câmera > Formatos > 'Mais Compatível' (vai virar JPG). Ou tira print da foto e manda o screenshot.",
+    );
   }
 
   let repInput: RepInput;

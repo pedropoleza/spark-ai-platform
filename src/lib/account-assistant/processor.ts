@@ -85,6 +85,17 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   const { rep } = input;
   const userText = extractUserText(input.input);
 
+  // Fix Track 8 (review 2026-05-05): processor responde direto se webhook
+  // handler detectou erro de arquivo user-facing (HEIC, PDF vazio, file too
+  // large). Antes: bot recebia o erro como caption text e respondia genérico
+  // sem mencionar a real causa. Agora rep recebe a mensagem clara.
+  if (userText.startsWith("__FILE_ERROR__:")) {
+    return {
+      text: userText.replace(/^__FILE_ERROR__:/, ""),
+      should_send: true,
+    };
+  }
+
   // Fix CRITICAL Track 1 C1 (review 2026-05-05): se rep já rejeitou termos,
   // bot silencia. Antes, qualquer msg posterior caía no `!rep.terms_accepted_at`
   // de novo e re-mandava os termos → loop eterno. Pra desbloquear: admin

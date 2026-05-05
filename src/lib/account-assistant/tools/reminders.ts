@@ -87,11 +87,16 @@ const scheduleReminder: ToolEntry = {
     // delivery_channel: respeita o que LLM passou; senão usa o canal atual
     // do contexto como default. Importante: pra Web UI, prompt-builder
     // ensinou o LLM a perguntar antes — se chegou 'whatsapp' aqui veio do WA.
-    const requestedChannel = args.delivery_channel ? String(args.delivery_channel) : null;
+    // Fix Track 4 HIGH-1 (review 2026-05-05): normaliza case-insensitive +
+    // remove tautologia (`ctx.confirmationMode ? "whatsapp" : "whatsapp"`).
+    const requestedChannel = args.delivery_channel
+      ? String(args.delivery_channel).toLowerCase()
+      : null;
     const validChannels = ["whatsapp", "web_ui", "both"];
-    const deliveryChannel = requestedChannel && validChannels.includes(requestedChannel)
-      ? requestedChannel
-      : (ctx.confirmationMode ? "whatsapp" : "whatsapp"); // default whatsapp
+    const deliveryChannel =
+      requestedChannel && validChannels.includes(requestedChannel)
+        ? requestedChannel
+        : "whatsapp"; // default — prompt-builder instrui LLM a perguntar pra Web UI requests
 
     const supabase = createAdminClient();
     const { data, error } = await supabase

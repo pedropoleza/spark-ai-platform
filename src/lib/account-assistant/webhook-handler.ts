@@ -870,6 +870,20 @@ async function extractRepInput(args: {
           "[Sparkbot] file processing failed for", att.url, ":",
           err instanceof Error ? err.message : err,
         );
+        // Fix Track 8 H-MM-2 + H-MM-6 (review 2026-05-05): se erro tem
+        // código user-friendly (HEIC, PDF vazio), propaga PRO REP em vez
+        // de silenciar e responder texto. Antes: bot respondia só com
+        // base no caption text — rep pensava que bot leu o arquivo mas
+        // não, confusão.
+        const code = (err as { code?: string })?.code;
+        const userFacingCodes = ["heic_not_supported", "pdf_empty", "file_too_large"];
+        if (code && userFacingCodes.includes(code)) {
+          // Devolve como text especial pro processor montar resposta direta
+          return {
+            kind: "text",
+            text: `__FILE_ERROR__:${err instanceof Error ? err.message : "Falha processando arquivo."}`,
+          };
+        }
         // Tenta próximo anexo
       }
     }
