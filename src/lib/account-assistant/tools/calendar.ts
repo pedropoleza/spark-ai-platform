@@ -281,6 +281,167 @@ const getFreeSlots: ToolEntry = {
   },
 };
 
+const listMyFreeSlots: ToolEntry = {
+  def: {
+    name: "list_my_free_slots",
+    description:
+      "Lista horários LIVRES do REP num período (hoje/amanhã/semana). Combina /free-slots de TODOS os calendars onde rep é team_member, considerando appointments de outros users + blocks manuais + Google Calendar synced. Use SEMPRE quando rep pergunta 'que horários eu tenho livres', 'qual horários disponiveis', 'tô livre quando' etc.\n\n⚠️ NUNCA calcule horários livres a partir de list_appointments — esse só retorna appointments NATIVOS do Spark Leads, perde Google Calendar blocks. Esta tool é a única correta.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        when: {
+          type: "string",
+          enum: ["today", "tomorrow", "week", "next_week"],
+          description: "Janela. Default 'today'.",
+        },
+      },
+    },
+  },
+  handler: async (ctx, args) => {
+    const when = String(args.when || "today");
+    const repUserId = getRepGhlUserId(ctx);
+    if (!repUserId) {
+      return {
+        status: "error",
+        message: "Não consegui resolver seu user_id. Tente confirm_rep_timezone primeiro ou avise admin.",
+        retryable: false,
+      };
+    }
+
+    const now = new Date();
+    let startMs: number, endMs: number;
+    if (when === "today") {
+      const s = new Date(now); s.setHours(0, 0, 0, 0);
+      const e = new Date(now); e.setHours(23, 59, 59, 999);
+      startMs = s.getTime(); endMs = e.getTime();
+    } else if (when === "tomorrow") {
+      const s = new Date(now); s.setDate(s.getDate() + 1); s.setHours(0, 0, 0, 0);
+      const e = new Date(s); e.setHours(23, 59, 59, 999);
+      startMs = s.getTime(); endMs = e.getTime();
+    } else if (when === "next_week") {
+      const s = new Date(now); s.setDate(s.getDate() + 7); s.setHours(0, 0, 0, 0);
+      const e = new Date(s); e.setDate(e.getDate() + 7); e.setHours(23, 59, 59, 999);
+      startMs = s.getTime(); endMs = e.getTime();
+    } else {
+      const s = new Date(now); s.setHours(0, 0, 0, 0);
+      startMs = s.getTime();
+      const e = new Date(s); e.setDate(e.getDate() + 7);
+      endMs = e.getTime();
+    }
+
+    try {
+      // Lista calendars onde rep é team_member
+      const calRes = await ctx.ghlClient.get<{
+        calendars?: Array<{
+          id: string;
+          name?: string;
+          teamMembers?: Array<{ userId: string }>;
+        }>;
+      }>("/calendars/", { locationId: ctx.locationId });
+
+      const userCalendars = (calRes.calendars || []).filter((c) =>
+        (c.teamMembers || []).some((tm) => tm.userId === repUserId),
+      );
+
+      if (userCalendars.length === 0) {
+        return {
+          status: "not_found",
+          message: "Você não é team_member de nenhum calendar nesta location.",
+        };
+      }
+
+      // Query /free-slots de cada calendar em paralelo. Cada um já considera
+      // Google Calendar blocks daquele calendar específico (testado em prod
+      // 2026-05-05 — calendars com integration retornam slots respeitando).
+      const freeSlotsResults = await Promise.all(
+        userCalendars.map((c) =>
+          ctx.ghlClient
+            .get<Record<string, { slots?: string[] }>>(
+              `/calendars/${c.id}/free-slots`,
+              {
+                startDate: String(startMs),
+                endDate: String(endMs),
+              },
+            )
+            .then((res) => ({ calendar: c, raw: res }))
+            .catch(() => null),
+        ),
+      );
+
+      // Coleta slots de cada calendar como Set por data, depois INTERSECTA
+      // (slot livre = todos calendars do rep concordam que tá livre).
+      // Heurística: comparar por timestamp ISO exato. Se um calendar tem
+      // slots de 30min e outro de 1h, intersect pode ser zero. Trade-off:
+      // ser conservador, listar só slots em comum.
+      const slotsByCalendar: Array<{ name: string; byDate: Record<string, Set<string>> }> = [];
+      for (const r of freeSlotsResults) {
+        if (!r) continue;
+        const byDate: Record<string, Set<string>> = {};
+        for (const [key, value] of Object.entries(r.raw)) {
+          if (key === "traceId" || !value) continue;
+          const slots = Array.isArray(value) ? (value as unknown as string[]) : value.slots || [];
+          if (slots.length > 0) byDate[key] = new Set(slots);
+        }
+        slotsByCalendar.push({ name: r.calendar.name || r.calendar.id, byDate });
+      }
+
+      if (slotsByCalendar.length === 0) {
+        return {
+          status: "not_found",
+          message: "Nenhum calendar do rep retornou slots.",
+        };
+      }
+
+      // Intersect across calendars: pra cada data, slot só é livre se TODOS
+      // os calendars devolvem ele
+      const intersected: Record<string, string[]> = {};
+      const allDates = new Set<string>();
+      for (const c of slotsByCalendar) {
+        for (const d of Object.keys(c.byDate)) allDates.add(d);
+      }
+      for (const date of allDates) {
+        // pega o conjunto inicial do primeiro calendar
+        const firstCal = slotsByCalendar[0];
+        if (!firstCal.byDate[date]) continue; // primeiro calendar não tem essa data → ninguém livre
+        let common = new Set(firstCal.byDate[date]);
+        for (let i = 1; i < slotsByCalendar.length; i++) {
+          const cal = slotsByCalendar[i];
+          if (!cal.byDate[date]) {
+            // Calendar não tem essa data — significa "tudo ocupado" pra ele
+            common = new Set();
+            break;
+          }
+          // intersect
+          const next = new Set<string>();
+          for (const slot of common) {
+            if (cal.byDate[date].has(slot)) next.add(slot);
+          }
+          common = next;
+          if (common.size === 0) break;
+        }
+        if (common.size > 0) {
+          intersected[date] = Array.from(common).sort();
+        }
+      }
+
+      return {
+        status: "ok",
+        data: {
+          slots_by_date: intersected,
+          calendars_checked: slotsByCalendar.length,
+          calendar_names: slotsByCalendar.map((c) => c.name),
+          source: "intersection across all rep's calendars (considera Google Calendar blocks via /free-slots interno)",
+          warning_google_calendar:
+            "Se o rep tem agenda Google pessoal NÃO integrada no Spark Leads, blocks dela podem não aparecer. Ativar em Settings → My Profile → Calendar Connection.",
+        },
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "consulta de horários livres");
+    }
+  },
+};
+
 const getAppointment: ToolEntry = {
   def: {
     name: "get_appointment",
@@ -614,6 +775,7 @@ export const CALENDAR_TOOLS: ToolEntry[] = [
   listAppointments,
   listCalendars,
   getFreeSlots,
+  listMyFreeSlots,
   getAppointment,
   createAppointment,
   updateAppointment,
