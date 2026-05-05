@@ -27,26 +27,49 @@ Não mando mensagens pros seus leads sem você confirmar. Não apago nada sem vo
 
 Tá ok? Responde "aceito" pra gente começar.`;
 
-/** Palavras que contam como aceite. */
+/** Palavras que contam como aceite (whole-word match no início ou frase única). */
 const ACCEPT_KEYWORDS = [
   "aceito", "aceita", "ok", "okay", "sim", "concordo", "concordado",
-  "beleza", "blz", "pode", "pode sim", "tá", "ta", "combinado", "fechado",
+  "beleza", "blz", "pode", "tá", "ta", "combinado", "fechado",
   "👍", "✅",
 ];
 
-/** Palavras que contam como recusa. */
-const REJECT_KEYWORDS = [
-  "nao", "não", "no", "recuso", "não aceito", "nao aceito", "nunca",
-];
+/** Padrões de negação — qualquer match dispara REJECT (fail-safe). */
+const NEGATION_PATTERN =
+  /\b(nao|no|nunca|recuso|recus[ao]|jeito\s+nenhum|de\s+jeito|nem|nada|negativo|n[ãa]o\s+quero|n[ãa]o\s+aceito)\b/;
+
+/**
+ * Normaliza texto pra parsing: lowercase + remove acentos + remove pontuação.
+ * Crítico pra "não aceito" não escapar do REJECT só por causa do acento.
+ */
+function normalizeForParse(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // diacríticos
+    .replace(/[.,!?;:]/g, "")
+    .replace(/\s+/g, " ");
+}
 
 export function parseTermsResponse(text: string): "accept" | "reject" | "unclear" {
-  const normalized = text.trim().toLowerCase();
+  const normalized = normalizeForParse(text);
   if (!normalized) return "unclear";
 
-  if (REJECT_KEYWORDS.some((k) => normalized === k || normalized.startsWith(k + " "))) {
+  // Fix CRITICAL Track 1 C2 (review 2026-05-05): regex anti-falso-positivo.
+  // Antes, "não tá ok" virava ACCEPT por causa do `.includes(" ok")`.
+  // Agora: SE houver QUALQUER negação detectada, é REJECT (fail-safe).
+  if (NEGATION_PATTERN.test(normalized)) {
     return "reject";
   }
-  if (ACCEPT_KEYWORDS.some((k) => normalized === k || normalized.startsWith(k + " ") || normalized.includes(" " + k))) {
+
+  // ACCEPT: whole-word match no início OU frase única.
+  // NUNCA `.includes` no meio (causou falso positivo histórico).
+  if (
+    ACCEPT_KEYWORDS.some(
+      (k) => normalized === k || normalized.startsWith(k + " "),
+    )
+  ) {
     return "accept";
   }
   return "unclear";

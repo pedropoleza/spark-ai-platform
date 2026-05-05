@@ -200,9 +200,21 @@ const cancelReminder: ToolEntry = {
     },
   },
   handler: async (ctx, args) => {
-    const reminderId = String(args.reminder_id || "");
-    const invalid = validateGhlId(reminderId, "reminder");
-    if (invalid) return invalid;
+    const reminderId = String(args.reminder_id || "").trim();
+    // Fix CRITICAL Track 4 CRIT-1 (review 2026-05-05): assistant_scheduled_tasks.id
+    // é UUID (com hífens), não GHL ID alfanumérico. Antes, validateGhlId
+    // (regex /^[A-Za-z0-9]+$/) rejeitava 100% dos UUIDs reais → cancel_reminder
+    // nunca funcionou em prod. Validação mínima: non-empty + UUID v4 format.
+    if (!reminderId) {
+      return { status: "error", message: "reminder_id obrigatório", retryable: false };
+    }
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reminderId)) {
+      return {
+        status: "error",
+        message: `reminder_id inválido (formato esperado: UUID). Use list_my_reminders pra obter o ID correto.`,
+        retryable: false,
+      };
+    }
 
     const supabase = createAdminClient();
     // Garante que o lembrete pertence ao rep (segurança)

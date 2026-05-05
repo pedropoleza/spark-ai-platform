@@ -327,16 +327,11 @@ const blockCalendarSlot: ToolEntry = {
   def: {
     name: "block_calendar_slot",
     description:
-      "⚠️ BLOQUEIA um horário no calendar do PRÓPRIO REP pra compromisso pessoal/folga/lembrete. NÃO é appointment com cliente:\n- Não envia link de Zoom\n- Não notifica nenhum contato\n- Não conta como reunião nas métricas\n- Só aparece como horário ocupado no calendar do rep, impedindo que clientes book esse slot\n\nUse APENAS quando rep pedir EXPLICITAMENTE pra bloquear agenda — frases como 'bloqueia minha agenda quarta 14h', 'tô em compromisso pessoal sexta 10-12h', 'marca 30min de almoço', 'reserva esse horário pra mim'. NUNCA use como fallback de create_appointment quando o slot tá ocupado — se appointment falhou, ofereça outro horário ou outro user, NÃO bloqueie.\n\nPor padrão bloqueia no user do próprio rep. Pra bloquear pra outro membro da equipe, passe assigned_user_id.",
+      "⚠️ BLOQUEIA um horário no calendar do PRÓPRIO REP pra compromisso pessoal/folga/lembrete. NÃO é appointment com cliente:\n- Não envia link de Zoom\n- Não notifica nenhum contato\n- Não conta como reunião nas métricas\n- Só aparece como horário ocupado no calendar do rep, impedindo que clientes book esse slot\n\nUse APENAS quando rep pedir EXPLICITAMENTE pra bloquear agenda — frases como 'bloqueia minha agenda quarta 14h', 'tô em compromisso pessoal sexta 10-12h', 'marca 30min de almoço', 'reserva esse horário pra mim'. NUNCA use como fallback de create_appointment quando o slot tá ocupado — se appointment falhou, ofereça outro horário ou outro user, NÃO bloqueie.\n\nPor padrão bloqueia no user do próprio rep (não em calendar específico). Pra bloquear pra outro membro da equipe, passe assigned_user_id.",
     risk: "high",
     parameters: {
       type: "object",
       properties: {
-        calendar_id: {
-          type: "string",
-          description:
-            "ID do calendar onde criar o bloqueio. Use list_calendars se não souber.",
-        },
         start_time: { type: "string", description: "ISO 8601" },
         end_time: { type: "string", description: "ISO 8601" },
         title: {
@@ -344,23 +339,16 @@ const blockCalendarSlot: ToolEntry = {
           description:
             "Título do bloqueio (ex: 'Compromisso pessoal', 'Almoço', 'Folga'). Default: 'Bloqueio de agenda'.",
         },
-        notes: {
-          type: "string",
-          description: "OPCIONAL. Notas adicionais que aparecem no detalhe do bloqueio.",
-        },
         assigned_user_id: {
           type: "string",
           description:
-            "OPCIONAL. ID do user GHL pra quem bloquear. Default: o próprio rep que está conversando.",
+            "OPCIONAL. ID do user pra quem bloquear. Default: o próprio rep que está conversando.",
         },
       },
-      required: ["calendar_id", "start_time", "end_time"],
+      required: ["start_time", "end_time"],
     },
   },
   handler: async (ctx, args) => {
-    const calendarId = String(args.calendar_id || "");
-    const invalid = validateGhlId(calendarId, "calendar");
-    if (invalid) return invalid;
     const startInvalid = validateIso8601(String(args.start_time || ""), "start_time");
     if (startInvalid) return startInvalid;
     const endInvalid = validateIso8601(String(args.end_time || ""), "end_time");
@@ -379,14 +367,17 @@ const blockCalendarSlot: ToolEntry = {
     }
 
     try {
+      // Fix CRITICAL Track 4 CRIT-3 (review 2026-05-05): spec do Spark Leads
+      // diz "Either calendarId or assignedUserId, NOT both" pra block-slots,
+      // E `notes` NÃO existe no spec. Antes, body tinha calendarId+assignedUserId
+      // simultâneos + notes inválido → API rejeitava ou ignorava silenciosamente.
+      // Use case real é "bloqueio pessoal pro rep X" → SÓ assignedUserId.
       const body: Record<string, unknown> = {
-        calendarId,
         locationId: ctx.locationId,
+        assignedUserId: targetUser,
         startTime: new Date(String(args.start_time)).toISOString(),
         endTime: new Date(String(args.end_time)).toISOString(),
         title: args.title ? String(args.title) : "Bloqueio de agenda",
-        assignedUserId: targetUser,
-        ...(args.notes ? { notes: String(args.notes) } : {}),
       };
       const res = await ctx.ghlClient.post<{
         id?: string;

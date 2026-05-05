@@ -187,6 +187,20 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
     .single();
 
   if (error) {
+    // Fix CRITICAL Track 1 C3 (review 2026-05-05): race condition entre
+    // 2 webhooks Stevo+GHL em <100ms. Ambos passam dedup ID-based,
+    // ambos chegam ao INSERT, UNIQUE phone constraint salva o segundo
+    // com 23505 — antes, esse error subia como `null` → rep recebia
+    // "não cadastrado" simultaneamente com termos. Agora, se 23505,
+    // re-fetch e devolve a row criada pelo competidor.
+    if ((error as { code?: string }).code === "23505") {
+      const { data: existing } = await supabase
+        .from("rep_identities")
+        .select("*")
+        .eq("phone", normalizedPhone)
+        .maybeSingle();
+      if (existing) return existing as RepIdentity;
+    }
     console.error("[identity] failed to insert rep_identity:", error.message);
     return null;
   }
@@ -219,6 +233,20 @@ export async function acceptTerms(repId: string): Promise<void> {
   await supabase
     .from("rep_identities")
     .update({ terms_accepted_at: new Date().toISOString() })
+    .eq("id", repId);
+}
+
+/**
+ * Marca terms como REJEITADOS. Fix CRITICAL Track 1 C1 (review 2026-05-05):
+ * antes, rep que recusava ficava em loop infinito porque rejeição não era
+ * persistida. Agora bot silencia até admin limpar a flag manualmente
+ * (UPDATE rep_identities SET terms_rejected_at = NULL WHERE id = X).
+ */
+export async function rejectTerms(repId: string): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase
+    .from("rep_identities")
+    .update({ terms_rejected_at: new Date().toISOString() })
     .eq("id", repId);
 }
 

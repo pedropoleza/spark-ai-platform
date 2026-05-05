@@ -255,11 +255,24 @@ const switchActiveLocation: ToolEntry = {
     ctx.rep.active_location_id = target.location_id;
     ctx.locationId = target.location_id;
 
-    const crossCompany =
-      targetLocation && targetLocation.company_id !== ctx.companyId;
+    // Fix CRITICAL Track 4 CRIT-2 (review 2026-05-05): re-instanciar ghlClient
+    // com o novo locationId (e companyId se cross-company). Antes, ghlClient
+    // ficava preso no constructor com OLD locationId — próximas tools no
+    // mesmo turn usavam token da location ANTIGA → 403/404 ou cross-tenant
+    // data leak (body.locationId NEW + Authorization OLD = GHL pode aceitar
+    // override silenciosamente). Recriar é cheap (só guarda IDs).
+    const oldCompanyId = ctx.companyId;
+    const newCompanyId = targetLocation?.company_id || ctx.companyId;
+    if (newCompanyId !== ctx.companyId) {
+      ctx.companyId = newCompanyId;
+    }
+    const { GHLClient } = await import("@/lib/ghl/client");
+    ctx.ghlClient = new GHLClient(ctx.companyId, ctx.locationId);
+
+    const crossCompany = oldCompanyId !== newCompanyId;
     const baseMsg = `Trocou pra "${target.location_name || target.location_id}". Próximas ações rodam nessa location.`;
     const finalMsg = crossCompany
-      ? `${baseMsg} (Aviso: location é de outra agency — pode precisar repetir o pedido em uma nova mensagem.)`
+      ? `${baseMsg} (Cross-company: ghlClient atualizado pro novo company.)`
       : baseMsg;
 
     return {
@@ -268,7 +281,7 @@ const switchActiveLocation: ToolEntry = {
         message: finalMsg,
         active_location_id: target.location_id,
         location_name: target.location_name,
-        cross_company_warning: crossCompany ?? false,
+        cross_company_warning: crossCompany,
       },
     };
   },

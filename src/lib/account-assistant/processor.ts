@@ -19,7 +19,7 @@ import {
   parseTermsResponse,
 } from "./terms";
 import { buildOnboardingForWhatsApp } from "./onboarding";
-import { acceptTerms, setActiveLocation, syncRepInternalFlag } from "./identity";
+import { acceptTerms, rejectTerms, setActiveLocation, syncRepInternalFlag } from "./identity";
 import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "./prompt-builder";
 import { runWithTools, type LLMMessage } from "./llm-client";
 import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
@@ -85,6 +85,17 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   const { rep } = input;
   const userText = extractUserText(input.input);
 
+  // Fix CRITICAL Track 1 C1 (review 2026-05-05): se rep já rejeitou termos,
+  // bot silencia. Antes, qualquer msg posterior caía no `!rep.terms_accepted_at`
+  // de novo e re-mandava os termos → loop eterno. Pra desbloquear: admin
+  // limpa `terms_rejected_at` no DB.
+  if (
+    !rep.terms_accepted_at &&
+    (rep as { terms_rejected_at?: string | null }).terms_rejected_at
+  ) {
+    return { text: "", should_send: false };
+  }
+
   // 1. Termos de uso: se nunca aceitou, manda termos
   if (!rep.terms_accepted_at) {
     const parsed = parseTermsResponse(userText);
@@ -97,6 +108,8 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       return { text: onboardingText, should_send: true };
     }
     if (parsed === "reject") {
+      // Fix Track 1 C1: persistir rejeição pra silenciar bot daqui em diante.
+      await rejectTerms(rep.id);
       return { text: TERMS_REJECTED_TEXT, should_send: true };
     }
     // Primeira msg ou resposta unclear
