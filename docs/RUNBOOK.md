@@ -334,4 +334,90 @@ const ALLOWED_ORIGIN_PATTERNS: RegExp[] = [
   /^https:\/\/(?:[a-z0-9-]+\.)*MEU-NOVO-DOMINIO\.com$/i,
 ];
 ```
+
+---
+
+## 🔄 Resetar rep que rejeitou termos
+
+Rep mandou "não" ao TERMS_OF_USE_TEXT → bot persiste `terms_rejected_at` e
+silencia daqui em diante (Track 1 C1 fix 2026-05-05). Pra desbloquear:
+
+```sql
+UPDATE rep_identities
+SET terms_rejected_at = NULL,
+    updated_at = now()
+WHERE phone = '+5511XXXXXXXXX';
+```
+
+Próxima msg do rep cai no `!terms_accepted_at` branch normalmente — bot
+re-envia termos.
+
+---
+
+## 🔐 Cron secret rotation (CRON_SECRET)
+
+**Secret atual hardcoded em `cron.job.command`** (pg_cron) — visível em
+qualquer dump/snapshot DB. Quando rotacionar:
+
+1. Gerar novo secret: `openssl rand -hex 32`
+2. Setar GUC no Postgres (via SQL Editor com superuser):
+   ```sql
+   ALTER DATABASE postgres SET app.cron_secret TO '<novo-hex>';
+   ```
+   (precisa reconectar pra GUC entrar em vigor — feche/reabra SQL Editor)
+3. Atualizar Vercel env: `vercel env add CRON_SECRET production` (paste new)
+4. Re-deploy: `vercel --prod`
+5. Aplicar migration que substitui hardcoded por `current_setting('app.cron_secret', true)`:
+   ```sql
+   -- Drop + re-schedule cron com:
+   --   'Authorization', 'Bearer ' || current_setting('app.cron_secret', true)
+   ```
+6. Verificar: `SELECT current_setting('app.cron_secret', false);` retorna o novo.
+
+**Hoje (2026-05-05)**: NÃO foi rotacionado. Migration 00041 declarava o
+GUC pattern mas nunca foi aplicada de fato. Fica como TODO pra Pedro.
+
+---
+
+## 🆔 Onboarding nova sub-account (Brazillionaires sub)
+
+Pra adicionar nova sub-account ao Spark Leads + ativar SparkBot:
+
+1. **Provisionar location no GHL** (Pedro faz no admin Spark Leads).
+2. **Tokens GHL**: location precisa ter OAuth aprovado — verificar em
+   `locations` table no Supabase (`SELECT * FROM locations WHERE
+   location_id = '<NEW>'`). Se não está, fazer OAuth flow no admin GHL
+   pra permitir Spark Leads app.
+3. **Custom JS**: copiar `loader.js` URL pra Agency Settings → Custom JS.
+   Pode mudar location_id no script se sub-account isolada.
+4. **AI Hub**: admin (Pedro) entra no `/agents/account-assistant`,
+   Setup Wizard mostra QR code + número WhatsApp +18134079657.
+5. **Phone do admin** precisa estar cadastrado no GHL user dele —
+   senão Wizard avisa `reason_no_phone=true`.
+6. **Primeira msg do admin via WhatsApp**: bot envia TERMS_OF_USE_TEXT.
+   Admin responde "aceito" → onboarding inline (auto-detecta fuso da
+   location, mostra guia rápido).
+7. **`agent_configs`**: defaults aplicados auto. Se admin quer override
+   `monthly_spend_cap_usd` ou `daily_proactive_limit`, edita via UI
+   `/agents/account-assistant/config`.
+
+**Internal team flag**: se admin é agency owner ou tem 5+ ghl_users,
+`detectIsInternal()` setará `is_internal=true` automaticamente —
+bot NÃO cobra wallet pra esse rep.
+
+---
+
+## 🔧 Reactive rules stub vs implementado
+
+Apenas **`post_meeting`** é reactive rule REAL hoje. Lead esfriando,
+Tarefa atrasada, Task vencendo, Briefing pré-reunião, etc são stub
+(retornam `{fired:0}`). Em 2026-05-05 esses 3 foram desabilitados em
+prod (`UPDATE assistant_proactive_rules SET enabled=false WHERE name
+IN (...)`) pra não enganar o rep.
+
+**Pra ativar uma stub no futuro**:
+1. Implementar polling específico em `cron/sparkbot-proactive/route.ts`
+   `processReactivePolling()` (siga modelo de `processPostMeetingPolling`).
+2. Test com synthetic-test endpoint.
+3. `UPDATE assistant_proactive_rules SET enabled=true WHERE name='X'`.
 Em DEV (`NODE_ENV !== production`), tudo passa.

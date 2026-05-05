@@ -55,14 +55,15 @@ Quando criar nova string user-facing, escolhe um:
 - Read-only tools (`search_*`, `get_*`, `list_*`, `analyze_tabular_data`) sempre executam pra preservar análises.
 - **NÃO bypass nunca.** Test em prod já causou estrago no passado.
 
-### Sparkbot — Idempotency (5 camadas)
+### Sparkbot — Idempotency (7 camadas)
 Em ordem de precedência:
 1. **In-memory mutex** (`inFlightMessages` em webhook-handler.ts) — sub-segundo intra-lambda.
 2. **SELECT por `ghl_message_id`** — retry sequencial.
 3. **`sparkbot_dedup_locks`** UNIQUE PK — race <100ms multi-provider.
 4. **CONTENT-MATCH** (15s window) — texto idêntico do mesmo rep.
 5. **TIMING-MATCH** (5s window) — qualquer kind, multi-provider audio/imagem com bodies diferentes.
-6. **UNIQUE constraint** em `sparkbot_messages.ghl_message_id` — última defesa, captura via `error.code === "23505"`.
+6. **UNIQUE constraint** em `sparkbot_messages.ghl_message_id` — captura via `error.code === "23505"`.
+7. **rep_identity 23505 capture** em `identifyRep` (Track 1 C3 fix 2026-05-05) — 2 webhooks Stevo+GHL <100ms ambos chegam ao INSERT, segundo bate UNIQUE phone constraint, código captura `code === "23505"` e re-fetch rep criado pelo competidor.
 
 **Placeholder rejection** (`Audio Message.`, `Image`, etc): só rejeita se NÃO tem attachment processável (Stevo manda placeholder + audio_url juntos).
 
@@ -117,6 +118,19 @@ Em ordem de precedência:
 - **Hard cap mensal**: default $100/sub-account em `agent_configs.monthly_spend_cap_usd`. NULL = sem cap.
 - **Internal team**: `is_internal=true` em rep_identities. Detecção em camadas: env `INTERNAL_TEAM_PHONES` → role `agency`/`agency_owner` → heurística "5+ ghl_users". Skipa charge mas mantém audit.
 - **Cap atingido**: `cap_blocked=true` em usage_records, charge skipado, bot CONTINUA respondendo (UX preservada).
+- **Schema usage_records**: tem `cached_tokens, cache_creation_tokens, audio_seconds, audio_model, image_count, claim_token, claimed_at, charged_at` (migration 00056 fixou drift). Sem essas cols, Whisper/Vision/cache billing fica silenciosamente quebrado.
+
+### SparkBot Termos (Pedro 2026-05-05)
+- **Aceite** persiste `terms_accepted_at` via `acceptTerms()`.
+- **Rejeição** persiste `terms_rejected_at` via `rejectTerms()` (fix Track 1 C1 — antes era loop infinito reenviando termos).
+- **Reset**: admin precisa `UPDATE rep_identities SET terms_rejected_at = NULL WHERE id = X` pra rep poder retomar.
+- **parseTermsResponse**: regex anti-falso-positivo (NEGATION_PATTERN check ANTES de ACCEPT, normaliza acentos). Antes "não tá ok pra mim" virava ACCEPT — LGPD risk.
+
+### SparkBot Cron Guards (Pedro 2026-05-05)
+- pg_cron `sparkbot-proactive` agendado a cada 30s com:
+  - `pg_try_advisory_xact_lock(8675309)` — anti double-execution sob backlog
+  - `WHERE EXISTS` triplo (assistant_scheduled_tasks + assistant_proactive_rules enabled + bulk_message_recipients pending) — evita auto-DDoS de calls vazias
+- **Apenas `post_meeting` reactive rule é IMPLEMENTADO** — outros 3 (Lead esfriando, Tarefa atrasada, Task vencendo) eram stub mas estavam `enabled=true` em prod. Disabled em 2026-05-05 até implementação real (admin sees no UI). Activación: implementar polling em `processReactivePolling` + reativar enabled.
 
 ---
 
