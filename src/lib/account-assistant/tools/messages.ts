@@ -128,7 +128,7 @@ const sendMessageToContact: ToolEntry = {
           type: "string",
           enum: ["SMS", "WhatsApp", "Email", "IG"],
           description:
-            "Canal de envio. Default 'SMS' (= WhatsApp Web / SMS via Stevo/Evolution — funciona pra TODOS os contatos). 'WhatsApp' = WhatsApp API oficial (⚠️ só funciona se a sub-account tem WhatsApp Business API ATIVADA — caso não tenha, GHL retorna erro; nesse caso use 'SMS'). 'Email' / 'IG' = canais alternativos.",
+            "Canal de envio. Default 'SMS' (= WhatsApp Web / SMS via Stevo/Evolution — funciona pra TODOS os contatos). 'WhatsApp' = WhatsApp API oficial (⚠️ só funciona se a sub-account tem WhatsApp Business API ATIVADA — caso não tenha, Spark Leads retorna erro; nesse caso use 'SMS'). 'Email' / 'IG' = canais alternativos.",
         },
         subject: { type: "string", description: "Subject (apenas pra Email)." },
       },

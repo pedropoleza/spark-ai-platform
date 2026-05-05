@@ -100,10 +100,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // bot silencia. Antes, qualquer msg posterior caía no `!rep.terms_accepted_at`
   // de novo e re-mandava os termos → loop eterno. Pra desbloquear: admin
   // limpa `terms_rejected_at` no DB.
-  if (
-    !rep.terms_accepted_at &&
-    (rep as { terms_rejected_at?: string | null }).terms_rejected_at
-  ) {
+  if (!rep.terms_accepted_at && rep.terms_rejected_at) {
     return { text: "", should_send: false };
   }
 
@@ -493,7 +490,7 @@ function buildUserMessage(input: RepInput, runtimeContext: string): LLMMessage {
     lines.push(
       "4. Se o rep esqueceu de mapear notes na primeira tentativa, basta " +
       "RECHAMAR import_contacts_from_data com o mapping correto — é idempotente " +
-      "(GHL faz dedup por phone/email), só cria as notas que faltaram.",
+      "(Spark Leads faz dedup por phone/email), só cria as notas que faltaram.",
     );
     return { role: "user", content: lines.join("\n") };
   }

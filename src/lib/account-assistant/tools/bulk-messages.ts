@@ -479,7 +479,6 @@ const scheduleBulkMessage: ToolEntry = {
           `Cap diário cortou em ${remaining} (eram ${contacts.length}). ${contacts.length - remaining} ficaram de fora.`,
         );
       }
-      const cappedNote: string | null = noteParts.length > 0 ? noteParts.join(" ") : null;
 
       // Fix Track 7 C4 (review 2026-05-05): se job criado dentro de janela
       // quiet, deslocar start_at pro próximo quiet_end. Antes: recipients
@@ -492,6 +491,9 @@ const scheduleBulkMessage: ToolEntry = {
           `Start ajustado pra ${adjustedStartAt.toISOString()} (quiet hours).`,
         );
       }
+      // Fix re-validation 2026-05-05: cappedNote calculado APÓS quiet push
+      // (antes era calculado entre cap e quiet, perdendo a quiet note).
+      const cappedNote: string | null = noteParts.length > 0 ? noteParts.join(" ") : null;
 
       const selected = contacts.slice(0, willEnqueue);
       const supabase = createAdminClient();

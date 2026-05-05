@@ -59,6 +59,13 @@ export interface RepIdentity {
   active_location_id: string | null;
   profile: RepProfile;
   terms_accepted_at: string | null;
+  /**
+   * Pedro 2026-05-05: rep que recusou termos. Bot silencia daqui em diante
+   * (não responde nada) até admin limpar manualmente. Persistido pelo
+   * `rejectTerms()` em identity.ts. Antes desse fix, processor entrava em
+   * loop reenviando termos a cada msg posterior.
+   */
+  terms_rejected_at?: string | null;
   unanswered_count: number;
   unanswered_pause_until: string | null;
   /**
