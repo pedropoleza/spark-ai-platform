@@ -112,9 +112,13 @@ export async function DELETE(request: NextRequest) {
     .maybeSingle();
   if (!location) return NextResponse.json({ ok: false, reason: "location_not_found" });
   const ghl = new GHLClient(location.company_id, "efZEjK6PqtPGDHqB2vV6");
+  // GHL Marketplace OAuth não tem permission de DELETE em /calendars/events/appointments —
+  // fallback: PUT appointmentStatus='cancelled' (mantém o evento no histórico mas marcado).
   try {
-    await ghl.delete(`/calendars/events/appointments/${apptId}`);
-    return NextResponse.json({ ok: true, deleted: apptId });
+    await ghl.put(`/calendars/events/appointments/${apptId}`, {
+      appointmentStatus: "cancelled",
+    });
+    return NextResponse.json({ ok: true, cancelled: apptId });
   } catch (err) {
     return NextResponse.json({
       ok: false,
