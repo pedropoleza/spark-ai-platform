@@ -112,8 +112,7 @@ async function main() {
       console.log(`\nSlots por dia:`);
       for (const [date, slots] of Object.entries(data.slots_by_date)) {
         console.log(`  ${date}: ${slots.length} slots`);
-        for (const s of slots.slice(0, 5)) console.log(`    - ${s}`);
-        if (slots.length > 5) console.log(`    ... +${slots.length - 5} mais`);
+        for (const s of slots) console.log(`    - ${s}`);
       }
     }
   }

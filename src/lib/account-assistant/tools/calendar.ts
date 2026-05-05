@@ -467,6 +467,28 @@ const listMyFreeSlots: ToolEntry = {
         }
       }
 
+      // Silent calendars: respondeu OK mas retornou ZERO slots em TODO
+      // o range. Provavelmente admin-only (só admin cria appts, não exposto
+      // pra cliente bookar) OU schedule diferente do default user.
+      // Bug observado 2026-05-05: Marcos tem 7 calendars como team_member,
+      // mas só 6 usam o "Work Hours" schedule (Mon-Thu 9-22). O 7º
+      // ("Calendário - Agência") é admin-only — nunca retorna slot público.
+      // INTERSECT-conservador antigo via "missing" + BH OK → suspect block,
+      // escondendo slots GENUINAMENTE livres do rep.
+      // Fix: silent calendars NÃO contam como "esperado" no INTERSECT.
+      const silentCalendars = new Set<string>();
+      for (const r of freeSlotsResults) {
+        if (!r.ok) continue;
+        const hasAnySlots = Object.entries(r.raw).some(([key, value]) => {
+          if (key === "traceId" || !value) return false;
+          const slots = Array.isArray(value)
+            ? (value as unknown as string[])
+            : value.slots || [];
+          return slots.length > 0;
+        });
+        if (!hasAnySlots) silentCalendars.add(r.calendar.id);
+      }
+
       // INTERSECT-conservador (B4/I2 best-effort): se slot tá em business
       // hours de N calendars do rep mas só K < N retornaram, K-N escondeu
       // — provável Google Calendar block escapando.
@@ -545,17 +567,29 @@ const listMyFreeSlots: ToolEntry = {
             continue;
           }
 
-          // INTERSECT-conservador SOMENTE se 2+ userCalendars
-          if (userCalendars.length >= 2) {
+          // INTERSECT-conservador SOMENTE se 3+ userCalendars (era 2+).
+          // Fix bug observado em prod 2026-05-05 (caso Marcos via screenshot
+          // visual): threshold antigo "1+ missing" era too eager — escondia
+          // slots GENUINAMENTE livres como suspect blocks.
+          // Agora: (a) ignora silent calendars (admin-only), (b) precisa de
+          // 3+ baseline pra ter sample size, (c) só suspect se 50%+ dos
+          // calendars-com-BH faltarem. Mantém detecção de Google block real
+          // (que tipicamente afeta TODOS os calendars do rep) sem falso-
+          // positivo em calendar com config idiossincrática.
+          if (userCalendars.length >= 3) {
             const calsWithBH = userCalendars.filter(
               (c) =>
                 userCalendarsResponded.has(c.id) &&
+                !silentCalendars.has(c.id) &&
                 calendarHasOpenHoursAt(c, slotStart, repTimezone),
             );
             const calsReturning = meta.sources.size;
+            const missingCount = calsWithBH.length - calsReturning;
+            const missingRatio =
+              calsWithBH.length > 0 ? missingCount / calsWithBH.length : 0;
             if (
-              calsWithBH.length >= 2 &&
-              calsReturning < calsWithBH.length
+              calsWithBH.length >= 3 &&
+              missingRatio >= 0.5
             ) {
               const missing = calsWithBH
                 .filter((c) => !meta.sources.has(c.id))
@@ -604,6 +638,10 @@ const listMyFreeSlots: ToolEntry = {
           partial_total_event_calendars: eventCalendars.length,
           truncated_calendars: truncatedCalendars,
           all_events_failed: allEventsFailed,
+          silent_calendars: Array.from(silentCalendars).map(
+            (id) =>
+              userCalendars.find((c) => c.id === id)?.name || id,
+          ),
           window: {
             start: new Date(startMs).toISOString(),
             end: new Date(endMs).toISOString(),
