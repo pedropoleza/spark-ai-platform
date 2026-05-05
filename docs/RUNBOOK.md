@@ -188,6 +188,27 @@ Campos úteis em `metadata->>` ou `metadata->`:
 - **Fix:** `withConfirmationParam` injeta o param dinamicamente baseado em `confirmation_mode`
 - **Prevenção:** sempre testar gate em `medium_and_high` mode
 
+### Calendar — bot lista slot livre que tem Google block (2026-05-05)
+- **Sintoma:** rep ou cliente avisa que bot ofereceu horário X, mas Google Calendar tinha block. Caso real: Marcos Alves (+1 786 461-5477, location `YuR0LCZomFzrfkDK2ezo`).
+- **Causa raiz:** bot calculava livre via `list_appointments` + reasoning manual — `/calendars/events` NÃO expõe Google Calendar synced blocks (visíveis na UI mas não na API). Plus, `userId` no events filter era `createdBy.userId` (não assignedUserId).
+- **Fix arquitetural (C15):** 2 tools dedicadas com semânticas separadas:
+  - `list_my_free_slots(when)` — USER-CENTRIC: UNION /free-slots dos rep's calendars + subtract events cross-calendar (filter client-side por assignedUserId) + INTERSECT-conservador best-effort pra detectar Google blocks via gap entre calendars com BH coverage. Pra "EU tô livre?".
+  - `get_free_slots(calendar_id, start, end)` — CALENDAR-CENTRIC puro: confia em /calendars/{id}/free-slots do GHL pra agregar regras desse calendar específico (BH + Google sync interno + conflicts internos). Pra "horários no Calendar X?".
+- **Diagnóstico em prod:**
+  ```sql
+  -- Ver qual tool foi chamada pra um rep
+  SELECT created_at, content, metadata->'tool_calls'
+  FROM sparkbot_messages
+  WHERE rep_identity_id = '<rep_id>' AND metadata ? 'tool_calls'
+  ORDER BY created_at DESC LIMIT 10;
+  ```
+  Se vir `list_appointments` sendo usado pra "tô livre?" — bot regrediu pra padrão antigo, checa system prompt.
+- **Bugs subsequentes corrigidos (re-review 2026-05-05):**
+  - **C14**: `calendarHasOpenHoursAt` usava `getUTC*` mas openHours é LOCAL → INTERSECT-conservador era no-op silencioso pra reps fora UTC. Fix: Intl.DateTimeFormat com timeZone do rep.
+  - `computeWindowInTz` lançava RangeError pra tz inválido → fallback "America/New_York".
+  - **C16**: All-events-fail retornava status:ok enganoso → novo status `degraded` no ToolResult + warning crítico + LLM exige confirmação verbal antes de marcar.
+- **Prevenção:** rep ou Pedro pode forçar test manual via WhatsApp pro SparkBot: "que horários tenho livre amanhã?" — bot DEVE chamar `list_my_free_slots`, NUNCA `list_appointments`.
+
 ---
 
 ## 📦 Migrations
