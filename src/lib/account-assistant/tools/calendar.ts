@@ -120,7 +120,7 @@ const getFreeSlots: ToolEntry = {
   def: {
     name: "get_free_slots",
     description:
-      "Lista horários disponíveis num calendário, dentro de uma janela. Use ANTES de create_appointment pra não tentar agendar horário ocupado.\n\nFEAT 2026-05-05: cross-calendar check — agora subtrai conflitos de TODOS os calendars do user (não só o calendar passado). Resolve caso de rep ter appointment em calendar A e cliente quer agendar no calendar B no mesmo horário. Aviso sobre Google Calendar não-sincronizado retornado via meta.",
+      "Lista horários disponíveis NUM CALENDÁRIO ESPECÍFICO. Calendar-centric: confia nas regras do calendar pra agregar (business hours, conflicts internos, Google Calendar synced). Use ANTES de `create_appointment` pra validar slot.\n\n⚠️ Use SOMENTE quando rep menciona um calendar específico ('horários no Calendar X', 'quando posso marcar no Field Training'). Pra 'EU livre em geral?' use `list_my_free_slots` (cross-calendar logic).",
     risk: "safe",
     parameters: {
       type: "object",
@@ -144,7 +144,6 @@ const getFreeSlots: ToolEntry = {
     const startMs = new Date(String(args.start_date)).getTime();
     const endMs = new Date(String(args.end_date)).getTime();
 
-    // Fix Track 3 #14 (review 2026-05-05): validar end > start + max 7 dias.
     if (endMs <= startMs) {
       return {
         status: "error",
@@ -164,115 +163,33 @@ const getFreeSlots: ToolEntry = {
     const repUserId = getRepGhlUserId(ctx);
 
     try {
-      // FEAT 2026-05-05 cross-calendar conflict check (caso cliente Marcos):
-      // 1. Query /free-slots do calendar requested (já considera Google sync
-      //    pra esse calendar específico).
-      // 2. Em paralelo, list calendars do user + query /events de cada
-      //    pra coletar conflitos cross-calendar.
-      // 3. Subtrai client-side os slots que conflitam.
-      // Não cobre: Google Calendar blocks que não sincronizaram com GHL
-      // (rep precisa ativar integração no GHL Settings).
-      const [freeSlotsRes, calendarsRes] = await Promise.all([
-        ctx.ghlClient.get<Record<string, { slots?: string[] }>>(
-          `/calendars/${calendarId}/free-slots`,
-          {
-            startDate: String(startMs),
-            endDate: String(endMs),
-            ...(args.timezone ? { timezone: String(args.timezone) } : {}),
-          },
-        ),
-        repUserId
-          ? ctx.ghlClient
-              .get<{
-                calendars?: Array<{ id: string; teamMembers?: Array<{ userId: string }> }>;
-              }>("/calendars/", { locationId: ctx.locationId })
-              .catch(() => null)
-          : Promise.resolve(null),
-      ]);
-
-      // Extrai os slots iniciais (já considera Google sync interno do calendar)
+      // Calendar-centric puro (review 2026-05-05): SEM cross-calendar logic.
+      // Confia no GHL pra agregar regras desse calendar específico (business
+      // hours, Google Calendar synced, conflicts internos).
+      // Pra "rep livre cross-calendar" use list_my_free_slots (separate tool).
+      const res = await ctx.ghlClient.get<Record<string, { slots?: string[] }>>(
+        `/calendars/${calendarId}/free-slots`,
+        {
+          startDate: String(startMs),
+          endDate: String(endMs),
+          ...(args.timezone ? { timezone: String(args.timezone) } : {}),
+          // userId pra round-robin filtrar slots pro user específico (B2 fix)
+          ...(repUserId ? { userId: repUserId } : {}),
+        },
+      );
       const slotsByDate: Record<string, string[]> = {};
-      for (const [key, value] of Object.entries(freeSlotsRes)) {
+      for (const [key, value] of Object.entries(res)) {
         if (key === "traceId" || !value) continue;
         const slots = Array.isArray(value) ? (value as unknown as string[]) : value.slots || [];
         if (slots.length > 0) slotsByDate[key] = slots;
       }
 
-      // Coleta conflitos cross-calendar — só rola se temos repUserId
-      const conflicts: Array<{ start: number; end: number }> = [];
-      let calendarsChecked = 0;
-      if (repUserId && calendarsRes) {
-        const userCalendars = (calendarsRes.calendars || []).filter((c) =>
-          (c.teamMembers || []).some((tm) => tm.userId === repUserId),
-        );
-        // Excluir o calendar requested (já coberto pelo /free-slots)
-        const otherCalendars = userCalendars.filter((c) => c.id !== calendarId);
-        const eventsResults = await Promise.all(
-          otherCalendars.map((c) =>
-            ctx.ghlClient
-              .get<{
-                events?: Array<{
-                  startTime: string;
-                  endTime: string;
-                  appointmentStatus?: string;
-                }>;
-              }>("/calendars/events", {
-                locationId: ctx.locationId,
-                calendarId: c.id,
-                startTime: String(startMs),
-                endTime: String(endMs),
-                userId: repUserId,
-              })
-              .catch(() => null),
-          ),
-        );
-        for (const result of eventsResults) {
-          if (!result?.events) continue;
-          calendarsChecked++;
-          for (const event of result.events) {
-            const status = (event.appointmentStatus || "scheduled").toLowerCase();
-            if (status === "cancelled" || status === "noshow" || status === "invalid") continue;
-            const eStart = new Date(event.startTime).getTime();
-            const eEnd = new Date(event.endTime).getTime();
-            if (isNaN(eStart) || isNaN(eEnd)) continue;
-            conflicts.push({ start: eStart, end: eEnd });
-          }
-        }
-      }
-
-      // Filtra slots que colidem com conflicts cross-calendar.
-      // Assume slot duration = próximo slot - este (ou 30min se único).
-      let removedCount = 0;
-      const filteredByDate: Record<string, string[]> = {};
-      for (const [date, slots] of Object.entries(slotsByDate)) {
-        const filtered: string[] = [];
-        for (let i = 0; i < slots.length; i++) {
-          const slotStart = new Date(slots[i]).getTime();
-          // Heurística de duração: 30min default. Slots típicos GHL.
-          const slotEnd = slotStart + 30 * 60_000;
-          const conflicts_hit = conflicts.some(
-            (c) => slotStart < c.end && slotEnd > c.start,
-          );
-          if (conflicts_hit) {
-            removedCount++;
-          } else {
-            filtered.push(slots[i]);
-          }
-        }
-        if (filtered.length > 0) filteredByDate[date] = filtered;
-      }
-
       return {
         status: "ok",
         data: {
-          slots_by_date: filteredByDate,
-          cross_calendar_check: {
-            calendars_scanned: calendarsChecked,
-            conflicts_found: conflicts.length,
-            slots_removed: removedCount,
-          },
-          warning_google_calendar:
-            "Se o rep tem agenda Google pessoal NÃO integrada no Spark Leads, blocks dela podem não aparecer aqui. Pra integrar: Settings → My Profile → Calendar Connection na conta dele.",
+          slots_by_date: slotsByDate,
+          calendar_id: calendarId,
+          source: "calendar-centric — /calendars/{id}/free-slots respeita business hours + Google sync interno daquele calendar.",
         },
       };
     } catch (err) {
@@ -281,11 +198,77 @@ const getFreeSlots: ToolEntry = {
   },
 };
 
+/**
+ * Calcula start/end do dia/semana NO TIMEZONE do rep.
+ * Antes usava setHours() que opera em UTC (timezone do servidor Vercel).
+ * Pra rep em EDT (UTC-4), "today" via UTC perdia 4h de cada lado.
+ * Agora usa Intl.DateTimeFormat pra obter boundaries certos.
+ */
+function computeWindowInTz(
+  when: string,
+  timezone: string,
+): { startMs: number; endMs: number } {
+  // Pega "today" no timezone do rep
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric", month: "2-digit", day: "2-digit",
+  });
+  const todayStr = fmt.format(new Date()); // "2026-05-05"
+
+  // Helper pra construir start-of-day no timezone do rep
+  const startOfDayInTz = (dateStr: string): number => {
+    // Trick: pega midnight UTC do dia e ajusta pelo offset do rep tz nesse dia
+    const utcMidnight = new Date(`${dateStr}T00:00:00Z`).getTime();
+    // Calcula offset do rep tz pra esse dia
+    const sample = new Date(utcMidnight);
+    const tzFmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit",
+    });
+    const parts = tzFmt.formatToParts(sample);
+    const get = (t: string) => parts.find((p) => p.type === t)?.value || "0";
+    const h = parseInt(get("hour"));
+    const m = parseInt(get("minute"));
+    // utcMidnight em UTC = midnight UTC. No tz é (h:m). Pra ter midnight no tz,
+    // recua o offset entre o que tz vê (h:m) e UTC midnight (00:00).
+    const offsetMin = h * 60 + m;
+    return utcMidnight - offsetMin * 60_000;
+  };
+
+  const addDays = (dateStr: string, days: number): string => {
+    const d = new Date(`${dateStr}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+
+  let startStr: string, endStr: string;
+  if (when === "today") {
+    startStr = todayStr;
+    endStr = addDays(todayStr, 1);
+  } else if (when === "tomorrow") {
+    startStr = addDays(todayStr, 1);
+    endStr = addDays(todayStr, 2);
+  } else if (when === "next_week") {
+    startStr = addDays(todayStr, 7);
+    endStr = addDays(todayStr, 14);
+  } else {
+    // 'week'
+    startStr = todayStr;
+    endStr = addDays(todayStr, 7);
+  }
+
+  const startMs = startOfDayInTz(startStr);
+  const endMs = startOfDayInTz(endStr) - 1; // último ms do dia anterior
+  return { startMs, endMs };
+}
+
 const listMyFreeSlots: ToolEntry = {
   def: {
     name: "list_my_free_slots",
     description:
-      "Lista horários LIVRES do REP num período (hoje/amanhã/semana). Combina /free-slots de TODOS os calendars onde rep é team_member, considerando appointments de outros users + blocks manuais + Google Calendar synced. Use SEMPRE quando rep pergunta 'que horários eu tenho livres', 'qual horários disponiveis', 'tô livre quando' etc.\n\n⚠️ NUNCA calcule horários livres a partir de list_appointments — esse só retorna appointments NATIVOS do Spark Leads, perde Google Calendar blocks. Esta tool é a única correta.",
+      "Lista horários LIVRES do REP num período (USER-CENTRIC). Considera todos os calendars do rep + appointments cross-calendar (qualquer calendar onde rep é assignedUser) + blocks manuais + Google Calendar synced internally por calendar.\n\nUse SEMPRE quando rep pergunta 'que horários EU tenho livres', 'qual minha disponibilidade', 'tô livre quando', 'meu horário hoje/amanhã'.\n\n⚠️ NUNCA use:\n- `list_appointments` + reasoning manual pra calcular livre — perde Google Calendar blocks\n- `get_free_slots` pra essa pergunta — get_free_slots é calendar-centric (sem cross-calendar logic), ideal pra 'horários no Calendar X' mas NÃO pra 'EU livre'\n\nEsta tool é a ÚNICA correta pra user-centric availability.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -309,41 +292,35 @@ const listMyFreeSlots: ToolEntry = {
       };
     }
 
-    const now = new Date();
-    let startMs: number, endMs: number;
-    if (when === "today") {
-      const s = new Date(now); s.setHours(0, 0, 0, 0);
-      const e = new Date(now); e.setHours(23, 59, 59, 999);
-      startMs = s.getTime(); endMs = e.getTime();
-    } else if (when === "tomorrow") {
-      const s = new Date(now); s.setDate(s.getDate() + 1); s.setHours(0, 0, 0, 0);
-      const e = new Date(s); e.setHours(23, 59, 59, 999);
-      startMs = s.getTime(); endMs = e.getTime();
-    } else if (when === "next_week") {
-      const s = new Date(now); s.setDate(s.getDate() + 7); s.setHours(0, 0, 0, 0);
-      const e = new Date(s); e.setDate(e.getDate() + 7); e.setHours(23, 59, 59, 999);
-      startMs = s.getTime(); endMs = e.getTime();
-    } else {
-      const s = new Date(now); s.setHours(0, 0, 0, 0);
-      startMs = s.getTime();
-      const e = new Date(s); e.setDate(e.getDate() + 7);
-      endMs = e.getTime();
-    }
+    // B3 + I6 fix (review 2026-05-05): timezone window correto.
+    // Antes setHours operava em UTC do servidor Vercel — pra rep em EDT,
+    // window cobria parte do dia errado (perdia late-night EDT, incluía
+    // night anterior). Agora calcula boundaries no timezone do rep.
+    const repTimezone = ctx.rep.timezone || "America/New_York";
+    const { startMs, endMs } = computeWindowInTz(when, repTimezone);
 
     try {
-      // Lista calendars com slotDuration pra usar como heurística depois
+      // Lista TODOS os calendars da location — necessário pra cross-calendar
+      // event coverage (I5 fix): appt do rep pode estar em calendar onde ele
+      // não é team_member (criado por colega).
       const calRes = await ctx.ghlClient.get<{
         calendars?: Array<{
           id: string;
           name?: string;
           slotDuration?: number;
-          slotDurationUnit?: string; // 'mins' ou 'hours'
+          slotDurationUnit?: string;
+          openHours?: Array<{
+            daysOfTheWeek: number[];
+            hours: Array<{ openHour: number; openMinute: number; closeHour: number; closeMinute: number }>;
+          }>;
           teamMembers?: Array<{ userId: string; selected?: boolean }>;
         }>;
       }>("/calendars/", { locationId: ctx.locationId });
 
-      // Filtra calendars onde rep é team_member ATIVO (selected !== false)
-      const userCalendars = (calRes.calendars || []).filter((c) =>
+      const allCalendars = calRes.calendars || [];
+
+      // userCalendars = onde rep é team_member ATIVO (fonte de /free-slots)
+      const userCalendars = allCalendars.filter((c) =>
         (c.teamMembers || []).some(
           (tm) => tm.userId === repUserId && tm.selected !== false,
         ),
@@ -356,16 +333,10 @@ const listMyFreeSlots: ToolEntry = {
         };
       }
 
-      // Approach (review 2026-05-05):
-      // - UNION dos /free-slots (slot livre = livre em PELO MENOS UM calendar)
-      // - SUBTRAI events cross-calendar onde rep é assignedUser
-      //
-      // Fixes do deep analysis 2026-05-05:
-      // BUG 1: usar slotDuration de cada calendar (era 30min hardcoded)
-      // BUG 2: passar userId em /free-slots pra round-robin filtrar pro rep
-      // BUG NOVO: NUNCA passar userId em /calendars/events — esse param
-      //   filtra por createdBy/owner, NÃO por assignedUser. Filter
-      //   client-side por event.assignedUserId === repUserId.
+      // eventCalendars = TODOS os calendars (cap 30 pra latência)
+      const eventCalendars = allCalendars.slice(0, 30);
+      const truncatedCalendars = allCalendars.length > 30;
+
       let eventsFailed = 0;
       const [freeSlotsResults, eventsResults] = await Promise.all([
         Promise.all(
@@ -376,15 +347,19 @@ const listMyFreeSlots: ToolEntry = {
                 {
                   startDate: String(startMs),
                   endDate: String(endMs),
-                  userId: repUserId, // BUG 2 fix: filtra slot pro rep em round-robin
+                  userId: repUserId,
                 },
               )
-              .then((res) => ({ calendar: c, raw: res }))
-              .catch(() => null),
+              .then((res) => ({ calendar: c, raw: res, ok: true }))
+              .catch(() => ({
+                calendar: c,
+                raw: {} as Record<string, { slots?: string[] }>,
+                ok: false,
+              })),
           ),
         ),
         Promise.all(
-          userCalendars.map((c) =>
+          eventCalendars.map((c) =>
             ctx.ghlClient
               .get<{
                 events?: Array<{
@@ -399,8 +374,6 @@ const listMyFreeSlots: ToolEntry = {
                 calendarId: c.id,
                 startTime: String(startMs),
                 endTime: String(endMs),
-                // BUG NOVO: SEM userId — filtra demais. Vamos filtrar
-                // client-side por assignedUserId.
               })
               .then((res) => ({ calendar: c, events: res.events || [] }))
               .catch(() => {
@@ -411,34 +384,47 @@ const listMyFreeSlots: ToolEntry = {
         ),
       ]);
 
-      // 1. UNION dos free slots — coleta todos por data
-      const unionByDate: Record<string, Set<string>> = {};
-      const calendarMeta: Record<string, { duration_min: number }> = {};
+      // 1. UNION dos free slots — track per-slot duration + sources
+      type SlotMeta = { duration_min: number; sources: Set<string> };
+      const unionByDate: Record<string, Map<string, SlotMeta>> = {};
       const validCalendarNames: string[] = [];
+      const userCalendarsResponded = new Set<string>();
       for (const r of freeSlotsResults) {
-        if (!r) continue;
+        if (!r.ok) continue;
+        userCalendarsResponded.add(r.calendar.id);
         validCalendarNames.push(r.calendar.name || r.calendar.id);
-        // Calcula duration em minutos
-        const dur = r.calendar.slotDuration || 30;
-        const durMin = r.calendar.slotDurationUnit === "hours" ? dur * 60 : dur;
-        calendarMeta[r.calendar.id] = { duration_min: durMin };
+        const durRaw = r.calendar.slotDuration || 30;
+        const durMin = r.calendar.slotDurationUnit === "hours" ? durRaw * 60 : durRaw;
         for (const [key, value] of Object.entries(r.raw)) {
           if (key === "traceId" || !value) continue;
           const slots = Array.isArray(value) ? (value as unknown as string[]) : value.slots || [];
           if (slots.length === 0) continue;
-          if (!unionByDate[key]) unionByDate[key] = new Set();
-          for (const s of slots) unionByDate[key].add(s);
+          if (!unionByDate[key]) unionByDate[key] = new Map();
+          for (const s of slots) {
+            const existing = unionByDate[key].get(s);
+            if (existing) {
+              existing.sources.add(r.calendar.id);
+              existing.duration_min = Math.max(existing.duration_min, durMin);
+            } else {
+              unionByDate[key].set(s, {
+                duration_min: durMin,
+                sources: new Set([r.calendar.id]),
+              });
+            }
+          }
         }
       }
 
-      // 2. Coleta events onde rep é assignedUser (cross-calendar)
+      // 2. Coleta events onde rep é assignedUser (cross-calendar coverage)
       const conflicts: Array<{ start: number; end: number; title?: string }> = [];
       for (const r of eventsResults) {
         for (const event of r.events) {
-          // BUG NOVO fix: filter client-side
           if (event.assignedUserId !== repUserId) continue;
           const status = (event.appointmentStatus || "scheduled").toLowerCase();
-          if (status === "cancelled" || status === "noshow" || status === "no-show" || status === "invalid") continue;
+          if (
+            status === "cancelled" || status === "noshow" ||
+            status === "no-show" || status === "invalid"
+          ) continue;
           const eStart = new Date(event.startTime).getTime();
           const eEnd = new Date(event.endTime).getTime();
           if (isNaN(eStart) || isNaN(eEnd)) continue;
@@ -446,27 +432,77 @@ const listMyFreeSlots: ToolEntry = {
         }
       }
 
-      // 3. Filtra union slots removendo conflitos.
-      // BUG 1 fix: usa slotDuration médio dos calendars (60min se algum
-      // tem 60min, senão menor entre eles). Conservador — pega duration
-      // MAIOR pra cobrir worst case.
-      const maxDuration = Math.max(
-        30,
-        ...Object.values(calendarMeta).map((m) => m.duration_min),
-      );
+      // INTERSECT-conservador (B4/I2 best-effort): se slot tá em business
+      // hours de N calendars do rep mas só K < N retornaram, K-N escondeu
+      // — provável Google Calendar block escapando.
+      function calendarHasOpenHoursAt(
+        cal: typeof userCalendars[0],
+        slotMs: number,
+      ): boolean {
+        if (!cal.openHours || cal.openHours.length === 0) return true;
+        const d = new Date(slotMs);
+        const wd = d.getUTCDay();
+        const hh = d.getUTCHours();
+        const mm = d.getUTCMinutes();
+        const slotMinOfDay = hh * 60 + mm;
+        for (const block of cal.openHours) {
+          if (!block.daysOfTheWeek.includes(wd)) continue;
+          for (const range of block.hours) {
+            const openMin = range.openHour * 60 + range.openMinute;
+            const closeMin = range.closeHour * 60 + range.closeMinute;
+            if (slotMinOfDay >= openMin && slotMinOfDay < closeMin) return true;
+          }
+        }
+        return false;
+      }
+
       const filteredByDate: Record<string, string[]> = {};
-      let removedCount = 0;
-      for (const [date, slotsSet] of Object.entries(unionByDate)) {
-        const sorted = Array.from(slotsSet).sort();
+      let removedConflict = 0;
+      let removedSuspectBlock = 0;
+      const suspectBlockExamples: string[] = [];
+      for (const [date, slotsMap] of Object.entries(unionByDate)) {
+        const sorted = Array.from(slotsMap.entries()).sort(([a], [b]) =>
+          a.localeCompare(b),
+        );
         const ok: string[] = [];
-        for (const slotIso of sorted) {
+        for (const [slotIso, meta] of sorted) {
           const slotStart = new Date(slotIso).getTime();
-          const slotEnd = slotStart + maxDuration * 60_000;
+          const slotEnd = slotStart + meta.duration_min * 60_000;
+
           const hasConflict = conflicts.some(
             (c) => slotStart < c.end && slotEnd > c.start,
           );
-          if (hasConflict) removedCount++;
-          else ok.push(slotIso);
+          if (hasConflict) {
+            removedConflict++;
+            continue;
+          }
+
+          // INTERSECT-conservador SOMENTE se 2+ userCalendars
+          if (userCalendars.length >= 2) {
+            const calsWithBH = userCalendars.filter(
+              (c) =>
+                userCalendarsResponded.has(c.id) &&
+                calendarHasOpenHoursAt(c, slotStart),
+            );
+            const calsReturning = meta.sources.size;
+            if (
+              calsWithBH.length >= 2 &&
+              calsReturning < calsWithBH.length
+            ) {
+              const missing = calsWithBH
+                .filter((c) => !meta.sources.has(c.id))
+                .map((c) => c.name || c.id);
+              removedSuspectBlock++;
+              if (suspectBlockExamples.length < 3) {
+                suspectBlockExamples.push(
+                  `${slotIso} (esperado em ${calsWithBH.length}, retornou em ${calsReturning}; missing: ${missing.slice(0, 2).join(", ")})`,
+                );
+              }
+              continue;
+            }
+          }
+
+          ok.push(slotIso);
         }
         if (ok.length > 0) filteredByDate[date] = ok;
       }
@@ -484,17 +520,24 @@ const listMyFreeSlots: ToolEntry = {
           calendars_checked: validCalendarNames.length,
           calendar_names: validCalendarNames,
           conflicts_found: conflicts.length,
-          slots_removed_due_to_conflicts: removedCount,
-          slot_duration_used_min: maxDuration,
-          partial: eventsFailed > 0,
+          slots_removed_conflicts: removedConflict,
+          slots_removed_suspect_block: removedSuspectBlock,
+          suspect_block_examples: suspectBlockExamples,
+          partial: eventsFailed > 0 || truncatedCalendars,
           partial_calendars_failed: eventsFailed,
+          truncated_calendars: truncatedCalendars,
+          window: {
+            start: new Date(startMs).toISOString(),
+            end: new Date(endMs).toISOString(),
+            timezone: repTimezone,
+          },
           source:
-            "UNION /free-slots (com userId pra round-robin) menos events cross-calendar onde assignedUserId = rep. /free-slots considera Google Calendar synced internamente por calendar.",
+            "USER-CENTRIC: UNION /free-slots dos rep's calendars (com userId p/ round-robin) MENOS events cross-calendar onde assignedUserId=rep. INTERSECT-conservador remove slots suspeitos de Google block (slot ausente de calendar com business hours coverage).",
           warning_google_calendar:
-            "Se o rep tem agenda Google pessoal NÃO integrada no Spark Leads, blocks dela podem não aparecer. Ativar em Settings → My Profile → Calendar Connection.",
+            "Best-effort detection de Google Calendar blocks via INTERSECT. Pode escapar se rep tem agenda Google pessoal NÃO integrada — confirma no GHL UI antes de marcar.",
           warning_partial:
             eventsFailed > 0
-              ? `${eventsFailed} calendars falharam ao retornar events — alguns conflicts podem ter sido perdidos. Avise rep pra confirmar manualmente.`
+              ? `${eventsFailed} calendars falharam ao retornar events — alguns conflicts podem ter sido perdidos.`
               : null,
         },
       };
