@@ -229,25 +229,40 @@ function computeWindowInTz(
   const todayStr = fmt.format(new Date()); // "2026-05-05"
 
   // Helper pra construir start-of-day no timezone do rep
+  // Fix CRITICAL bug 2026-05-05 (descoberto via test direto Marcos):
+  // Versão antiga `utcMidnight - h*60min` funcionava só pra timezones com
+  // offset positivo (Asia/Europe). Pra negative offsets (Americas), retornava
+  // start do dia ANTERIOR. Affected ALL Brazillionaires reps US — toda call
+  // de list_my_free_slots('tomorrow') buscava window do TODAY.
+  //
+  // Algoritmo correto: calcula offset real do tz comparando o que ele vê
+  // como UTC vs UTC real, depois subtrai do utcMidnight do dia desejado.
   const startOfDayInTz = (dateStr: string): number => {
-    // Trick: pega midnight UTC do dia e ajusta pelo offset do rep tz nesse dia
-    const utcMidnight = new Date(`${dateStr}T00:00:00Z`).getTime();
-    // Calcula offset do rep tz pra esse dia
-    const sample = new Date(utcMidnight);
+    const utcMidnight = new Date(`${dateStr}T00:00:00Z`);
+    const utcMs = utcMidnight.getTime();
     const tzFmt = new Intl.DateTimeFormat("en-US", {
       timeZone: tzUsed,
       hour12: false,
       year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
     });
-    const parts = tzFmt.formatToParts(sample);
+    const parts = tzFmt.formatToParts(utcMidnight);
     const get = (t: string) => parts.find((p) => p.type === t)?.value || "0";
-    const h = parseInt(get("hour"));
-    const m = parseInt(get("minute"));
-    // utcMidnight em UTC = midnight UTC. No tz é (h:m). Pra ter midnight no tz,
-    // recua o offset entre o que tz vê (h:m) e UTC midnight (00:00).
-    const offsetMin = h * 60 + m;
-    return utcMidnight - offsetMin * 60_000;
+    // "What tz sees" representado como se fosse UTC (mesmo wall-clock)
+    const tzAsIfUtc = Date.UTC(
+      parseInt(get("year"), 10),
+      parseInt(get("month"), 10) - 1,
+      parseInt(get("day"), 10),
+      parseInt(get("hour"), 10) === 24 ? 0 : parseInt(get("hour"), 10),
+      parseInt(get("minute"), 10),
+      parseInt(get("second"), 10),
+    );
+    // offsetMs = quanto o tz tá adiantado(+) ou atrasado(-) em relação a UTC
+    const offsetMs = tzAsIfUtc - utcMs;
+    // Midnight do dia X no tz = utcMidnight do dia X - offsetMs
+    // (positivo: tz adiantado, midnight tz vem ANTES de utcMidnight)
+    // (negativo: tz atrasado, midnight tz vem DEPOIS de utcMidnight)
+    return utcMs - offsetMs;
   };
 
   const addDays = (dateStr: string, days: number): string => {
