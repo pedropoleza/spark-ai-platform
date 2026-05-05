@@ -101,10 +101,27 @@ function SparkbotPanel() {
         });
         const data = await res.json();
         if (data.ok && Array.isArray(data.messages)) {
-          // Mescla com optimistic local: mantém locais não persistidos no fim
+          // Mescla com optimistic local. Fix bug observado em prod 2026-05-05:
+          // antes só dedupava por ID, mas tmp-u-X NUNCA casava com server UUID
+          // — locais ficavam pra sempre, aparecendo duplicados ao lado das
+          // versões persistidas. Agora dedup também por content+role+timing
+          // (±30s) — captura o caso de o /send ter respondido mas estado
+          // local ainda ter tmp-* pendente.
           setMessages((prev) => {
-            const serverIds = new Set(data.messages.map((m: Message) => m.id));
-            const locals = prev.filter((m) => m.id.startsWith("tmp-") && !serverIds.has(m.id));
+            const serverIds = new Set<string>(data.messages.map((m: Message) => m.id));
+            const locals = prev.filter((m) => {
+              if (!m.id.startsWith("tmp-")) return false;
+              if (serverIds.has(m.id)) return false;
+              // Procura server msg "equivalente" (mesmo role+content em ±30s)
+              const localTs = new Date(m.created_at).getTime();
+              const eq = (data.messages as Message[]).some(
+                (sm) =>
+                  sm.role === m.role &&
+                  sm.content === m.content &&
+                  Math.abs(new Date(sm.created_at).getTime() - localTs) < 30_000,
+              );
+              return !eq;
+            });
             return [...data.messages, ...locals];
           });
           // Mark all read (rep tá olhando o painel)
@@ -155,29 +172,51 @@ function SparkbotPanel() {
     // Limpa anexo da UI antes mesmo da response (rep pode anexar próximo)
     setAttachment(null);
 
+    // Fix bug observado em prod 2026-05-05: client-side timeout pra não
+    // deixar UI travada infinita se /send demorar > Vercel maxDuration.
+    // Antes, bot lento → 3 dots eternos → user clica de novo → polling
+    // duplica a msg n vezes na UI.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 65_000);
+
     try {
       const res = await fetch(`/api/sparkbot/send`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, attachment: attachmentPayload }),
+        signal: controller.signal,
       });
       const data = await res.json();
       if (!data.ok) {
         setError(data.reason || "erro ao enviar");
-        setMessages((prev) => prev.filter((m) => m.id !== agentTmpId));
+        setMessages((prev) => prev.filter((m) => m.id !== agentTmpId && m.id !== userTmpId));
         return;
       }
+      // Substitui tmp-u-X pelo ID real do server (data.user_message_id) E
+      // tmp-a-X pela resposta. Sem isso, polling do inbox NÃO conseguia
+      // dedupar (tmp-u-X nunca casava com server UUID), causando o bug
+      // visual de mensagens duplicadas observado em prod 2026-05-05.
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === agentTmpId
-            ? { ...m, content: data.text || "(sem resposta)", pending: false }
-            : m,
-        ),
+        prev.map((m) => {
+          if (m.id === userTmpId && data.user_message_id) {
+            return { ...m, id: data.user_message_id };
+          }
+          if (m.id === agentTmpId) {
+            return { ...m, content: data.text || "(sem resposta)", pending: false };
+          }
+          return m;
+        }),
       );
-    } catch {
-      setError("falha de rede");
+    } catch (err) {
+      const isAbort = err instanceof Error && err.name === "AbortError";
+      setError(
+        isAbort
+          ? "Demorei demais pra responder. Tenta de novo (sua msg foi recebida — pode aparecer quando refresh)."
+          : "falha de rede",
+      );
       setMessages((prev) => prev.filter((m) => m.id !== agentTmpId));
     } finally {
+      clearTimeout(timeoutId);
       setSending(false);
       setTimeout(() => textareaRef.current?.focus(), 50);
     }
