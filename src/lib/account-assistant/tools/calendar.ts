@@ -331,37 +331,42 @@ const listMyFreeSlots: ToolEntry = {
     }
 
     try {
-      // Lista calendars onde rep é team_member
+      // Lista calendars com slotDuration pra usar como heurística depois
       const calRes = await ctx.ghlClient.get<{
         calendars?: Array<{
           id: string;
           name?: string;
-          teamMembers?: Array<{ userId: string }>;
+          slotDuration?: number;
+          slotDurationUnit?: string; // 'mins' ou 'hours'
+          teamMembers?: Array<{ userId: string; selected?: boolean }>;
         }>;
       }>("/calendars/", { locationId: ctx.locationId });
 
+      // Filtra calendars onde rep é team_member ATIVO (selected !== false)
       const userCalendars = (calRes.calendars || []).filter((c) =>
-        (c.teamMembers || []).some((tm) => tm.userId === repUserId),
+        (c.teamMembers || []).some(
+          (tm) => tm.userId === repUserId && tm.selected !== false,
+        ),
       );
 
       if (userCalendars.length === 0) {
         return {
           status: "not_found",
-          message: "Você não é team_member de nenhum calendar nesta location.",
+          message: "Você não é team_member de nenhum calendar ativo nesta location.",
         };
       }
 
-      // Fix bug observado em prod 2026-05-05 (cliente Marcos): interseção
-      // dos /free-slots retornava VAZIO porque cada calendar tem openHours
-      // diferentes (Recruit Tue-Thu, Atendimento Mon-Fri, etc). Slot tem
-      // que estar em business hours de TODOS os calendars pra entrar
-      // intersect → quase sempre {}.
+      // Approach (review 2026-05-05):
+      // - UNION dos /free-slots (slot livre = livre em PELO MENOS UM calendar)
+      // - SUBTRAI events cross-calendar onde rep é assignedUser
       //
-      // Approach novo: UNION dos free-slots (slot livre = livre em PELO
-      // MENOS UM calendar do rep) + SUBTRAI events cross-calendar
-      // (appointments + blocks de QUALQUER calendar do rep). Isso reflete
-      // melhor "rep está livre nessa hora" — se algum calendar dele aceita
-      // booking, ele está livre, salvo se tem evento em outro calendar.
+      // Fixes do deep analysis 2026-05-05:
+      // BUG 1: usar slotDuration de cada calendar (era 30min hardcoded)
+      // BUG 2: passar userId em /free-slots pra round-robin filtrar pro rep
+      // BUG NOVO: NUNCA passar userId em /calendars/events — esse param
+      //   filtra por createdBy/owner, NÃO por assignedUser. Filter
+      //   client-side por event.assignedUserId === repUserId.
+      let eventsFailed = 0;
       const [freeSlotsResults, eventsResults] = await Promise.all([
         Promise.all(
           userCalendars.map((c) =>
@@ -371,6 +376,7 @@ const listMyFreeSlots: ToolEntry = {
                 {
                   startDate: String(startMs),
                   endDate: String(endMs),
+                  userId: repUserId, // BUG 2 fix: filtra slot pro rep em round-robin
                 },
               )
               .then((res) => ({ calendar: c, raw: res }))
@@ -385,6 +391,7 @@ const listMyFreeSlots: ToolEntry = {
                   startTime: string;
                   endTime: string;
                   appointmentStatus?: string;
+                  assignedUserId?: string;
                   title?: string;
                 }>;
               }>("/calendars/events", {
@@ -392,20 +399,29 @@ const listMyFreeSlots: ToolEntry = {
                 calendarId: c.id,
                 startTime: String(startMs),
                 endTime: String(endMs),
-                userId: repUserId,
+                // BUG NOVO: SEM userId — filtra demais. Vamos filtrar
+                // client-side por assignedUserId.
               })
               .then((res) => ({ calendar: c, events: res.events || [] }))
-              .catch(() => ({ calendar: c, events: [] })),
+              .catch(() => {
+                eventsFailed++;
+                return { calendar: c, events: [] };
+              }),
           ),
         ),
       ]);
 
       // 1. UNION dos free slots — coleta todos por data
       const unionByDate: Record<string, Set<string>> = {};
+      const calendarMeta: Record<string, { duration_min: number }> = {};
       const validCalendarNames: string[] = [];
       for (const r of freeSlotsResults) {
         if (!r) continue;
         validCalendarNames.push(r.calendar.name || r.calendar.id);
+        // Calcula duration em minutos
+        const dur = r.calendar.slotDuration || 30;
+        const durMin = r.calendar.slotDurationUnit === "hours" ? dur * 60 : dur;
+        calendarMeta[r.calendar.id] = { duration_min: durMin };
         for (const [key, value] of Object.entries(r.raw)) {
           if (key === "traceId" || !value) continue;
           const slots = Array.isArray(value) ? (value as unknown as string[]) : value.slots || [];
@@ -415,10 +431,12 @@ const listMyFreeSlots: ToolEntry = {
         }
       }
 
-      // 2. Coleta TODOS os events ocupados de qualquer calendar do rep
+      // 2. Coleta events onde rep é assignedUser (cross-calendar)
       const conflicts: Array<{ start: number; end: number; title?: string }> = [];
       for (const r of eventsResults) {
         for (const event of r.events) {
+          // BUG NOVO fix: filter client-side
+          if (event.assignedUserId !== repUserId) continue;
           const status = (event.appointmentStatus || "scheduled").toLowerCase();
           if (status === "cancelled" || status === "noshow" || status === "no-show" || status === "invalid") continue;
           const eStart = new Date(event.startTime).getTime();
@@ -428,9 +446,14 @@ const listMyFreeSlots: ToolEntry = {
         }
       }
 
-      // 3. Filtra union slots removendo conflitos cross-calendar
-      // Heurística duração: assume 30min (típico GHL menor unit).
-      // Se conflito sobrepõe parcialmente o slot, slot vira ocupado.
+      // 3. Filtra union slots removendo conflitos.
+      // BUG 1 fix: usa slotDuration médio dos calendars (60min se algum
+      // tem 60min, senão menor entre eles). Conservador — pega duration
+      // MAIOR pra cobrir worst case.
+      const maxDuration = Math.max(
+        30,
+        ...Object.values(calendarMeta).map((m) => m.duration_min),
+      );
       const filteredByDate: Record<string, string[]> = {};
       let removedCount = 0;
       for (const [date, slotsSet] of Object.entries(unionByDate)) {
@@ -438,7 +461,7 @@ const listMyFreeSlots: ToolEntry = {
         const ok: string[] = [];
         for (const slotIso of sorted) {
           const slotStart = new Date(slotIso).getTime();
-          const slotEnd = slotStart + 30 * 60_000;
+          const slotEnd = slotStart + maxDuration * 60_000;
           const hasConflict = conflicts.some(
             (c) => slotStart < c.end && slotEnd > c.start,
           );
@@ -462,10 +485,17 @@ const listMyFreeSlots: ToolEntry = {
           calendar_names: validCalendarNames,
           conflicts_found: conflicts.length,
           slots_removed_due_to_conflicts: removedCount,
+          slot_duration_used_min: maxDuration,
+          partial: eventsFailed > 0,
+          partial_calendars_failed: eventsFailed,
           source:
-            "union dos /free-slots de todos calendars do rep, menos conflicts cross-calendar (appointments + blocks). /free-slots considera Google Calendar synced internally por calendar.",
+            "UNION /free-slots (com userId pra round-robin) menos events cross-calendar onde assignedUserId = rep. /free-slots considera Google Calendar synced internamente por calendar.",
           warning_google_calendar:
             "Se o rep tem agenda Google pessoal NÃO integrada no Spark Leads, blocks dela podem não aparecer. Ativar em Settings → My Profile → Calendar Connection.",
+          warning_partial:
+            eventsFailed > 0
+              ? `${eventsFailed} calendars falharam ao retornar events — alguns conflicts podem ter sido perdidos. Avise rep pra confirmar manualmente.`
+              : null,
         },
       };
     } catch (err) {
