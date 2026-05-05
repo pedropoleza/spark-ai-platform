@@ -93,3 +93,32 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({ ok: true, ...out });
 }
+
+/**
+ * DELETE /api/debug/appointment-test?appointment_id=X
+ * Cleanup do appointment de teste criado pela GET (id 6Qs9HLGYTjYXqUcN55OJ).
+ */
+export async function DELETE(request: NextRequest) {
+  if (!isAuthorizedCron(request)) {
+    return NextResponse.json({ ok: false, reason: "unauthorized" }, { status: 401 });
+  }
+  const url = new URL(request.url);
+  const apptId = url.searchParams.get("appointment_id") || "6Qs9HLGYTjYXqUcN55OJ";
+  const supabase = createAdminClient();
+  const { data: location } = await supabase
+    .from("locations")
+    .select("company_id")
+    .eq("location_id", "efZEjK6PqtPGDHqB2vV6")
+    .maybeSingle();
+  if (!location) return NextResponse.json({ ok: false, reason: "location_not_found" });
+  const ghl = new GHLClient(location.company_id, "efZEjK6PqtPGDHqB2vV6");
+  try {
+    await ghl.delete(`/calendars/events/appointments/${apptId}`);
+    return NextResponse.json({ ok: true, deleted: apptId });
+  } catch (err) {
+    return NextResponse.json({
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}

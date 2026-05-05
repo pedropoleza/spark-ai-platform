@@ -214,7 +214,7 @@ const createAppointment: ToolEntry = {
   def: {
     name: "create_appointment",
     description:
-      "⚠️ AGENDA reunião pra um contato no calendário. AFETA o lead — sempre confirma com o rep ANTES. Use get_free_slots pra escolher horário válido.",
+      "⚠️ AGENDA reunião pra um contato no calendário. AFETA o lead — sempre confirma com o rep ANTES. Use get_free_slots pra escolher horário válido.\n\nObservação importante: pra calendars **round-robin/collective/group** (com vários team members), NÃO passe `assigned_user_id` — deixe o GHL escolher automaticamente. Pra calendars **personal/service** (1 user só), opcional. Default: não passar (mais seguro pra qualquer tipo de calendar).",
     risk: "high",
     parameters: {
       type: "object",
@@ -226,6 +226,11 @@ const createAppointment: ToolEntry = {
         title: { type: "string" },
         meeting_location_type: { type: "string", description: "Ex: 'custom', 'phone', 'zoom'." },
         meeting_location: { type: "string", description: "Ex: link Zoom, telefone, endereço." },
+        assigned_user_id: {
+          type: "string",
+          description:
+            "OPCIONAL. ID do user GHL a quem atribuir a reunião. Use APENAS se o rep pedir explicitamente OU se for um calendar personal de 1 user específico. Pra round-robin/collective/group, OMITA — GHL escolhe automaticamente baseado em disponibilidade.",
+        },
       },
       required: ["calendar_id", "contact_id", "start_time", "end_time"],
     },
@@ -240,6 +245,14 @@ const createAppointment: ToolEntry = {
     const endInvalid = validateIso8601(String(args.end_time || ""), "end_time");
     if (endInvalid) return endInvalid;
 
+    // Fix bug observado em prod 2026-05-04: antes setávamos
+    // `body.assignedUserId = repUser` SEMPRE. Isso quebrava calendars
+    // round-robin com `lookBusyConfig` ativado — GHL valida slot
+    // especificamente pro user e o look-busy esconde 50% dos slots,
+    // retornando "slot no longer available" pra horários que get_free_slots
+    // listou como livres. Solução: NÃO passar assignedUserId por default;
+    // deixar GHL decidir baseado no calendar type. LLM pode forçar via
+    // arg `assigned_user_id` se precisar (caso edge: calendar personal).
     try {
       const body: Record<string, unknown> = {
         calendarId,
@@ -250,16 +263,24 @@ const createAppointment: ToolEntry = {
         ...(args.title ? { title: String(args.title) } : {}),
         ...(args.meeting_location_type ? { meetingLocationType: String(args.meeting_location_type) } : {}),
         ...(args.meeting_location ? { address: String(args.meeting_location) } : {}),
+        ...(args.assigned_user_id
+          ? { assignedUserId: String(args.assigned_user_id) }
+          : {}),
       };
-      const repUser = getRepGhlUserId(ctx);
-      if (repUser) body.assignedUserId = repUser;
 
-      const res = await ctx.ghlClient.post<{ id?: string; appointment?: { id: string } }>(
-        "/calendars/events/appointments",
-        body,
-      );
+      const res = await ctx.ghlClient.post<{
+        id?: string;
+        appointment?: { id: string };
+        assignedUserId?: string;
+      }>("/calendars/events/appointments", body);
       const apptId = res.id || res.appointment?.id;
-      return { status: "ok", data: { appointment_id: apptId } };
+      return {
+        status: "ok",
+        data: {
+          appointment_id: apptId,
+          assigned_to: res.assignedUserId || null,
+        },
+      };
     } catch (err) {
       return ghlErrorToResult(err, "criação de appointment");
     }
