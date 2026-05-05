@@ -120,7 +120,7 @@ const getFreeSlots: ToolEntry = {
   def: {
     name: "get_free_slots",
     description:
-      "Lista horários disponíveis num calendário, dentro de uma janela. Use ANTES de create_appointment pra não tentar agendar horário ocupado.",
+      "Lista horários disponíveis num calendário, dentro de uma janela. Use ANTES de create_appointment pra não tentar agendar horário ocupado.\n\nFEAT 2026-05-05: cross-calendar check — agora subtrai conflitos de TODOS os calendars do user (não só o calendar passado). Resolve caso de rep ter appointment em calendar A e cliente quer agendar no calendar B no mesmo horário. Aviso sobre Google Calendar não-sincronizado retornado via meta.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -161,22 +161,120 @@ const getFreeSlots: ToolEntry = {
       };
     }
 
+    const repUserId = getRepGhlUserId(ctx);
+
     try {
-      const res = await ctx.ghlClient.get<Record<string, { slots?: string[] }>>(
-        `/calendars/${calendarId}/free-slots`,
-        {
-          startDate: String(startMs),
-          endDate: String(endMs),
-          ...(args.timezone ? { timezone: String(args.timezone) } : {}),
-        },
-      );
+      // FEAT 2026-05-05 cross-calendar conflict check (caso cliente Marcos):
+      // 1. Query /free-slots do calendar requested (já considera Google sync
+      //    pra esse calendar específico).
+      // 2. Em paralelo, list calendars do user + query /events de cada
+      //    pra coletar conflitos cross-calendar.
+      // 3. Subtrai client-side os slots que conflitam.
+      // Não cobre: Google Calendar blocks que não sincronizaram com GHL
+      // (rep precisa ativar integração no GHL Settings).
+      const [freeSlotsRes, calendarsRes] = await Promise.all([
+        ctx.ghlClient.get<Record<string, { slots?: string[] }>>(
+          `/calendars/${calendarId}/free-slots`,
+          {
+            startDate: String(startMs),
+            endDate: String(endMs),
+            ...(args.timezone ? { timezone: String(args.timezone) } : {}),
+          },
+        ),
+        repUserId
+          ? ctx.ghlClient
+              .get<{
+                calendars?: Array<{ id: string; teamMembers?: Array<{ userId: string }> }>;
+              }>("/calendars/", { locationId: ctx.locationId })
+              .catch(() => null)
+          : Promise.resolve(null),
+      ]);
+
+      // Extrai os slots iniciais (já considera Google sync interno do calendar)
       const slotsByDate: Record<string, string[]> = {};
-      for (const [key, value] of Object.entries(res)) {
+      for (const [key, value] of Object.entries(freeSlotsRes)) {
         if (key === "traceId" || !value) continue;
         const slots = Array.isArray(value) ? (value as unknown as string[]) : value.slots || [];
         if (slots.length > 0) slotsByDate[key] = slots;
       }
-      return { status: "ok", data: { slots_by_date: slotsByDate } };
+
+      // Coleta conflitos cross-calendar — só rola se temos repUserId
+      const conflicts: Array<{ start: number; end: number }> = [];
+      let calendarsChecked = 0;
+      if (repUserId && calendarsRes) {
+        const userCalendars = (calendarsRes.calendars || []).filter((c) =>
+          (c.teamMembers || []).some((tm) => tm.userId === repUserId),
+        );
+        // Excluir o calendar requested (já coberto pelo /free-slots)
+        const otherCalendars = userCalendars.filter((c) => c.id !== calendarId);
+        const eventsResults = await Promise.all(
+          otherCalendars.map((c) =>
+            ctx.ghlClient
+              .get<{
+                events?: Array<{
+                  startTime: string;
+                  endTime: string;
+                  appointmentStatus?: string;
+                }>;
+              }>("/calendars/events", {
+                locationId: ctx.locationId,
+                calendarId: c.id,
+                startTime: String(startMs),
+                endTime: String(endMs),
+                userId: repUserId,
+              })
+              .catch(() => null),
+          ),
+        );
+        for (const result of eventsResults) {
+          if (!result?.events) continue;
+          calendarsChecked++;
+          for (const event of result.events) {
+            const status = (event.appointmentStatus || "scheduled").toLowerCase();
+            if (status === "cancelled" || status === "noshow" || status === "invalid") continue;
+            const eStart = new Date(event.startTime).getTime();
+            const eEnd = new Date(event.endTime).getTime();
+            if (isNaN(eStart) || isNaN(eEnd)) continue;
+            conflicts.push({ start: eStart, end: eEnd });
+          }
+        }
+      }
+
+      // Filtra slots que colidem com conflicts cross-calendar.
+      // Assume slot duration = próximo slot - este (ou 30min se único).
+      let removedCount = 0;
+      const filteredByDate: Record<string, string[]> = {};
+      for (const [date, slots] of Object.entries(slotsByDate)) {
+        const filtered: string[] = [];
+        for (let i = 0; i < slots.length; i++) {
+          const slotStart = new Date(slots[i]).getTime();
+          // Heurística de duração: 30min default. Slots típicos GHL.
+          const slotEnd = slotStart + 30 * 60_000;
+          const conflicts_hit = conflicts.some(
+            (c) => slotStart < c.end && slotEnd > c.start,
+          );
+          if (conflicts_hit) {
+            removedCount++;
+          } else {
+            filtered.push(slots[i]);
+          }
+        }
+        if (filtered.length > 0) filteredByDate[date] = filtered;
+      }
+
+      return {
+        status: "ok",
+        data: {
+          slots_by_date: filteredByDate,
+          cross_calendar_check: {
+            calendars_scanned: calendarsChecked,
+            conflicts_found: conflicts.length,
+            slots_removed: removedCount,
+          },
+          warning_google_calendar:
+            "Se o rep tem agenda Google pessoal NÃO integrada no Spark Leads, blocks dela podem não aparecer aqui. Pra integrar: Settings → My Profile → Calendar Connection na conta dele.",
+        },
+      };
     } catch (err) {
       return ghlErrorToResult(err, "consulta de horários disponíveis");
     }
