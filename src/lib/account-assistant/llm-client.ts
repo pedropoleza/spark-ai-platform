@@ -311,6 +311,18 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     let response;
     try {
+      // Fix Track 12 M1 (review 2026-05-05): aplica cache_control no ÚLTIMO
+      // tool além do system prompt. Tools array (~30 defs JSON pesado) é
+      // estável entre turns — ~30% economia de input tokens em cache hit.
+      // Anthropic cacheia tudo até o último marker ephemeral inclusivo.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const toolsWithCache: any = Array.isArray(tools) && tools.length > 0
+        ? tools.map((t, idx) =>
+            idx === tools.length - 1
+              ? { ...t, cache_control: { type: "ephemeral" } }
+              : t,
+          )
+        : tools;
       response = await client.messages.create({
         model: input.model,
         max_tokens: 2500,
@@ -318,8 +330,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           { type: "text", text: input.systemPrompt, cache_control: { type: "ephemeral" } } as any,
         ],
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        tools: tools as any,
+        tools: toolsWithCache,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         messages: messages as any,
         temperature: 0.3, // mais determinístico pra tool use

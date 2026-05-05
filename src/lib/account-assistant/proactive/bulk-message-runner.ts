@@ -305,17 +305,19 @@ async function sendToContact(
 async function refreshJobCounters(jobId: string): Promise<boolean> {
   const supabase = createAdminClient();
 
-  // Conta status atuais — usa head:false pra count exato.
+  // Fix Track 7 M3 (review 2026-05-05): antes fazia 6 queries (head count
+  // por status). Agora 1 query select all rows + agregação JS. Em scale,
+  // 50 jobs × 6 queries = 300 queries/tick → 50 queries.
+  const { data: rows } = await supabase
+    .from("bulk_message_recipients")
+    .select("status")
+    .eq("job_id", jobId);
+
   const counts: Record<string, number> = {
     pending: 0, sending: 0, sent: 0, failed: 0, skipped: 0, cancelled: 0,
   };
-  for (const status of Object.keys(counts)) {
-    const { count } = await supabase
-      .from("bulk_message_recipients")
-      .select("id", { count: "exact", head: true })
-      .eq("job_id", jobId)
-      .eq("status", status);
-    counts[status] = count ?? 0;
+  for (const row of (rows || []) as Array<{ status: string }>) {
+    if (counts[row.status] !== undefined) counts[row.status]++;
   }
   const total =
     counts.pending + counts.sending + counts.sent +

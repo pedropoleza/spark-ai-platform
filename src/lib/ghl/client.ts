@@ -58,11 +58,17 @@ export class GHLClient {
       response = await request();
     }
 
-    // 5xx transitório — retry 1x
+    // Fix Track 12 H3 (review 2026-05-05): 5xx com exponential backoff +
+    // 2 retries (era só 1). Antes, GHL 502/503 transient quebrava a primeira
+    // chamada do bot. Network errors já tinham 2 retries — alinhamos.
     if (response.status >= 500 && response.status < 600) {
-      console.warn(`[GHL] ${response.status} received, retrying once in 500ms...`);
-      await new Promise(r => setTimeout(r, 500));
-      response = await request();
+      for (let attempt5xx = 0; attempt5xx < 2; attempt5xx++) {
+        const delay = 300 * Math.pow(2, attempt5xx); // 300ms, 600ms
+        console.warn(`[GHL] ${response.status} (attempt ${attempt5xx + 1}/2), retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+        response = await request();
+        if (response.status < 500 || response.status >= 600) break;
+      }
     }
 
     if (!response.ok) {

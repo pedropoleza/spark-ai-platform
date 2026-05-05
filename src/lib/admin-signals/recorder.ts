@@ -135,6 +135,34 @@ export async function recordSignal(input: RecordSignalInput): Promise<RecordSign
     .single();
 
   if (error) {
+    // Fix Track 11 M-T11-4 (review 2026-05-05): race condition entre 2
+    // inserts simultâneos do mesmo fingerprint. Antes: SELECT achou null,
+    // ambos vão pra INSERT, segundo bate UNIQUE constraint, perde a
+    // ocorrência (não incrementa). Agora: capture 23505, re-fetch e fazer
+    // increment manual.
+    if ((error as { code?: string }).code === "23505") {
+      const { data: existingRetry } = await supabase
+        .from("admin_signals")
+        .select("id, occurrence_count")
+        .eq("fingerprint", fingerprint)
+        .maybeSingle();
+      if (existingRetry) {
+        await supabase
+          .from("admin_signals")
+          .update({
+            occurrence_count: existingRetry.occurrence_count + 1,
+            last_seen_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingRetry.id);
+        return {
+          ok: true,
+          signal_id: existingRetry.id,
+          was_new: false,
+          occurrence_count: existingRetry.occurrence_count + 1,
+        };
+      }
+    }
     console.warn("[admin-signals] insert falhou:", error.message);
     return { ok: false, error: error.message };
   }
