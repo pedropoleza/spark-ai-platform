@@ -281,7 +281,11 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     `Phone: ${rep.phone}`,
     `Location ativa: ${locationName}`,
     rep.ghl_users.length > 1
-      ? `⚠️  Este rep trabalha em ${rep.ghl_users.length} locations. Sempre opere na location ativa ("${locationName}") a menos que ele peça pra trocar.`
+      ? [
+          `⚠️  Este rep trabalha em ${rep.ghl_users.length} locations. Sempre opere na location ativa ("${locationName}") a menos que ele peça pra trocar.`,
+          `Pra TROCAR de location: use a tool \`switch_active_location\` (passe o nome ou ID). SEMPRE confirme com o rep antes ('Vou trocar pra X, confirma?'). Quando rep falar "muda pra Y", "agora to no Z", "operando em W" — chame essa tool.`,
+          `Pra LISTAR as locations disponíveis: use \`list_my_locations\`.`,
+        ].join("\n")
       : "",
     "",
     buildMemorySection(rep.profile),
