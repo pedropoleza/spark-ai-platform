@@ -64,7 +64,7 @@ const defaultConfig: ConfigForm = {
     { key: "state", label: "Estado", required: true, type: "text", skip_if_filled: true },
     { key: "work_permit", label: "Social Security / Permissão de trabalho", required: true, type: "boolean", skip_if_filled: false },
   ],
-  ai_model: "gpt-4.1-mini",
+  ai_model: "claude-sonnet-4-6",
   custom_instructions: "",
   knowledge_base_instructions: "",
   system_prompt_override: null,

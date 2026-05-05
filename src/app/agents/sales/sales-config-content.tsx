@@ -65,7 +65,7 @@ const defaultConfig: ConfigForm = {
     { key: "state", label: "Estado onde mora", required: true, type: "text", sync_to_ghl: false },
     { key: "smoker_status", label: "Fumante", required: true, type: "boolean", sync_to_ghl: false },
   ],
-  ai_model: "gpt-4.1-mini",
+  ai_model: "claude-sonnet-4-6",
   custom_instructions: "",
   knowledge_base_instructions: "",
   system_prompt_override: null,
