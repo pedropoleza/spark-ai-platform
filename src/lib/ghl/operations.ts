@@ -109,18 +109,37 @@ export async function sendMessageToContact(
 // Booking error detection (centralizada)
 // =====================================================
 
+// Fix HIGH-11 (deep review 2026-05-05): keyword "calendar"/"calendario"
+// era genérica demais — erro de CONFIG ("Calendario nao configurado") batia
+// como conflict, action-executor mandava "tenta outro horário" ao lead em
+// loop infinito. Agora keywords são específicas de CONFLICT (slot ocupado/
+// já agendado/etc) E filtramos keywords de CONFIG (não configurado/missing).
 const BOOKING_CONFLICT_KEYWORDS = [
-  "available", "conflict", "calendario", "calendário", "calendar",
-  "slot", "agendamento", "busy", "occupied", "no longer", "ja agendado",
-  "já agendado", "422",
+  "no longer available", "no longer", "not available",
+  "slot is",                           // "slot is not available" / "slot is taken"
+  "conflict", "busy", "occupied",
+  "ja agendado", "já agendado",
+  "horario indisponivel", "horário indisponível",
+  "422",                               // GHL 422 typical pra slot conflict
+];
+
+const BOOKING_CONFIG_KEYWORDS = [
+  "nao configurado", "não configurado",
+  "not configured", "missing calendar",
+  "calendarid required",
 ];
 
 /**
  * Detecta se um erro do GHL parece ser de slot ocupado / conflict de
  * agendamento. Usado pelo action-executor pra decidir se reagenda em
  * outro horário ou trata como erro genérico.
+ *
+ * IMPORTANTE: erro de CONFIG (calendar não configurado, missing ID) NÃO é
+ * conflict — bot não deve oferecer "outro horário". Filtramos antes.
  */
 export function isBookingConflictError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  // Se é erro de config, NÃO é conflict
+  if (BOOKING_CONFIG_KEYWORDS.some((k) => msg.includes(k))) return false;
   return BOOKING_CONFLICT_KEYWORDS.some((k) => msg.includes(k));
 }

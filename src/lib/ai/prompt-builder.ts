@@ -85,9 +85,24 @@ interface PromptContext {
  */
 export function buildSystemPrompt(ctx: PromptContext): string {
   if (ctx.config.system_prompt_override) {
-    const dataContext = ctx.config.data_fields.length > 0 ? buildDataFieldsTemplateSection(ctx) : "";
+    // Fix HIGH-7 (deep review 2026-05-05): antes, override SHORT-CIRCUITAVA
+    // pulando recruitment guard, KB, identity, booking. Resultado: agente
+    // recruitment com override virava "vendedor" silenciosamente. Agora
+    // override SUBSTITUI custom_instructions/objective mas mantém sections
+    // críticas (anti-vendas no recruitment, KB, identity, booking format,
+    // responseFormat) — admin pode customizar voz/tom mas não consegue
+    // contornar regras de produto.
+    const dataContext = ctx.config.data_fields.length > 0
+      ? buildDataFieldsTemplateSection(ctx)
+      : "";
     return [
+      buildMetaInstruction(),
+      buildIdentitySection(ctx),                   // identidade humana/IA
       ctx.config.system_prompt_override,
+      buildKnowledgeBaseSection(ctx),              // KB
+      buildRecruitmentSection(ctx),                // anti-vendas em recruitment
+      buildBookingSection(ctx),                    // ISO 8601 + tz rules
+      buildMediaInstructionsSection(ctx.config),
       dataContext,
       buildResponseFormatSection(ctx),
     ].filter(Boolean).join("\n\n");
@@ -913,10 +928,14 @@ export function buildResponseJsonSchema(ctx: PromptContext) {
               {
                 type: "object",
                 additionalProperties: false,
+                // Fix HIGH-8 (deep review 2026-05-05): appointment_id é
+                // nullable porque LLM nem sempre tem ID real (vai depender
+                // de findExistingAppointment lookup). Antes strict mode
+                // forçava string → LLM alucinava ID inválido → 404 GHL.
                 required: ["type", "appointment_id", "start_time"],
                 properties: {
                   type: { type: "string", enum: ["reschedule_appointment"] },
-                  appointment_id: { type: "string" },
+                  appointment_id: { type: ["string", "null"] },
                   start_time: { type: "string", description: "ISO 8601 com offset" },
                 },
               },

@@ -606,13 +606,25 @@ async function processGroup(
       .eq("contact_id", group.contactId);
   }
 
+  // Fix CRIT-2 (deep review 2026-05-05): se aggregatedBody=="" (lead mandou
+  // só mídia que falhou no parse, ex: PDF com pdf_reading=false), Claude
+  // rejeita 400 "text content blocks must be non-empty". Fallback string
+  // descritiva pro LLM saber que houve algo enviado.
+  const safeNewMessages = group.aggregatedBody && group.aggregatedBody.trim()
+    ? group.aggregatedBody
+    : "[contato enviou conteúdo não processável (mídia ou anexo)]";
+
+  // Fix MED-7: detectar Claude por prefix em vez de hardcoded version list.
+  // Antes: hardcoded ["claude-sonnet-4-6", "claude-haiku-4-5", ...] —
+  // quando admin selecionava claude-sonnet-4-7 (ou versão futura), caía em
+  // OpenAI client + erro modelo desconhecido. Default Sonnet.
   const aiResult = await processWithAI({
     systemPrompt,
     runtimeContext,
     conversationMessages: compressed.turns,
     conversationHistory: "",
-    newMessages: group.aggregatedBody,
-    model: config.ai_model || "gpt-4.1-mini",
+    newMessages: safeNewMessages,
+    model: config.ai_model || "claude-sonnet-4-6",
     images: imageInputs.length > 0 ? imageInputs : undefined,
     responseSchema,
     priorTurnCount: conversationTurns.length,
@@ -706,16 +718,20 @@ async function processGroup(
   }
 
   try {
+    // Fix HIGH-2 (deep review 2026-05-05): incluir imageCount no billing.
+    // Antes, vision em gpt-4o (~$0.0085/img high detail) NÃO era cobrado
+    // em sales/recruitment — só Sparkbot. Agora paridade.
     await trackAndCharge({
       locationId: group.locationId,
       companyId: location.company_id,
       agentId: agent.id,
       contactId: group.contactId,
       actionType: "ai_processing",
-      model: config.ai_model || "gpt-4.1-mini",
+      model: config.ai_model || "claude-sonnet-4-6",
       promptTokens: aiResult.prompt_tokens || 0,
       completionTokens: aiResult.completion_tokens || 0,
       cachedTokens: aiResult.cached_tokens || 0,
+      imageCount: imageInputs.length,
       usesCustomKey,
     });
   } catch (billingError) {

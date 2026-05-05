@@ -3,7 +3,9 @@ import type { AIResponse, AIProcessingResult } from "@/types/ai";
 import { sanitizeAgentMessage } from "@/lib/ai/response-sanitizer";
 
 const OPENAI_VISION_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"];
-const CLAUDE_MODELS = ["claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"];
+// Fix MED-7 (deep review 2026-05-05): detectar Claude por prefix em vez de
+// hardcoded version list. Antes, claude-sonnet-4-7-* (versão futura) caía em
+// OpenAI client → erro modelo desconhecido. Agora qualquer "claude-*" funciona.
 
 function getOpenAIClient() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 30000, maxRetries: 1 });
@@ -61,7 +63,7 @@ interface ProcessMessageInput {
 }
 
 function isClaude(model: string): boolean {
-  return CLAUDE_MODELS.some((m) => model.startsWith(m));
+  return model.startsWith("claude-");
 }
 
 function supportsVision(model: string): boolean {
@@ -190,8 +192,15 @@ async function processWithOpenAI(
     { role: "system", content: input.systemPrompt },
   ];
   if (useStructured) {
+    // Fix CRIT-3 (deep review 2026-05-05): filter content vazio.
+    // Claude rejeita user msg com content="" → 400 invalid_request. OpenAI
+    // tolera mas comportamento bizarro. Substituir por placeholder pra
+    // preservar turn boundary.
     for (const turn of conversationMessages!) {
-      messages.push({ role: turn.role, content: turn.content });
+      const safe = turn.content && turn.content.trim()
+        ? turn.content
+        : "[mensagem vazia]";
+      messages.push({ role: turn.role, content: safe });
     }
   }
   messages.push(currentUserMessage);
@@ -257,8 +266,13 @@ async function processWithClaude(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const messages: any[] = [];
   if (useStructured) {
+    // Fix CRIT-3 (deep review 2026-05-05): filter content vazio (mesma
+    // lógica do path OpenAI acima).
     for (const turn of conversationMessages!) {
-      messages.push({ role: turn.role, content: turn.content });
+      const safe = turn.content && turn.content.trim()
+        ? turn.content
+        : "[mensagem vazia]";
+      messages.push({ role: turn.role, content: safe });
     }
   }
   messages.push({ role: "user", content: currentContent });

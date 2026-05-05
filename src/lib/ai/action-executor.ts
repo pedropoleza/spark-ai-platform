@@ -55,10 +55,39 @@ export async function executeActions(
   const messageType = channelToMessageType(ctx.channel);
 
   // 1. Executar acoes PRIMEIRO (book, reschedule, update fields, tags)
+  // Fix HIGH-10 (deep review 2026-05-05): dedup actions por
+  // (type, calendar_id?, start_time?, appointment_id?, field_key?, tag?,
+  // pipeline_id?, stage_id?). Antes, LLM podia retornar mesma action 2x
+  // (book_appointment com mesmo start_time) → race em findExistingAppointment
+  // criava 2 appointments OU update incorreto.
+  const dedupKey = (a: typeof response.actions[number]): string => {
+    return JSON.stringify({
+      t: a.type,
+      f: a.field_key || "",
+      v: a.value || "",
+      tag: a.tag || "",
+      cal: a.calendar_id || "",
+      st: a.start_time || "",
+      apt: a.appointment_id || "",
+      pip: a.pipeline_id || "",
+      stg: a.stage_id || "",
+    });
+  };
+  const seen = new Set<string>();
+  const dedupedActions = response.actions.filter((a) => {
+    const k = dedupKey(a);
+    if (seen.has(k)) {
+      console.warn("[ActionExecutor] Skipping duplicate action:", a.type);
+      return false;
+    }
+    seen.add(k);
+    return true;
+  });
+
   let actionsFailed = false;
   let failedActionError = "";
 
-  for (const action of response.actions) {
+  for (const action of dedupedActions) {
     try {
       await executeAction(client, action, ctx);
       await logExecution(supabase, ctx, action.type, { ...action });
@@ -117,8 +146,16 @@ export async function executeActions(
     }
   }
 
-  // 3. Atualizar conversation_state
-  await updateConversationState(supabase, ctx, response);
+  // 3. Atualizar conversation_state — SKIP em test mode pra não poluir
+  // estado real da conversa do contato.
+  // Fix CRIT-1 (deep review 2026-05-05): antes, testar agente em /test
+  // com execActions=true E contact_id real corrompia conversation_state
+  // de prod (last_ai_response_at, message_count, status, conversation_id).
+  // Resultado: bot real ficava com follow-ups cancelados, summary gerado
+  // antecipadamente, contagem inflada. Agora testMode preserva estado real.
+  if (!ctx.testMode) {
+    await updateConversationState(supabase, ctx, response);
+  }
 }
 
 async function executeAction(

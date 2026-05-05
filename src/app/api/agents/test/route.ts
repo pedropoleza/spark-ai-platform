@@ -376,9 +376,14 @@ export async function POST(request: NextRequest) {
     conversationMessages: conversationTurns,
     conversationHistory: "",
     newMessages: message,
-    model: config.ai_model || "gpt-4.1-mini",
+    model: config.ai_model || "claude-sonnet-4-6",
     responseSchema,
-    priorTurnCount: conversationTurns.length,
+    // Fix HIGH-1 (deep review 2026-05-05): usar effectivePriorTurnCount aqui
+    // tb (já era usado no buildSystemPrompt acima). Antes só conversationTurns
+    // era passado pra processWithAI/sanitizer — se lead tinha 20 msgs reais
+    // no GHL mas test session vazia, sanitizer tratava como 1ª msg → não
+    // strippava saudação ("Oi, sou Maria...") apesar do prompt instruir.
+    priorTurnCount: effectivePriorTurnCount,
   });
 
   if (!result.success || !result.response) {

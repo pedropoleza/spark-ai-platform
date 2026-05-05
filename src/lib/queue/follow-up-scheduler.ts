@@ -129,14 +129,19 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
     try {
       // Verificar se o objetivo ja foi cumprido (cancelar se sim).
       // Buscamos também collected_data e conversation_id para personalizar o follow-up.
+      // Fix MED-2 + HIGH-6 (deep review 2026-05-05):
+      //  - Inclui "stale" em completedStatuses (antes não cancelava — bot
+      //    encerrava conversa mas follow-ups continuavam).
+      //  - Checa ai_paused_at: se admin pausou IA pra handoff humano,
+      //    follow-ups bot NÃO devem disparar.
       const { data: convState } = await supabase
         .from("conversation_state")
-        .select("status, collected_data, conversation_id")
+        .select("status, collected_data, conversation_id, ai_paused_at")
         .eq("agent_id", followUp.agent_id)
         .eq("contact_id", followUp.contact_id)
         .single();
 
-      const completedStatuses = ["qualified", "booked", "disqualified", "handed_off"];
+      const completedStatuses = ["qualified", "booked", "disqualified", "handed_off", "stale"];
       if (convState && completedStatuses.includes(convState.status)) {
         // Objetivo cumprido, cancelar todos os follow-ups
         await supabase
@@ -145,6 +150,14 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           .eq("agent_id", followUp.agent_id)
           .eq("contact_id", followUp.contact_id)
           .in("status", ["pending", "processing"]);
+        continue;
+      }
+
+      // ai_paused_at: humano assumiu, bot fica em silêncio.
+      if (convState && (convState as { ai_paused_at?: string }).ai_paused_at) {
+        console.log(
+          `[FollowUp] Skipping pra contact=${followUp.contact_id} — ai_paused_at setado.`,
+        );
         continue;
       }
 
@@ -333,11 +346,20 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         }
 
         if (result.success && result.response?.message) {
-          await client.post("/conversations/messages", {
-            type: "SMS",
-            contactId: followUp.contact_id,
-            message: result.response.message,
-          });
+          // Fix HIGH-5 (deep review 2026-05-05): normalizar message — pode
+          // vir como string OU array. Antes mandava o array serializado
+          // direto pra GHL (400 ou comportamento estranho).
+          const msgRaw = result.response.message;
+          const msgText = Array.isArray(msgRaw)
+            ? msgRaw.filter((s) => typeof s === "string" && s.trim()).join("\n\n")
+            : String(msgRaw);
+          if (msgText.trim()) {
+            await client.post("/conversations/messages", {
+              type: "SMS",
+              contactId: followUp.contact_id,
+              message: msgText.trim(),
+            });
+          }
         }
       }
 
