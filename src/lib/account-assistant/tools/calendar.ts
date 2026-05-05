@@ -282,7 +282,128 @@ const createAppointment: ToolEntry = {
         },
       };
     } catch (err) {
+      // Pedro 2026-05-04: se rep passou assigned_user_id explícito E o erro
+      // foi "slot not available", enriquece com lista de OUTROS team_members
+      // do calendar pro LLM oferecer alternativa ("seu user tá bloqueado,
+      // quer tentar com X ou Y?").
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const isSlotBlock = /slot.*not.*available|no longer available/i.test(errMsg);
+      if (args.assigned_user_id && isSlotBlock) {
+        try {
+          const calRes = await ctx.ghlClient.get<{
+            calendar?: {
+              teamMembers?: Array<{ userId?: string; isPrimary?: boolean }>;
+            };
+          }>(`/calendars/${calendarId}`);
+          const others = (calRes.calendar?.teamMembers || [])
+            .map((tm) => tm.userId)
+            .filter((id): id is string => !!id && id !== String(args.assigned_user_id));
+          if (others.length > 0) {
+            const repUser = getRepGhlUserId(ctx);
+            return {
+              status: "error",
+              message:
+                `O horário tá bloqueado pro user ${args.assigned_user_id}` +
+                (args.assigned_user_id === repUser ? " (você)" : "") +
+                ` — pode ser look-busy do calendar OU conflito real. ` +
+                `Outros team_members do mesmo calendar: ${others.join(", ")}. ` +
+                `Pergunte ao rep se quer tentar com algum deles, OU se prefere outro horário (use get_free_slots).`,
+              retryable: false,
+            };
+          }
+        } catch {
+          // Falha no calendar lookup — cai pro fallback genérico abaixo
+        }
+      }
       return ghlErrorToResult(err, "criação de appointment");
+    }
+  },
+};
+
+// =====================================================================
+// Tool: block_calendar_slot — bloqueia agenda PESSOAL do rep
+// =====================================================================
+const blockCalendarSlot: ToolEntry = {
+  def: {
+    name: "block_calendar_slot",
+    description:
+      "⚠️ BLOQUEIA um horário no calendar do PRÓPRIO REP pra compromisso pessoal/folga/lembrete. NÃO é appointment com cliente:\n- Não envia link de Zoom\n- Não notifica nenhum contato\n- Não conta como reunião nas métricas\n- Só aparece como horário ocupado no calendar do rep, impedindo que clientes book esse slot\n\nUse APENAS quando rep pedir EXPLICITAMENTE pra bloquear agenda — frases como 'bloqueia minha agenda quarta 14h', 'tô em compromisso pessoal sexta 10-12h', 'marca 30min de almoço', 'reserva esse horário pra mim'. NUNCA use como fallback de create_appointment quando o slot tá ocupado — se appointment falhou, ofereça outro horário ou outro user, NÃO bloqueie.\n\nPor padrão bloqueia no user do próprio rep. Pra bloquear pra outro membro da equipe, passe assigned_user_id.",
+    risk: "high",
+    parameters: {
+      type: "object",
+      properties: {
+        calendar_id: {
+          type: "string",
+          description:
+            "ID do calendar onde criar o bloqueio. Use list_calendars se não souber.",
+        },
+        start_time: { type: "string", description: "ISO 8601" },
+        end_time: { type: "string", description: "ISO 8601" },
+        title: {
+          type: "string",
+          description:
+            "Título do bloqueio (ex: 'Compromisso pessoal', 'Almoço', 'Folga'). Default: 'Bloqueio de agenda'.",
+        },
+        notes: {
+          type: "string",
+          description: "OPCIONAL. Notas adicionais que aparecem no detalhe do bloqueio.",
+        },
+        assigned_user_id: {
+          type: "string",
+          description:
+            "OPCIONAL. ID do user GHL pra quem bloquear. Default: o próprio rep que está conversando.",
+        },
+      },
+      required: ["calendar_id", "start_time", "end_time"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const calendarId = String(args.calendar_id || "");
+    const invalid = validateGhlId(calendarId, "calendar");
+    if (invalid) return invalid;
+    const startInvalid = validateIso8601(String(args.start_time || ""), "start_time");
+    if (startInvalid) return startInvalid;
+    const endInvalid = validateIso8601(String(args.end_time || ""), "end_time");
+    if (endInvalid) return endInvalid;
+
+    const targetUser = args.assigned_user_id
+      ? String(args.assigned_user_id)
+      : getRepGhlUserId(ctx);
+    if (!targetUser) {
+      return {
+        status: "error",
+        message:
+          "Não consegui resolver qual user atribuir o bloqueio. Passe assigned_user_id explicitamente.",
+        retryable: false,
+      };
+    }
+
+    try {
+      const body: Record<string, unknown> = {
+        calendarId,
+        locationId: ctx.locationId,
+        startTime: new Date(String(args.start_time)).toISOString(),
+        endTime: new Date(String(args.end_time)).toISOString(),
+        title: args.title ? String(args.title) : "Bloqueio de agenda",
+        assignedUserId: targetUser,
+        ...(args.notes ? { notes: String(args.notes) } : {}),
+      };
+      const res = await ctx.ghlClient.post<{
+        id?: string;
+        event?: { id: string };
+      }>("/calendars/events/block-slots", body);
+      const eventId = res.id || res.event?.id;
+      return {
+        status: "ok",
+        data: {
+          block_id: eventId,
+          assigned_to: targetUser,
+          message:
+            "Horário bloqueado no calendar (não é appointment com cliente — ninguém é notificado).",
+        },
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "bloqueio de agenda");
     }
   },
 };
@@ -366,4 +487,5 @@ export const CALENDAR_TOOLS: ToolEntry[] = [
   createAppointment,
   updateAppointment,
   deleteAppointment,
+  blockCalendarSlot,
 ];
