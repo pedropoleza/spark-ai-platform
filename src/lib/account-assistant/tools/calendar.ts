@@ -351,87 +351,119 @@ const listMyFreeSlots: ToolEntry = {
         };
       }
 
-      // Query /free-slots de cada calendar em paralelo. Cada um já considera
-      // Google Calendar blocks daquele calendar específico (testado em prod
-      // 2026-05-05 — calendars com integration retornam slots respeitando).
-      const freeSlotsResults = await Promise.all(
-        userCalendars.map((c) =>
-          ctx.ghlClient
-            .get<Record<string, { slots?: string[] }>>(
-              `/calendars/${c.id}/free-slots`,
-              {
-                startDate: String(startMs),
-                endDate: String(endMs),
-              },
-            )
-            .then((res) => ({ calendar: c, raw: res }))
-            .catch(() => null),
+      // Fix bug observado em prod 2026-05-05 (cliente Marcos): interseção
+      // dos /free-slots retornava VAZIO porque cada calendar tem openHours
+      // diferentes (Recruit Tue-Thu, Atendimento Mon-Fri, etc). Slot tem
+      // que estar em business hours de TODOS os calendars pra entrar
+      // intersect → quase sempre {}.
+      //
+      // Approach novo: UNION dos free-slots (slot livre = livre em PELO
+      // MENOS UM calendar do rep) + SUBTRAI events cross-calendar
+      // (appointments + blocks de QUALQUER calendar do rep). Isso reflete
+      // melhor "rep está livre nessa hora" — se algum calendar dele aceita
+      // booking, ele está livre, salvo se tem evento em outro calendar.
+      const [freeSlotsResults, eventsResults] = await Promise.all([
+        Promise.all(
+          userCalendars.map((c) =>
+            ctx.ghlClient
+              .get<Record<string, { slots?: string[] }>>(
+                `/calendars/${c.id}/free-slots`,
+                {
+                  startDate: String(startMs),
+                  endDate: String(endMs),
+                },
+              )
+              .then((res) => ({ calendar: c, raw: res }))
+              .catch(() => null),
+          ),
         ),
-      );
+        Promise.all(
+          userCalendars.map((c) =>
+            ctx.ghlClient
+              .get<{
+                events?: Array<{
+                  startTime: string;
+                  endTime: string;
+                  appointmentStatus?: string;
+                  title?: string;
+                }>;
+              }>("/calendars/events", {
+                locationId: ctx.locationId,
+                calendarId: c.id,
+                startTime: String(startMs),
+                endTime: String(endMs),
+                userId: repUserId,
+              })
+              .then((res) => ({ calendar: c, events: res.events || [] }))
+              .catch(() => ({ calendar: c, events: [] })),
+          ),
+        ),
+      ]);
 
-      // Coleta slots de cada calendar como Set por data, depois INTERSECTA
-      // (slot livre = todos calendars do rep concordam que tá livre).
-      // Heurística: comparar por timestamp ISO exato. Se um calendar tem
-      // slots de 30min e outro de 1h, intersect pode ser zero. Trade-off:
-      // ser conservador, listar só slots em comum.
-      const slotsByCalendar: Array<{ name: string; byDate: Record<string, Set<string>> }> = [];
+      // 1. UNION dos free slots — coleta todos por data
+      const unionByDate: Record<string, Set<string>> = {};
+      const validCalendarNames: string[] = [];
       for (const r of freeSlotsResults) {
         if (!r) continue;
-        const byDate: Record<string, Set<string>> = {};
+        validCalendarNames.push(r.calendar.name || r.calendar.id);
         for (const [key, value] of Object.entries(r.raw)) {
           if (key === "traceId" || !value) continue;
           const slots = Array.isArray(value) ? (value as unknown as string[]) : value.slots || [];
-          if (slots.length > 0) byDate[key] = new Set(slots);
+          if (slots.length === 0) continue;
+          if (!unionByDate[key]) unionByDate[key] = new Set();
+          for (const s of slots) unionByDate[key].add(s);
         }
-        slotsByCalendar.push({ name: r.calendar.name || r.calendar.id, byDate });
       }
 
-      if (slotsByCalendar.length === 0) {
-        return {
-          status: "not_found",
-          message: "Nenhum calendar do rep retornou slots.",
-        };
+      // 2. Coleta TODOS os events ocupados de qualquer calendar do rep
+      const conflicts: Array<{ start: number; end: number; title?: string }> = [];
+      for (const r of eventsResults) {
+        for (const event of r.events) {
+          const status = (event.appointmentStatus || "scheduled").toLowerCase();
+          if (status === "cancelled" || status === "noshow" || status === "no-show" || status === "invalid") continue;
+          const eStart = new Date(event.startTime).getTime();
+          const eEnd = new Date(event.endTime).getTime();
+          if (isNaN(eStart) || isNaN(eEnd)) continue;
+          conflicts.push({ start: eStart, end: eEnd, title: event.title });
+        }
       }
 
-      // Intersect across calendars: pra cada data, slot só é livre se TODOS
-      // os calendars devolvem ele
-      const intersected: Record<string, string[]> = {};
-      const allDates = new Set<string>();
-      for (const c of slotsByCalendar) {
-        for (const d of Object.keys(c.byDate)) allDates.add(d);
-      }
-      for (const date of allDates) {
-        // pega o conjunto inicial do primeiro calendar
-        const firstCal = slotsByCalendar[0];
-        if (!firstCal.byDate[date]) continue; // primeiro calendar não tem essa data → ninguém livre
-        let common = new Set(firstCal.byDate[date]);
-        for (let i = 1; i < slotsByCalendar.length; i++) {
-          const cal = slotsByCalendar[i];
-          if (!cal.byDate[date]) {
-            // Calendar não tem essa data — significa "tudo ocupado" pra ele
-            common = new Set();
-            break;
-          }
-          // intersect
-          const next = new Set<string>();
-          for (const slot of common) {
-            if (cal.byDate[date].has(slot)) next.add(slot);
-          }
-          common = next;
-          if (common.size === 0) break;
+      // 3. Filtra union slots removendo conflitos cross-calendar
+      // Heurística duração: assume 30min (típico GHL menor unit).
+      // Se conflito sobrepõe parcialmente o slot, slot vira ocupado.
+      const filteredByDate: Record<string, string[]> = {};
+      let removedCount = 0;
+      for (const [date, slotsSet] of Object.entries(unionByDate)) {
+        const sorted = Array.from(slotsSet).sort();
+        const ok: string[] = [];
+        for (const slotIso of sorted) {
+          const slotStart = new Date(slotIso).getTime();
+          const slotEnd = slotStart + 30 * 60_000;
+          const hasConflict = conflicts.some(
+            (c) => slotStart < c.end && slotEnd > c.start,
+          );
+          if (hasConflict) removedCount++;
+          else ok.push(slotIso);
         }
-        if (common.size > 0) {
-          intersected[date] = Array.from(common).sort();
-        }
+        if (ok.length > 0) filteredByDate[date] = ok;
       }
+
+      const totalSlots = Object.values(filteredByDate).reduce(
+        (s, arr) => s + arr.length,
+        0,
+      );
 
       return {
         status: "ok",
         data: {
-          slots_by_date: intersected,
-          calendars_checked: slotsByCalendar.length,
-          calendar_names: slotsByCalendar.map((c) => c.name),
-          source: "intersection across all rep's calendars (considera Google Calendar blocks via /free-slots interno)",
+          slots_by_date: filteredByDate,
+          total_slots: totalSlots,
+          calendars_checked: validCalendarNames.length,
+          calendar_names: validCalendarNames,
+          conflicts_found: conflicts.length,
+          slots_removed_due_to_conflicts: removedCount,
+          source:
+            "union dos /free-slots de todos calendars do rep, menos conflicts cross-calendar (appointments + blocks). /free-slots considera Google Calendar synced internally por calendar.",
           warning_google_calendar:
             "Se o rep tem agenda Google pessoal NÃO integrada no Spark Leads, blocks dela podem não aparecer. Ativar em Settings → My Profile → Calendar Connection.",
         },
