@@ -39,6 +39,10 @@ Tom direto de colega. Sem floreio. Comece já com "Em 15min vc tem call com [nom
       "get_conversation_history",
       "list_opportunities",
       "get_contact_notes",
+      // Fix Track 9 #4 (review 2026-05-05): adicionado pra bot poder consultar
+      // KB se lead tem perfil regulatório específico (NY Reg 187, Foreign
+      // National, etc) durante briefing.
+      "query_carrier_knowledge",
     ],
     cooldown_minutes: 30,
   },

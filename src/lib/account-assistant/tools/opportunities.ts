@@ -8,7 +8,8 @@ import { validateGhlId, getRepGhlUserId, ghlErrorToResult } from "./types";
 const listOpportunities: ToolEntry = {
   def: {
     name: "list_opportunities",
-    description: "Lista opportunities do rep, com filtros opcionais.",
+    description:
+      "Lista opportunities do rep, com filtros opcionais. Default 20, max 100. Se rep precisa de mais, peça filtro mais específico (status, pipeline, min_value).",
     risk: "safe",
     parameters: {
       type: "object",
@@ -17,7 +18,7 @@ const listOpportunities: ToolEntry = {
         min_value: { type: "number", description: "Valor mínimo." },
         pipeline_id: { type: "string" },
         all_users: { type: "boolean", description: "Se true, lista da location toda. Default false (só do rep)." },
-        limit: { type: "number", default: 20 },
+        limit: { type: "number", description: "Default 20, max 100.", default: 20 },
       },
     },
   },
@@ -55,21 +56,32 @@ const listOpportunities: ToolEntry = {
       // do range por algum motivo). Mas com monetary_value_greater_than no
       // server, essa filtragem deve ser no-op.
       const opps = (res.opportunities || []).filter((o) => (o.monetaryValue || 0) >= minValue);
+      // Fix Track 3 #10 (review 2026-05-05): not_found pra empty + meta truncated.
+      if (opps.length === 0) {
+        return {
+          status: "not_found",
+          message: `Nenhuma opportunity com filtros (status=${status}${minValue > 0 ? `, min_value=${minValue}` : ""}).`,
+        };
+      }
       return {
         status: "ok",
-        data: opps.map((o) => ({
-          id: o.id,
-          name: o.name,
-          value: o.monetaryValue || 0,
-          status: o.status,
-          pipeline_id: o.pipelineId,
-          stage_id: o.pipelineStageId,
-          contact_id: o.contactId,
-          contact_name: o.contact?.name,
-          assigned_to: o.assignedTo,
-          updated_at: o.updatedAt,
-          created_at: o.createdAt,
-        })),
+        data: {
+          opportunities: opps.map((o) => ({
+            id: o.id,
+            name: o.name,
+            value: o.monetaryValue || 0,
+            status: o.status,
+            pipeline_id: o.pipelineId,
+            stage_id: o.pipelineStageId,
+            contact_id: o.contactId,
+            contact_name: o.contact?.name,
+            assigned_to: o.assignedTo,
+            updated_at: o.updatedAt,
+            created_at: o.createdAt,
+          })),
+          truncated: opps.length >= limit,
+          returned: opps.length,
+        },
       };
     } catch (err) {
       return ghlErrorToResult(err, "listagem de opportunities");

@@ -9,7 +9,11 @@ const searchContacts: ToolEntry = {
   def: {
     name: "search_contacts",
     description:
-      "Busca contatos (leads/clientes) por nome, email ou telefone. Retorna até 20 resultados com id real do Spark Leads. Use SEMPRE antes de qualquer ação que precise de contact_id.",
+      "Busca contatos (leads/clientes) por nome, email ou telefone no Spark Leads. Retorna até 20 resultados com id real. " +
+      "DICAS: (1) query precisa ter ≥ 2 chars; " +
+      "(2) phone deve ser dígitos puros (5511987654321) ou E.164 (+5511987654321), sem espaços/parênteses; " +
+      "(3) se 0 resultados pra um nome completo, tente apenas o primeiro nome ou últimos 4 dígitos do phone. " +
+      "Use SEMPRE antes de qualquer ação que precise de contact_id.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -335,11 +339,16 @@ const getContactNotes: ToolEntry = {
 const getContactTasks: ToolEntry = {
   def: {
     name: "get_contact_tasks",
-    description: "Lista todas as tasks (pendentes e completas) de um contato.",
+    description:
+      "Lista as tasks de um contato (pendentes e completas, mais recentes primeiro). Default: 30 mais recentes (max 100).",
     risk: "safe",
     parameters: {
       type: "object",
-      properties: { contact_id: { type: "string" } },
+      properties: {
+        contact_id: { type: "string" },
+        limit: { type: "number", description: "Default 30, max 100." },
+        include_completed: { type: "boolean", description: "Default true. False filtra só pendentes." },
+      },
       required: ["contact_id"],
     },
   },
@@ -347,6 +356,9 @@ const getContactTasks: ToolEntry = {
     const contactId = String(args.contact_id || "");
     const invalid = validateGhlId(contactId, "contact");
     if (invalid) return invalid;
+    // Fix Track 3 #12 (review 2026-05-05): limit + meta truncated.
+    const limit = Math.min(Math.max(Number(args.limit) || 30, 1), 100);
+    const includeCompleted = args.include_completed !== false;
 
     try {
       const res = await ctx.ghlClient.get<{
@@ -356,16 +368,32 @@ const getContactTasks: ToolEntry = {
           assignedTo?: string;
         }>;
       }>(`/contacts/${contactId}/tasks`);
+      let allTasks = res.tasks || [];
+      if (!includeCompleted) {
+        allTasks = allTasks.filter((t) => !t.completed);
+      }
+      if (allTasks.length === 0) {
+        return {
+          status: "not_found",
+          message: includeCompleted ? "Contato sem tasks." : "Contato sem tasks pendentes.",
+        };
+      }
+      const tasks = allTasks.slice(0, limit);
       return {
         status: "ok",
-        data: (res.tasks || []).map((t) => ({
-          id: t.id,
-          title: t.title,
-          body: t.body,
-          completed: t.completed,
-          due_at: t.dueDate,
-          assigned_to: t.assignedTo,
-        })),
+        data: {
+          tasks: tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            body: t.body,
+            completed: t.completed,
+            due_at: t.dueDate,
+            assigned_to: t.assignedTo,
+          })),
+          truncated: allTasks.length > limit,
+          total_in_crm: allTasks.length,
+          returned: tasks.length,
+        },
       };
     } catch (err) {
       return ghlErrorToResult(err, "listagem de tasks");
