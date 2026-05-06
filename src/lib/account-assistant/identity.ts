@@ -417,6 +417,31 @@ export async function identifyRepByGhlUser(args: {
       const alreadyHas = links.some(
         (l) => l.ghl_user_id === ghlUserId && l.location_id === locationId,
       );
+
+      // Fix CRITICAL bug observado em prod 2026-05-06 (Pedro auditando
+      // Magnet Money): antes, se um rep tinha o ghl_user_id em LocationA
+      // (real), e alguém abria web UI / chamava check-admin com mesmo
+      // ghl_user_id em LocationB onde ele NÃO é user, code adicionava
+      // link "garbage" {role=null, location_name=null} no ghl_users[]
+      // só pelo match do ghl_user_id. Resultado: 31 garbage links em 7
+      // reps detectados.
+      // Impacto: cron iterava locations garbage, query GHL events com
+      // ghl_user_id em location onde user não existe → desperdício +
+      // logs poluídos. Plus: confunde lógica de active_location.
+      // Fix: SÓ adiciona link se step 2 (lookup /users/?locationId=X)
+      // CONFIRMOU que o user existe lá (userPhone OU userName OU userRole
+      // não-null indicam que API retornou o user real).
+      const userConfirmedInLocation =
+        userPhone !== null || userName !== null || userRole !== null;
+
+      if (!alreadyHas && !userConfirmedInLocation) {
+        console.warn(
+          `[identity:web] ghl_user_id ${ghlUserId} NÃO é user em ${locationId} ` +
+            `(GHL /users/ não retornou). Skip add link garbage. rep=${repExisting.id}`,
+        );
+        return repExisting;
+      }
+
       if (!alreadyHas) {
         const updatedLinks = [
           ...links,
