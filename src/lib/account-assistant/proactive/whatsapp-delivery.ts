@@ -114,6 +114,8 @@ export async function deliverProactiveMessage(
   const enabled = process.env.WHATSAPP_DELIVERY_ENABLED === "1";
   let sentViaWhatsapp = false;
   let sendError: string | null = null;
+  let ghlMessageId: string | null = null;
+  let ghlConversationId: string | null = null;
 
   // Tenta envio WhatsApp/SMS via Stevo se flag habilitada e rep tem phone real
   if (
@@ -185,13 +187,25 @@ export async function deliverProactiveMessage(
         throw new Error("não consegui resolver contact_id no Spark Leads");
       }
 
-      // Envia via canal preferido (SMS via Stevo agora; WhatsApp futuro)
+      // Envia via canal preferido (SMS via Stevo agora; WhatsApp futuro).
+      // Fix bug observado em prod 2026-05-06: capturar messageId + conversationId
+      // do response GHL pra rastrear delivery status real depois (polling
+      // backfill em delivery-status-poller.ts). Antes, sem ID guardado,
+      // status=failed no Stevo era invisível — bot achava que enviou,
+      // mensagem morria silenciosamente.
+      type SendResp = {
+        messageId?: string;
+        conversationId?: string;
+        msg?: { id?: string };
+        id?: string;
+      };
       const { pickOutboundChannel, fallbackChannel } = await import(
         "../outbound-channel"
       );
       const outboundType = pickOutboundChannel();
+      let sendResp: SendResp | undefined;
       try {
-        await ghlClient.post("/conversations/messages", {
+        sendResp = await ghlClient.post<SendResp>("/conversations/messages", {
           type: outboundType,
           contactId,
           message: formattedMessage,
@@ -202,13 +216,74 @@ export async function deliverProactiveMessage(
           `[proactive-delivery] send ${outboundType} falhou — fallback ${fb}:`,
           sendErr instanceof Error ? sendErr.message : sendErr,
         );
-        await ghlClient.post("/conversations/messages", {
+        sendResp = await ghlClient.post<SendResp>("/conversations/messages", {
           type: fb,
           contactId,
           message: formattedMessage,
         });
       }
+      ghlMessageId =
+        sendResp?.messageId || sendResp?.msg?.id || sendResp?.id || null;
+      ghlConversationId = sendResp?.conversationId || null;
       sentViaWhatsapp = true;
+
+      // Imediato pós-send: GHL/Stevo mostra status final em ~1-3s pra
+      // erros de instância inativa. Pollar 1x rapidamente pra detectar
+      // failed cedo e marcar fallback web (rep vê no painel imediato).
+      // Polling longo (delayed delivery) fica pro cron backfill.
+      if (ghlMessageId) {
+        try {
+          await new Promise((r) => setTimeout(r, 2_500));
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const detail = await ghlClient.get<any>(
+            `/conversations/messages/${encodeURIComponent(ghlMessageId)}`,
+          );
+          const status = detail?.message?.status as string | undefined;
+          const errMsg = detail?.message?.error as string | undefined;
+          if (status && ["failed", "rejected"].includes(status.toLowerCase())) {
+            sentViaWhatsapp = false;
+            sendError = `delivery_failed (${status})${errMsg ? `: ${errMsg}` : ""}`;
+            console.warn(
+              `[proactive-delivery] msg ${ghlMessageId} virou ${status} — ` +
+                `fallback pro painel web. err="${errMsg || "?"}"`,
+            );
+            // Auto-signal admin sobre Stevo down (rate-limited via
+            // fingerprint dedup natural do recordSignal).
+            try {
+              const { recordSignalAsync } = await import(
+                "@/lib/admin-signals/recorder"
+              );
+              recordSignalAsync({
+                type: "failure",
+                title: `Stevo delivery failed: ${errMsg || "unknown"}`,
+                description:
+                  `Mensagem proativa ${ghlMessageId} para rep ${rep.id} ` +
+                  `falhou imediatamente após send. error="${errMsg}"\n` +
+                  `provider_id=${detail?.message?.conversationProviderId}\n` +
+                  `Verificar instância Stevo do HUB ${hubLocationId} (re-escanear QR?).`,
+                severity: "high",
+                source: "bot_auto",
+                metadata: {
+                  rep_id: rep.id,
+                  hub_location_id: hubLocationId,
+                  ghl_message_id: ghlMessageId,
+                  stevo_error: errMsg,
+                  stevo_provider_id:
+                    detail?.message?.conversationProviderId || null,
+                },
+              });
+            } catch {
+              // Signal não-crítico — não bloqueia
+            }
+          }
+        } catch (pollErr) {
+          // Poll falhou — não é fatal. Backfill cron tenta de novo depois.
+          console.warn(
+            `[proactive-delivery] poll status pós-send falhou (não-fatal):`,
+            pollErr instanceof Error ? pollErr.message : pollErr,
+          );
+        }
+      }
     } catch (err) {
       sendError = err instanceof Error ? err.message : String(err);
       console.warn(
@@ -222,6 +297,11 @@ export async function deliverProactiveMessage(
   // assim rep não perde a mensagem; vê na próxima vez que abrir painel).
   // - sentViaWhatsapp=true → channel='whatsapp', read_in_web_at=now (sem badge)
   // - sentViaWhatsapp=false → channel='system' (badge ativa no painel)
+  //
+  // Fix bug observado em prod 2026-05-06: salvar ghl_message_id +
+  // ghl_conversation_id pra polling backfill verificar status real depois.
+  // delivery_status segue tracking pós-poll: "pending" (acabou de enviar,
+  // sem confirmação), "delivered", "failed". Backfill cron atualiza depois.
   await supabase.from("sparkbot_messages").insert({
     rep_id: rep.id,
     hub_location_id: hubLocationId,
@@ -230,6 +310,7 @@ export async function deliverProactiveMessage(
     role: "agent",
     content: formattedMessage,
     channel: sentViaWhatsapp ? "whatsapp" : "system",
+    ghl_message_id: ghlMessageId,
     read_in_web_at: sentViaWhatsapp ? new Date().toISOString() : null,
     metadata: {
       source: opts.source,
@@ -238,6 +319,10 @@ export async function deliverProactiveMessage(
       whatsapp_sent: sentViaWhatsapp,
       whatsapp_send_error: sendError,
       whatsapp_delivery_enabled: enabled,
+      ghl_message_id: ghlMessageId,
+      ghl_conversation_id: ghlConversationId,
+      delivery_status: sentViaWhatsapp ? "pending_confirm" : "failed_immediate",
+      delivery_status_checked_at: null,
       ...opts.extraMetadata,
     },
   });

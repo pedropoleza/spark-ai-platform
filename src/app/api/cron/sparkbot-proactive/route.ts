@@ -4,6 +4,7 @@ import { shouldFireCron } from "@/lib/account-assistant/proactive/cron-evaluator
 import { fireScheduledReminders } from "@/lib/account-assistant/proactive/reminder-runner";
 import { fireBulkRecipients } from "@/lib/account-assistant/proactive/bulk-message-runner";
 import { dispatchRule } from "@/lib/account-assistant/proactive/dispatcher";
+import { pollDeliveryStatuses } from "@/lib/account-assistant/proactive/delivery-status-poller";
 import { GHLClient } from "@/lib/ghl/client";
 import { isAuthorizedCron } from "@/lib/utils/cron-auth";
 import type { ProactiveRule, RepIdentity, ScheduledTrigger } from "@/types/account-assistant";
@@ -103,6 +104,20 @@ export async function GET(request: NextRequest) {
   // praticamente sempre processa 0-1 por tick exceto após pausa/quiet_hours.
   const bulkResult = await fireBulkRecipients();
 
+  // Polling de delivery status (Stevo): verifica se mensagens proativas
+  // recentes foram realmente entregues (status terminal), falharam ou
+  // ainda estão pendentes. Atualiza metadata + auto-fallback pra web
+  // se failed + auto-signal admin se Stevo cair.
+  // Fix bug observado em prod 2026-05-06 (35 msgs em 7 dias todas failed
+  // sem ninguém perceber porque instância Stevo morreu silenciosamente).
+  const pollerResult = await pollDeliveryStatuses().catch((err) => {
+    console.warn(
+      "[cron] delivery poller falhou (não-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+    return { checked: 0, delivered: 0, failed: 0, still_pending: 0, errors: 1 };
+  });
+
   const durationMs = Date.now() - startTs;
   return NextResponse.json({
     ok: true,
@@ -115,6 +130,7 @@ export async function GET(request: NextRequest) {
     bulk_failed: bulkResult.failed,
     bulk_skipped: bulkResult.skipped,
     bulk_jobs_completed: bulkResult.jobs_completed,
+    delivery_poller: pollerResult,
     duration_ms: durationMs,
   });
 }
