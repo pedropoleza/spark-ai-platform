@@ -88,6 +88,21 @@ export interface RepIdentity {
    * Usado pra agency owner/admins. Veja migration 00048.
    */
   is_internal?: boolean;
+  /**
+   * Timestamp da última msg INBOUND do rep (de qualquer canal). Crítico
+   * pra opt-in gate: proativos só dispara se !== null (rep iniciou
+   * conversa pelo menos 1x — opt-in via WhatsApp legítimo).
+   * Fix CRITICAL bug 2026-05-06: setup wizard auto-aceita terms mas isso
+   * NÃO conta como opt-in. Sem inbound real, enviar proativo = ban risk.
+   */
+  last_inbound_at?: string | null;
+  /**
+   * Pausa proativos (silence gate). Bot continua respondendo inbound,
+   * mas não inicia conversa. Resetado em qualquer inbound do rep.
+   */
+  proactive_paused_at?: string | null;
+  proactive_warned_at?: string | null;
+  consecutive_proactive_without_reply?: number;
   created_at: string;
   updated_at: string;
 }

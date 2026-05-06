@@ -164,10 +164,26 @@ async function getEligibleReps(
 
   // V2: 1 Sparkbot global. Todos os reps com terms aceitos podem ser
   // candidatos; futuro: cruzar com allowed_ghl_users na config do agent.
+  //
+  // Fix CRITICAL bug 2026-05-06: antes filtrava só por terms_accepted_at.
+  // Investigação Pedro descobriu que setup wizard auto-aceita terms quando
+  // admin ativa o agent — mas isso NÃO significa que o rep iniciou conversa
+  // (opt-in legítimo via WhatsApp). De 54 reps marcados eligíveis, só 4
+  // tinham last_inbound_at — 50 receberam proativos pra void (ainda bem
+  // que Stevo legacy tava com instância dead, senão era ban garantido pelo
+  // Meta — pattern "enviar pra desconhecidos" detecta na hora).
+  //
+  // Regra agora: SÓ envia proativo pra reps que mandaram pelo menos 1
+  // inbound (significa que opted-in via WhatsApp real, não terms-mock).
+  // Plus: se rep está pausado (proactive_paused_at) ou rejeitou terms
+  // (terms_rejected_at), exclui também. Defense in depth.
   const { data } = await supabase
     .from("rep_identities")
     .select("*")
     .not("terms_accepted_at", "is", null)
+    .is("terms_rejected_at", null)
+    .is("proactive_paused_at", null)
+    .not("last_inbound_at", "is", null)
     .limit(100);
   return (data || []) as RepIdentity[];
 }

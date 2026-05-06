@@ -23,6 +23,23 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { RepIdentity } from "@/types/account-assistant";
 
+/**
+ * Opt-in check: rep só pode receber proativo se INICIOU conversa pelo menos
+ * 1x via WhatsApp (last_inbound_at IS NOT NULL).
+ *
+ * Fix CRITICAL bug 2026-05-06: setup wizard auto-aceita terms quando admin
+ * ativa o agent, mas isso NÃO significa que o rep deu opt-in via WhatsApp.
+ * Enviar proativo pra rep "terms-aceito-mas-nunca-mandou-msg" = pattern
+ * spammer que Meta detecta → ban garantido do número Stevo.
+ *
+ * Defense in depth: tanto getEligibleReps no cron filtra, quanto aqui no
+ * delivery rejeitamos pre-send (caso algum caller bypassa o filter do cron,
+ * ex: chamada manual ou path proativo novo).
+ */
+function hasOptedInViaWhatsApp(rep: { last_inbound_at?: string | null }): boolean {
+  return !!rep.last_inbound_at;
+}
+
 export interface DeliveryOptions {
   /**
    * active_location_id da operação — vai em sparkbot_messages pra audit.
@@ -60,11 +77,73 @@ export interface DeliveryResult {
  * Retorna sempre — se algo falhou, registra o erro mas não throw.
  */
 export async function deliverProactiveMessage(
-  rep: Pick<RepIdentity, "id" | "phone">,
+  rep: Pick<RepIdentity, "id" | "phone"> & { last_inbound_at?: string | null },
   formattedMessage: string,
   opts: DeliveryOptions,
 ): Promise<DeliveryResult> {
   const supabase = createAdminClient();
+
+  // Fix CRITICAL bug 2026-05-06: opt-in gate. Sem inbound prévio do rep,
+  // proativo PROIBIDO via WhatsApp/Stevo (ban risk). Cai pra channel='system'
+  // (badge no painel web) — quando rep abrir painel e mandar 1ª msg, libera
+  // proativos futuros normalmente.
+  // Lookup last_inbound_at se rep não trouxe (defense in depth: caller pode
+  // ter passado objeto Pick<> incompleto).
+  let hasOptIn = hasOptedInViaWhatsApp(rep);
+  if (!hasOptIn && rep.last_inbound_at === undefined) {
+    // Re-fetch do DB pra confirmar
+    const { data: full } = await supabase
+      .from("rep_identities")
+      .select("last_inbound_at")
+      .eq("id", rep.id)
+      .maybeSingle();
+    if (full?.last_inbound_at) hasOptIn = true;
+  }
+  if (!hasOptIn) {
+    console.warn(
+      `[proactive-delivery] rep ${rep.id} sem last_inbound_at — opt-in WhatsApp ` +
+        `não confirmado. SKIP send pra void; persistindo no painel web.`,
+    );
+    // Não envia via Stevo. Persiste como 'system' (badge web). Quando rep
+    // mandar 1ª msg, próximos proativos serão entregues normalmente.
+    const envHubLocationId =
+      process.env.ASSISTANT_HUB_LOCATION_ID?.trim() || opts.activeLocationId;
+    const { data: hubAgent } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("location_id", envHubLocationId)
+      .eq("type", "account_assistant")
+      .eq("status", "active")
+      .maybeSingle();
+    if (!hubAgent) {
+      // Sem hub não dá nem pra persistir — log + sai
+      console.warn(
+        `[proactive-delivery] hub agent não encontrado pra persistir como system (rep ${rep.id})`,
+      );
+      return { ok: false, via: "system", error: "no_hub_agent_no_optin" };
+    }
+    await supabase.from("sparkbot_messages").insert({
+      rep_id: rep.id,
+      hub_location_id: envHubLocationId,
+      agent_id: hubAgent.id,
+      active_location_id: opts.activeLocationId,
+      role: "agent",
+      content: formattedMessage,
+      channel: "system",
+      read_in_web_at: null, // badge ativo
+      metadata: {
+        source: opts.source,
+        ...(opts.reminderId ? { reminder_id: opts.reminderId } : {}),
+        ...(opts.kind ? { task_type: opts.kind } : {}),
+        whatsapp_sent: false,
+        delivery_status: "blocked_no_optin",
+        block_reason: "rep sem last_inbound_at — proativo bloqueado pra evitar ban Meta",
+        ...opts.extraMetadata,
+      },
+    });
+    return { ok: true, via: "system", error: "blocked_no_optin", hubLocationId: envHubLocationId };
+  }
+
   const envHubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
   const hubCompanyId =
     process.env.ASSISTANT_HUB_COMPANY_ID?.trim() ||
