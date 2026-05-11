@@ -118,7 +118,7 @@ const sendMessageToContact: ToolEntry = {
   def: {
     name: "send_message_to_contact",
     description:
-      "🚨 AÇÃO AVANÇADA — envia mensagem REAL pra um lead/cliente em nome do rep. SEMPRE peça confirmação ANTES de chamar essa tool. Avise o rep com algo como: 'Vou mandar [resumo da msg] pro [nome do contato] via [canal]. Confirma? (Essa é uma ação avançada, preciso da sua confirmação)'.",
+      "🚨 AÇÃO AVANÇADA — envia mensagem REAL pra um lead/cliente em nome do rep. SEMPRE peça confirmação ANTES de chamar essa tool. Avise o rep com algo como: 'Vou mandar [resumo da msg] pro [nome do contato]. Confirma?'.",
     risk: "high",
     parameters: {
       type: "object",
@@ -129,7 +129,11 @@ const sendMessageToContact: ToolEntry = {
           type: "string",
           enum: ["SMS", "WhatsApp", "Email", "IG"],
           description:
-            "Canal de envio. Default 'SMS' (= WhatsApp Web / SMS via Stevo/Evolution — funciona pra TODOS os contatos). 'WhatsApp' = WhatsApp API oficial (⚠️ só funciona se a sub-account tem WhatsApp Business API ATIVADA — caso não tenha, Spark Leads retorna erro; nesse caso use 'SMS'). 'Email' / 'IG' = canais alternativos.",
+            "⚠️ DEFAULT OBRIGATÓRIO: 'SMS'. Omite o param SE rep não pedir canal específico.\n\n" +
+            "'SMS' = canal padrão. Apesar do nome 'SMS', no Spark Leads das contas Brazillionaires este canal é roteado via Stevo/Evolution (WhatsApp QR Code) — A MENSAGEM CHEGA NO WHATSAPP DO CONTATO. Esse é o canal de produção 99,9% das vezes.\n\n" +
+            "'WhatsApp' (raríssimo) = WhatsApp Business API OFICIAL da Meta. SÓ usar se rep pedir EXPLICITAMENTE 'via WhatsApp API oficial' OU 'via Meta Business' (frases técnicas, raras). 99% das sub-accounts NÃO têm essa subscription ativa — vai retornar erro 'No active WhatsApp subscription for this location'.\n\n" +
+            "REGRA DE OURO: se rep falar 'manda no WhatsApp', 'envia pelo WhatsApp', 'WhatsApp pra ele' → usa 'SMS' (que ROTEIA pro WhatsApp via Stevo). NÃO use channel='WhatsApp' baseado no que o rep falar — só com pedido técnico explícito.\n\n" +
+            "'Email' / 'IG' = canais alternativos quando rep mencionar específico.",
         },
         subject: { type: "string", description: "Subject (apenas pra Email)." },
       },
@@ -169,23 +173,60 @@ const sendMessageToContact: ToolEntry = {
       }
     }
 
-    try {
+    // Fix Pedro 2026-05-06 (bug em prod): LLM ainda escolhe channel='WhatsApp'
+    // quando rep fala "manda no whatsapp" — mas 99% das sub-accounts não tem
+    // WhatsApp Business API ativa. Erro: "No active WhatsApp subscription
+    // for this location". Fallback automático pra SMS (que via Stevo roteia
+    // pro WhatsApp QR Code, comportamento esperado pelo rep).
+    const trySend = async (
+      ch: string,
+    ): Promise<{ messageId?: string; conversationId?: string }> => {
       const body: Record<string, unknown> = {
-        type: channel,
+        type: ch,
         contactId,
         message,
-        ...(channel === "Email" && args.subject ? { subject: String(args.subject) } : {}),
+        ...(ch === "Email" && args.subject ? { subject: String(args.subject) } : {}),
       };
-      const res = await ctx.ghlClient.post<{ messageId?: string; conversationId?: string }>(
+      return ctx.ghlClient.post<{ messageId?: string; conversationId?: string }>(
         "/conversations/messages",
         body,
       );
+    };
+
+    let effectiveChannel = channel;
+    let fellBackFromWhatsApp = false;
+    try {
+      let res: { messageId?: string; conversationId?: string };
+      try {
+        res = await trySend(channel);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Detecta erro de subscription do WhatsApp API: GHL retorna
+        // "No active WhatsApp subscription" (status ~422/400) quando
+        // sub-account não tem Meta Business. Fallback transparente pra SMS.
+        if (
+          channel === "WhatsApp" &&
+          /no active whatsapp subscription|whatsapp.*not.*active|whatsapp.*disabled/i.test(msg)
+        ) {
+          console.warn(
+            `[send_message_to_contact] WhatsApp API falhou (subscription inativa); ` +
+              `fallback transparente pra SMS (via Stevo). contact=${contactId}`,
+          );
+          res = await trySend("SMS");
+          effectiveChannel = "SMS";
+          fellBackFromWhatsApp = true;
+        } else {
+          throw err;
+        }
+      }
       return {
         status: "ok",
         data: {
           message_id: res.messageId,
           conversation_id: res.conversationId,
-          channel,
+          channel: effectiveChannel,
+          channel_requested: channel,
+          fell_back_from_whatsapp_api: fellBackFromWhatsApp,
           assigned_to: repUserId || null,
           assignment_changed: assignmentChanged,
           previous_assignee: previousAssignee,
@@ -239,7 +280,9 @@ const scheduleMessageToContact: ToolEntry = {
           type: "string",
           enum: ["SMS", "WhatsApp", "Email", "IG"],
           description:
-            "Canal de envio. Default 'SMS' (= WhatsApp via Stevo). 'WhatsApp' só se sub-account tem WhatsApp Business API ativada.",
+            "⚠️ DEFAULT OBRIGATÓRIO: 'SMS'. 'SMS' no Spark Leads é roteado via Stevo/Evolution → CHEGA NO WHATSAPP do contato. 99,9% dos casos.\n\n" +
+            "'WhatsApp' (raro) = WhatsApp Business API oficial. Só use se rep pedir EXPLICITAMENTE 'WhatsApp API oficial' ou 'Meta Business'. Senão falha por subscription.\n\n" +
+            "REGRA: rep dizendo 'manda no WhatsApp' = use 'SMS' (que ROTEIA pro WhatsApp). NÃO mapeie 'WhatsApp' do rep direto pro channel='WhatsApp' do enum.",
         },
         subject: {
           type: "string",

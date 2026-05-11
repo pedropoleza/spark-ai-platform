@@ -378,12 +378,41 @@ async function fireOutboundToContact(
       );
     }
 
-    // Agora SIM, send
-    const res = await ghl.post<{ messageId?: string; conversationId?: string }>(
-      "/conversations/messages",
-      body,
-    );
-    messageId = res.messageId || null;
+    // Agora SIM, send.
+    // Fix Pedro 2026-05-06: fallback transparente WhatsApp API → SMS
+    // quando sub-account não tem subscription (idem send_message_to_contact).
+    const trySend = async (
+      ch: string,
+    ): Promise<{ messageId?: string; conversationId?: string }> => {
+      const sendBody: Record<string, unknown> = { ...body, type: ch };
+      return ghl.post<{ messageId?: string; conversationId?: string }>(
+        "/conversations/messages",
+        sendBody,
+      );
+    };
+    try {
+      const res = await trySend(channel);
+      messageId = res.messageId || null;
+    } catch (sendErr) {
+      const m = sendErr instanceof Error ? sendErr.message : String(sendErr);
+      if (
+        channel === "WhatsApp" &&
+        /no active whatsapp subscription|whatsapp.*not.*active|whatsapp.*disabled/i.test(m)
+      ) {
+        console.warn(
+          `[reminder-runner] outbound task ${task.id} — WhatsApp API ` +
+            `inativo; fallback transparente pra SMS (Stevo).`,
+        );
+        try {
+          const fb = await trySend("SMS");
+          messageId = fb.messageId || null;
+        } catch (fbErr) {
+          throw fbErr;
+        }
+      } else {
+        throw sendErr;
+      }
+    }
   } catch (err) {
     sendError = err instanceof Error ? err.message : String(err);
     console.warn(
