@@ -327,9 +327,58 @@ async function fireOutboundToContact(
 
   let messageId: string | null = null;
   let sendError: string | null = null;
+  let assignmentChanged = false;
+  let previousAssignee: string | null = null;
   try {
     const { GHLClient } = await import("@/lib/ghl/client");
     const ghl = new GHLClient(loc.company_id, task.location_id);
+
+    // Fix Pedro 2026-05-06: PROTOCOLO PADRÃO — antes de QUALQUER send,
+    // garante que assignedTo do contato é o rep que agendou (task.rep_id).
+    // Resolve ghl_user_id do rep na location da task (pode ser diferente
+    // do active_location se rep tem múltiplas sub-accounts).
+    // Pra contas com múltiplas instâncias WhatsApp, GHL roteia outbound
+    // baseado em assignedTo. Sem switch, msg sai pelo número errado.
+    try {
+      const { data: rep } = await supabase
+        .from("rep_identities")
+        .select("ghl_users")
+        .eq("id", task.rep_id)
+        .maybeSingle();
+      const repGhlUserId = (
+        (rep?.ghl_users as Array<{ ghl_user_id: string; location_id: string }>) || []
+      ).find((u) => u.location_id === task.location_id)?.ghl_user_id;
+      if (repGhlUserId) {
+        const { ensureContactAssignedTo } = await import("@/lib/ghl/operations");
+        const r = await ensureContactAssignedTo(
+          ghl,
+          payload.contact_id,
+          repGhlUserId,
+        );
+        assignmentChanged = r.changed;
+        previousAssignee = r.previousAssignedTo;
+        if (r.changed) {
+          console.log(
+            `[reminder-runner] outbound task ${task.id} — assignedTo switched ` +
+              `from ${previousAssignee || "null"} to ${repGhlUserId}`,
+          );
+        }
+      } else {
+        console.warn(
+          `[reminder-runner] outbound task ${task.id} — rep ${task.rep_id} sem ` +
+            `ghl_user_id em location ${task.location_id}. Skip assignment switch ` +
+            `(msg pode sair pelo número errado em conta multi-WhatsApp).`,
+        );
+      }
+    } catch (assignErr) {
+      // Não fatal — segue tentando o send.
+      console.warn(
+        `[reminder-runner] outbound task ${task.id} — assignedTo update falhou:`,
+        assignErr instanceof Error ? assignErr.message.slice(0, 100) : assignErr,
+      );
+    }
+
+    // Agora SIM, send
     const res = await ghl.post<{ messageId?: string; conversationId?: string }>(
       "/conversations/messages",
       body,
@@ -377,6 +426,8 @@ async function fireOutboundToContact(
           ghl_message_id: messageId,
           send_error: sendError,
           delivery_status: sendError ? "failed_immediate" : "pending_confirm",
+          assignment_changed: assignmentChanged,
+          previous_assignee: previousAssignee,
         },
       });
     }

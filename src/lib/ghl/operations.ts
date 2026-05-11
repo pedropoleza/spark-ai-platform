@@ -80,6 +80,54 @@ export async function createNoteOnContact(
 }
 
 // =====================================================
+// Assigned user (owner) management
+// =====================================================
+
+/**
+ * Garante que o `assignedTo` do contato está setado pro `targetUserId`.
+ * Idempotente: fetch contato, se já tá assigned no target, no-op.
+ * Senão, PUT /contacts/{id} setando assignedTo.
+ *
+ * POR QUE EXISTE: Pedro 2026-05-06 — contas com múltiplas instâncias
+ * WhatsApp ativas roteiam a mensagem outbound baseado no `assignedTo`
+ * do contato. Se o rep que pediu o envio NÃO é o assignee, a msg vai
+ * pelo número de outro rep (errado, confuso). PROTOCOLO PADRÃO: antes
+ * de QUALQUER send_message (agora ou agendado), bot muda assignedTo
+ * pro user que pediu, garantindo que a msg sai pelo número correto.
+ *
+ * Retorna {changed, previousAssignedTo} pra audit/log no caller.
+ */
+export async function ensureContactAssignedTo(
+  client: GHLClient,
+  contactId: string,
+  targetUserId: string,
+): Promise<{ changed: boolean; previousAssignedTo: string | null }> {
+  if (!targetUserId) {
+    return { changed: false, previousAssignedTo: null };
+  }
+  try {
+    const res = await client.get<{
+      contact?: { assignedTo?: string };
+    }>(`/contacts/${contactId}`);
+    const current = res.contact?.assignedTo || null;
+    if (current === targetUserId) {
+      // Já está com assignment correto
+      return { changed: false, previousAssignedTo: current };
+    }
+    await client.put(`/contacts/${contactId}`, { assignedTo: targetUserId });
+    return { changed: true, previousAssignedTo: current };
+  } catch (err) {
+    // Não fatal — caller decide se continua com send mesmo assim.
+    // Log pra observabilidade.
+    console.warn(
+      `[ensureContactAssignedTo] falhou pra contact=${contactId} target=${targetUserId}:`,
+      err instanceof Error ? err.message.slice(0, 100) : err,
+    );
+    throw err;
+  }
+}
+
+// =====================================================
 // Messages (conversations)
 // =====================================================
 

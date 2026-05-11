@@ -6,7 +6,8 @@
  */
 
 import type { ToolEntry } from "./types";
-import { validateGhlId, validateIso8601, ghlErrorToResult } from "./types";
+import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult } from "./types";
+import { ensureContactAssignedTo } from "@/lib/ghl/operations";
 
 const searchConversations: ToolEntry = {
   def: {
@@ -147,6 +148,27 @@ const sendMessageToContact: ToolEntry = {
       return { status: "error", message: `channel inválido (use ${validChannels.join("|")})`, retryable: false };
     }
 
+    // Fix Pedro 2026-05-06: PROTOCOLO PADRÃO — antes de QUALQUER send,
+    // garante que o assignedTo do contato é o rep que pediu. Pra contas
+    // com múltiplas instâncias WhatsApp ativas, GHL roteia outbound baseado
+    // no assignedTo. Sem isso, msg pode sair pelo número de outro rep.
+    let assignmentChanged = false;
+    let previousAssignee: string | null = null;
+    const repUserId = getRepGhlUserId(ctx);
+    if (repUserId) {
+      try {
+        const r = await ensureContactAssignedTo(ctx.ghlClient, contactId, repUserId);
+        assignmentChanged = r.changed;
+        previousAssignee = r.previousAssignedTo;
+      } catch (err) {
+        // Não fatal — segue tentando o send. Log pra audit.
+        console.warn(
+          `[send_message_to_contact] assignedTo update falhou (não fatal):`,
+          err instanceof Error ? err.message.slice(0, 100) : err,
+        );
+      }
+    }
+
     try {
       const body: Record<string, unknown> = {
         type: channel,
@@ -164,6 +186,9 @@ const sendMessageToContact: ToolEntry = {
           message_id: res.messageId,
           conversation_id: res.conversationId,
           channel,
+          assigned_to: repUserId || null,
+          assignment_changed: assignmentChanged,
+          previous_assignee: previousAssignee,
         },
       };
     } catch (err) {

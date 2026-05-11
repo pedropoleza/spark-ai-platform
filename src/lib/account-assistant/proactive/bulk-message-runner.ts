@@ -283,6 +283,33 @@ async function sendToContact(
     const ghlClient = new GHLClient(location.company_id, job.location_id);
     const ghlType = job.delivery_channel === "whatsapp_api" ? "WhatsApp" : "SMS";
 
+    // Fix Pedro 2026-05-06: PROTOCOLO PADRÃO — antes de QUALQUER send,
+    // garante que assignedTo é o rep que criou o job. Em contas com
+    // múltiplas instâncias WhatsApp ativas, GHL roteia outbound baseado
+    // no assignedTo do contato. Sem isso, mensagem em massa pode sair
+    // pelo número de outro rep da agency, confundindo recipientes.
+    try {
+      const { data: rep } = await supabase
+        .from("rep_identities")
+        .select("ghl_users")
+        .eq("id", job.rep_id)
+        .maybeSingle();
+      const repGhlUserId = (
+        (rep?.ghl_users as Array<{ ghl_user_id: string; location_id: string }>) || []
+      ).find((u) => u.location_id === job.location_id)?.ghl_user_id;
+      if (repGhlUserId) {
+        const { ensureContactAssignedTo } = await import("@/lib/ghl/operations");
+        await ensureContactAssignedTo(ghlClient, recipient.contact_id, repGhlUserId);
+      }
+    } catch (assignErr) {
+      // Não fatal — segue. (Pra recipient com 100s/1000s de msgs, esse
+      // hit no GHL é aceitável: 1 extra GET + ocasional PUT por contato.)
+      console.warn(
+        `[bulk-runner] assignedTo update falhou pra contact=${recipient.contact_id}:`,
+        assignErr instanceof Error ? assignErr.message.slice(0, 100) : assignErr,
+      );
+    }
+
     await ghlClient.post("/conversations/messages", {
       type: ghlType,
       contactId: recipient.contact_id,
