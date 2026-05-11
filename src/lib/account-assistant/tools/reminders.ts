@@ -84,21 +84,37 @@ const scheduleReminder: ToolEntry = {
       ? String(args.title).slice(0, 100)
       : message.slice(0, 40) + (message.length > 40 ? "…" : "");
 
-    // delivery_channel: respeita o que LLM passou; senão usa o canal atual
-    // do contexto como default. Importante: pra Web UI, prompt-builder
-    // ensinou o LLM a perguntar antes — se chegou 'whatsapp' aqui veio do WA.
-    // Fix Track 4 HIGH-1 (review 2026-05-05): normaliza case-insensitive +
-    // remove tautologia (`ctx.confirmationMode ? "whatsapp" : "whatsapp"`).
+    // delivery_channel: respeita o que LLM passou; senão DEFAULT inteligente
+    // baseado em qual canal o rep efetivamente usa.
+    // Fix HIGH-H5 (deep audit 2026-05-06): antes default era hardcoded
+    // 'whatsapp'. Pra rep que SÓ usa Web UI (admin que nunca mandou WhatsApp),
+    // lembrete agendado nunca chegava — só no painel se LLM lembrasse de
+    // perguntar. Agora detecta canal real do rep via opt-in check (msgs
+    // com channel='whatsapp' no histórico). Sem opt-in WhatsApp = default
+    // 'web_ui'. Com opt-in = default 'whatsapp'.
+    // Fix Track 4 HIGH-1 (review 2026-05-05): normaliza case-insensitive.
+    const supabase = createAdminClient();
     const requestedChannel = args.delivery_channel
       ? String(args.delivery_channel).toLowerCase()
       : null;
     const validChannels = ["whatsapp", "web_ui", "both"];
-    const deliveryChannel =
-      requestedChannel && validChannels.includes(requestedChannel)
-        ? requestedChannel
-        : "whatsapp"; // default — prompt-builder instrui LLM a perguntar pra Web UI requests
 
-    const supabase = createAdminClient();
+    let deliveryChannel: string;
+    if (requestedChannel && validChannels.includes(requestedChannel)) {
+      deliveryChannel = requestedChannel;
+    } else {
+      // Detect channel real do rep via opt-in WhatsApp
+      const { data: waMsgs } = await supabase
+        .from("sparkbot_messages")
+        .select("id")
+        .eq("rep_id", ctx.rep.id)
+        .eq("role", "user")
+        .eq("channel", "whatsapp")
+        .limit(1);
+      const hasWhatsAppOptIn = !!(waMsgs && waMsgs.length > 0);
+      deliveryChannel = hasWhatsAppOptIn ? "whatsapp" : "web_ui";
+    }
+
     const { data, error } = await supabase
       .from("assistant_scheduled_tasks")
       .insert({

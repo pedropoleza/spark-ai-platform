@@ -165,27 +165,36 @@ async function getEligibleReps(
   // V2: 1 Sparkbot global. Todos os reps com terms aceitos podem ser
   // candidatos; futuro: cruzar com allowed_ghl_users na config do agent.
   //
-  // Fix CRITICAL bug 2026-05-06: antes filtrava só por terms_accepted_at.
-  // Investigação Pedro descobriu que setup wizard auto-aceita terms quando
-  // admin ativa o agent — mas isso NÃO significa que o rep iniciou conversa
-  // (opt-in legítimo via WhatsApp). De 54 reps marcados eligíveis, só 4
-  // tinham last_inbound_at — 50 receberam proativos pra void (ainda bem
-  // que Stevo legacy tava com instância dead, senão era ban garantido pelo
-  // Meta — pattern "enviar pra desconhecidos" detecta na hora).
+  // Fix CRIT-C1 (deep audit 2026-05-06): filtro antigo `last_inbound_at
+  // IS NOT NULL` aceitava reps que SÓ usaram Web UI (campo é setado em
+  // qualquer inbound). Resultado: bot tentava WhatsApp pro rep Web-only =
+  // ban risk Meta. Agora exige inbound REAL via channel='whatsapp' no
+  // sparkbot_messages history.
   //
-  // Regra agora: SÓ envia proativo pra reps que mandaram pelo menos 1
-  // inbound (significa que opted-in via WhatsApp real, não terms-mock).
-  // Plus: se rep está pausado (proactive_paused_at) ou rejeitou terms
-  // (terms_rejected_at), exclui também. Defense in depth.
-  const { data } = await supabase
+  // Plus: filtra rejeitou terms / pausado. Defense in depth — delivery
+  // re-checa antes de send (caso scheduler bypass).
+  const { data: candidates } = await supabase
     .from("rep_identities")
     .select("*")
     .not("terms_accepted_at", "is", null)
     .is("terms_rejected_at", null)
     .is("proactive_paused_at", null)
     .not("last_inbound_at", "is", null)
-    .limit(100);
-  return (data || []) as RepIdentity[];
+    .limit(200);
+  if (!candidates || candidates.length === 0) return [];
+
+  // Confirma opt-in via WhatsApp (channel='whatsapp' em alguma user msg).
+  // Bulk query 1x pra evitar N+1.
+  const repIds = candidates.map((r) => r.id);
+  const { data: optedReps } = await supabase
+    .from("sparkbot_messages")
+    .select("rep_id")
+    .in("rep_id", repIds)
+    .eq("role", "user")
+    .eq("channel", "whatsapp");
+  const optedInIds = new Set((optedReps || []).map((r) => r.rep_id));
+
+  return candidates.filter((r) => optedInIds.has(r.id)) as RepIdentity[];
 }
 
 async function getRepTimezone(

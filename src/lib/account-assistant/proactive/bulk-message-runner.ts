@@ -310,12 +310,38 @@ async function sendToContact(
       );
     }
 
-    await ghlClient.post("/conversations/messages", {
-      type: ghlType,
-      contactId: recipient.contact_id,
-      message,
-    });
-    return { ok: true };
+    // Fix HIGH-H6 (deep audit 2026-05-06): fallback automático WhatsApp API
+    // → SMS quando sub-account não tem subscription Meta. Antes, jobs em
+    // bulk com delivery_channel='whatsapp_api' falhavam recipient-a-recipient
+    // sem fallback. Agora cobertura paralela aos paths singular (send +
+    // scheduled outbound_to_contact).
+    const trySend = async (ch: string) =>
+      ghlClient.post("/conversations/messages", {
+        type: ch,
+        contactId: recipient.contact_id,
+        message,
+      });
+    try {
+      await trySend(ghlType);
+      return { ok: true };
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      if (
+        ghlType === "WhatsApp" &&
+        /no active whatsapp subscription|whatsapp.*not.*active|whatsapp.*disabled/i.test(m)
+      ) {
+        console.warn(
+          `[bulk-runner] WhatsApp API inativo pro job ${job.id} — fallback SMS (Stevo)`,
+        );
+        try {
+          await trySend("SMS");
+          return { ok: true };
+        } catch (fbErr) {
+          throw fbErr;
+        }
+      }
+      throw err;
+    }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     return { ok: false, error: errMsg.slice(0, 500) };

@@ -24,20 +24,43 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { RepIdentity } from "@/types/account-assistant";
 
 /**
- * Opt-in check: rep só pode receber proativo se INICIOU conversa pelo menos
- * 1x via WhatsApp (last_inbound_at IS NOT NULL).
+ * Opt-in check: rep só pode receber proativo via WhatsApp se INICIOU
+ * conversa pelo menos 1x VIA WHATSAPP (não Web UI).
  *
  * Fix CRITICAL bug 2026-05-06: setup wizard auto-aceita terms quando admin
  * ativa o agent, mas isso NÃO significa que o rep deu opt-in via WhatsApp.
  * Enviar proativo pra rep "terms-aceito-mas-nunca-mandou-msg" = pattern
  * spammer que Meta detecta → ban garantido do número Stevo.
  *
+ * Fix CRIT-C1 (deep audit 2026-05-06): o filtro antigo checava
+ * `last_inbound_at IS NOT NULL` mas esse campo é setado em QUALQUER inbound
+ * (Web UI OU WhatsApp). Resultado: rep que SÓ usou painel web passava no
+ * gate → bot tentava WhatsApp pro número dele → ban risk (rep nunca falou
+ * via WhatsApp). Agora exige sparkbot_messages com `channel='whatsapp'`
+ * E role='user' — prova de opt-in real via WhatsApp.
+ *
  * Defense in depth: tanto getEligibleReps no cron filtra, quanto aqui no
- * delivery rejeitamos pre-send (caso algum caller bypassa o filter do cron,
- * ex: chamada manual ou path proativo novo).
+ * delivery rejeitamos pre-send (caso algum caller bypassa o filter do cron).
  */
-function hasOptedInViaWhatsApp(rep: { last_inbound_at?: string | null }): boolean {
-  return !!rep.last_inbound_at;
+async function hasOptedInViaWhatsApp(
+  repId: string,
+  supabase: ReturnType<typeof createAdminClient>,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("sparkbot_messages")
+    .select("id")
+    .eq("rep_id", repId)
+    .eq("role", "user")
+    .eq("channel", "whatsapp")
+    .limit(1);
+  if (error) {
+    console.warn(
+      `[opt-in-check] query failed pra rep ${repId} — fail-closed (assume no opt-in):`,
+      error.message,
+    );
+    return false;
+  }
+  return !!data && data.length > 0;
 }
 
 export interface DeliveryOptions {
@@ -83,26 +106,16 @@ export async function deliverProactiveMessage(
 ): Promise<DeliveryResult> {
   const supabase = createAdminClient();
 
-  // Fix CRITICAL bug 2026-05-06: opt-in gate. Sem inbound prévio do rep,
-  // proativo PROIBIDO via WhatsApp/Stevo (ban risk). Cai pra channel='system'
-  // (badge no painel web) — quando rep abrir painel e mandar 1ª msg, libera
-  // proativos futuros normalmente.
-  // Lookup last_inbound_at se rep não trouxe (defense in depth: caller pode
-  // ter passado objeto Pick<> incompleto).
-  let hasOptIn = hasOptedInViaWhatsApp(rep);
-  if (!hasOptIn && rep.last_inbound_at === undefined) {
-    // Re-fetch do DB pra confirmar
-    const { data: full } = await supabase
-      .from("rep_identities")
-      .select("last_inbound_at")
-      .eq("id", rep.id)
-      .maybeSingle();
-    if (full?.last_inbound_at) hasOptIn = true;
-  }
+  // Fix CRIT-C1 (deep audit 2026-05-06): opt-in agora é via channel='whatsapp'
+  // específico, não last_inbound_at genérico (que aceitava Web UI-only).
+  // Rep que SÓ usou Web UI: msg vai como channel='system' (badge no painel),
+  // não tenta WhatsApp (evita ban Meta).
+  const hasOptIn = await hasOptedInViaWhatsApp(rep.id, supabase);
   if (!hasOptIn) {
     console.warn(
-      `[proactive-delivery] rep ${rep.id} sem last_inbound_at — opt-in WhatsApp ` +
-        `não confirmado. SKIP send pra void; persistindo no painel web.`,
+      `[proactive-delivery] rep ${rep.id} sem inbound prévio VIA WHATSAPP ` +
+        `(pode ter usado só Web UI). SKIP WhatsApp send pra evitar ban Meta; ` +
+        `persistindo no painel web (badge).`,
     );
     // Não envia via Stevo. Persiste como 'system' (badge web). Quando rep
     // mandar 1ª msg, próximos proativos serão entregues normalmente.

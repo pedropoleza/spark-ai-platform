@@ -72,7 +72,7 @@ export interface UsageCost {
   totalTokens: number;
   audioSeconds: number;
   costUsd: number;      // custo real
-  markupUsd: number;    // 20% markup
+  markupUsd: number;    // 10% markup (Pedro 2026-05-04 — antes era 20%)
   totalChargeUsd: number; // total a cobrar
 }
 
