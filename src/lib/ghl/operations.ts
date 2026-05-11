@@ -95,12 +95,24 @@ export async function createNoteOnContact(
  * de QUALQUER send_message (agora ou agendado), bot muda assignedTo
  * pro user que pediu, garantindo que a msg sai pelo número correto.
  *
+ * IMPORTANTE — propagation delay: o GHL roteia outbound consultando
+ * o `assignedTo` cacheado em vários sistemas internos. Se POST de
+ * conversations/messages vier <2s após PUT do assignedTo, a msg pode
+ * sair pelo assignee ANTIGO (race condition observada por Pedro
+ * 2026-05-06 — assigned trocado mas msg saiu pelo número errado).
+ *
+ * Pra mitigar: quando o switch ACONTECE (changed=true), aguarda
+ * `propagationWaitMs` (default 5s) antes de retornar. Caller pode
+ * confiar que ao retornar, o switch já se propagou. Quando changed=false
+ * (já estava correto), no-op imediato.
+ *
  * Retorna {changed, previousAssignedTo} pra audit/log no caller.
  */
 export async function ensureContactAssignedTo(
   client: GHLClient,
   contactId: string,
   targetUserId: string,
+  propagationWaitMs: number = 5_000,
 ): Promise<{ changed: boolean; previousAssignedTo: string | null }> {
   if (!targetUserId) {
     return { changed: false, previousAssignedTo: null };
@@ -111,10 +123,16 @@ export async function ensureContactAssignedTo(
     }>(`/contacts/${contactId}`);
     const current = res.contact?.assignedTo || null;
     if (current === targetUserId) {
-      // Já está com assignment correto
+      // Já está com assignment correto — no-op, sem espera
       return { changed: false, previousAssignedTo: current };
     }
     await client.put(`/contacts/${contactId}`, { assignedTo: targetUserId });
+    // Fix Pedro 2026-05-06 (race observada): GHL precisa de tempo pra
+    // propagar o novo assignedTo nos sistemas internos de routing
+    // outbound. Sem essa espera, msg pode sair pelo número antigo.
+    if (propagationWaitMs > 0) {
+      await new Promise((r) => setTimeout(r, propagationWaitMs));
+    }
     return { changed: true, previousAssignedTo: current };
   } catch (err) {
     // Não fatal — caller decide se continua com send mesmo assim.
