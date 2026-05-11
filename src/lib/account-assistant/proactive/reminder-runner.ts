@@ -37,13 +37,20 @@ export async function fireScheduledReminders(): Promise<ReminderRunResult> {
   const supabase = createAdminClient();
   const nowIso = new Date().toISOString();
 
-  // Atomic claim: marca pending → running em uma só query
+  // Atomic claim: marca pending → running em uma só query.
+  // Fix Pedro 2026-05-06: estende pra outbound_to_contact (mensagens
+  // agendadas pra CONTATO, não pro rep) — schedule_message_to_contact.
   const { data: claimed } = await supabase
     .from("assistant_scheduled_tasks")
     .update({ status: "running" })
     .eq("status", "pending")
     .lte("next_run_at", nowIso)
-    .in("task_type", ["reminder", "recurring_reminder"])
+    .in("task_type", [
+      "reminder",
+      "recurring_reminder",
+      "outbound_to_contact",
+      "outbound_to_contact_recurring",
+    ])
     .select("*")
     .order("next_run_at", { ascending: true })
     .limit(50);
@@ -74,6 +81,17 @@ export async function fireScheduledReminders(): Promise<ReminderRunResult> {
 
 async function fireOne(task: ScheduledTaskRow): Promise<"fired" | "failed" | "skipped"> {
   const supabase = createAdminClient();
+
+  // Branch: outbound_to_contact é fluxo separado — envia direto pro
+  // CONTATO via POST /conversations/messages do GHL, não passa pelo
+  // silence-gate do rep (que é pra proativos AO rep).
+  if (
+    task.task_type === "outbound_to_contact" ||
+    task.task_type === "outbound_to_contact_recurring"
+  ) {
+    return await fireOutboundToContact(task);
+  }
+
   const message = task.task_payload?.message;
   const title = task.task_payload?.title;
   const sessionId = task.task_payload?.test_session_id;
@@ -256,6 +274,152 @@ async function deliverReminder(
 }
 
 /**
+ * Dispara mensagem agendada pra contato (outbound_to_contact).
+ * Diferente de fireOne padrão (que entrega pro rep via web/whatsapp do hub),
+ * este faz POST direto pro GHL /conversations/messages do CONTATO na
+ * location onde foi agendada — usa company_id da location, não do hub.
+ *
+ * Fix Pedro 2026-05-06: nova capability "manda pra Maria amanhã 10h".
+ * Envio falho persiste como signal admin (visibility) e marca task=failed.
+ * Recurring continua: failed numa execução não impede próximas (advanceTask
+ * recalcula next_run_at normalmente).
+ */
+async function fireOutboundToContact(
+  task: ScheduledTaskRow,
+): Promise<"fired" | "failed" | "skipped"> {
+  const supabase = createAdminClient();
+  const payload = task.task_payload as {
+    contact_id?: string;
+    message?: string;
+    channel?: string;
+    subject?: string;
+  };
+
+  if (!payload.contact_id || !payload.message) {
+    console.warn(
+      `[reminder-runner] outbound task ${task.id} sem contact_id ou message — failed`,
+    );
+    await markTaskFailed(task.id);
+    return "failed";
+  }
+
+  // Resolve company_id pela location do task (não do hub).
+  const { data: loc } = await supabase
+    .from("locations")
+    .select("company_id")
+    .eq("location_id", task.location_id)
+    .maybeSingle();
+  if (!loc?.company_id) {
+    console.warn(
+      `[reminder-runner] outbound task ${task.id} location ${task.location_id} sem company_id — failed`,
+    );
+    await markTaskFailed(task.id);
+    return "failed";
+  }
+
+  const channel = payload.channel || "SMS";
+  const body: Record<string, unknown> = {
+    type: channel,
+    contactId: payload.contact_id,
+    message: payload.message,
+    ...(channel === "Email" && payload.subject ? { subject: payload.subject } : {}),
+  };
+
+  let messageId: string | null = null;
+  let sendError: string | null = null;
+  try {
+    const { GHLClient } = await import("@/lib/ghl/client");
+    const ghl = new GHLClient(loc.company_id, task.location_id);
+    const res = await ghl.post<{ messageId?: string; conversationId?: string }>(
+      "/conversations/messages",
+      body,
+    );
+    messageId = res.messageId || null;
+  } catch (err) {
+    sendError = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[reminder-runner] outbound task ${task.id} POST falhou: ${sendError}`,
+    );
+  }
+
+  // Audit em sparkbot_messages (mesma table que outros proativos).
+  // Channel='system' = badge no painel web do rep ("manda msg pra Maria
+  // enviado: ...") — rep vê histórico dos agendamentos executados.
+  try {
+    // Resolve hub agent_id
+    const envHubLoc = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+    const { data: hubAgent } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("location_id", envHubLoc)
+      .eq("type", "account_assistant")
+      .eq("status", "active")
+      .maybeSingle();
+    if (hubAgent && envHubLoc) {
+      const auditContent = sendError
+        ? `⚠️ Falha ao enviar msg agendada pro contato: ${sendError.slice(0, 100)}`
+        : `📤 Msg agendada enviada pro contato (${channel}): "${(payload.message || "").slice(0, 80)}${(payload.message || "").length > 80 ? "..." : ""}"`;
+      await supabase.from("sparkbot_messages").insert({
+        rep_id: task.rep_id,
+        hub_location_id: envHubLoc,
+        agent_id: hubAgent.id,
+        active_location_id: task.location_id,
+        role: "agent",
+        content: auditContent,
+        channel: "system",
+        ghl_message_id: messageId,
+        read_in_web_at: sendError ? null : new Date().toISOString(),
+        metadata: {
+          source: "scheduled_outbound_to_contact",
+          scheduled_task_id: task.id,
+          contact_id: payload.contact_id,
+          channel,
+          ghl_message_id: messageId,
+          send_error: sendError,
+          delivery_status: sendError ? "failed_immediate" : "pending_confirm",
+        },
+      });
+    }
+  } catch (err) {
+    console.warn(
+      `[reminder-runner] outbound task ${task.id} audit failed (não-fatal):`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // Se falhou no send, auto-signal admin (igual delivery-status-poller faz
+  // pra proativos do rep). Pedro vê em /admin/signals.
+  if (sendError) {
+    try {
+      const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+      recordSignalAsync({
+        type: "failure",
+        title: `Mensagem agendada pra contato falhou: ${sendError.slice(0, 80)}`,
+        description:
+          `Task ${task.id} (rep ${task.rep_id}) falhou ao enviar pra ` +
+          `contact ${payload.contact_id} via ${channel}. Erro: ${sendError}`,
+        severity: "medium",
+        source: "bot_auto",
+        metadata: {
+          scheduled_task_id: task.id,
+          rep_id: task.rep_id,
+          contact_id: payload.contact_id,
+          location_id: task.location_id,
+          channel,
+          send_error: sendError,
+        },
+      });
+    } catch {
+      /* signal não crítico */
+    }
+  }
+
+  // Avança state (recurring → próximo next_run_at; one-shot → completed).
+  await advanceTask(task);
+  return sendError ? "failed" : "fired";
+}
+
+/**
  * Avança o estado da task após disparo:
  *   - one-shot: marca como completed
  *   - recurring: calcula próximo next_run_at do cron e volta pra pending
@@ -264,7 +428,14 @@ async function advanceTask(task: ScheduledTaskRow): Promise<void> {
   const supabase = createAdminClient();
   const nowIso = new Date().toISOString();
 
-  if (task.task_type === "recurring_reminder" && task.cron_expr) {
+  // Fix Pedro 2026-05-06: pattern recurring se aplica a 2 task types:
+  // recurring_reminder (msg pro rep) E outbound_to_contact_recurring
+  // (msg agendada pra contato).
+  if (
+    (task.task_type === "recurring_reminder" ||
+      task.task_type === "outbound_to_contact_recurring") &&
+    task.cron_expr
+  ) {
     // Resolver timezone pelo location_id da task (era NY hardcoded — bug)
     const { data: loc } = await supabase
       .from("locations")

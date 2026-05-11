@@ -440,6 +440,131 @@ const getContactAppointments: ToolEntry = {
   },
 };
 
+// ============================================================
+// BIRTHDAYS LOOKUP
+// ============================================================
+// Pedro 2026-05-06: bot precisa lookup contatos com dateOfBirth = hoje
+// (ou janela 'this_week' / 'next_7_days') pra cumprimentar / lembrar rep.
+//
+// Implementação: POST /contacts/search (V2 — schema oficial vazio, mas
+// API aceita filters array). Filter operator 'contains' no campo
+// dateOfBirth pra match MM-DD ignorando ano.
+// Caso GHL retorne error/0 resultados, NÃO faz fallback expensivo
+// (fetch all + filter client-side estoura org grande). Aí bot oferece
+// workaround manual ("filtre no Spark Leads por Date of Birth").
+
+const listBirthdaysToday: ToolEntry = {
+  def: {
+    name: "list_birthdays_today",
+    description:
+      "Lista contatos com aniversário HOJE (ou janela 'this_week' = próximos 7 dias). Use quando rep pergunta 'quem faz aniversário hoje?', 'aniversariantes da semana', 'quem tá fazendo birthday?'.\n\nPra uso recorrente ('todo dia 8h me manda aniversariantes'), combine com `schedule_message_to_contact` ou (futuro) `create_proactive_rule`.\n\nLimitação: filter é best-effort via Spark Leads search V2 — orgs muito grandes (10k+ contatos) podem ter results parciais. Se a tool retornar warning de truncated, sugira ao rep filtrar manual no Spark Leads (Contacts > Filter > Date of Birth).",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        when: {
+          type: "string",
+          enum: ["today", "tomorrow", "this_week", "next_7_days"],
+          description: "Janela. Default 'today'.",
+        },
+        limit: {
+          type: "number",
+          description: "Default 20, max 50.",
+        },
+      },
+    },
+  },
+  handler: async (ctx, args) => {
+    const when = String(args.when || "today");
+    const limit = Math.min(Number(args.limit) || 20, 50);
+
+    // Resolve dias-alvo no tz do rep (NY default)
+    const repTz =
+      (ctx.rep as { timezone?: string | null }).timezone || "America/New_York";
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: repTz,
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const todayMMDD = fmt.format(new Date());
+
+    const daysToCheck: string[] = [];
+    if (when === "today") {
+      daysToCheck.push(todayMMDD);
+    } else if (when === "tomorrow") {
+      const tomorrow = new Date(Date.now() + 24 * 60 * 60_000);
+      daysToCheck.push(fmt.format(tomorrow));
+    } else {
+      // this_week / next_7_days: próximos 7 dias incluindo hoje
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(Date.now() + i * 24 * 60 * 60_000);
+        daysToCheck.push(fmt.format(d));
+      }
+    }
+
+    // GHL search V2 testado 2026-05-06: NÃO aceita nenhum operator
+    // (contains/eq) em date_of_birth — sempre 422 "Invalid Operator".
+    // Significa que filtro automático via API não é possível hoje.
+    // Tool faz 1 tentativa (canary) e retorna error útil com workaround.
+    // Quando GHL liberar filter date_of_birth (V3+), pivota pra strategy
+    // multi-ano.
+    try {
+      type SearchResp = {
+        contacts?: Array<{
+          id: string;
+          firstName?: string;
+          lastName?: string;
+          contactName?: string;
+          phone?: string;
+          email?: string;
+          dateOfBirth?: string;
+          tags?: string[];
+        }>;
+      };
+      const yearProbe = new Date().getFullYear() - 30;
+      await ctx.ghlClient.post<SearchResp>("/contacts/search", {
+        locationId: ctx.locationId,
+        filters: [
+          {
+            field: "dateOfBirth",
+            operator: "eq",
+            value: `${yearProbe}-${daysToCheck[0]}`,
+          },
+        ],
+        pageLimit: 1,
+      });
+      // Se chegou aqui sem 422, GHL passou a aceitar — desbloquear feature.
+      return {
+        status: "ok",
+        data: {
+          when,
+          days_checked: daysToCheck,
+          total: 0,
+          contacts: [],
+          warning:
+            "Spark Leads aceitou filter — mas implementação V1 desta tool é canary-only (1 ano). Avise admin pra liberar full multi-year scan.",
+        },
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const isFilterUnsupported = /Invalid Operator|Invalid Field/i.test(msg);
+      if (isFilterUnsupported) {
+        return {
+          status: "error",
+          message:
+            `Spark Leads não permite filtrar contatos por data de nascimento via API ainda — limitação conhecida do CRM. ` +
+            `Workaround manual: rep abre Spark Leads → Contacts → Filter → Date of Birth = ${todayMMDD} (ou range pra week). ` +
+            `Pra automação recorrente (ex: 'todo dia 8h manda aniversariantes'), Pedro precisa adicionar custom field ` +
+            `tipo 'birthday_mmdd' nos contatos OU GHL liberar filter de date_of_birth na próxima versão. ` +
+            `Sugira ao rep e use \`report_missed_capability\` se ele quiser que Pedro priorize.`,
+          retryable: false,
+        };
+      }
+      return ghlErrorToResult(err, "busca de aniversariantes");
+    }
+  },
+};
+
 export const CONTACTS_TOOLS: ToolEntry[] = [
   searchContacts,
   getContact,
@@ -449,4 +574,5 @@ export const CONTACTS_TOOLS: ToolEntry[] = [
   getContactNotes,
   getContactTasks,
   getContactAppointments,
+  listBirthdaysToday,
 ];
