@@ -70,7 +70,10 @@ function toolRequiresConfirmation(
 function withConfirmationParam(def: ToolDefinition, mode: ConfirmationMode): ToolDefinition {
   if (!toolRequiresConfirmation(def.risk, mode)) return def;
 
-  const params = (def.parameters || {}) as { properties?: Record<string, unknown> };
+  const params = (def.parameters || {}) as {
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
   const properties = { ...(params.properties || {}) };
   // Já tem? Não sobrescreve (caso alguma tool um dia declare explicitamente).
   if (!properties.confirmed_by_rep) {
@@ -78,13 +81,25 @@ function withConfirmationParam(def: ToolDefinition, mode: ConfirmationMode): Too
       type: "boolean",
       description:
         "OBRIGATÓRIO antes de executar esta tool. " +
-        "Pergunte ao rep 'Confirma?' e SÓ envie `true` depois de receber 'sim/confirma/pode/ok'. " +
-        "Não invente confirmação — sem este flag, o sistema bloqueia.",
+        "Passe `false` na PRIMEIRA chamada (rep ainda não confirmou) — gate bloqueia e devolve mensagem dizendo pra perguntar 'Confirma?'. " +
+        "Depois que rep responder 'sim/confirma/pode/ok', RECHAME esta tool com EXATAMENTE os mesmos argumentos + `confirmed_by_rep: true`. " +
+        "NUNCA omita esse campo. Sem ele, gate bloqueia.",
     };
   }
+  // Fix Pedro 2026-05-06: marca como REQUIRED no schema. Sem isso,
+  // GPT-4.1 em fallback (quando Anthropic sem crédito) tende a OMITIR
+  // o campo, gerando loop "Confirma? → Sim → Preciso da sua confirmação".
+  // Required força LLM a passar true OU false explicitamente — description
+  // orienta a passar false na 1ª e true após 'sim' verbal do rep.
+  // Claude já passava sem required, mas required protege fallback OpenAI.
+  const existingRequired = Array.isArray(params.required) ? params.required : [];
+  const required = existingRequired.includes("confirmed_by_rep")
+    ? existingRequired
+    : [...existingRequired, "confirmed_by_rep"];
+
   return {
     ...def,
-    parameters: { ...params, properties },
+    parameters: { ...params, properties, required },
   };
 }
 

@@ -213,6 +213,51 @@ export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToo
         console.error(
           `[LLM] Claude secundário também falhou (iteration 0), fallback OpenAI ${FALLBACK_MODEL}: ${secondaryErrMsg}`,
         );
+
+        // Fix Pedro 2026-05-06: auto-signal admin quando AMBOS Claude
+        // primary E secondary falham. Indica Anthropic API DOWN ou
+        // CRÉDITO INSUFICIENTE — bot tá em fallback OpenAI degradado
+        // (compliance ~85% pior). Pedro vê em /admin/signals.
+        // Padrão "credit balance" / "rate_limit" / "401" detectados
+        // separadamente pra severity adequada.
+        try {
+          const combined = `${primaryErrMsg}\n${secondaryErrMsg}`;
+          let title = "🚨 Claude API DOWN — bot rodando em fallback OpenAI";
+          let severity: "high" | "medium" = "high";
+          if (/credit balance|insufficient.*credit|payment/i.test(combined)) {
+            title = "💳 Anthropic SEM CRÉDITO — recarregar urgente";
+          } else if (/rate.?limit|429/i.test(combined)) {
+            title = "⏱️ Claude rate limit — fallback temporário OpenAI";
+            severity = "medium";
+          } else if (/401|unauthor|invalid.*key/i.test(combined)) {
+            title = "🔑 Anthropic API key inválida ou revogada";
+          }
+          const { recordSignalAsync } = await import(
+            "@/lib/admin-signals/recorder"
+          );
+          recordSignalAsync({
+            type: "failure",
+            title,
+            description:
+              `Primary (${DEFAULT_MODEL}) e Secondary (${SECONDARY_CLAUDE_MODEL}) falharam. ` +
+              `Bot caiu em fallback ${FALLBACK_MODEL} (OpenAI), que tem compliance ~85% pior em prompt-following. ` +
+              `Esperar problemas em confirmation gate, identity, ID corruption.\n\n` +
+              `Primary err: ${primaryErrMsg.slice(0, 300)}\n` +
+              `Secondary err: ${secondaryErrMsg.slice(0, 300)}`,
+            severity,
+            source: "bot_auto",
+            metadata: {
+              primary_model: DEFAULT_MODEL,
+              secondary_model: SECONDARY_CLAUDE_MODEL,
+              fallback_model: FALLBACK_MODEL,
+              primary_error_snippet: primaryErrMsg.slice(0, 200),
+              secondary_error_snippet: secondaryErrMsg.slice(0, 200),
+            },
+          });
+        } catch {
+          /* signal não crítico */
+        }
+
         try {
           const r = await runWithOpenAI({ ...input, model: FALLBACK_MODEL });
           return { ...r, primary_error: primaryErrMsg, secondary_error: secondaryErrMsg };
