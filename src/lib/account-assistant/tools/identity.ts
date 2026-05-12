@@ -342,9 +342,64 @@ const reportMissedCapability: ToolEntry = {
   },
 };
 
+// ============================================================
+// DAILY BRIEFING PREFERENCE (Pedro 2026-05-12)
+// ============================================================
+// Rep pode ligar/desligar o "Resumo matinal" diário (8h tz local).
+// Persistido em rep_identities.daily_briefing_enabled (migration 00062).
+// Default TRUE — todos elegíveis recebem.
+
+const setDailyBriefing: ToolEntry = {
+  def: {
+    name: "set_daily_briefing",
+    description:
+      "Liga ou desliga o RESUMO MATINAL diário pro rep (msg proativa 8h da manhã com agendamentos do dia + resumo de ontem).\n\nUse quando rep falar:\n- 'Para de mandar resumo de manhã' / 'Não quero mais o briefing' → enabled=false\n- 'Volta a mandar resumo de manhã' / 'Quero o briefing de novo' → enabled=true\n- 'Configura briefing pra começar' → enabled=true\n\nConfirma com o rep antes de mudar.",
+    risk: "medium",
+    parameters: {
+      type: "object",
+      properties: {
+        enabled: {
+          type: "boolean",
+          description:
+            "true = ativa o resumo matinal (default pra rep novo). false = desativa.",
+        },
+      },
+      required: ["enabled"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const enabled = args.enabled === true;
+    const supabase = createAdminClient();
+    const { error } = await supabase
+      .from("rep_identities")
+      .update({
+        daily_briefing_enabled: enabled,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", ctx.rep.id);
+    if (error) {
+      return {
+        status: "error",
+        message: `falha ao atualizar preferência: ${error.message}`,
+        retryable: false,
+      };
+    }
+    return {
+      status: "ok",
+      data: {
+        daily_briefing_enabled: enabled,
+        message: enabled
+          ? "Resumo matinal ativado. Vou te mandar todo dia útil às 8h da manhã com seus agendamentos + resumo do dia anterior."
+          : "Resumo matinal desativado. Você pode reativar a qualquer momento.",
+      },
+    };
+  },
+};
+
 export const IDENTITY_TOOLS: ToolEntry[] = [
   confirmRepTimezone,
   listMyLocations,
   switchActiveLocation,
   reportMissedCapability,
+  setDailyBriefing,
 ];

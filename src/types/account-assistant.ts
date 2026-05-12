@@ -103,6 +103,11 @@ export interface RepIdentity {
   proactive_paused_at?: string | null;
   proactive_warned_at?: string | null;
   consecutive_proactive_without_reply?: number;
+  /**
+   * Opt-in/opt-out do "Resumo matinal" diário (Pedro 2026-05-12).
+   * Default TRUE pra todos. Rep pode desativar via tool set_daily_briefing.
+   */
+  daily_briefing_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }

@@ -62,27 +62,111 @@ export async function GET(request: NextRequest) {
     if (rule.rule_type === "scheduled") {
       const trigger = rule.trigger_config as ScheduledTrigger;
       if (!trigger?.cron) continue;
-      // Pra regra agendada, precisa avaliar pra cada rep elegível.
-      // Mas em V2 simulated, não temos sessão de teste aberta no cron, então
-      // só logamos o fact que a regra teria disparado (pra UI mostrar
-      // "última vez que rodaria"). Disparo real fica pra V3.
+      // Fix Pedro 2026-05-12: scheduled rules saíram do STUB. Agora dispara
+      // real via dispatchRule. Por enquanto, SÓ "Resumo matinal" tem
+      // handler dedicado (loadDailyContext + buildDailyBriefingPrompt) —
+      // outras rules scheduled ficam disabled em DB até prompt template
+      // específico ser criado pra cada (Pipeline review, Reflexão semanal,
+      // Resumo fim do dia).
       const reps = await getEligibleReps(supabase, rule);
       for (const rep of reps) {
         const tz = await getRepTimezone(supabase, rep);
         const should = shouldFireCron(trigger.cron, tz);
-        if (should) {
-          // Modo 'real' será habilitado em V3. Em V2 cron registra skip.
-          await supabase
-            .from("assistant_alert_state")
-            .upsert(
+        if (!should) continue;
+
+        // Dedup: já disparou pra esse rep+rule HOJE no tz dele?
+        // assistant_alert_state.last_fired_at compare com today window.
+        const todayStartTz = (() => {
+          const d = new Date();
+          const fmt = new Intl.DateTimeFormat("en-CA", {
+            timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+          });
+          return new Date(`${fmt.format(d)}T00:00:00`).toISOString();
+        })();
+        const { data: existing } = await supabase
+          .from("assistant_alert_state")
+          .select("last_fired_at, status")
+          .eq("rep_id", rep.id)
+          .eq("rule_id", rule.id)
+          .is("target_id", null)
+          .maybeSingle();
+        if (
+          existing?.last_fired_at &&
+          existing.last_fired_at > todayStartTz &&
+          ["sent", "skipped_empty", "skipped_quiet_hours"].includes(
+            existing.status,
+          )
+        ) {
+          // Já disparou (ou skip explícito) hoje — pula
+          continue;
+        }
+
+        // Detecta tipo de rule pra escolher handler. Por enquanto só
+        // "Resumo matinal" tem implementação real.
+        if (rule.name === "Resumo matinal") {
+          // Opt-out check: rep pode ter desabilitado via tool
+          // set_daily_briefing(false).
+          const repFull = rep as RepIdentity & {
+            daily_briefing_enabled?: boolean;
+          };
+          if (repFull.daily_briefing_enabled === false) {
+            // Skip — rep opt-out
+            continue;
+          }
+          const { loadDailyContext } = await import(
+            "@/lib/account-assistant/proactive/daily-briefing"
+          );
+          const { buildDailyBriefingPrompt } = await import(
+            "@/lib/account-assistant/proactive/daily-briefing-prompt"
+          );
+          const context = await loadDailyContext(rep);
+          if (!context) {
+            // Skip-empty: rep não tem nada relevante
+            await supabase.from("assistant_alert_state").upsert(
               {
                 rep_id: rep.id, rule_id: rule.id, target_id: null,
                 last_fired_at: new Date().toISOString(),
-                status: "skipped_disabled",
-                tokens_used: null, cost_usd: null,
+                status: "skipped_empty",
               },
               { onConflict: "rep_id,rule_id,target_id" },
             );
+            skippedCount++;
+            continue;
+          }
+
+          // Clone rule com prompt_instruction custom (template otimizado)
+          const ruleWithPrompt: ProactiveRule = {
+            ...(rule as ProactiveRule),
+            prompt_instruction: buildDailyBriefingPrompt(context),
+          };
+
+          try {
+            const result = await dispatchRule({
+              rule: ruleWithPrompt,
+              rep: rep as RepIdentity,
+              contextData: context as unknown as Record<string, unknown>,
+              mode: "real",
+            });
+            if (result.status === "sent") firedCount++;
+            else skippedCount++;
+          } catch (err) {
+            console.error(
+              `[cron:scheduled] Resumo matinal falhou rep=${rep.id}:`,
+              err instanceof Error ? err.message : err,
+            );
+            skippedCount++;
+          }
+        } else {
+          // Outras scheduled rules (Pipeline review etc): por enquanto
+          // skip + log. Habilitar quando tiver prompt template dedicado.
+          await supabase.from("assistant_alert_state").upsert(
+            {
+              rep_id: rep.id, rule_id: rule.id, target_id: null,
+              last_fired_at: new Date().toISOString(),
+              status: "skipped_disabled",
+            },
+            { onConflict: "rep_id,rule_id,target_id" },
+          );
           skippedCount++;
         }
       }
