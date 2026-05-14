@@ -6,13 +6,18 @@
  */
 
 import type { ToolEntry } from "./types";
-import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult } from "./types";
+import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult, resolveAssignedUserId } from "./types";
 
 const createTask: ToolEntry = {
   def: {
     name: "create_task",
     description:
-      "Cria uma task associada ao contato. due_at DEVE ser ISO 8601 com timezone (ex: '2026-04-28T10:00:00-05:00'). Converta datas naturais ('amanhã 10h', 'segunda') usando o timezone do contexto antes de chamar.",
+      "Cria uma task associada ao contato. due_at DEVE ser ISO 8601 com timezone (ex: '2026-04-28T10:00:00-05:00'). Converta datas naturais ('amanhã 10h', 'segunda') usando o timezone do contexto antes de chamar.\n\n" +
+      "ATRIBUIÇÃO (Pedro 2026-05-14): default = task atribuída ao próprio rep. Pra atribuir a OUTRO user (ex: rep delega pro João), passe `assigned_to`:\n" +
+      "  - 'self' / 'me' / 'eu' → rep ativo (default, redundante)\n" +
+      "  - ghl_user_id válido (~20 chars alfanuméricos) → atribui a esse user\n" +
+      "Se rep falar nome ('cria task pro João'), chame `list_users` ANTES pra resolver o ghl_user_id correto. NUNCA invente ID.\n\n" +
+      "TASKS FUTURAS/RECORRENTES: pra 'agenda 3 tasks pro João amanhã 9h/14h/18h', faça 3 chamadas separadas com mesmo `contact_id` + `assigned_to` + `due_at` diferentes. GHL aceita dueDate futuro nativamente — não precisa de cron separado.",
     risk: "medium",
     parameters: {
       type: "object",
@@ -21,6 +26,12 @@ const createTask: ToolEntry = {
         title: { type: "string" },
         due_at: { type: "string", description: "ISO 8601 com offset (ex: 2026-04-28T10:00:00-05:00) ou Z." },
         body: { type: "string", description: "Descrição opcional." },
+        assigned_to: {
+          type: "string",
+          description:
+            "OPCIONAL. ghl_user_id do dono da task (~20 chars alfanuméricos) OU 'self' (= rep ativo). " +
+            "Default: rep ativo. Pra atribuir a outro user, use list_users pra obter o id correto.",
+        },
       },
       required: ["contact_id", "title", "due_at"],
     },
@@ -36,15 +47,27 @@ const createTask: ToolEntry = {
     if (dateInvalid) return dateInvalid;
     const isoDueAt = new Date(dueAt).toISOString();
 
+    // Resolve assigned_to: 'self'/'me'/'eu' → rep, UUID → as-is, vazio → rep default
+    const resolved = resolveAssignedUserId(ctx, args.assigned_to);
+    if (!resolved.ok) return resolved.error;
+    const assignedTo = resolved.user_id || getRepGhlUserId(ctx);
+
     try {
       const res = await ctx.ghlClient.post<{ id?: string }>(`/contacts/${contactId}/tasks`, {
         title,
         body: args.body ? String(args.body) : undefined,
         dueDate: isoDueAt,
         completed: false, // GHL exige campo explícito
-        ...(getRepGhlUserId(ctx) ? { assignedTo: getRepGhlUserId(ctx) } : {}),
+        ...(assignedTo ? { assignedTo } : {}),
       });
-      return { status: "ok", data: { task_id: res.id, due_at: isoDueAt } };
+      return {
+        status: "ok",
+        data: {
+          task_id: res.id,
+          due_at: isoDueAt,
+          assigned_to: assignedTo || null,
+        },
+      };
     } catch (err) {
       return ghlErrorToResult(err, "criação de task");
     }
@@ -99,7 +122,10 @@ const getTask: ToolEntry = {
 const updateTask: ToolEntry = {
   def: {
     name: "update_task",
-    description: "Edita campos de uma task (título, body, due_at, assigned_to). Pra marcar completed use complete_task.",
+    description:
+      "Edita campos de uma task (título, body, due_at, assigned_to). Pra marcar completed use complete_task.\n\n" +
+      "REATRIBUIÇÃO (Pedro 2026-05-14): passe `assigned_to` pra trocar o dono. Aceita 'self'/'me'/'eu' (= rep ativo) ou ghl_user_id válido. " +
+      "Se rep falar nome ('passa essa task pro João'), chame list_users ANTES pra resolver o id.",
     risk: "medium",
     parameters: {
       type: "object",
@@ -109,6 +135,11 @@ const updateTask: ToolEntry = {
         title: { type: "string" },
         body: { type: "string" },
         due_at: { type: "string", description: "ISO 8601" },
+        assigned_to: {
+          type: "string",
+          description:
+            "OPCIONAL. Reatribuir task pra outro user. Aceita 'self' ou ghl_user_id válido. Use list_users pra resolver nomes.",
+        },
       },
       required: ["contact_id", "task_id"],
     },
@@ -126,6 +157,11 @@ const updateTask: ToolEntry = {
       const dateInvalid = validateIso8601(String(args.due_at), "due_at");
       if (dateInvalid) return dateInvalid;
       body.dueDate = new Date(String(args.due_at)).toISOString();
+    }
+    if (args.assigned_to !== undefined) {
+      const resolved = resolveAssignedUserId(ctx, args.assigned_to);
+      if (!resolved.ok) return resolved.error;
+      if (resolved.user_id) body.assignedTo = resolved.user_id;
     }
     if (Object.keys(body).length === 0) {
       return { status: "error", message: "Nenhum campo pra atualizar", retryable: false };

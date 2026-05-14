@@ -100,6 +100,63 @@ export function getRepGhlUserId(ctx: ToolContext): string | undefined {
 }
 
 /**
+ * Resolve `assigned_to` / `assigned_user_id` pra ghl_user_id real.
+ *
+ * Pedro 2026-05-14: criado pra cobrir 2 casos:
+ *  1. Tasks atribuídas a outro user via input do rep ("cria task pro João")
+ *  2. Bug histórico onde LLM mandava `"self"` literal como string e GHL
+ *     rejeitava com 422 "user id not part of calendar team" (signal HIGH
+ *     2 hits 2026-05-11).
+ *
+ * Valores aceitos:
+ *  - undefined/null/'' → { user_id: undefined } (caller decide default)
+ *  - 'self' | 'me' | 'eu' | 'rep' | 'self_user' → ghl_user_id do rep ativo
+ *  - UUID-like (>=18 chars alfanuméricos) → returned as-is
+ *  - Qualquer outro → erro estruturado pro LLM corrigir (use list_users)
+ */
+export function resolveAssignedUserId(
+  ctx: ToolContext,
+  raw: unknown,
+): { ok: true; user_id: string | undefined } | { ok: false; error: ToolResult } {
+  if (raw === undefined || raw === null || raw === "") {
+    return { ok: true, user_id: undefined };
+  }
+  const original = String(raw).trim();
+  if (!original) return { ok: true, user_id: undefined };
+
+  const lower = original.toLowerCase();
+  if (["self", "me", "eu", "rep", "self_user", "myself"].includes(lower)) {
+    const repId = getRepGhlUserId(ctx);
+    if (!repId) {
+      return {
+        ok: false,
+        error: {
+          status: "error",
+          message: "Não consegui resolver 'self' pro user_id do rep nessa location. Use list_users + ID explícito.",
+          retryable: false,
+        },
+      };
+    }
+    return { ok: true, user_id: repId };
+  }
+
+  // Valida como UUID-like (mesma heurística do validateGhlId mas standalone)
+  if (original.length < 18 || !/^[A-Za-z0-9]+$/.test(original)) {
+    return {
+      ok: false,
+      error: {
+        status: "error",
+        message:
+          `assigned_to inválido: "${original}". Use 'self' (atribuir ao rep ativo) ou um ghl_user_id válido ` +
+          `(~20 chars alfanuméricos). Liste opções com list_users e use o campo \`id\` exato.`,
+        retryable: false,
+      },
+    };
+  }
+  return { ok: true, user_id: original };
+}
+
+/**
  * Wrap padrão pra tools que falham na chamada Spark Leads (GHL API): converte
  * Error em ToolResult de erro com mensagem útil pro LLM corrigir.
  *

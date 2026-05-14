@@ -8,7 +8,7 @@
  */
 
 import type { ToolContext, ToolEntry } from "./types";
-import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult } from "./types";
+import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult, resolveAssignedUserId } from "./types";
 import type { ToolResult } from "@/types/account-assistant";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 
@@ -974,6 +974,14 @@ const createAppointment: ToolEntry = {
     const overrideResult = buildOverridePayload(ctx, args);
     if (!overrideResult.ok) return overrideResult.error;
 
+    // Fix bug "self" literal observado em prod 2026-05-11 (signal HIGH 2 hits):
+    // LLM mandava `assigned_user_id: "self"` como string em vez de resolver
+    // pro ghl_user_id real. GHL rejeitava com 422 "user id not part of
+    // calendar team". Helper resolve 'self'/'me'/'eu' → rep ativo.
+    const resolvedUser = resolveAssignedUserId(ctx, args.assigned_user_id);
+    if (!resolvedUser.ok) return resolvedUser.error;
+    const assignedUserId = resolvedUser.user_id;
+
     // H26 (review 2026-05-14): auto-ativa overrideLocationConfig quando rep
     // especifica meeting location. Sem isso, GHL ignora silenciosamente
     // meetingLocationType/address e usa default do calendar — bug histórico.
@@ -1000,9 +1008,7 @@ const createAppointment: ToolEntry = {
         ...(args.meeting_location_type ? { meetingLocationType: String(args.meeting_location_type) } : {}),
         ...(args.meeting_location ? { address: String(args.meeting_location) } : {}),
         ...(hasCustomMeetingLocation ? { overrideLocationConfig: true } : {}),
-        ...(args.assigned_user_id
-          ? { assignedUserId: String(args.assigned_user_id) }
-          : {}),
+        ...(assignedUserId ? { assignedUserId } : {}),
         ...overrideResult.body, // H26 admin flags — spread no fim pra garantir prioridade
       };
 
@@ -1047,10 +1053,11 @@ const createAppointment: ToolEntry = {
       // Pedro 2026-05-04: se rep passou assigned_user_id explícito E o erro
       // foi "slot not available", enriquece com lista de OUTROS team_members
       // do calendar pro LLM oferecer alternativa ("seu user tá bloqueado,
-      // quer tentar com X ou Y?").
+      // quer tentar com X ou Y?"). Usa variável `assignedUserId` resolvida
+      // (não args raw) — evita comparar contra "self" literal.
       const errMsg = err instanceof Error ? err.message : String(err);
       const isSlotBlock = /slot.*not.*available|no longer available/i.test(errMsg);
-      if (args.assigned_user_id && isSlotBlock) {
+      if (assignedUserId && isSlotBlock) {
         try {
           const calRes = await ctx.ghlClient.get<{
             calendar?: {
@@ -1059,14 +1066,14 @@ const createAppointment: ToolEntry = {
           }>(`/calendars/${encodeURIComponent(calendarId)}`);
           const others = (calRes.calendar?.teamMembers || [])
             .map((tm) => tm.userId)
-            .filter((id): id is string => !!id && id !== String(args.assigned_user_id));
+            .filter((id): id is string => !!id && id !== assignedUserId);
           if (others.length > 0) {
             const repUser = getRepGhlUserId(ctx);
             return {
               status: "error",
               message:
-                `O horário tá bloqueado pro user ${args.assigned_user_id}` +
-                (args.assigned_user_id === repUser ? " (você)" : "") +
+                `O horário tá bloqueado pro user ${assignedUserId}` +
+                (assignedUserId === repUser ? " (você)" : "") +
                 ` — pode ser look-busy do calendar OU conflito real. ` +
                 `Outros team_members do mesmo calendar: ${others.join(", ")}. ` +
                 `Pergunte ao rep se quer tentar com algum deles, OU se prefere outro horário (use get_free_slots).`,
@@ -1116,9 +1123,11 @@ const blockCalendarSlot: ToolEntry = {
     const endInvalid = validateIso8601(String(args.end_time || ""), "end_time");
     if (endInvalid) return endInvalid;
 
-    const targetUser = args.assigned_user_id
-      ? String(args.assigned_user_id)
-      : getRepGhlUserId(ctx);
+    // Fix bug "self" literal 2026-05-14: helper resolveAssignedUserId aceita
+    // 'self'/'me'/'eu' e resolve pro rep, valida UUID se passado explícito.
+    const resolved = resolveAssignedUserId(ctx, args.assigned_user_id);
+    if (!resolved.ok) return resolved.error;
+    const targetUser = resolved.user_id || getRepGhlUserId(ctx);
     if (!targetUser) {
       return {
         status: "error",
