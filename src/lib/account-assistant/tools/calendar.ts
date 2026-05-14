@@ -7,8 +7,73 @@
  * - appointments crud em /calendars/events/appointments (não em /contacts/{id})
  */
 
-import type { ToolEntry } from "./types";
+import type { ToolContext, ToolEntry } from "./types";
 import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult } from "./types";
+import type { ToolResult } from "@/types/account-assistant";
+import { recordSignalAsync } from "@/lib/admin-signals/recorder";
+
+/**
+ * H26 (review 2026-05-14): valida override flags ADMIN-ONLY pra appointments.
+ *
+ * Restrito a admin/internal team (ctx.rep.is_internal === true, populado por
+ * H17 detectIsInternal — env phone, role agency*, ou 5+ ghl_users).
+ *
+ * Flags cobertas (todas vão em POST/PUT /calendars/events/appointments):
+ *  - ignoreFreeSlotValidation: fura slot bloqueado/conflict
+ *  - ignoreDateRange: pula min notice / max horizon
+ *  - toNotify=false: desativa automation/notification
+ *
+ * NÃO INCLUI overrideLocationConfig — esse é auto-ativado quando rep
+ * especifica meeting_location_type/meeting_location (gate diferente,
+ * qualquer rep pode trocar local de reunião).
+ *
+ * Retorno:
+ *  - { ok: false, error } se rep não-admin tentou usar override
+ *  - { ok: true, body, used } com campos GHL prontos pra mergear no body
+ *  - { ok: true, body: {}, used: [] } se nenhuma flag foi passada
+ */
+function buildOverridePayload(
+  ctx: ToolContext,
+  args: Record<string, unknown>,
+):
+  | { ok: true; body: Record<string, unknown>; used: string[] }
+  | { ok: false; error: ToolResult } {
+  const requestedOverride =
+    args.ignore_free_slot_validation === true ||
+    args.ignore_date_range === true ||
+    args.to_notify === false;
+
+  if (requestedOverride && !ctx.rep.is_internal) {
+    return {
+      ok: false,
+      error: {
+        status: "error",
+        message:
+          "Override de calendar (forçar slot bloqueado / ignorar min notice / desativar notification) " +
+          "é restrito a admin/internal team. Rep comum não tem permissão. " +
+          "Avise o rep: 'Não consigo forçar esse bloqueio — só admin tem essa permissão. " +
+          "Quer que eu tente outro horário?' e use get_free_slots pra alternativa.",
+        retryable: false,
+      },
+    };
+  }
+
+  const body: Record<string, unknown> = {};
+  const used: string[] = [];
+  if (args.ignore_free_slot_validation === true) {
+    body.ignoreFreeSlotValidation = true;
+    used.push("ignore_free_slot_validation");
+  }
+  if (args.ignore_date_range === true) {
+    body.ignoreDateRange = true;
+    used.push("ignore_date_range");
+  }
+  if (args.to_notify === false) {
+    body.toNotify = false;
+    used.push("to_notify_false");
+  }
+  return { ok: true, body, used };
+}
 
 const listAppointments: ToolEntry = {
   def: {
@@ -840,7 +905,10 @@ const createAppointment: ToolEntry = {
   def: {
     name: "create_appointment",
     description:
-      "⚠️ AGENDA reunião pra um contato no calendário. AFETA o lead — sempre confirma com o rep ANTES. Use get_free_slots pra escolher horário válido.\n\nObservação importante: pra calendars **round-robin/collective/group** (com vários team members), NÃO passe `assigned_user_id` — deixe o Spark Leads escolher automaticamente. Pra calendars **personal/service** (1 user só), opcional. Default: não passar (mais seguro pra qualquer tipo de calendar).",
+      "⚠️ AGENDA reunião pra um contato no calendário. AFETA o lead — sempre confirma com o rep ANTES. Use get_free_slots pra escolher horário válido.\n\n" +
+      "Observação importante: pra calendars **round-robin/collective/group** (com vários team members), NÃO passe `assigned_user_id` — deixe o Spark Leads escolher automaticamente. Pra calendars **personal/service** (1 user só), opcional. Default: não passar (mais seguro pra qualquer tipo de calendar).\n\n" +
+      "⚙️ MEETING LOCATION (qualquer rep): se rep especificar onde/como — 'Zoom', 'Google Meet', 'presencial em [endereço]', 'telefone [num]', 'link [url]' — passe `meeting_location_type` E `meeting_location`. Sem isso, GHL ignora silenciosamente e usa default do calendar (bug histórico pré-H26).\n\n" +
+      "⚙️ OVERRIDE ADMIN (apenas internal team): se rep admin pedir pra forçar slot bloqueado (`ignore_free_slot_validation`), ignorar minimum notice (`ignore_date_range`), ou marcar sem notificação (`to_notify=false`), SEMPRE explicite o override na frase de confirmação: 'Vou marcar X mesmo com slot bloqueado — confirma?'. NUNCA use silenciosamente. Rep não-admin recebe erro do gate.",
     risk: "high",
     parameters: {
       type: "object",
@@ -850,12 +918,43 @@ const createAppointment: ToolEntry = {
         start_time: { type: "string", description: "ISO 8601" },
         end_time: { type: "string", description: "ISO 8601" },
         title: { type: "string" },
-        meeting_location_type: { type: "string", description: "Ex: 'custom', 'phone', 'zoom'." },
-        meeting_location: { type: "string", description: "Ex: link Zoom, telefone, endereço." },
+        meeting_location_type: {
+          type: "string",
+          description:
+            "OPCIONAL. Tipo de local da reunião. Valores: 'zoom' | 'gmeet' | 'phone' | 'address' | 'custom'. " +
+            "Passar este param ativa overrideLocationConfig automaticamente — GHL respeita o local que você manda em vez do default do calendar.",
+        },
+        meeting_location: {
+          type: "string",
+          description:
+            "OPCIONAL. Link/endereço/telefone literal (ex: 'https://zoom.us/j/abc', 'Av. Paulista 100', '+5511987654321'). " +
+            "Use quando rep especificar link/endereço próprio. Pra 'zoom'/'gmeet' SEM link específico, omita — GHL gera automático.",
+        },
         assigned_user_id: {
           type: "string",
           description:
             "OPCIONAL. ID do user a quem atribuir a reunião. Use APENAS se o rep pedir explicitamente OU se for um calendar personal de 1 user específico. Pra round-robin/collective/group, OMITA — Spark Leads escolhe automaticamente baseado em disponibilidade.",
+        },
+        // H26 (review 2026-05-14): override flags admin-only — bypassam
+        // validações destrutivas do Spark Leads. Gate em buildOverridePayload.
+        ignore_free_slot_validation: {
+          type: "boolean",
+          description:
+            "OPCIONAL (admin only). Força marcação EM CIMA de slot bloqueado/conflict. " +
+            "Use APENAS quando rep admin pedir explicitamente ('força', 'mesmo bloqueado', 'ignora bloqueio'). " +
+            "Na confirmação verbal, deixe claro que está IGNORANDO um bloqueio.",
+        },
+        ignore_date_range: {
+          type: "boolean",
+          description:
+            "OPCIONAL (admin only). Pula 'minimum scheduling notice' do calendar (ex: calendar exige 2h+ no futuro). " +
+            "Use quando rep admin diz 'marca pra agora' / 'marca pra hoje' e o horário rejeita por min notice.",
+        },
+        to_notify: {
+          type: "boolean",
+          description:
+            "OPCIONAL (admin only, default true). Passe `false` quando rep admin pedir explicitamente 'marca sem mandar notificação' ou 'sem disparar automation'. " +
+            "⚠️ DRÁSTICO — cliente NÃO recebe lembrete/invite. Confirme separadamente antes de usar.",
         },
       },
       required: ["calendar_id", "contact_id", "start_time", "end_time"],
@@ -870,6 +969,17 @@ const createAppointment: ToolEntry = {
     if (startInvalid) return startInvalid;
     const endInvalid = validateIso8601(String(args.end_time || ""), "end_time");
     if (endInvalid) return endInvalid;
+
+    // H26 (review 2026-05-14): gate admin pras 3 flags destrutivas.
+    const overrideResult = buildOverridePayload(ctx, args);
+    if (!overrideResult.ok) return overrideResult.error;
+
+    // H26 (review 2026-05-14): auto-ativa overrideLocationConfig quando rep
+    // especifica meeting location. Sem isso, GHL ignora silenciosamente
+    // meetingLocationType/address e usa default do calendar — bug histórico.
+    const hasCustomMeetingLocation =
+      args.meeting_location_type !== undefined ||
+      args.meeting_location !== undefined;
 
     // Fix bug observado em prod 2026-05-04: antes setávamos
     // `body.assignedUserId = repUser` SEMPRE. Isso quebrava calendars
@@ -889,9 +999,11 @@ const createAppointment: ToolEntry = {
         ...(args.title ? { title: String(args.title) } : {}),
         ...(args.meeting_location_type ? { meetingLocationType: String(args.meeting_location_type) } : {}),
         ...(args.meeting_location ? { address: String(args.meeting_location) } : {}),
+        ...(hasCustomMeetingLocation ? { overrideLocationConfig: true } : {}),
         ...(args.assigned_user_id
           ? { assignedUserId: String(args.assigned_user_id) }
           : {}),
+        ...overrideResult.body, // H26 admin flags — spread no fim pra garantir prioridade
       };
 
       const res = await ctx.ghlClient.post<{
@@ -900,6 +1012,30 @@ const createAppointment: ToolEntry = {
         assignedUserId?: string;
       }>("/calendars/events/appointments", body);
       const apptId = res.id || res.appointment?.id;
+
+      // H26 audit: signal só pras flags admin (não pro meeting location override).
+      // Fingerprint ESTÁVEL (sem apptId no title) → recorder dedupa via
+      // sha256(type+title), vira counter natural no painel.
+      if (overrideResult.used.length > 0) {
+        recordSignalAsync({
+          type: "idea",
+          title: `Calendar override admin (${overrideResult.used.sort().join("+")})`,
+          description: `Admin usou override flags em create_appointment: ${overrideResult.used.join(", ")}`,
+          severity: "low",
+          source: "bot_auto",
+          metadata: {
+            tool: "create_appointment",
+            appointment_id: apptId,
+            rep_id: ctx.rep.id,
+            rep_phone: ctx.rep.phone,
+            location_id: ctx.locationId,
+            calendar_id: calendarId,
+            contact_id: contactId,
+            override_flags_used: overrideResult.used,
+          },
+        });
+      }
+
       return {
         status: "ok",
         data: {
@@ -1028,7 +1164,10 @@ const blockCalendarSlot: ToolEntry = {
 const updateAppointment: ToolEntry = {
   def: {
     name: "update_appointment",
-    description: "⚠️ Reagendar um appointment existente (mudar horário ou status). Confirma antes.",
+    description:
+      "⚠️ Reagendar um appointment existente (mudar horário, status, OU meeting location). Confirma antes.\n\n" +
+      "⚙️ MEETING LOCATION (qualquer rep): se rep pedir pra TROCAR o local da reunião ('agora vai ser presencial', 'muda pra Google Meet', 'manda link do meu Zoom em vez do default'), passe `meeting_location_type` + `meeting_location`. Sem isso, GHL ignora silenciosamente.\n\n" +
+      "⚙️ OVERRIDE ADMIN (apenas internal team): se rep admin pedir pra REagendar em cima de bloqueio (`ignore_free_slot_validation`), pra horário fora do min notice (`ignore_date_range`), ou sem mandar notificação (`to_notify=false`), SEMPRE explicite na confirmação: 'Vou mover pra X mesmo bloqueado — confirma?'. NUNCA silencioso. Rep não-admin recebe erro do gate.",
     risk: "high",
     parameters: {
       type: "object",
@@ -1041,6 +1180,31 @@ const updateAppointment: ToolEntry = {
           enum: ["confirmed", "showed", "noshow", "cancelled", "invalid"],
           description: "Status do appointment. Use APENAS valores enumerados.",
         },
+        // H26 (review 2026-05-14): meeting location override (qualquer rep)
+        meeting_location_type: {
+          type: "string",
+          description:
+            "OPCIONAL. 'zoom' | 'gmeet' | 'phone' | 'address' | 'custom'. Ativa overrideLocationConfig auto.",
+        },
+        meeting_location: {
+          type: "string",
+          description:
+            "OPCIONAL. Link/endereço/telefone literal pro novo meeting location. " +
+            "Pra 'zoom'/'gmeet' SEM link específico, omita — GHL gera automático.",
+        },
+        // H26: admin override flags
+        ignore_free_slot_validation: {
+          type: "boolean",
+          description: "OPCIONAL (admin only). Força reagendamento em slot bloqueado/conflict.",
+        },
+        ignore_date_range: {
+          type: "boolean",
+          description: "OPCIONAL (admin only). Pula min notice ao reagendar pra horário próximo.",
+        },
+        to_notify: {
+          type: "boolean",
+          description: "OPCIONAL (admin only). `false` = sem notificação do reagendamento. ⚠️ DRÁSTICO.",
+        },
       },
       required: ["appointment_id"],
     },
@@ -1049,6 +1213,10 @@ const updateAppointment: ToolEntry = {
     const appointmentId = String(args.appointment_id || "");
     const invalid = validateGhlId(appointmentId, "appointment");
     if (invalid) return invalid;
+
+    // H26 (review 2026-05-14): gate admin pras 3 flags destrutivas.
+    const overrideResult = buildOverridePayload(ctx, args);
+    if (!overrideResult.ok) return overrideResult.error;
 
     const body: Record<string, unknown> = {};
     if (args.start_time) {
@@ -1074,12 +1242,49 @@ const updateAppointment: ToolEntry = {
       }
       body.appointmentStatus = status;
     }
+
+    // H26 (review 2026-05-14): meeting location override auto-ativado.
+    // Sem overrideLocationConfig=true, GHL descartaria silenciosamente.
+    if (args.meeting_location_type !== undefined) {
+      body.meetingLocationType = String(args.meeting_location_type);
+    }
+    if (args.meeting_location !== undefined) {
+      body.address = String(args.meeting_location);
+    }
+    if (args.meeting_location_type !== undefined || args.meeting_location !== undefined) {
+      body.overrideLocationConfig = true;
+    }
+
+    // H26: admin override flags
+    Object.assign(body, overrideResult.body);
+
     if (Object.keys(body).length === 0) {
       return { status: "error", message: "Nenhum campo pra atualizar", retryable: false };
     }
 
     try {
       await ctx.ghlClient.put(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`, body);
+
+      // H26 audit: signal pras flags admin (não pra meeting location).
+      // Fingerprint estável → counter natural no painel /admin/signals.
+      if (overrideResult.used.length > 0) {
+        recordSignalAsync({
+          type: "idea",
+          title: `Calendar override admin (${overrideResult.used.sort().join("+")})`,
+          description: `Admin usou override flags em update_appointment: ${overrideResult.used.join(", ")}`,
+          severity: "low",
+          source: "bot_auto",
+          metadata: {
+            tool: "update_appointment",
+            appointment_id: appointmentId,
+            rep_id: ctx.rep.id,
+            rep_phone: ctx.rep.phone,
+            location_id: ctx.locationId,
+            override_flags_used: overrideResult.used,
+          },
+        });
+      }
+
       return { status: "ok", data: { appointment_id: appointmentId, updated: Object.keys(body) } };
     } catch (err) {
       return ghlErrorToResult(err, "atualização de appointment");

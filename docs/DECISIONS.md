@@ -47,6 +47,7 @@ Quando criar nova entry: pegue próximo número disponível na categoria, adicio
 | **H23** | `account-assistant/tools/identity.ts:switchActiveLocation` + `block_calendar_slot` + `report_missed_capability` | 2026-05-04 | 3 tools novas: switch_active_location (rep multi-tenant troca sub-account ativa), block_calendar_slot (compromisso pessoal sem ser appointment com cliente), report_missed_capability (auto-registra "rep pediu X que não consigo" pro painel admin). | conversa Pedro 2026-05-04 |
 | **H24** | `lib/account-assistant/tools/bulk-messages.ts` + 7 tools | 2026-05-04 | Tools de disparo em massa com drip mode (anti-WhatsApp ban): preview/schedule/list/get_progress/pause/resume/cancel. Filtro por tag, drip 90s±30s entre msgs, variation via Haiku, cap 100/dia/sub-account, quiet_hours obrigatório. Migration 00050. | conversa Pedro 2026-05-04 |
 | **H25** | `app/admin/signals/*` + `lib/admin-signals/recorder.ts` + `middleware.ts` | 2026-05-04 | Painel /admin/signals (Basic Auth via env `ADMIN_PANEL_PASSWORD`) rastreando 4 tipos: failure/missed_capability/error/idea com fingerprint dedup (sha256 type+title). Hook em executeTool auto-registra erros. Tool `report_missed_capability` registra gaps de capacidade quando bot diz "não consigo". Migration 00051. | conversa Pedro 2026-05-04 |
+| **H26** | `account-assistant/tools/calendar.ts` (createAppointment, updateAppointment) + helper `buildOverridePayload` | 2026-05-14 | 4 override flags em appointments. **3 destrutivas admin-only** via H17 `is_internal` (`ignoreFreeSlotValidation`/`ignoreDateRange`/`toNotify=false`) — gate em `buildOverridePayload`, audit signal `idea` com fingerprint estável (recorder dedupa → counter no painel). **`overrideLocationConfig` auto-ativado** pra qualquer rep quando passa `meeting_location_type`/`meeting_location` — conserta bug silencioso onde GHL descartava esses params. Schema NÃO expõe `overrideLocationConfig` standalone — sempre derivado dos params de meeting location. update_appointment ganha `meeting_location_type`/`meeting_location` (não existiam). `block_calendar_slot` fora do escopo (endpoint /block-slots não aceita flags). | conversa Pedro 2026-05-14 |
 
 ## Críticos novos da ULTRA-REVIEW 2026-05-05 (`C5-C13`)
 
@@ -111,7 +112,7 @@ Quando criar nova entry: pegue próximo número disponível na categoria, adicio
 ## Como adicionar entry
 
 1. Escolha categoria: `H` (high), `C` (critical), `P0/P1`, `NB-` (validation findings)
-2. Pegue próximo número disponível: maior `H` atual é H12, próximo é H13
+2. Pegue próximo número disponível: maior `H` atual é H26, próximo é H27
 3. Add linha na tabela acima
 4. Add comment no código: `// H13 (review YYYY-MM-DD): <sumário curto>`
 5. Commit com referência: `fix(scope): <ação> (H13)`
