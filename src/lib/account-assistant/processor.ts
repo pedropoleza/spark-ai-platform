@@ -26,22 +26,69 @@ import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 
 /**
- * Detector de hallucination POST-HOC (Pedro 2026-05-14, caso Gustavo):
- * bot afirmou "Nota salva!" 8 vezes seguidas sem chamar create_note.
+ * Detector GENERALIZADO de hallucination POST-HOC.
  *
- * Detecta padrão: resposta inclui afirmação de write-action E NENHUMA
- * tool_call correspondente foi feita no turn. Registra signal HIGH
- * (não bloqueia a resposta — UX), Pedro vê no painel /admin/signals e
- * pode acionar manual.
+ * Pedro 2026-05-14, caso Gustavo: bot afirmou "Nota salva!" 8x seguidas
+ * sem chamar create_note. Fix v1 cobria 4 famílias específicas. Pedro:
+ * "talvez não é melhor criar uma regra geral?" → expandido pra 2 camadas:
  *
- * Cobre 4 famílias de hallucination:
- *  - notes: "nota salva", "anotei", "anotações salvas", "coloquei nas notas"
- *  - tasks: "task criada", "task adicionada", "tarefa salva"
- *  - tags: "tag adicionada", "tag aplicada"
- *  - reminders: "lembrete agendado", "lembrete marcado"
+ *   1. ESPECÍFICO (8 famílias) — alta precisão, cita tool exata que
+ *      satisfaz a claim. Pega o caso típico onde bot disse "X criado"
+ *      mas chamou tool de família ERRADA (ex: "tag aplicada" mas chamou
+ *      create_note).
  *
- * Cada família tem o conjunto de tools que SATISFAZ a claim. Se claim
- * presente mas nenhuma das tools foi chamada → hallucination.
+ *   2. GENÉRICO catch-all — qualquer verbo write em pretérito 1ª pessoa
+ *      OU particípio passado + ZERO tools write chamadas no turn =
+ *      hallucination. Pega famílias futuras (novas tools) sem update
+ *      manual. Falso positivo aceitável (raro) — signal é só pra Pedro
+ *      reviewar, não bloqueia resposta.
+ *
+ * Não bloqueia a resposta — só registra signal HIGH em admin_signals
+ * pra Pedro reviewar no painel.
+ */
+
+/**
+ * Tools de WRITE (qualquer mutação no Spark Leads ou state do bot).
+ * Identificadas por prefix de nome. Mantido em sync com tools/index.ts
+ * — quando adicionar tool nova com mutação, garante que prefixo bate.
+ *
+ * Tools de READ (search_*, list_*, get_*, query_*, preview_*) NÃO
+ * satisfazem claim de "feito" — não contam como write.
+ */
+const WRITE_TOOL_NAME_PATTERNS = [
+  /^create_/,
+  /^update_/,
+  /^delete_/,
+  /^add_/,
+  /^remove_/,
+  /^complete_/,
+  /^send_/,
+  /^schedule_/,
+  /^import_/,
+  /^block_/,
+  /^cancel_/,
+  /^pause_/,
+  /^resume_/,
+  /^switch_/,
+  /^confirm_/,
+  /^set_/,
+  /^forget_/,
+  /^accept_/,
+  /^reject_/,
+  /^reply_/,
+  /^assign_/,
+  /^move_/,
+  /^report_missed_capability/, // exceção: registra estado no painel
+];
+
+function isWriteTool(toolName: string): boolean {
+  return WRITE_TOOL_NAME_PATTERNS.some((re) => re.test(toolName));
+}
+
+/**
+ * Famílias específicas de claim → tools que satisfazem. Cada família tem
+ * regex preciso (evita matches casuais). Se regex bate mas NENHUMA tool
+ * da satisfying_tools foi chamada → hallucination específica.
  */
 const HALLUCINATION_PATTERNS: Array<{
   family: string;
@@ -50,41 +97,138 @@ const HALLUCINATION_PATTERNS: Array<{
 }> = [
   {
     family: "note",
-    regex: /\b(nota\s+(salva|criada|adicionada)|notas?\s+(salvas?|criadas?|adicionadas?)|anotei|anota[çc][oõ]es?\s+salvas?|coloquei\s+nas?\s+notas?|salvei\s+a\s+nota|anotado\s+(nos?\s+)?notes?)\b/i,
-    satisfying_tools: ["create_note"],
+    regex:
+      /\b(nota\s+(salva|criada|adicionada)|notas?\s+(salvas?|criadas?|adicionadas?)|anotei|anota[çc][oõ]es?\s+salvas?|coloquei\s+nas?\s+notas?|salvei\s+a\s+nota|anotado\s+(nos?\s+)?notes?)\b/i,
+    satisfying_tools: ["create_note", "update_note"],
   },
   {
     family: "task",
-    regex: /\b(task\s+(criada|adicionada|salva)|tarefa\s+(criada|adicionada|salva))\b/i,
-    satisfying_tools: ["create_task"],
+    regex:
+      /\b(task\s+(criada|adicionada|salva|completada|conclu[ií]da)|tarefa\s+(criada|adicionada|salva|completada|conclu[ií]da)|marquei\s+(a\s+)?task)\b/i,
+    satisfying_tools: ["create_task", "update_task", "complete_task"],
   },
   {
     family: "tag",
-    regex: /\btag\s+(adicionada|aplicada|colocada|removida)\b/i,
+    regex:
+      /\btags?\s+(adicionada|aplicada|colocada|removida|tirada|posta)s?\b/i,
     satisfying_tools: ["add_tag", "remove_tag"],
   },
   {
     family: "reminder",
-    regex: /\blembrete\s+(agendado|marcado|criado|salvo)\b/i,
-    satisfying_tools: ["schedule_reminder", "schedule_recurring_reminder"],
+    regex:
+      /\blembrete\s+(agendado|marcado|criado|salvo|cancelado|removido)s?\b/i,
+    satisfying_tools: [
+      "schedule_reminder",
+      "schedule_recurring_reminder",
+      "cancel_reminder",
+    ],
+  },
+  {
+    family: "appointment",
+    regex:
+      /\b(appointment|reuni[aã]o|agenda\s+do\s+cliente)\s+(marcad[ao]|agendad[ao]|criad[ao]|reagendad[ao]|cancelad[ao]|movid[ao])s?\b|\b(marquei|agendei|reagendei|cancelei)\s+(a\s+)?(reuni[aã]o|appointment|encontro)/i,
+    satisfying_tools: [
+      "create_appointment",
+      "update_appointment",
+      "delete_appointment",
+      "block_calendar_slot",
+    ],
+  },
+  {
+    family: "message",
+    regex:
+      /\b(mensagem|msg|whatsapp|sms|email|mensagens|msgs)\s+(enviad[ao]|mandad[ao]|dispar[aá]d[ao]|agendad[ao]|cancelad[ao])s?\b|\b(mandei|enviei|disparei|despachei)\s+(a\s+|o\s+)?(mensagem|msg|whatsapp|sms|email|texto)\b/i,
+    satisfying_tools: [
+      "send_message_to_contact",
+      "schedule_message_to_contact",
+      "schedule_bulk_message",
+      "cancel_scheduled_message",
+      "pause_bulk_message",
+      "resume_bulk_message",
+      "cancel_bulk_message",
+    ],
+  },
+  {
+    family: "contact",
+    regex:
+      /\b(contato|lead|cliente)\s+(criad[ao]|adicionad[ao]|atualizad[ao]|alterad[ao]|deletad[ao]|apagad[ao]|removid[ao]|mergead[ao]|cadastrad[ao])s?\b|\b(criei|adicionei|atualizei|alterei|deletei|apaguei)\s+(o\s+)?(contato|lead|cliente)\b/i,
+    satisfying_tools: ["create_contact", "update_contact", "delete_contact"],
+  },
+  {
+    family: "opportunity",
+    regex:
+      /\b(oportunidade|opp|opportunity|deal|neg[oó]cio|pipeline)\s+(criad[ao]|adicionad[ao]|atualizad[ao]|movid[ao]|deletad[ao]|fechad[ao]|trocad[ao]|atribu[ií]d[ao])s?\b|\b(criei|movi|fechei|atualizei|atribu[ií])\s+(a\s+|o\s+)?(oportunidade|opp|deal|neg[oó]cio|pipeline)\b|\b(mov[ií])\s+pra\s+(M[0-9]|stage)/i,
+    satisfying_tools: [
+      "create_opportunity",
+      "update_opportunity",
+      "update_opportunity_status",
+      "delete_opportunity",
+    ],
   },
 ];
+
+/**
+ * Detector GENÉRICO catch-all: verbos write em pretérito 1ª pessoa OU
+ * particípio + 0 tools write chamadas = afirmação sem ação.
+ *
+ * Pega famílias futuras automaticamente (alias, briefing, switch_location,
+ * confirm_timezone, etc) sem update manual de regex específico.
+ *
+ * Falsos positivos possíveis (raros): "Acabei de listar" sem write tool
+ * = OK porque "listar" não bate nos verbos write. Mas "Acabei de mostrar"
+ * também não bate. Verbos selecionados são DEFINITIVAMENTE write.
+ */
+const GENERIC_WRITE_VERB_REGEX =
+  /\b(criei|criamos|agendei|agendamos|marquei|marcamos|salvei|salvamos|anotei|anotamos|registrei|registramos|removi|removemos|adicionei|adicionamos|mandei|mandamos|enviei|enviamos|disparei|disparamos|atualizei|atualizamos|atribu[ií]|atribu[ií]mos|deletei|deletamos|apaguei|apagamos|completei|completamos|fechei|fechamos|movi|movemos|troquei|trocamos|bloqueei|bloqueamos|cancelei|cancelamos|pausei|pausamos|configurei|configuramos|confirmei|confirmamos|inseri|inserimos|despachei|despachamos|cadastrei|cadastramos|importei|importamos|sincronizei|sincronizamos|reagendei|reagendamos|reatribu[ií]|reatribu[ií]mos)\b/i;
 
 function detectHallucination(
   responseText: string,
   toolsCalled: string[],
-): Array<{ family: string; matched_text: string }> {
-  const found: Array<{ family: string; matched_text: string }> = [];
+): Array<{ family: string; matched_text: string; detector: "specific" | "generic" }> {
+  const found: Array<{
+    family: string;
+    matched_text: string;
+    detector: "specific" | "generic";
+  }> = [];
+
+  // Camada 1: detectores específicos (precisos por família)
+  const matchedFamilies = new Set<string>();
   for (const pattern of HALLUCINATION_PATTERNS) {
     const match = responseText.match(pattern.regex);
     if (!match) continue;
+    matchedFamilies.add(pattern.family);
     const hasMatchingTool = pattern.satisfying_tools.some((t) =>
       toolsCalled.includes(t),
     );
     if (!hasMatchingTool) {
-      found.push({ family: pattern.family, matched_text: match[0] });
+      found.push({
+        family: pattern.family,
+        matched_text: match[0],
+        detector: "specific",
+      });
     }
   }
+
+  // Camada 2: detector genérico catch-all (pega famílias não-cobertas).
+  // Só dispara se NENHUM detector específico bateu OU se bateu mas
+  // NENHUMA tool write foi chamada (cobre caso onde bot disse "feito"
+  // sem qualquer write tool).
+  const genericMatch = responseText.match(GENERIC_WRITE_VERB_REGEX);
+  if (genericMatch) {
+    const writeToolsCalled = toolsCalled.filter(isWriteTool);
+    if (writeToolsCalled.length === 0) {
+      // Não tem nenhuma write tool no turn — afirmação totalmente sem suporte
+      const alreadyReported = found.some((f) => f.matched_text === genericMatch[0]);
+      if (!alreadyReported) {
+        found.push({
+          family: "generic_write",
+          matched_text: genericMatch[0],
+          detector: "generic",
+        });
+      }
+    }
+  }
+
   return found;
 }
 
@@ -459,19 +603,23 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   }
 
   // Detector post-hoc de hallucination (Pedro 2026-05-14, caso Gustavo).
-  // Resposta do bot inclui afirmação de write SEM tool_call correspondente
-  // → signal HIGH no painel admin. Não bloqueia a resposta — UX preservada.
-  // Pedro escolhe corrigir manual OU re-rodar com prompt agressivo.
+  // 2 camadas: específico (8 famílias) + genérico (qualquer verbo write
+  // pretérito sem write tool no turn). Resposta do bot inclui afirmação
+  // de write SEM tool_call correspondente → signal HIGH no painel.
+  // Não bloqueia a resposta — UX preservada. Pedro reviewa no painel.
   if (result.text) {
     const toolsCalled = result.tool_calls.map((tc) => tc.name);
     const hallucinations = detectHallucination(result.text, toolsCalled);
     for (const h of hallucinations) {
       recordSignalAsync({
         type: "failure",
-        title: `Hallucination ${h.family} sem tool_call`,
+        title: `Hallucination ${h.family} sem tool_call (${h.detector})`,
         description:
-          `Bot afirmou "${h.matched_text}" mas nenhuma tool da família ${h.family} foi chamada no turn. ` +
-          `Caso Gustavo 2026-05-14 (8 hits) deve servir de referência.`,
+          `Bot afirmou "${h.matched_text}" mas ${
+            h.detector === "specific"
+              ? `nenhuma tool da família ${h.family} foi chamada no turn`
+              : `NENHUMA tool de write foi chamada no turn`
+          }. Caso Gustavo 2026-05-14 (8 hits create_note) deve servir de referência. Fingerprint dedupa repetições.`,
         severity: "high",
         source: "bot_auto",
         metadata: {
@@ -480,6 +628,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
           location_id: activeLocationId,
           agent_id: input.agentId,
           family: h.family,
+          detector: h.detector,
           matched_text: h.matched_text,
           response_preview: result.text.slice(0, 300),
           tools_called: toolsCalled,
@@ -487,7 +636,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
         },
       });
       console.warn(
-        `[Sparkbot] HALLUCINATION DETECTED rep=${rep.id} family=${h.family} matched="${h.matched_text}" tools=[${toolsCalled.join(",")}]`,
+        `[Sparkbot] HALLUCINATION DETECTED rep=${rep.id} family=${h.family} detector=${h.detector} matched="${h.matched_text}" tools=[${toolsCalled.join(",")}]`,
       );
     }
   }
