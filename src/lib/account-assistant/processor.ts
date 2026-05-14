@@ -23,6 +23,70 @@ import { acceptTerms, rejectTerms, setActiveLocation, syncRepInternalFlag } from
 import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "./prompt-builder";
 import { runWithTools, type LLMMessage } from "./llm-client";
 import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
+import { recordSignalAsync } from "@/lib/admin-signals/recorder";
+
+/**
+ * Detector de hallucination POST-HOC (Pedro 2026-05-14, caso Gustavo):
+ * bot afirmou "Nota salva!" 8 vezes seguidas sem chamar create_note.
+ *
+ * Detecta padrão: resposta inclui afirmação de write-action E NENHUMA
+ * tool_call correspondente foi feita no turn. Registra signal HIGH
+ * (não bloqueia a resposta — UX), Pedro vê no painel /admin/signals e
+ * pode acionar manual.
+ *
+ * Cobre 4 famílias de hallucination:
+ *  - notes: "nota salva", "anotei", "anotações salvas", "coloquei nas notas"
+ *  - tasks: "task criada", "task adicionada", "tarefa salva"
+ *  - tags: "tag adicionada", "tag aplicada"
+ *  - reminders: "lembrete agendado", "lembrete marcado"
+ *
+ * Cada família tem o conjunto de tools que SATISFAZ a claim. Se claim
+ * presente mas nenhuma das tools foi chamada → hallucination.
+ */
+const HALLUCINATION_PATTERNS: Array<{
+  family: string;
+  regex: RegExp;
+  satisfying_tools: string[];
+}> = [
+  {
+    family: "note",
+    regex: /\b(nota\s+(salva|criada|adicionada)|notas?\s+(salvas?|criadas?|adicionadas?)|anotei|anota[çc][oõ]es?\s+salvas?|coloquei\s+nas?\s+notas?|salvei\s+a\s+nota|anotado\s+(nos?\s+)?notes?)\b/i,
+    satisfying_tools: ["create_note"],
+  },
+  {
+    family: "task",
+    regex: /\b(task\s+(criada|adicionada|salva)|tarefa\s+(criada|adicionada|salva))\b/i,
+    satisfying_tools: ["create_task"],
+  },
+  {
+    family: "tag",
+    regex: /\btag\s+(adicionada|aplicada|colocada|removida)\b/i,
+    satisfying_tools: ["add_tag", "remove_tag"],
+  },
+  {
+    family: "reminder",
+    regex: /\blembrete\s+(agendado|marcado|criado|salvo)\b/i,
+    satisfying_tools: ["schedule_reminder", "schedule_recurring_reminder"],
+  },
+];
+
+function detectHallucination(
+  responseText: string,
+  toolsCalled: string[],
+): Array<{ family: string; matched_text: string }> {
+  const found: Array<{ family: string; matched_text: string }> = [];
+  for (const pattern of HALLUCINATION_PATTERNS) {
+    const match = responseText.match(pattern.regex);
+    if (!match) continue;
+    const hasMatchingTool = pattern.satisfying_tools.some((t) =>
+      toolsCalled.includes(t),
+    );
+    if (!hasMatchingTool) {
+      found.push({ family: pattern.family, matched_text: match[0] });
+    }
+  }
+  return found;
+}
 
 export interface ProcessInput {
   rep: RepIdentity;
@@ -391,6 +455,40 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       });
     } catch (err) {
       console.error("[Sparkbot] Billing failed (non-blocking):", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Detector post-hoc de hallucination (Pedro 2026-05-14, caso Gustavo).
+  // Resposta do bot inclui afirmação de write SEM tool_call correspondente
+  // → signal HIGH no painel admin. Não bloqueia a resposta — UX preservada.
+  // Pedro escolhe corrigir manual OU re-rodar com prompt agressivo.
+  if (result.text) {
+    const toolsCalled = result.tool_calls.map((tc) => tc.name);
+    const hallucinations = detectHallucination(result.text, toolsCalled);
+    for (const h of hallucinations) {
+      recordSignalAsync({
+        type: "failure",
+        title: `Hallucination ${h.family} sem tool_call`,
+        description:
+          `Bot afirmou "${h.matched_text}" mas nenhuma tool da família ${h.family} foi chamada no turn. ` +
+          `Caso Gustavo 2026-05-14 (8 hits) deve servir de referência.`,
+        severity: "high",
+        source: "bot_auto",
+        metadata: {
+          rep_id: rep.id,
+          rep_phone: rep.phone,
+          location_id: activeLocationId,
+          agent_id: input.agentId,
+          family: h.family,
+          matched_text: h.matched_text,
+          response_preview: result.text.slice(0, 300),
+          tools_called: toolsCalled,
+          model_used: result.model_used,
+        },
+      });
+      console.warn(
+        `[Sparkbot] HALLUCINATION DETECTED rep=${rep.id} family=${h.family} matched="${h.matched_text}" tools=[${toolsCalled.join(",")}]`,
+      );
     }
   }
 

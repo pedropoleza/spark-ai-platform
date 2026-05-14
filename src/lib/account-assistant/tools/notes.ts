@@ -10,13 +10,22 @@ import { createNoteOnContact } from "@/lib/ghl/operations";
 const createNote: ToolEntry = {
   def: {
     name: "create_note",
-    description: "Cria uma nota num contato. Use quando o rep pedir 'adiciona nota no X'.",
+    description:
+      "Cria uma nota num contato. ⚠️ CHAME IMEDIATAMENTE quando rep:\n" +
+      "  (a) pedir explícito 'anota', 'salva nos notes', 'coloca nas notas';\n" +
+      "  (b) mandar 'vou te mandar info pra anotar em X' E em seguida mandar texto longo (objetivos, histórico, motivação do lead);\n" +
+      "  (c) acabou de criar contato e logo após mandou texto descritivo sobre esse lead;\n" +
+      "  (d) responder qualificação tipo '1- Por que...', '2- Como...'.\n\n" +
+      "🚨 NUNCA responda 'Nota salva' / 'Anotei' / 'Coloquei nas notas' SEM ter chamado esta tool E recebido tool_result com status=ok. Bug CRÍTICO 2026-05-14 (Gustavo): bot mentiu 8 vezes seguidas afirmando 'Nota salva' sem chamar a tool. Não repetir.\n\n" +
+      "🚨 MÚLTIPLAS NOTAS: cada texto longo = 1 chamada SEPARADA desta tool (não combine, não junte). " +
+      "Se rep manda 5 mensagens com info, são 5 create_note distintas.\n\n" +
+      "Pré-requisito: contact_id REAL obtido via search_contacts/create_contact no MESMO turn ou turn imediatamente anterior — nunca invente ID.",
     risk: "medium",
     parameters: {
       type: "object",
       properties: {
-        contact_id: { type: "string" },
-        body: { type: "string", description: "Conteúdo da nota." },
+        contact_id: { type: "string", description: "ID alfanumérico ~20 chars do contato (de search_contacts/create_contact). NUNCA email/phone." },
+        body: { type: "string", description: "Conteúdo COMPLETO da nota — preserve o texto exato que o rep mandou, sem resumir nem reescrever." },
       },
       required: ["contact_id", "body"],
     },
