@@ -9,16 +9,21 @@ const listOpportunities: ToolEntry = {
   def: {
     name: "list_opportunities",
     description:
-      "Lista opportunities do rep, com filtros opcionais. Default 20, max 100. Se rep precisa de mais, peça filtro mais específico (status, pipeline, min_value).",
+      "Lista TODAS as opportunities do rep com auto-paginação (não trunca em 100 como antes do fix 2026-05-14). Filtros: status, stage_id (UUID), stage_name (auto-resolve via list_pipelines), pipeline_id, min_value. Default puxa até 5000 opps (50 páginas GHL × 100). Retorna 'complete: true' se exauriu fonte naturalmente; 'false' se atingiu cap defensivo. ⚠️ Quando complete=false, AVISE o rep que há mais opps além das retornadas.",
     risk: "safe",
     parameters: {
       type: "object",
       properties: {
         status: { type: "string", enum: ["open", "won", "lost", "abandoned", "all"], default: "open" },
-        min_value: { type: "number", description: "Valor mínimo." },
+        min_value: { type: "number", description: "Valor mínimo monetário (server-side)." },
         pipeline_id: { type: "string" },
+        stage_id: { type: "string", description: "UUID do stage. Mais preciso/rápido que stage_name." },
+        stage_name: {
+          type: "string",
+          description: "Nome do stage (case-insensitive, partial match). Ex: 'M3' encontra 'Inscrito M3'. Se ambíguo (várias matches), retorna erro com lista — passe stage_id direto.",
+        },
         all_users: { type: "boolean", description: "Se true, lista da location toda. Default false (só do rep)." },
-        limit: { type: "number", description: "Default 20, max 100.", default: 20 },
+        limit: { type: "number", description: "Soft cap total de resultados após paginação. Default 5000 = puxa praticamente tudo. Use limit menor (ex 50) só pra amostra rápida.", default: 5000 },
       },
     },
   },
@@ -26,47 +31,174 @@ const listOpportunities: ToolEntry = {
     const status = String(args.status || "open");
     const minValue = typeof args.min_value === "number" ? args.min_value : 0;
     const pipelineId = args.pipeline_id ? String(args.pipeline_id) : undefined;
-    const limit = Math.min(Number(args.limit) || 20, 100);
+    let stageId = args.stage_id ? String(args.stage_id) : undefined;
+    const stageNameQuery = args.stage_name ? String(args.stage_name).trim() : undefined;
+    const cap = Math.min(Math.max(Number(args.limit) || 5000, 1), 5000);
     const allUsers = args.all_users === true;
     const repUserId = getRepGhlUserId(ctx);
 
-    // GHL aceita query param `monetary_value_greater_than` em /opportunities/search.
-    // Passar pra GHL evita filtrar 100 opps mais recentes e perder grandes opps
-    // fora dessa janela (bug do ultra review).
-    const params: Record<string, string> = {
+    // Resolve stage_name → stage_id automaticamente (fix Gustavo 2026-05-14).
+    // Antes o bot precisava chamar list_pipelines manualmente e copiar UUID;
+    // virava ping-pong de tool calls + bot alucinava IDs.
+    let stageResolved: string | undefined;
+    if (stageNameQuery && !stageId) {
+      try {
+        const pipesRes = await ctx.ghlClient.get<{
+          pipelines?: Array<{
+            id: string; name?: string;
+            stages?: Array<{ id: string; name?: string }>;
+          }>;
+        }>("/opportunities/pipelines", { locationId: ctx.locationId });
+        const pipes = pipesRes.pipelines || [];
+        const q = stageNameQuery.toLowerCase();
+        const exact: Array<{ pipelineName: string; stageId: string; stageName: string }> = [];
+        const partial: typeof exact = [];
+        for (const p of pipes) {
+          for (const s of p.stages || []) {
+            const sn = (s.name || "").toLowerCase().trim();
+            if (!sn) continue;
+            if (sn === q) {
+              exact.push({
+                pipelineName: p.name || "(pipeline)",
+                stageId: s.id,
+                stageName: s.name || "(stage)",
+              });
+            } else if (sn.includes(q) || q.includes(sn)) {
+              partial.push({
+                pipelineName: p.name || "(pipeline)",
+                stageId: s.id,
+                stageName: s.name || "(stage)",
+              });
+            }
+          }
+        }
+        // Exact match tem precedência. Só cai pra partial se zero exact.
+        const matches = exact.length > 0 ? exact : partial;
+        if (matches.length === 0) {
+          return {
+            status: "not_found",
+            message: `Stage '${stageNameQuery}' não encontrado em nenhum pipeline. Chame list_pipelines pra ver opções.`,
+          };
+        }
+        if (matches.length > 1) {
+          const list = matches
+            .slice(0, 8)
+            .map((m) => `${m.pipelineName} → ${m.stageName} (id: ${m.stageId})`)
+            .join("; ");
+          return {
+            status: "error",
+            message: `Stage '${stageNameQuery}' tem ${matches.length} matches: ${list}. Passe stage_id direto pra ser preciso.`,
+            retryable: false,
+          };
+        }
+        stageId = matches[0].stageId;
+        stageResolved = `${matches[0].pipelineName} → ${matches[0].stageName}`;
+      } catch (err) {
+        return ghlErrorToResult(err, "resolução de stage_name");
+      }
+    }
+
+    // Base params (per-page = 100 = max do GHL). Filtros server-side reduzem
+    // dados em trânsito e respeitam paginação correta.
+    const baseParams: Record<string, string> = {
       location_id: ctx.locationId,
-      limit: String(limit),
+      limit: "100",
       ...(status !== "all" ? { status } : {}),
       ...(pipelineId ? { pipeline_id: pipelineId } : {}),
+      ...(stageId ? { pipeline_stage_id: stageId } : {}),
       ...(allUsers || !repUserId ? {} : { assigned_to: repUserId }),
       ...(minValue > 0 ? { monetary_value_greater_than: String(minValue) } : {}),
     };
 
+    type OppItem = {
+      id: string; name?: string; monetaryValue?: number;
+      status?: string; pipelineId?: string; pipelineStageId?: string;
+      contactId?: string; assignedTo?: string;
+      updatedAt?: string; createdAt?: string;
+      contact?: { id: string; name: string; email?: string; phone?: string };
+    };
+    type OppsResp = {
+      opportunities?: OppItem[];
+      meta?: {
+        total?: number;
+        startAfterId?: string;
+        startAfter?: number;
+        nextPageUrl?: string;
+      };
+    };
+
+    const allOpps: OppItem[] = [];
+    let pagesFetched = 0;
+    let cursor: { startAfterId?: string; startAfter?: number } = {};
+    let totalReported: number | undefined;
+    let complete = false;
+    const MAX_PAGES = Math.ceil(cap / 100); // 5000 cap → 50 pages
+
     try {
-      const res = await ctx.ghlClient.get<{
-        opportunities?: Array<{
-          id: string; name?: string; monetaryValue?: number;
-          status?: string; pipelineId?: string; pipelineStageId?: string;
-          contactId?: string; assignedTo?: string;
-          updatedAt?: string; createdAt?: string;
-          contact?: { id: string; name: string; email?: string; phone?: string };
-        }>;
-      }>("/opportunities/search", params);
-      // Client-side filter mantido como segurança (caso GHL devolva opps fora
-      // do range por algum motivo). Mas com monetary_value_greater_than no
-      // server, essa filtragem deve ser no-op.
-      const opps = (res.opportunities || []).filter((o) => (o.monetaryValue || 0) >= minValue);
-      // Fix Track 3 #10 (review 2026-05-05): not_found pra empty + meta truncated.
-      if (opps.length === 0) {
+      while (pagesFetched < MAX_PAGES) {
+        const params: Record<string, string> = { ...baseParams };
+        if (cursor.startAfterId) params.startAfterId = cursor.startAfterId;
+        if (cursor.startAfter !== undefined) params.startAfter = String(cursor.startAfter);
+
+        const res = await ctx.ghlClient.get<OppsResp>("/opportunities/search", params);
+        pagesFetched++;
+
+        // Captura total reportado pelo GHL na 1ª resposta (ground truth)
+        if (totalReported === undefined && typeof res.meta?.total === "number") {
+          totalReported = res.meta.total;
+        }
+
+        // Defesa: client-side filter de min_value (já enviado server-side, mas
+        // mantém como safety net se GHL devolver algo fora do filtro). Também
+        // aplica stage_id client-side se server não respeitar.
+        const page = (res.opportunities || []).filter((o) => {
+          if ((o.monetaryValue || 0) < minValue) return false;
+          if (stageId && o.pipelineStageId !== stageId) return false;
+          return true;
+        });
+
+        if (page.length === 0 && (res.opportunities || []).length === 0) {
+          // Página vazia real = fim natural
+          complete = true;
+          break;
+        }
+        allOpps.push(...page);
+
+        // Sem cursor de próxima página = fim natural
+        const nextCursor = res.meta?.startAfterId;
+        if (!nextCursor) {
+          complete = true;
+          break;
+        }
+        // Anti loop-infinito: cursor idêntico
+        if (nextCursor === cursor.startAfterId) {
+          complete = true;
+          break;
+        }
+        cursor = {
+          startAfterId: nextCursor,
+          startAfter: res.meta?.startAfter,
+        };
+
+        // Hit cap
+        if (allOpps.length >= cap) break;
+      }
+
+      if (allOpps.length === 0) {
         return {
           status: "not_found",
-          message: `Nenhuma opportunity com filtros (status=${status}${minValue > 0 ? `, min_value=${minValue}` : ""}).`,
+          message: `Nenhuma opportunity com filtros (status=${status}${stageResolved ? `, stage=${stageResolved}` : ""}${minValue > 0 ? `, min_value=${minValue}` : ""}).`,
         };
       }
+
+      const trimmed = allOpps.slice(0, cap);
+      // Se trimmou abaixo de allOpps.length, ainda pode haver mais → not complete
+      if (trimmed.length < allOpps.length) complete = false;
+
       return {
         status: "ok",
         data: {
-          opportunities: opps.map((o) => ({
+          opportunities: trimmed.map((o) => ({
             id: o.id,
             name: o.name,
             value: o.monetaryValue || 0,
@@ -79,8 +211,11 @@ const listOpportunities: ToolEntry = {
             updated_at: o.updatedAt,
             created_at: o.createdAt,
           })),
-          truncated: opps.length >= limit,
-          returned: opps.length,
+          complete,
+          total_returned: trimmed.length,
+          pages_fetched: pagesFetched,
+          ...(stageResolved ? { stage_resolved: stageResolved } : {}),
+          ...(typeof totalReported === "number" ? { total_reported_by_ghl: totalReported } : {}),
         },
       };
     } catch (err) {

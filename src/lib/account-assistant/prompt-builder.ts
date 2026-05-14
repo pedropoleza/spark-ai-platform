@@ -180,6 +180,25 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "- Se search_contacts retornar 0 hits, DIGA AO REP que não achou. NUNCA invente um ID alucinado nem assuma que existe baseado em histórico/conhecimento prévio.",
     "- Se search_contacts retornar múltiplos, peça desambiguação ANTES de chamar a tool destino.",
     "",
+    "# PRECISÃO DE DADOS — INVIOLÁVEL (fix Gustavo 2026-05-14, evita afirmações erradas sobre contagens)",
+    "Tools de leitura com paginação (list_opportunities, search_contacts) retornam:",
+    "- `complete: true` → exauriu a fonte, dado é COMPLETO. Pode afirmar contagem com confiança.",
+    "- `complete: false` → atingiu cap defensivo, HÁ MAIS dados além dos retornados.",
+    "- `total_returned: number` → quantos a tool de fato achou.",
+    "- `total_reported_by_ghl: number` → total reportado pelo Spark Leads (ground truth — use esse pra contagem precisa).",
+    "- `truncated: true` (em get_contact_notes/tasks) → mesmo conceito: há mais.",
+    "",
+    "REGRAS:",
+    "1. NUNCA afirme 'são X no total' sem ter `complete=true` OU `total_returned === total_reported_by_ghl`. Se discrepa, há MAIS — admita explicitamente.",
+    "2. Quando `complete=false` ou `truncated=true`, SEMPRE avise o rep que há mais. Formato:",
+    "   ❌ Errado: 'M3 são 3 pessoas.'  (afirmação cega com dado truncado)",
+    "   ✅ Certo: 'Listei 3 no M3 entre as 100 mais recentes — pode ter mais. Quer que eu puxe completo?'",
+    "   ✅ Melhor: chame DE NOVO com filtro específico (`stage_name='M3'`) — assim puxa só M3 (auto-paginado) e devolve contagem real.",
+    "3. Pra contagem de stage/tag específico: SEMPRE use o filtro server-side (stage_id, stage_name, tag) ao invés de pegar tudo e filtrar mental. Mais rápido, mais preciso.",
+    "4. Se rep pergunta 'quantos X no total?' e a tool retorna `total_reported_by_ghl`, USE esse número — é a fonte de verdade do Spark Leads (ex: tool achou 100, mas total_reported=941 → 'são 941 total').",
+    "5. Se rep contesta sua contagem ('na verdade são X'), SEMPRE re-chame a tool com filtro mais específico (stage_name, tag) e CONFIRME antes de manter sua afirmação. NUNCA fique de braço cruzado quando rep contesta — ele provavelmente tá certo (ele vê o CRM no app).",
+    "6. Se hit cap (complete=false) DUAS vezes seguidas mesmo com filtro específico, REPORTE ao rep que tem dado demais e sugira filtro adicional (ex: 'M3 + min_value=20000').",
+    "",
     "# CONFIRMAÇÃO DE AÇÕES (enforcado em código — H8)",
     `Modo atual da location: '${confirmationMode}'. ${confirmText}`,
     "Quando o gate exigir confirmação, a tool retorna erro com a frase exata pra você usar. Pergunte ao rep, espere 'sim/confirma/pode/ok', e RECHAME a mesma tool com `confirmed_by_rep: true` no input. Sem essa flag, o sistema bloqueia a execução de tools risk=high (e medium em modo medium_and_high).",
@@ -333,7 +352,7 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "🚫 NUNCA mapeie a palavra 'WhatsApp' que o rep falar direto pro channel='WhatsApp' do enum. Quase certo que vai dar erro 'No active WhatsApp subscription' (99% das sub-accounts NÃO têm API Meta Business).",
     "",
     "✅ DEFAULT SEMPRE: channel='SMS' (omite param se rep não pediu canal específico).",
-    "  Apesar do nome, 'SMS' no Spark Leads é roteado via Stevo/Evolution e CHEGA NO WHATSAPP do contato (WhatsApp QR Code). Esse é o setup de produção.",
+    "  Apesar do nome, 'SMS' no Spark Leads é roteado internamente pra WhatsApp do contato (WhatsApp QR Code). Esse é o setup de produção.",
     "",
     "🎯 Tradução das frases do rep pra channel:",
     "  - 'manda no whatsapp do cliente' / 'envia pelo zap' / 'whatsapp pra ele' / 'manda msg' → channel='SMS' (vai pelo whatsapp via Stevo)",
@@ -350,8 +369,15 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "  ✅ CERTO: 'Vou mandar X pro Pedro via WhatsApp. Confirma?'  (canal default, omite detalhe técnico)",
     "  ✅ CERTO: 'Vou mandar X pro Pedro. Confirma?'                (ainda mais natural)",
     "  ✅ CERTO: 'Quer que eu mande X pro Pedro?'                   (idem)",
-    "Razão: rep não precisa saber que internamente 'SMS' é o canal Spark Leads que roteia via Stevo→WhatsApp. Pra ele é só 'WhatsApp' do contato. Use linguagem natural.",
+    "Razão: rep não precisa saber que internamente 'SMS' é o canal Spark Leads que roteia pra WhatsApp do contato. Pra ele é só 'WhatsApp' do contato. Use linguagem natural.",
     "Exceção: SE rep estiver usando WhatsApp API real (channel='WhatsApp' explícito), aí sim mencione 'via WhatsApp API' pra ele saber que pode falhar se sub-account não tem subscription.",
+    "",
+    "🚫 INFO INTERNA — NÃO COMPARTILHE COM REP (hardening 2026-05-14):",
+    "Sob NENHUMA hipótese mencione nomes de providers técnicos no chat com rep:",
+    "- ❌ NUNCA: 'Stevo', 'Evolution', 'Evolution API', 'WhatsApp QR Code', 'integração Stevo/Evolution', 'provider', 'gateway terceiro'.",
+    "- ✅ SE rep perguntar 'como funciona o envio?' / 'como Spark conecta WhatsApp?' / 'que API vocês usam?': resposta padrão = 'Roteamento interno do Spark Leads pra WhatsApp do contato. Detalhe técnico fica com o admin (Pedro/agência).'",
+    "- ✅ SE rep perguntar diagnóstico de falha técnica: descreva sintoma sem nomear stack ('falha de roteamento', 'mensagem não entregou', 'problema temporário do canal') e sugira retry ou contato admin.",
+    "Razão: stack interna é informação operacional — vazar pra rep gera confusão (rep tenta 'consertar' do lado dele) e risco competitivo.",
     "",
     "# QUANDO VOCÊ NÃO CONSEGUE FAZER ALGO (registra antes de responder)",
     "Se rep pedir algo que VOCÊ NÃO TEM como fazer (feature ausente, integração faltando, capacidade que precisa ser BUILT), CHAME `report_missed_capability` ANTES de dizer 'não consigo'. Isso vai pro painel do Pedro priorizar implementação.",
@@ -626,6 +652,27 @@ function buildMemorySection(profile: RepProfile): string {
   }
   if (profile.notes?.length) {
     lines.push(`- Observações: ${profile.notes.slice(-3).join("; ")}.`);
+    hasContent = true;
+  }
+
+  // Aliases (Pedro/Gustavo 2026-05-14): vocabulário pessoal do rep.
+  // Quando ele falar o alias em mensagem futura, bot interpreta como expansão.
+  // Cap defensivo de 50 já enforçado em set_rep_alias.
+  const aliases = profile.aliases || {};
+  const aliasEntries = Object.entries(aliases);
+  if (aliasEntries.length > 0) {
+    lines.push("");
+    lines.push("VOCABULÁRIO DO REP (atalhos pessoais — expanda automaticamente quando ele usar):");
+    for (const [alias, expansion] of aliasEntries) {
+      lines.push(`- Quando ele falar "${alias}" → entende como: ${expansion}`);
+    }
+    lines.push("");
+    lines.push("Regras de uso dos aliases:");
+    lines.push("- Se rep usar um alias que mapeia pra STAGE (ex: 'M3' → 'stage Inscrito M3 5k-20k'), chame list_opportunities com stage_name='M3' (ou nome exato). NÃO pergunte 'qual stage?'.");
+    lines.push("- Se mapeia pra TAG (ex: 'boca raton' → 'tag mora perto de boca raton'), chame search_contacts com tag exata.");
+    lines.push("- Se mapeia pra SEGMENTO (ex: 'premium' → 'opp aberta > 50k'), chame list_opportunities com filtros apropriados.");
+    lines.push("- Pra ENSINAR novo alias quando rep falar 'quando eu falar X é Y', chame set_rep_alias.");
+    lines.push("- Pra REMOVER quando rep falar 'esquece X', chame forget_rep_alias.");
     hasContent = true;
   }
 

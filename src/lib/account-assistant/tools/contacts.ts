@@ -3,59 +3,181 @@
  */
 
 import type { ToolEntry } from "./types";
-import { validateGhlId, ghlErrorToResult } from "./types";
+import { validateGhlId, ghlErrorToResult, getRepGhlUserId } from "./types";
 
 const searchContacts: ToolEntry = {
   def: {
     name: "search_contacts",
     description:
-      "Busca contatos (leads/clientes) por nome, email ou telefone no Spark Leads. Retorna até 20 resultados com id real. " +
-      "DICAS: (1) query precisa ter ≥ 2 chars; " +
-      "(2) phone deve ser dígitos puros (5511987654321) ou E.164 (+5511987654321), sem espaços/parênteses; " +
-      "(3) se 0 resultados pra um nome completo, tente apenas o primeiro nome ou últimos 4 dígitos do phone. " +
+      "Busca contatos no Spark Leads. Combina query (nome/email/phone) + tag (case-insensitive partial) + assigned_to_me. Auto-paginação até 5000 contatos (fix Gustavo 2026-05-14 — antes truncava em 20). " +
+      "DICAS: (1) query precisa ≥ 2 chars; phone em dígitos puros (5511987654321) ou E.164 (+5511987654321) — sem espaços/parênteses. " +
+      "(2) tag aceita partial: 'boca' encontra 'mora perto de boca raton'. " +
+      "(3) Retorna 'complete: true' se exauriu fonte; 'false' se hit cap → SEMPRE avise rep que há mais. " +
       "Use SEMPRE antes de qualquer ação que precise de contact_id.",
     risk: "safe",
     parameters: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Nome, email ou telefone." },
-        limit: { type: "number", description: "Máximo de resultados (default 10, max 20).", default: 10 },
+        query: { type: "string", description: "Nome, email ou phone (parcial)." },
+        tag: { type: "string", description: "Filtra por tag (case-insensitive, partial match)." },
+        assigned_to_me: { type: "boolean", description: "Se true, só contatos atribuídos ao rep." },
+        limit: { type: "number", description: "Soft cap total após paginação. Default 1000, max 5000.", default: 1000 },
       },
-      required: ["query"],
     },
   },
   handler: async (ctx, args) => {
-    const query = String(args.query || "").trim();
-    const limit = Math.min(Number(args.limit) || 10, 20);
-    if (!query) return { status: "error", message: "query obrigatória", retryable: false };
+    const query = args.query ? String(args.query).trim() : undefined;
+    const tag = args.tag ? String(args.tag).trim() : undefined;
+    const assignedToMe = args.assigned_to_me === true;
+    const cap = Math.min(Math.max(Number(args.limit) || 1000, 1), 5000);
 
-    try {
-      const res = await ctx.ghlClient.get<{
-        contacts?: Array<{
-          id: string;
-          firstName?: string; lastName?: string; name?: string;
-          email?: string; phone?: string;
-          lastActivity?: string; tags?: string[];
-        }>;
-      }>("/contacts/", { locationId: ctx.locationId, query, limit: String(limit) });
+    if (!query && !tag && !assignedToMe) {
+      return { status: "error", message: "Passe pelo menos um filtro: query, tag ou assigned_to_me", retryable: false };
+    }
 
-      const contacts = (res.contacts || []).slice(0, limit);
-      if (contacts.length === 0) {
-        return { status: "not_found", message: `Nenhum contato encontrado pra "${query}"` };
+    type ContactItem = {
+      id: string;
+      firstName?: string; lastName?: string; contactName?: string; name?: string;
+      email?: string; phone?: string;
+      tags?: string[]; lastActivity?: string;
+      assignedTo?: string;
+    };
+
+    // Fast path GET /contacts/?query= pra busca simples (sem tag, sem assigned_to).
+    // GET endpoint não pagina mas é mais rápido pra lookup de 1 contato específico
+    // (que é 90% dos casos antes de ação CRUD).
+    if (query && !tag && !assignedToMe) {
+      try {
+        const res = await ctx.ghlClient.get<{ contacts?: ContactItem[] }>("/contacts/", {
+          locationId: ctx.locationId,
+          query,
+          limit: String(Math.min(cap, 100)),
+        });
+        const contacts = (res.contacts || []).slice(0, cap);
+        if (contacts.length === 0) {
+          return { status: "not_found", message: `Nenhum contato encontrado pra "${query}"` };
+        }
+        return {
+          status: "ok",
+          data: {
+            contacts: contacts.map((c) => ({
+              id: c.id,
+              name: c.contactName || c.name || [c.firstName, c.lastName].filter(Boolean).join(" ") || "(sem nome)",
+              email: c.email || null,
+              phone: c.phone || null,
+              tags: c.tags || [],
+              last_activity: c.lastActivity || null,
+            })),
+            complete: contacts.length < cap, // GET não pagina — se hit cap pode haver mais
+            total_returned: contacts.length,
+            pages_fetched: 1,
+            method: "GET",
+          },
+        };
+      } catch (err) {
+        return ghlErrorToResult(err, "busca de contatos");
       }
+    }
+
+    // POST /contacts/search V2 — necessário pra filter por tag, assigned_to,
+    // ou combinações. Pagina via searchAfter cursor.
+    try {
+      const repUserId = getRepGhlUserId(ctx);
+      const filters: Array<Record<string, unknown>> = [];
+      if (tag) filters.push({ field: "tags", operator: "contains", value: tag });
+      if (assignedToMe && repUserId) {
+        filters.push({ field: "assignedTo", operator: "eq", value: repUserId });
+      }
+
+      type SearchResp = {
+        contacts?: ContactItem[];
+        total?: number;
+        // GHL V2 envia searchAfter (array de valores do sort key do último doc)
+        // OU pode vir como string base64-encoded. Cobrimos ambos.
+        searchAfter?: unknown[] | string;
+      };
+
+      const allContacts: ContactItem[] = [];
+      let pagesFetched = 0;
+      let cursor: unknown[] | string | undefined;
+      let totalReported: number | undefined;
+      let complete = false;
+      const MAX_PAGES = Math.ceil(cap / 100);
+
+      while (pagesFetched < MAX_PAGES) {
+        const body: Record<string, unknown> = {
+          locationId: ctx.locationId,
+          filters,
+          pageLimit: 100,
+        };
+        if (query) body.query = query;
+        if (cursor !== undefined) body.searchAfter = cursor;
+
+        const res = await ctx.ghlClient.post<SearchResp>("/contacts/search", body);
+        pagesFetched++;
+
+        if (totalReported === undefined && typeof res.total === "number") {
+          totalReported = res.total;
+        }
+
+        const page = res.contacts || [];
+        if (page.length === 0) {
+          complete = true;
+          break;
+        }
+        allContacts.push(...page);
+
+        const nextCursor = res.searchAfter;
+        const cursorEmpty =
+          nextCursor === undefined ||
+          nextCursor === null ||
+          (Array.isArray(nextCursor) && nextCursor.length === 0) ||
+          (typeof nextCursor === "string" && nextCursor === "");
+        if (cursorEmpty) {
+          complete = true;
+          break;
+        }
+        // Anti loop-infinito: cursor idêntico
+        if (JSON.stringify(nextCursor) === JSON.stringify(cursor)) {
+          complete = true;
+          break;
+        }
+        cursor = nextCursor;
+
+        if (allContacts.length >= cap) break;
+      }
+
+      if (allContacts.length === 0) {
+        return {
+          status: "not_found",
+          message: `Nenhum contato${tag ? ` com tag "${tag}"` : ""}${query ? ` matching "${query}"` : ""}${assignedToMe ? " atribuído a você" : ""}.`,
+        };
+      }
+
+      const trimmed = allContacts.slice(0, cap);
+      if (trimmed.length < allContacts.length) complete = false;
+
       return {
         status: "ok",
-        data: contacts.map((c) => ({
-          id: c.id,
-          name: c.name || [c.firstName, c.lastName].filter(Boolean).join(" ") || "(sem nome)",
-          email: c.email || null,
-          phone: c.phone || null,
-          tags: c.tags || [],
-          last_activity: c.lastActivity || null,
-        })),
+        data: {
+          contacts: trimmed.map((c) => ({
+            id: c.id,
+            name: c.contactName || c.name || [c.firstName, c.lastName].filter(Boolean).join(" ") || "(sem nome)",
+            email: c.email || null,
+            phone: c.phone || null,
+            tags: c.tags || [],
+            assigned_to: c.assignedTo || null,
+            last_activity: c.lastActivity || null,
+          })),
+          complete,
+          total_returned: trimmed.length,
+          pages_fetched: pagesFetched,
+          ...(typeof totalReported === "number" ? { total_reported_by_ghl: totalReported } : {}),
+          method: "POST V2",
+        },
       };
     } catch (err) {
-      return ghlErrorToResult(err, "busca de contatos");
+      return ghlErrorToResult(err, "busca de contatos V2");
     }
   },
 };
@@ -476,7 +598,8 @@ const listBirthdaysToday: ToolEntry = {
   },
   handler: async (ctx, args) => {
     const when = String(args.when || "today");
-    const limit = Math.min(Number(args.limit) || 20, 50);
+    // V1 canary-only: limit ignorado até GHL liberar filter de date_of_birth.
+    // Quando feature ativar, descomenta: const limit = Math.min(Number(args.limit) || 20, 50);
 
     // Resolve dias-alvo no tz do rep (NY default)
     const repTz =

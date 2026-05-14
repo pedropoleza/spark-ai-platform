@@ -396,10 +396,220 @@ const setDailyBriefing: ToolEntry = {
   },
 };
 
+// =====================================================================
+// REP ALIASES (Pedro/Gustavo 2026-05-14)
+// =====================================================================
+// Aliases = atalhos do rep pra termos do CRM/operação que o bot precisa
+// expandir SEM perguntar a cada turn.
+//
+// Caso Gustavo: ele falava "puxa todos do M2" e o bot não sabia que pra
+// ele "M2" = "Inscrito M2 (5k-20k)". Bot precisava perguntar ou chutar.
+// Com alias salvo, prompt-builder injeta { "M2": "Inscrito M2 (5k-20k)" }
+// na seção MEMÓRIA, e bot interpreta direto.
+//
+// Filosofia: aliases são MNEMÔNICOS pessoais (ex: nicknames de stages,
+// segmentos, listas). NÃO substituem search_contacts/list_opportunities —
+// rep sempre pode chamar tools com filtros explícitos. Alias só ajuda a
+// expandir referência em linguagem natural.
+
+const MAX_ALIASES_PER_REP = 50;
+const MAX_ALIAS_LENGTH = 60;
+const MAX_EXPANSION_LENGTH = 200;
+
+const setRepAlias: ToolEntry = {
+  def: {
+    name: "set_rep_alias",
+    description:
+      "Salva (ou atualiza) um ALIAS pessoal do rep — atalho mnemônico que o bot deve expandir em contextos futuros. Use quando rep ENSINAR algo tipo:\n" +
+      "- 'Quando eu falar M2 é o stage Inscrito M2 dos 5 ao 20k'\n" +
+      "- 'M3 = Inscrito M3 dos 20k aos 50k'\n" +
+      "- 'Boca Raton significa quem tem a tag mora perto de boca raton'\n" +
+      "- 'Pessoal premium = quem tem opp > 50k aberta'\n\n" +
+      "Após salvar, próximos turns o bot já enxerga o alias no system prompt (seção MEMÓRIA) e expande automaticamente. " +
+      "Limites: max 50 aliases por rep, 60 chars no alias, 200 chars na expansão.\n\n" +
+      "NÃO USE pra:\n" +
+      "- Fatos sobre contato específico (use create_note)\n" +
+      "- Preferência de tom/horário (será migrado pra profile.preferences/habits)\n" +
+      "- Observação geral sobre o rep (use ainda profile.notes via outro fluxo)",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        alias: {
+          type: "string",
+          description: "O termo curto que o rep usa (ex: 'M2', 'premium', 'boca raton'). Case-insensitive — salva em lowercase. Max 60 chars.",
+        },
+        expansion: {
+          type: "string",
+          description: "Significado completo (ex: 'stage Inscrito M2 dos 5 ao 20k', 'tag mora perto de boca raton'). Max 200 chars. Inclua tipo (stage/tag/segmento) pra bot saber qual tool usar.",
+        },
+      },
+      required: ["alias", "expansion"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const aliasRaw = String(args.alias || "").trim();
+    const expansion = String(args.expansion || "").trim();
+    if (!aliasRaw || !expansion) {
+      return { status: "error", message: "alias e expansion são obrigatórios", retryable: false };
+    }
+    if (aliasRaw.length > MAX_ALIAS_LENGTH) {
+      return {
+        status: "error",
+        message: `alias muito longo (${aliasRaw.length} chars). Max ${MAX_ALIAS_LENGTH}. Use um atalho curto e descritivo.`,
+        retryable: false,
+      };
+    }
+    if (expansion.length > MAX_EXPANSION_LENGTH) {
+      return {
+        status: "error",
+        message: `expansion muito longa (${expansion.length} chars). Max ${MAX_EXPANSION_LENGTH}. Resuma.`,
+        retryable: false,
+      };
+    }
+    const alias = aliasRaw.toLowerCase();
+
+    const existingAliases = { ...(ctx.rep.profile?.aliases || {}) };
+    const isUpdate = alias in existingAliases;
+    if (!isUpdate && Object.keys(existingAliases).length >= MAX_ALIASES_PER_REP) {
+      return {
+        status: "error",
+        message:
+          `Já tem ${MAX_ALIASES_PER_REP} aliases salvos — limite. Remova um com forget_rep_alias antes de adicionar novo.`,
+        retryable: false,
+      };
+    }
+    existingAliases[alias] = expansion;
+
+    const newProfile = { ...(ctx.rep.profile || {}), aliases: existingAliases };
+    const supabase = createAdminClient();
+    const { error } = await supabase
+      .from("rep_identities")
+      .update({
+        profile: newProfile,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", ctx.rep.id);
+    if (error) {
+      return {
+        status: "error",
+        message: `Falha ao salvar alias: ${error.message}`,
+        retryable: true,
+      };
+    }
+    // Atualiza ctx em memória pra próximas tool calls do mesmo turn já verem
+    ctx.rep.profile = newProfile;
+
+    return {
+      status: "ok",
+      data: {
+        alias,
+        expansion,
+        action: isUpdate ? "updated" : "created",
+        total_aliases: Object.keys(existingAliases).length,
+        message: isUpdate
+          ? `Alias "${alias}" atualizado. Daqui pra frente, quando você usar "${alias}", entendo como: ${expansion}.`
+          : `Alias salvo. Quando você falar "${alias}", entendo como: ${expansion}.`,
+      },
+    };
+  },
+};
+
+const forgetRepAlias: ToolEntry = {
+  def: {
+    name: "forget_rep_alias",
+    description:
+      "Remove um alias salvo. Use quando rep falar 'esquece M2', 'apaga aquele alias', 'não usa mais X como atalho'. " +
+      "Se rep não lembrar quais aliases tem, use list_rep_aliases primeiro.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        alias: { type: "string", description: "Alias a remover (case-insensitive)." },
+      },
+      required: ["alias"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const aliasRaw = String(args.alias || "").trim();
+    if (!aliasRaw) {
+      return { status: "error", message: "alias obrigatório", retryable: false };
+    }
+    const alias = aliasRaw.toLowerCase();
+    const existing = { ...(ctx.rep.profile?.aliases || {}) };
+    if (!(alias in existing)) {
+      return {
+        status: "not_found",
+        message: `Nenhum alias "${alias}" salvo. Use list_rep_aliases pra ver os atuais.`,
+      };
+    }
+    delete existing[alias];
+    const newProfile = { ...(ctx.rep.profile || {}), aliases: existing };
+    const supabase = createAdminClient();
+    const { error } = await supabase
+      .from("rep_identities")
+      .update({
+        profile: newProfile,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", ctx.rep.id);
+    if (error) {
+      return {
+        status: "error",
+        message: `Falha ao remover alias: ${error.message}`,
+        retryable: true,
+      };
+    }
+    ctx.rep.profile = newProfile;
+    return {
+      status: "ok",
+      data: {
+        removed: alias,
+        remaining: Object.keys(existing).length,
+        message: `Alias "${alias}" removido.`,
+      },
+    };
+  },
+};
+
+const listRepAliases: ToolEntry = {
+  def: {
+    name: "list_rep_aliases",
+    description:
+      "Lista todos os aliases salvos do rep. Use quando rep perguntar 'quais atalhos você lembra de mim?', 'o que você sabe sobre meu vocabulário?', ou antes de forget_rep_alias pra confirmar qual remover.",
+    risk: "safe",
+    parameters: { type: "object", properties: {} },
+  },
+  handler: async (ctx) => {
+    const aliases = ctx.rep.profile?.aliases || {};
+    const entries = Object.entries(aliases);
+    if (entries.length === 0) {
+      return {
+        status: "ok",
+        data: {
+          aliases: [],
+          total: 0,
+          message: "Nenhum alias salvo ainda. Você pode me ensinar com 'quando eu falar X é Y'.",
+        },
+      };
+    }
+    return {
+      status: "ok",
+      data: {
+        aliases: entries.map(([alias, expansion]) => ({ alias, expansion })),
+        total: entries.length,
+      },
+    };
+  },
+};
+
 export const IDENTITY_TOOLS: ToolEntry[] = [
   confirmRepTimezone,
   listMyLocations,
   switchActiveLocation,
   reportMissedCapability,
   setDailyBriefing,
+  setRepAlias,
+  forgetRepAlias,
+  listRepAliases,
 ];

@@ -49,6 +49,21 @@ export interface RepProfile {
    */
   quiet_hours_personal?: QuietHoursConfig;
   notes?: string[];                // free-form observações
+  /**
+   * Aliases — atalhos pessoais do rep pra termos do CRM/operação.
+   * Pedro 2026-05-14: introduzido pra resolver bug do Gustavo onde bot
+   * desconhecia que "M2" significa "M2 dos 5 ao 20k" (stage interno).
+   *
+   * Format: { "alias": "expansão" }
+   * Ex: { "M3": "Inscrito M3 (20k-50k)", "boca raton": "tag mora perto de boca raton" }
+   *
+   * Injetado no system prompt em buildMemorySection → bot interpreta
+   * aliases sem precisar perguntar a cada turn. Persistido em
+   * rep_identities.profile JSONB.
+   *
+   * Setado/removido via tools `set_rep_alias` e `forget_rep_alias`.
+   */
+  aliases?: Record<string, string>;
 }
 
 export interface RepIdentity {
