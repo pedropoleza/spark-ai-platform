@@ -4,16 +4,17 @@
 
 import type { ToolEntry } from "./types";
 import { validateGhlId, ghlErrorToResult, getRepGhlUserId } from "./types";
+import { executeContactsFilter, type FilterExpression } from "../filter-engine";
 
 const searchContacts: ToolEntry = {
   def: {
     name: "search_contacts",
     description:
-      "Busca contatos no Spark Leads. Combina query (nome/email/phone) + tag (case-insensitive partial) + assigned_to_me. Auto-paginação até 5000 contatos (fix Gustavo 2026-05-14 — antes truncava em 20). " +
-      "DICAS: (1) query precisa ≥ 2 chars; phone em dígitos puros (5511987654321) ou E.164 (+5511987654321) — sem espaços/parênteses. " +
+      "Busca CONTATOS por critério único simples (query / tag / assigned_to_me). Wrapper retrocompat do Filter Engine — use esta pra 90% dos casos de lookup rápido (achar contato por nome antes de criar nota, etc).\n\n" +
+      "⚠️ PARA FILTROS COMPLEXOS (múltiplos critérios, AND/OR, custom fields, opportunity joins, aniversariantes, etc) use a tool `get_contacts_filtered` — ela suporta FEL completo.\n\n" +
+      "DICAS: (1) query precisa ≥ 2 chars; phone em dígitos puros (5511987654321) ou E.164 (+5511987654321). " +
       "(2) tag aceita partial: 'boca' encontra 'mora perto de boca raton'. " +
-      "(3) Retorna 'complete: true' se exauriu fonte; 'false' se hit cap → SEMPRE avise rep que há mais. " +
-      "Use SEMPRE antes de qualquer ação que precise de contact_id.",
+      "(3) Retorna 'complete: true' se exauriu fonte; 'false' se hit cap → SEMPRE avise rep que há mais.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -35,18 +36,17 @@ const searchContacts: ToolEntry = {
       return { status: "error", message: "Passe pelo menos um filtro: query, tag ou assigned_to_me", retryable: false };
     }
 
-    type ContactItem = {
-      id: string;
-      firstName?: string; lastName?: string; contactName?: string; name?: string;
-      email?: string; phone?: string;
-      tags?: string[]; lastActivity?: string;
-      assignedTo?: string;
-    };
-
     // Fast path GET /contacts/?query= pra busca simples (sem tag, sem assigned_to).
     // GET endpoint não pagina mas é mais rápido pra lookup de 1 contato específico
-    // (que é 90% dos casos antes de ação CRUD).
+    // (que é 90% dos casos antes de ação CRUD). Mantido aqui no wrapper —
+    // engine ainda não usa GET (só POST V2) e GET é faster pra single lookup.
     if (query && !tag && !assignedToMe) {
+      type ContactItem = {
+        id: string;
+        firstName?: string; lastName?: string; contactName?: string; name?: string;
+        email?: string; phone?: string;
+        tags?: string[]; lastActivity?: string;
+      };
       try {
         const res = await ctx.ghlClient.get<{ contacts?: ContactItem[] }>("/contacts/", {
           locationId: ctx.locationId,
@@ -68,10 +68,10 @@ const searchContacts: ToolEntry = {
               tags: c.tags || [],
               last_activity: c.lastActivity || null,
             })),
-            complete: contacts.length < cap, // GET não pagina — se hit cap pode haver mais
+            complete: contacts.length < cap,
             total_returned: contacts.length,
             pages_fetched: 1,
-            method: "GET",
+            method: "GET (fast path)",
           },
         };
       } catch (err) {
@@ -79,106 +79,68 @@ const searchContacts: ToolEntry = {
       }
     }
 
-    // POST /contacts/search V2 — necessário pra filter por tag, assigned_to,
-    // ou combinações. Pagina via searchAfter cursor.
-    try {
-      const repUserId = getRepGhlUserId(ctx);
-      const filters: Array<Record<string, unknown>> = [];
-      if (tag) filters.push({ field: "tags", operator: "contains", value: tag });
-      if (assignedToMe && repUserId) {
-        filters.push({ field: "assignedTo", operator: "eq", value: repUserId });
-      }
-
-      type SearchResp = {
-        contacts?: ContactItem[];
-        total?: number;
-        // GHL V2 envia searchAfter (array de valores do sort key do último doc)
-        // OU pode vir como string base64-encoded. Cobrimos ambos.
-        searchAfter?: unknown[] | string;
-      };
-
-      const allContacts: ContactItem[] = [];
-      let pagesFetched = 0;
-      let cursor: unknown[] | string | undefined;
-      let totalReported: number | undefined;
-      let complete = false;
-      const MAX_PAGES = Math.ceil(cap / 100);
-
-      while (pagesFetched < MAX_PAGES) {
-        const body: Record<string, unknown> = {
-          locationId: ctx.locationId,
-          filters,
-          pageLimit: 100,
-        };
-        if (query) body.query = query;
-        if (cursor !== undefined) body.searchAfter = cursor;
-
-        const res = await ctx.ghlClient.post<SearchResp>("/contacts/search", body);
-        pagesFetched++;
-
-        if (totalReported === undefined && typeof res.total === "number") {
-          totalReported = res.total;
-        }
-
-        const page = res.contacts || [];
-        if (page.length === 0) {
-          complete = true;
-          break;
-        }
-        allContacts.push(...page);
-
-        const nextCursor = res.searchAfter;
-        const cursorEmpty =
-          nextCursor === undefined ||
-          nextCursor === null ||
-          (Array.isArray(nextCursor) && nextCursor.length === 0) ||
-          (typeof nextCursor === "string" && nextCursor === "");
-        if (cursorEmpty) {
-          complete = true;
-          break;
-        }
-        // Anti loop-infinito: cursor idêntico
-        if (JSON.stringify(nextCursor) === JSON.stringify(cursor)) {
-          complete = true;
-          break;
-        }
-        cursor = nextCursor;
-
-        if (allContacts.length >= cap) break;
-      }
-
-      if (allContacts.length === 0) {
-        return {
-          status: "not_found",
-          message: `Nenhum contato${tag ? ` com tag "${tag}"` : ""}${query ? ` matching "${query}"` : ""}${assignedToMe ? " atribuído a você" : ""}.`,
-        };
-      }
-
-      const trimmed = allContacts.slice(0, cap);
-      if (trimmed.length < allContacts.length) complete = false;
-
-      return {
-        status: "ok",
-        data: {
-          contacts: trimmed.map((c) => ({
-            id: c.id,
-            name: c.contactName || c.name || [c.firstName, c.lastName].filter(Boolean).join(" ") || "(sem nome)",
-            email: c.email || null,
-            phone: c.phone || null,
-            tags: c.tags || [],
-            assigned_to: c.assignedTo || null,
-            last_activity: c.lastActivity || null,
-          })),
-          complete,
-          total_returned: trimmed.length,
-          pages_fetched: pagesFetched,
-          ...(typeof totalReported === "number" ? { total_reported_by_ghl: totalReported } : {}),
-          method: "POST V2",
-        },
-      };
-    } catch (err) {
-      return ghlErrorToResult(err, "busca de contatos V2");
+    // H27 (review 2026-05-15): wraps Filter Engine pra critério múltiplo.
+    // Constrói FEL a partir dos args legacy.
+    const repUserId = getRepGhlUserId(ctx);
+    const conditions: FilterExpression[] = [];
+    if (query) {
+      // Query string ambígua (pode ser nome, email ou phone) — usa fullName client-side
+      // Mas se chegou aqui é porque tem outro filter — usa contains em fullName via engine.
+      // Limitação: engine não tem fullName server-side. Será client-side filter.
+      // (Como fallback razoável)
+      conditions.push({ field: "fullName", op: "contains", value: query });
     }
+    if (tag) conditions.push({ field: "tags", op: "contains", value: tag });
+    if (assignedToMe && repUserId) {
+      conditions.push({ field: "assignedTo", op: "eq", value: repUserId });
+    }
+
+    const filter: FilterExpression = conditions.length === 1 ? conditions[0] : { all: conditions };
+    const result = await executeContactsFilter(
+      filter,
+      {
+        rep_id: ctx.rep.id,
+        rep_phone: ctx.rep.phone,
+        location_id: ctx.locationId,
+        company_id: ctx.companyId,
+        ghl_client: ctx.ghlClient,
+        consumer_tool: "search_contacts",
+        rep_aliases: {
+          ...(ctx.rep.profile?.aliases || {}),
+          ...(repUserId ? { __self_user_id: repUserId } : {}),
+        },
+      },
+      { limit: cap },
+    );
+
+    if (result.status !== "ok") {
+      return { status: "error", message: result.message || "erro", retryable: result.retryable || false };
+    }
+    if (!result.items || result.items.length === 0) {
+      return {
+        status: "not_found",
+        message: `Nenhum contato${tag ? ` com tag "${tag}"` : ""}${query ? ` matching "${query}"` : ""}${assignedToMe ? " atribuído a você" : ""}.`,
+      };
+    }
+    return {
+      status: "ok",
+      data: {
+        contacts: result.items.map((c) => ({
+          id: c.id,
+          name: c.name || "(sem nome)",
+          email: c.email,
+          phone: c.phone,
+          tags: c.tags,
+          assigned_to: c.assignedTo,
+          last_activity: c.lastActivity,
+        })),
+        complete: result.complete,
+        total_returned: result.total_returned,
+        pages_fetched: result.pages_fetched,
+        total_reported_by_ghl: result.total_reported_by_ghl,
+        method: "Filter Engine",
+      },
+    };
   },
 };
 
@@ -598,8 +560,7 @@ const listBirthdaysToday: ToolEntry = {
   },
   handler: async (ctx, args) => {
     const when = String(args.when || "today");
-    // V1 canary-only: limit ignorado até GHL liberar filter de date_of_birth.
-    // Quando feature ativar, descomenta: const limit = Math.min(Number(args.limit) || 20, 50);
+    const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 500);
 
     // Resolve dias-alvo no tz do rep (NY default)
     const repTz =
@@ -625,38 +586,50 @@ const listBirthdaysToday: ToolEntry = {
       }
     }
 
-    // GHL search V2 testado 2026-05-06: NÃO aceita nenhum operator
-    // (contains/eq) em date_of_birth — sempre 422 "Invalid Operator".
-    // Significa que filtro automático via API não é possível hoje.
-    // Tool faz 1 tentativa (canary) e retorna error útil com workaround.
-    // Quando GHL liberar filter date_of_birth (V3+), pivota pra strategy
-    // multi-ano.
-    try {
-      type SearchResp = {
-        contacts?: Array<{
-          id: string;
-          firstName?: string;
-          lastName?: string;
-          contactName?: string;
-          phone?: string;
-          email?: string;
-          dateOfBirth?: string;
-          tags?: string[];
-        }>;
+    // H27 (review 2026-05-15): refactor pra usar Filter Engine.
+    // GHL NÃO suporta filter server-side em dateOfBirth, mas a engine
+    // detecta isso via capability matrix e faz pull all + client-side
+    // filter automaticamente. Aniversariantes = field 'dateOfBirth' op
+    // 'month_day_eq' value 'MM-DD'.
+    const repUserId = getRepGhlUserId(ctx);
+    const filter: FilterExpression =
+      daysToCheck.length === 1
+        ? { field: "dateOfBirth", op: "month_day_eq", value: daysToCheck[0] }
+        : {
+            any: daysToCheck.map((d) => ({
+              field: "dateOfBirth" as const,
+              op: "month_day_eq" as const,
+              value: d,
+            })),
+          };
+
+    const result = await executeContactsFilter(
+      filter,
+      {
+        rep_id: ctx.rep.id,
+        rep_phone: ctx.rep.phone,
+        location_id: ctx.locationId,
+        company_id: ctx.companyId,
+        ghl_client: ctx.ghlClient,
+        consumer_tool: "list_birthdays_today",
+        rep_aliases: {
+          ...(ctx.rep.profile?.aliases || {}),
+          ...(repUserId ? { __self_user_id: repUserId } : {}),
+        },
+      },
+      { limit },
+    );
+
+    if (result.status !== "ok") {
+      return {
+        status: "error",
+        message: result.message || "erro buscando aniversariantes",
+        retryable: result.retryable || false,
       };
-      const yearProbe = new Date().getFullYear() - 30;
-      await ctx.ghlClient.post<SearchResp>("/contacts/search", {
-        locationId: ctx.locationId,
-        filters: [
-          {
-            field: "dateOfBirth",
-            operator: "eq",
-            value: `${yearProbe}-${daysToCheck[0]}`,
-          },
-        ],
-        pageLimit: 1,
-      });
-      // Se chegou aqui sem 422, GHL passou a aceitar — desbloquear feature.
+    }
+
+    const items = result.items || [];
+    if (items.length === 0) {
       return {
         status: "ok",
         data: {
@@ -664,27 +637,38 @@ const listBirthdaysToday: ToolEntry = {
           days_checked: daysToCheck,
           total: 0,
           contacts: [],
-          warning:
-            "Spark Leads aceitou filter — mas implementação V1 desta tool é canary-only (1 ano). Avise admin pra liberar full multi-year scan.",
+          ...(result.hit_safety_cap
+            ? {
+                warning:
+                  `Cap defensivo atingido (${result.pages_fetched} páginas × 100). Pode haver mais aniversariantes além do scan. ` +
+                  `Sugira ao rep filtrar manual no Spark Leads ou usar período menor.`,
+              }
+            : {}),
         },
       };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const isFilterUnsupported = /Invalid Operator|Invalid Field/i.test(msg);
-      if (isFilterUnsupported) {
-        return {
-          status: "error",
-          message:
-            `Spark Leads não permite filtrar contatos por data de nascimento via API ainda — limitação conhecida do CRM. ` +
-            `Workaround manual: rep abre Spark Leads → Contacts → Filter → Date of Birth = ${todayMMDD} (ou range pra week). ` +
-            `Pra automação recorrente (ex: 'todo dia 8h manda aniversariantes'), Pedro precisa adicionar custom field ` +
-            `tipo 'birthday_mmdd' nos contatos OU GHL liberar filter de date_of_birth na próxima versão. ` +
-            `Sugira ao rep e use \`report_missed_capability\` se ele quiser que Pedro priorize.`,
-          retryable: false,
-        };
-      }
-      return ghlErrorToResult(err, "busca de aniversariantes");
     }
+
+    return {
+      status: "ok",
+      data: {
+        when,
+        days_checked: daysToCheck,
+        total: items.length,
+        contacts: items.map((c) => ({
+          id: c.id,
+          name: c.name,
+          phone: c.phone,
+          email: c.email,
+          date_of_birth: c.dateOfBirth,
+          tags: c.tags,
+        })),
+        complete: result.complete,
+        pages_fetched: result.pages_fetched,
+        ...(result.hit_safety_cap
+          ? { warning: `Scan parou em ${result.pages_fetched} páginas — pode haver mais aniversariantes.` }
+          : {}),
+      },
+    };
   },
 };
 

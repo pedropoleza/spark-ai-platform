@@ -103,7 +103,7 @@ async function fetchContactsByTag(
  * Conta quantas recipients foram criadas nas últimas 24h pra esta location.
  * Usado pra enforcement do daily_bulk_message_cap.
  */
-async function countRecipientsLast24h(locationId: string): Promise<number> {
+export async function countRecipientsLast24h(locationId: string): Promise<number> {
   const supabase = createAdminClient();
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data: jobs } = await supabase
@@ -121,7 +121,7 @@ async function countRecipientsLast24h(locationId: string): Promise<number> {
   return count ?? 0;
 }
 
-async function getDailyCap(agentId: string | null): Promise<number | null> {
+export async function getDailyCap(agentId: string | null): Promise<number | null> {
   if (!agentId) return 100;
   const supabase = createAdminClient();
   const { data } = await supabase
@@ -137,7 +137,7 @@ async function getDailyCap(agentId: string | null): Promise<number | null> {
  * Calcula scheduled_at sequencial pra cada recipient com jitter.
  * baseStart é o timestamp do primeiro envio.
  */
-function computeScheduledAts(
+export function computeScheduledAts(
   count: number,
   baseStart: Date,
   intervalSeconds: number,
@@ -163,7 +163,7 @@ function computeScheduledAts(
  *
  * Espelha lógica de `isInQuietHours` em dispatcher.ts/bulk-message-runner.ts.
  */
-async function adjustStartAtForQuietHours(
+export async function adjustStartAtForQuietHours(
   agentId: string | null,
   startAt: Date,
 ): Promise<Date> {
@@ -230,7 +230,7 @@ async function adjustStartAtForQuietHours(
   }
 }
 
-async function resolveAgentId(
+export async function resolveAgentId(
   locationId: string,
 ): Promise<string | null> {
   const supabase = createAdminClient();

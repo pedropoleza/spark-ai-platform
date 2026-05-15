@@ -126,6 +126,12 @@ Em ordem de precedência:
 - **Reset**: admin precisa `UPDATE rep_identities SET terms_rejected_at = NULL WHERE id = X` pra rep poder retomar.
 - **parseTermsResponse**: regex anti-falso-positivo (NEGATION_PATTERN check ANTES de ACCEPT, normaliza acentos). Antes "não tá ok pra mim" virava ACCEPT — LGPD risk.
 
+### Filter Engine (H27, Pedro 2026-05-15)
+Sistema unificado de filtros em `src/lib/account-assistant/filter-engine/`. Toda busca/lista de contatos/opps com critério múltiplo passa por ele. DSL JSON (FEL) com AND/OR/NOT, aliases auto (stageName→ID), customField por slug ou UUID, paginação ilimitada (cap defensivo 5000), cache 10min, audit em `filter_executions`. Tools expostas ao LLM: `get_contacts_filtered`, `get_opportunities_filtered`, `count_filtered`, `describe_filter_capabilities`. Legacy (`search_contacts`, `list_opportunities`, `list_birthdays_today`) viram wrappers retrocompat. Pra capability matrix das ops × fields, ver `filter-engine/capabilities.ts`. Plano: `_planning/filter-engine-and-bulk-v2.md`.
+
+### Bulk Messages V2 (H28, Pedro 2026-05-15)
+Em `tools/bulk-messages-v2.ts`. Multi-segment (N filters × N templates num job único, dedup por contact_id), disclaimers tier obrigatórios (`computeDisclaimers`: SEMPRE pergunta quente/fria; risk em >50 quentes ou >10 frios), interpolação rica (`{first_name}`, `{tags[0]}`, `{custom.slug}`, `{opportunity.stage_name}`), snapshot do texto final em `bulk_message_recipients.personalized_message`. Bulk V1 segue funcional. Resolve caso Gustavo 2026-05-15 (mensagem diferente por stage).
+
 ### SparkBot Cron Guards (Pedro 2026-05-05)
 - pg_cron `sparkbot-proactive` agendado a cada 30s com:
   - `pg_try_advisory_xact_lock(8675309)` — anti double-execution sob backlog
@@ -164,5 +170,7 @@ Em ordem de precedência:
 | Stress test results | `_planning/_review-2026-04-2[89]/stress-test/` |
 | Tool catalog completo | `_planning/account-assistant-v2.md` |
 | Endpoints GHL usados | `_planning/ghl-api-reference.md` |
+| Filter Engine (H27) | `_planning/filter-engine-and-bulk-v2.md` + `src/lib/account-assistant/filter-engine/` |
+| Capability matrix GHL × FEL | `src/lib/account-assistant/filter-engine/capabilities.ts` |
 | RAG/pgvector setup | `_planning/nlg-kb-implementation-plan.md` |
 | Estado de bugs fixados | `_planning/_review-*/00-RELATORIO-EXECUTIVO.md` |

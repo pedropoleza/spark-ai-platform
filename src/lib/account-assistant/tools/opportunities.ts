@@ -9,7 +9,8 @@ const listOpportunities: ToolEntry = {
   def: {
     name: "list_opportunities",
     description:
-      "Lista TODAS as opportunities do rep com auto-paginação (não trunca em 100 como antes do fix 2026-05-14). Filtros: status, stage_id (UUID), stage_name (auto-resolve via list_pipelines), pipeline_id, min_value. Default puxa até 5000 opps (50 páginas GHL × 100). Retorna 'complete: true' se exauriu fonte naturalmente; 'false' se atingiu cap defensivo. ⚠️ Quando complete=false, AVISE o rep que há mais opps além das retornadas.",
+      "Lista opportunities do rep com auto-paginação. Filtros: status, stage_id/stage_name (auto-resolve), pipeline_id, min_value. Retorna 'complete: true/false'.\n\n" +
+      "⚠️ PARA CRITÉRIOS MÚLTIPLOS (stage + valor + último update, AND/OR, custom fields) use `get_opportunities_filtered` — suporta FEL completo via Filter Engine (H27). Esta tool é wrapper retrocompat pra filtros simples.",
     risk: "safe",
     parameters: {
       type: "object",

@@ -22,6 +22,10 @@ import { CARRIER_KB_TOOLS } from "./carrier_kb";
 import { TABULAR_TOOLS } from "./tabular";
 import { IDENTITY_TOOLS } from "./identity";
 import { BULK_MESSAGES_TOOLS } from "./bulk-messages";
+// H27 (review 2026-05-15): Filter Engine tools
+import { FILTER_ENGINE_TOOLS } from "./filter-tools";
+// H28 (review 2026-05-15): Bulk V2 sobre Filter Engine
+import { BULK_MESSAGES_V2_TOOLS } from "./bulk-messages-v2";
 
 const ALL_ENTRIES: ToolEntry[] = [
   ...CONTACTS_TOOLS,
@@ -37,6 +41,8 @@ const ALL_ENTRIES: ToolEntry[] = [
   ...TABULAR_TOOLS,
   ...IDENTITY_TOOLS,
   ...BULK_MESSAGES_TOOLS,
+  ...FILTER_ENGINE_TOOLS,
+  ...BULK_MESSAGES_V2_TOOLS,
 ];
 
 export const TOOL_REGISTRY: Record<string, ToolEntry> = Object.fromEntries(
