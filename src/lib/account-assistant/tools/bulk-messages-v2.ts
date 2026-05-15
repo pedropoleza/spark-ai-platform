@@ -37,10 +37,10 @@ import {
 import {
   countRecipientsLast24h,
   getDailyCap,
-  computeScheduledAts,
   adjustStartAtForQuietHours,
   resolveAgentId,
 } from "./bulk-messages";
+import { computeBatchedScheduledAts, computeDeliveryOptions } from "./bulk-delivery-strategy";
 import { generatePreviewVariations } from "../proactive/bulk-message-variator";
 import { getRepGhlUserId } from "./types";
 
@@ -164,14 +164,23 @@ const previewBulkMessageV2: ToolEntry = {
   def: {
     name: "preview_bulk_message_v2",
     description:
-      "Preview de disparo em massa via Filter Engine (H28). Aceita 1 OU MAIS segmentos (cada um com filter FEL próprio + message_template próprio). Retorna: count por segmento, total deduplicado, ETA, exemplos personalizados, DISCLAIMERS obrigatórios (lista quente/fria + risk tier). Bot DEVE exibir todos os disclaimers pro rep ANTES de chamar schedule_bulk_message_v2.\n\n" +
-      "EXEMPLO MULTI-SEGMENT (caso Gustavo):\n" +
+      "Preview de disparo em massa multi-segment via Filter Engine (H28). Aceita 1+ segmentos (cada um com filter FEL + message_template). Retorna count/segment + dedup + ETA + DISCLAIMERS + delivery_options PRÉ-COMPUTADAS (Pedro 2026-05-15).\n\n" +
+      "💡 FLUXO INTUITIVO RECOMENDADO (Pedro 2026-05-15):\n" +
+      "  1. Se rep já deu briefing claro do tom da mensagem ('texto curto humanizado', 'tom casual sobre X'), GERE o message_template direto — NÃO pergunte 'qual texto?' de novo.\n" +
+      "  2. Chame preview_bulk_message_v2 com texto montado.\n" +
+      "  3. Pegue `delivery_options[]` do retorno (3 opções pré-calculadas: hoje / spread N dias / custom window) e APRESENTE COMO MENU NUMERADO pro rep:\n" +
+      "       Como quer distribuir o envio?\n" +
+      "       1. Tudo hoje (~3h)\n" +
+      "       2. Spread em 2 dias (~60/dia)\n" +
+      "       3. Janela específica (você define)\n" +
+      "  4. Coleta disclaimer flags TODOS, daí schedule_bulk_message_v2 com delivery_strategy escolhida.\n\n" +
+      "EXEMPLO MULTI-SEGMENT:\n" +
       "  segments=[\n" +
       "    { label:'M0', filter:{field:'opportunity.stageName',op:'eq',value:'M0'}, message_template:'Bem-vindo {first_name}!' },\n" +
       "    { label:'Prova Agendada', filter:{field:'opportunity.stageName',op:'eq',value:'Prova Agendada'}, message_template:'Oi {first_name}, último dia do ingresso...' }\n" +
       "  ]\n\n" +
-      "INTERPOLAÇÃO suportada no template: {first_name} {last_name} {full_name} {email} {phone} {tags[0]} {custom.field_slug} {opportunity.stage_name} {opportunity.value}\n\n" +
-      "⚠️ Sempre PRIMEIRO `preview_bulk_message_v2` → mostra disclaimers ao rep → rep confirma textualmente CADA → daí `schedule_bulk_message_v2` com flags de aceite.",
+      "INTERPOLAÇÃO: {first_name} {last_name} {full_name} {email} {phone} {tags[0]} {custom.slug} {opportunity.stage_name} {opportunity.value} {opportunity.customField.slug}\n\n" +
+      "⚠️ Sempre PRIMEIRO preview → exibe disclaimers + delivery_options → rep escolhe → schedule_bulk_message_v2 com delivery_strategy + flags.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -276,6 +285,17 @@ const previewBulkMessageV2: ToolEntry = {
       : total > 50 || (listTemp === "cold" && total > 5) ? "medium"
       : "low";
 
+    // Pedro 2026-05-15: computa OPÇÕES de delivery automaticamente pro bot
+    // apresentar como menu numerado (em vez de pergunta aberta).
+    const deliveryOptions = computeDeliveryOptions({
+      total_contacts: total,
+      daily_cap: cap,
+      used_today: usedToday,
+      default_interval_seconds: intervalSeconds,
+      default_jitter_seconds: jitterSeconds,
+      list_temperature: listTemp,
+    });
+
     return {
       status: "ok",
       data: {
@@ -307,6 +327,8 @@ const previewBulkMessageV2: ToolEntry = {
         disclaimers_for_whatsapp: formatDisclaimersForWhatsApp(disclaimers),
         examples,
         interleave_segments: interleave,
+        // Pedro 2026-05-15: opções pré-calculadas pro bot apresentar como menu
+        delivery_options: deliveryOptions,
       },
     };
   },
@@ -349,8 +371,25 @@ const scheduleBulkMessageV2: ToolEntry = {
         jitter_seconds: { type: "number" },
         dedup_across_segments: { type: "boolean" },
         interleave_segments: { type: "boolean" },
-        start_at: { type: "string", description: "ISO 8601. Default agora." },
+        start_at: { type: "string", description: "ISO 8601. Default agora. IGNORADO se delivery_strategy passado." },
         delivery_channel: { type: "string", enum: ["whatsapp_web_sms", "whatsapp_api"], description: "Default whatsapp_web_sms." },
+        // Pedro 2026-05-15: delivery_strategy substitui start_at quando rep
+        // escolhe opção do menu apresentado por preview_bulk_message_v2.
+        delivery_strategy: {
+          type: "object",
+          description:
+            "Como distribuir o disparo no tempo. Vem das delivery_options do preview. " +
+            "type='today' (tudo hoje), 'spread_days' (N dias úteis), 'custom_window' (start_at+end_at). " +
+            "Se omitido, usa default 'today' com interval 90s.",
+          properties: {
+            type: { type: "string", enum: ["today", "spread_days", "custom_window"] },
+            days_count: { type: "number", description: "Só pra spread_days. Min 2, max 7." },
+            start_at: { type: "string", description: "Só pra custom_window. ISO 8601." },
+            end_at: { type: "string", description: "Só pra custom_window. ISO 8601." },
+            interval_seconds: { type: "number" },
+            jitter_seconds: { type: "number" },
+          },
+        },
         // Disclaimer aceites — bot preenche após coletar confirmações
         confirmed_warm_list: { type: "boolean" },
         confirmed_risk_cold: { type: "boolean" },
@@ -440,12 +479,48 @@ const scheduleBulkMessageV2: ToolEntry = {
     // Custom field resolver pra interpolação
     const cfResolver = await buildCustomFieldResolver(ctx.ghlClient, ctx.locationId).catch(() => undefined);
 
-    // start_at
+    // start_at + delivery_strategy
+    const rawDeliveryStrategy = args.delivery_strategy as
+      | { type?: string; days_count?: number; start_at?: string; end_at?: string; interval_seconds?: number; jitter_seconds?: number }
+      | undefined;
     const startAt = args.start_at ? new Date(String(args.start_at)) : new Date();
     if (isNaN(startAt.getTime())) {
       return { status: "error", message: "start_at inválido.", retryable: false };
     }
     const adjustedStartAt = await adjustStartAtForQuietHours(agentId, startAt);
+
+    // Pedro 2026-05-15: resolve delivery strategy. Default = single-day burst.
+    let deliveryStrategy: import("./bulk-delivery-strategy").DeliveryStrategy = {
+      type: "today",
+      interval_seconds: intervalSeconds,
+      jitter_seconds: jitterSeconds,
+    };
+    if (rawDeliveryStrategy?.type === "spread_days") {
+      const days = Math.min(Math.max(Number(rawDeliveryStrategy.days_count) || 2, 2), 7);
+      deliveryStrategy = {
+        type: "spread_days",
+        days_count: days,
+        interval_seconds: intervalSeconds,
+        jitter_seconds: jitterSeconds,
+      };
+    } else if (rawDeliveryStrategy?.type === "custom_window") {
+      const sa = rawDeliveryStrategy.start_at;
+      const ea = rawDeliveryStrategy.end_at;
+      if (!sa || !ea) {
+        return {
+          status: "error",
+          message: "delivery_strategy.type='custom_window' exige start_at e end_at (ISO 8601).",
+          retryable: false,
+        };
+      }
+      deliveryStrategy = {
+        type: "custom_window",
+        start_at: sa,
+        end_at: ea,
+        interval_seconds: intervalSeconds,
+        jitter_seconds: jitterSeconds,
+      };
+    }
 
     // Cria job
     const supabase = createAdminClient();
@@ -528,7 +603,15 @@ const scheduleBulkMessageV2: ToolEntry = {
       }
     }
 
-    const scheduleAts = computeScheduledAts(ordered.length, adjustedStartAt, intervalSeconds, jitterSeconds);
+    // Pedro 2026-05-15: usa delivery_strategy (today/spread_days/custom_window)
+    // pra calcular scheduled_at. computeBatchedScheduledAts respeita
+    // espaçamento + spread multi-dia + cap diário.
+    const scheduleAts = computeBatchedScheduledAts({
+      total_recipients: ordered.length,
+      strategy: deliveryStrategy,
+      base_start: adjustedStartAt,
+      daily_cap: cap,
+    });
     const recipientRows: RecipientRow[] = ordered.map((o, i) => {
       const interp = interpolate(
         o.segment.message_template,
