@@ -138,7 +138,22 @@ function compileExpr(
   }
   if (isComposite(expr)) {
     if ("all" in expr) {
-      // AND: cada filho gera um set; depois intersection
+      // OTIMIZAÇÃO CRÍTICA (fix Pedro 2026-05-15): se TODOS children são
+      // leaves contact_search server-side compatíveis, MERGE em 1 única
+      // query GHL com `filters: [...]` array. GHL aceita N filters numa
+      // query (AND implícito) — sanity test confirmou state+tag combo
+      // retornou total=29 numa query, mas 2 queries paralelas +
+      // intersection com limit=100 retornaram 0 (falso negativo).
+      const allLeaves = expr.all.every(isLeaf);
+      if (allLeaves) {
+        const mergeable = tryMergeServerSideContacts(expr.all as FilterCondition[], entity);
+        if (mergeable) {
+          const out = nextSet(counter);
+          plan.push(mergeable(out));
+          return out;
+        }
+      }
+      // Caso geral AND: cada filho gera um set; intersection client-side
       const childSets = expr.all.map((child) => compileExpr(child, entity, plan, counter));
       if (childSets.length === 1) return childSets[0];
       const out = nextSet(counter);
@@ -403,6 +418,66 @@ function mapOpToGhl(op: FilterOp): string {
   //   etc.
   // Pra V1 mantemos mapping 1:1 e ajustamos se probe revelar diferenças.
   return op;
+}
+
+/**
+ * Tenta merge de AND de leaves em 1 ghl_search V2 (filters array AND
+ * implícito). Retorna factory function se viável; null caso contrário.
+ *
+ * Condições:
+ *  - Entity = contacts
+ *  - Todos children são leaves
+ *  - Todos têm capability server_side em contacts_search
+ *  - Nenhum é opportunity.* nem customField.* (custom field não cabe no
+ *    schema simples de filters; deixa pra próxima iteração)
+ *
+ * Fix Pedro 2026-05-15: antes, AND de N leaves gerava N queries paralelas
+ * + intersection client-side — quando limit aplicava em cada sub-query,
+ * intersection podia dar falso-negativo (caso state=FL ∩ tag=active clients).
+ */
+function tryMergeServerSideContacts(
+  conds: FilterCondition[],
+  entity: FilterEntity,
+): ((output_set: string) => PlanInstruction) | null {
+  if (entity !== "contacts") return null;
+  if (conds.length < 2) return null;
+
+  const ghlFilters: Array<{ field: string; operator: string; value: unknown }> = [];
+  for (const c of conds) {
+    if (c.field.startsWith("opportunity.")) return null;     // requires join
+    if (c.field.startsWith("customField.")) return null;     // requires CF resolver merge
+    const cap = getFieldCapability(c.field);
+    if (!cap) return null;
+    if (cap.server_side_endpoint !== "contacts_search") return null;
+    if (!cap.server_side_ops.includes(c.op)) return null;
+    ghlFilters.push({
+      field: cap.ghl_field_name,
+      operator: c.op,
+      value: normalizeFilterValue(c.field, c.value),
+    });
+  }
+
+  return (output_set: string) => ({
+    type: "ghl_search",
+    endpoint: "contacts_search_v2",
+    ghl_filters: ghlFilters,
+    output_set,
+  });
+}
+
+/**
+ * Normaliza valor pra match GHL.
+ * - state "FL"/"Fl"/"fl" → "FL" (uppercase 2-letter); GHL Smart Lists
+ *   normaliza "FL" ↔ "Florida" mas API V2 é case-sensitive — preservamos
+ *   2-letter, alias resolver futuramente pode expandir pra OR (FL OR Florida).
+ */
+function normalizeFilterValue(field: string, value: unknown): unknown {
+  if (field === "state" && typeof value === "string") {
+    // Se for 2-letter code, uppercase. Se for nome completo, retorna como está.
+    const trimmed = value.trim();
+    if (trimmed.length === 2) return trimmed.toUpperCase();
+  }
+  return value;
 }
 
 function buildOppQueryParams(
