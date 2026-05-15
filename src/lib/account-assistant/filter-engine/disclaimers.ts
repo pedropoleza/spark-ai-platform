@@ -137,3 +137,39 @@ export function formatDisclaimersForWhatsApp(disclaimers: Disclaimer[]): string 
   if (disclaimers.length === 0) return "";
   return disclaimers.map((d) => d.text).join("\n---\n");
 }
+
+/**
+ * Combined disclaimer format (H31.2, Pedro 2026-05-15).
+ * Quando há 2+ disclaimers, combina em CHECKLIST único pra rep dar
+ * "tudo ok" como aceite global (reduz turns).
+ */
+export function formatDisclaimersChecklist(disclaimers: Disclaimer[]): string {
+  if (disclaimers.length === 0) return "";
+  if (disclaimers.length === 1) return disclaimers[0].text;
+
+  const lines: string[] = ["*Antes de confirmar, preciso de OK em ${disclaimers.length} pontos:*", ""];
+  for (let i = 0; i < disclaimers.length; i++) {
+    const d = disclaimers[i];
+    // Extrai 1 linha resumida do disclaimer pra checklist (não o texto longo)
+    const summary = extractDisclaimerSummary(d);
+    lines.push(`☐ *${i + 1}.* ${summary}`);
+  }
+  lines.push("");
+  lines.push(`Responda *"tudo ok"* pra aceitar todos, ou aponte o que mudar.`);
+  return lines.join("\n").replace("${disclaimers.length}", String(disclaimers.length));
+}
+
+function extractDisclaimerSummary(d: Disclaimer): string {
+  // Cada key tem summary curto pré-definido
+  const summaries: Record<DisclaimerKey, string> = {
+    lista_quente_required:
+      "Confirma que a lista é QUENTE (já interagiram com você antes)?",
+    risk_high_volume_warm:
+      "Volume alto (>50 contatos) — confirma que entende o risco?",
+    risk_any_volume_cold:
+      "Lista FRIA + volume alto = risco MUITO alto. Confirma mesmo assim?",
+    first_bulk_ever:
+      "Primeiro disparo seu pela SparkBot — confirma que entende o fluxo (intervalo 90s, pode pausar/cancelar)?",
+  };
+  return summaries[d.key] || d.text.split("\n")[0].slice(0, 100);
+}

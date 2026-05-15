@@ -603,6 +603,71 @@ const listRepAliases: ToolEntry = {
   },
 };
 
+// =====================================================================
+// VERBOSITY PREFERENCE (H31.1, Pedro 2026-05-15)
+// =====================================================================
+// Rep pode pedir "fala mais curto" / "respostas curtas" / "menos texto"
+// e bot adapta. Persistido em rep_identities.profile.preferences.verbosity.
+// Bot prompt lê e adapta tamanho/detalhe das respostas.
+
+const setVerbosityPreference: ToolEntry = {
+  def: {
+    name: "set_verbosity_preference",
+    description:
+      "Salva preferência de tom/tamanho de resposta do rep. Use quando rep falar:\n" +
+      "- 'fala mais curto' / 'sem rodeios' / 'menos texto' → brief\n" +
+      "- 'pode dar mais detalhe' / 'explica direito' / 'normal' → normal\n" +
+      "- 'me explica tudo' / 'quero contexto' → detailed\n\n" +
+      "Persistido em rep_profile.preferences.verbosity. Bot vai usar nessa preferência em TODAS as próximas respostas.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        verbosity: {
+          type: "string",
+          enum: ["brief", "normal", "detailed"],
+          description:
+            "brief = 1-2 frases max, ações primeiro. normal = padrão atual (3-5 frases). detailed = até 6-8 frases com contexto.",
+        },
+      },
+      required: ["verbosity"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const verbosity = String(args.verbosity || "normal");
+    if (!["brief", "normal", "detailed"].includes(verbosity)) {
+      return { status: "error", message: "verbosity inválido", retryable: false };
+    }
+    const supabase = createAdminClient();
+    const currentProfile = (ctx.rep.profile || {}) as Record<string, unknown>;
+    const currentPrefs = (currentProfile.preferences || {}) as Record<string, unknown>;
+    const newProfile = {
+      ...currentProfile,
+      preferences: { ...currentPrefs, verbosity },
+    };
+    const { error } = await supabase
+      .from("rep_identities")
+      .update({ profile: newProfile, updated_at: new Date().toISOString() })
+      .eq("id", ctx.rep.id);
+    if (error) {
+      return { status: "error", message: `Falha ao salvar: ${error.message}`, retryable: true };
+    }
+    ctx.rep.profile = newProfile as typeof ctx.rep.profile;
+    return {
+      status: "ok",
+      data: {
+        verbosity,
+        message:
+          verbosity === "brief"
+            ? "Preferência salva — vou responder mais curto a partir de agora."
+            : verbosity === "detailed"
+              ? "Preferência salva — vou dar mais detalhe nas respostas."
+              : "Preferência salva — tom normal.",
+      },
+    };
+  },
+};
+
 export const IDENTITY_TOOLS: ToolEntry[] = [
   confirmRepTimezone,
   listMyLocations,
@@ -612,4 +677,5 @@ export const IDENTITY_TOOLS: ToolEntry[] = [
   setRepAlias,
   forgetRepAlias,
   listRepAliases,
+  setVerbosityPreference,
 ];

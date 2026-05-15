@@ -11,7 +11,9 @@ import type { ToolDefinition } from "@/types/account-assistant";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const FALLBACK_MODEL = "gpt-4.1";
-const MAX_ITERATIONS = 6;
+// H30.3 (Pedro 2026-05-15): bumped 6→10 pra suportar multi-action chaining
+// (rep manda 1 msg com N ações, bot executa em chain no mesmo turn).
+const MAX_ITERATIONS = 10;
 
 // H1 (review 2026-04-28): no stress test, 6 de 7 falhas conversacionais
 // (hallucinations, compliance flexível) ocorreram em GPT-4.1 fallback —

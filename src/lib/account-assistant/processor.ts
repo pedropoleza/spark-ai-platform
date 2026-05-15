@@ -24,6 +24,17 @@ import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier
 import { runWithTools, type LLMMessage } from "./llm-client";
 import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
+// H29/H30/H31 (Pedro 2026-05-15): Conversational UX layer
+import {
+  detectRepStyle,
+  styleHintForRep,
+  computeSmartDefaults,
+  renderSmartDefaultsForPrompt,
+  createTurnContext,
+  renderTurnContextForPrompt,
+  autoRegisterFromToolResult,
+  type TurnContextState,
+} from "./conversational";
 
 /**
  * Detector GENERALIZADO de hallucination POST-HOC.
@@ -470,6 +481,51 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   ]);
 
   const channel = input.channel || "whatsapp";
+
+  // H29/H30/H31 — Conversational layer (Pedro 2026-05-15)
+  // Detecta tom do rep das últimas mensagens dele no histórico.
+  const recentUserMessages = (input.conversationHistory || [])
+    .filter((t) => t.role === "user")
+    .map((t) => t.content)
+    .slice(-5);
+  const repStyle = detectRepStyle(recentUserMessages);
+  const ghlClientForCtx = new GHLClient(location.company_id, activeLocationId);
+  const tempToolCtx: ToolContext = {
+    rep,
+    locationId: activeLocationId,
+    companyId: location.company_id,
+    ghlClient: ghlClientForCtx,
+    confirmationMode: input.config.confirmation_mode || "high_only",
+    testSessionId: input.testSessionId || null,
+  };
+  const smartDefaults = computeSmartDefaults(tempToolCtx);
+  // Popula turn-context com tool_results dos últimos 2-3 turns. Permite
+  // bot ver "entidades já resolvidas" e evitar re-buscar (caso Gustavo:
+  // bot perguntando "qual contato?" depois de já ter achado).
+  const turnContextState: TurnContextState = createTurnContext();
+  try {
+    const recentTurns = (input.conversationHistory || []).slice(-6);
+    for (const turn of recentTurns) {
+      // Parse tool_calls embebidos no content (formato OpenAI compatível)
+      // Não-fatal: se falhar parse, ignora.
+      if (turn.role !== "assistant") continue;
+      // Histórico nosso guarda tool_calls como metadata? Vou tentar via
+      // regex simples no content (pode ser melhorado V2)
+      const calls = (turn as { tool_calls?: Array<{ name?: string; result?: unknown }> }).tool_calls;
+      if (Array.isArray(calls)) {
+        for (const tc of calls) {
+          if (tc.name && tc.result) {
+            const resultData = (tc.result as { data?: unknown }).data || tc.result;
+            autoRegisterFromToolResult(turnContextState, tc.name, resultData);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[processor] turn-context populate failed (non-fatal):", err);
+  }
+  const verbosityPref = (rep.profile?.preferences as { verbosity?: "brief" | "normal" | "detailed" } | undefined)?.verbosity;
+
   const systemPrompt = buildSparkbotSystemPrompt({
     rep,
     locationName: activeLink.location_name || location.location_name || activeLocationId,
@@ -486,6 +542,13 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       formality: input.config.tone_formality ?? null,
       naturalness: input.config.tone_naturalness ?? null,
       aggressiveness: input.config.tone_aggressiveness ?? null,
+    },
+    conversationalLayer: {
+      repStyleHint: styleHintForRep(repStyle),
+      smartDefaultsBlock: renderSmartDefaultsForPrompt(smartDefaults),
+      // turnContextBlock vazio no início — preenchido conforme tools rodam
+      turnContextBlock: renderTurnContextForPrompt(turnContextState),
+      verbosityPref,
     },
   });
 
@@ -506,7 +569,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     content: t.content,
   }));
 
-  const ghlClient = new GHLClient(location.company_id, activeLocationId);
+  const ghlClient = ghlClientForCtx;
   const toolCtx: ToolContext = {
     rep,
     locationId: activeLocationId,

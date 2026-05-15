@@ -12,6 +12,11 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { RepIdentity, RepProfile } from "@/types/account-assistant";
 import type { KnowledgeBaseItem } from "@/lib/ai/prompt-builder";
+import {
+  TEMPLATE_DOCS,
+  ERROR_RECOVERY_PROMPT_GUIDE,
+  MULTI_ACTION_PROMPT_GUIDE,
+} from "./conversational";
 
 interface BuildPromptArgs {
   rep: RepIdentity;
@@ -43,6 +48,20 @@ interface BuildPromptArgs {
     naturalness?: number | null;
     aggressiveness?: number | null;
   };
+  /**
+   * Conversational UX layer (H29/H30/H31, Pedro 2026-05-15).
+   * Injetado pelo processor a cada turn (não cacheado — varia por turn).
+   * - repStyle: detectado de últimas msgs do rep (adaptive voice mirror)
+   * - smartDefaultsBlock: renderSmartDefaultsForPrompt
+   * - turnContextBlock: renderTurnContextForPrompt
+   * - verbosityPref: lido de rep.profile.preferences.verbosity
+   */
+  conversationalLayer?: {
+    repStyleHint?: string;
+    smartDefaultsBlock?: string;
+    turnContextBlock?: string;
+    verbosityPref?: "brief" | "normal" | "detailed";
+  };
 }
 
 /**
@@ -55,6 +74,7 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     rep, locationName, locationTimezone, locale, confirmationMode, carrierOverview,
     channel = "whatsapp",
     customInstructions, kbInstructions, kbItems, tones,
+    conversationalLayer,
   } = args;
   // Fix observado em prod 2026-05-03: o texto pra medium_and_high antes
   // dizia que medium "executa E informa 'feito'" — isso conflitava com o
@@ -713,6 +733,38 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     // Instruções customizadas do admin (textarea livre) — vão NO FINAL pra
     // ter prioridade sobre comportamento default em caso de conflito.
     buildCustomInstructionsSection(customInstructions),
+
+    // ===================================================================
+    // CONVERSATIONAL UX LAYER (H29/H30/H31, Pedro 2026-05-15)
+    // ===================================================================
+    // Estes blocos refinam a UX. Vêm POR ÚLTIMO pra ter prioridade sobre
+    // qualquer instrução conflitante anterior — UX > tech rules.
+    "",
+    "# ═══════════════════════════════════════════════════════════════",
+    "# CONVERSATIONAL UX (H29/H30/H31) — leia e siga estes guides",
+    "# ═══════════════════════════════════════════════════════════════",
+    "",
+    TEMPLATE_DOCS,
+    "",
+    ERROR_RECOVERY_PROMPT_GUIDE,
+    "",
+    MULTI_ACTION_PROMPT_GUIDE,
+    "",
+    "# COMANDO RECAP",
+    "Quando rep falar 'recap', 'resumo', 'o que fizemos?', 'qual o status?', chame `recap_session` (default 30min). Tool retorna lista formatada — exiba `data.recap_formatted` verbatim.",
+    "",
+    "# COMANDO VERBOSITY",
+    "Se rep falar 'fala mais curto'/'sem rodeios'/'menos texto' → chame `set_verbosity_preference(verbosity='brief')`. 'mais detalhe'/'explica melhor' → 'detailed'. Persistido em rep_profile. Bot adapta TODAS respostas futuras conforme preferência.",
+    "",
+    // Bloco dinâmico do turn (cada turn diferente — vem após o cache)
+    conversationalLayer?.repStyleHint || "",
+    conversationalLayer?.smartDefaultsBlock || "",
+    conversationalLayer?.turnContextBlock || "",
+    conversationalLayer?.verbosityPref === "brief"
+      ? "[VERBOSITY: brief] Rep prefere respostas CURTAS (1-2 frases max). Vai direto à ação, sem floreio."
+      : conversationalLayer?.verbosityPref === "detailed"
+        ? "[VERBOSITY: detailed] Rep prefere respostas DETALHADAS (até 6-8 frases + contexto). Pode incluir 2 sugestões de next-step."
+        : "",
   ]
     .filter(Boolean)
     .join("\n");
