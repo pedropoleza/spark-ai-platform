@@ -74,16 +74,17 @@ export const CONTACT_FIELDS: Record<string, FieldCapability> = {
     type: "string",
     server_side_endpoint: "contacts_search",
     ghl_field_name: "email",
-    server_side_ops: ["eq", "contains", "exists", "not_exists"],
+    server_side_ops: ["eq", "contains"],
     client_side_ops: ["eq", "neq", "contains", "not_contains", "starts_with", "ends_with", "exists", "not_exists"],
+    notes: "GHL probe 2026-05-15: 'exists' em field string retorna 422. Use client-side fallback.",
   },
   phone: {
     type: "string",
     server_side_endpoint: "contacts_search",
     ghl_field_name: "phone",
-    server_side_ops: ["eq", "contains", "exists", "not_exists"],
+    server_side_ops: ["eq", "contains"],
     client_side_ops: ["eq", "neq", "contains", "not_contains", "starts_with", "ends_with", "exists", "not_exists"],
-    notes: "GHL aceita E.164 OU dígitos puros. Normaliza antes de comparar.",
+    notes: "GHL aceita E.164 OU dígitos puros. Normaliza antes de comparar. 'exists' não suportado server-side (422).",
   },
   // === Address ===
   address1: {
@@ -96,8 +97,9 @@ export const CONTACT_FIELDS: Record<string, FieldCapability> = {
   },
   state: {
     type: "string", server_side_endpoint: "contacts_search", ghl_field_name: "state",
-    server_side_ops: ["eq", "in"], client_side_ops: ["eq", "neq", "in", "not_in", "exists", "not_exists"],
-    notes: "GHL aceita 2-letter US states (FL, NY, CA) e nomes completos.",
+    server_side_ops: ["eq"],
+    client_side_ops: ["eq", "neq", "in", "not_in", "exists", "not_exists"],
+    notes: "GHL aceita 2-letter US states (FL, NY, CA) e nomes completos. 'in' não suportado server-side (probe 2026-05-15) → engine roda N queries paralelas + union.",
   },
   postalCode: {
     type: "string", server_side_endpoint: "contacts_search", ghl_field_name: "postalCode",
@@ -119,6 +121,7 @@ export const CONTACT_FIELDS: Record<string, FieldCapability> = {
   source: {
     type: "string", server_side_endpoint: "contacts_search", ghl_field_name: "source",
     server_side_ops: ["eq"], client_side_ops: ["eq", "neq", "exists", "not_exists"],
+    notes: "'exists' não suportado em string server-side (probe 2026-05-15).",
   },
   // === Date fields (suporte server bom EXCETO dateOfBirth) ===
   dateOfBirth: {
@@ -161,9 +164,9 @@ export const CONTACT_FIELDS: Record<string, FieldCapability> = {
   // === User reference ===
   assignedTo: {
     type: "string", server_side_endpoint: "contacts_search", ghl_field_name: "assignedTo",
-    server_side_ops: ["eq", "in", "exists", "not_exists"],
+    server_side_ops: ["eq"],
     client_side_ops: ["eq", "neq", "in", "not_in", "exists", "not_exists"],
-    notes: "Aceita 'self' alias (resolver troca pra ghl_user_id do rep).",
+    notes: "Aceita 'self' alias (resolver troca pra ghl_user_id do rep). 'in'/'exists' conservador → client-side.",
   },
 };
 

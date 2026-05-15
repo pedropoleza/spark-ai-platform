@@ -356,12 +356,22 @@ function validateSemantic(expr: FilterExpression): void {
 function canMergeAsIn(conds: FilterCondition[]): boolean {
   if (conds.length < 2) return false;
   const first = conds[0];
-  return conds.every(
-    (c) =>
-      c.field === first.field &&
-      (c.op === "eq" || c.op === "in") &&
-      (typeof c.value === "string" || typeof c.value === "number"),
-  );
+  if (
+    !conds.every(
+      (c) =>
+        c.field === first.field &&
+        (c.op === "eq" || c.op === "in") &&
+        (typeof c.value === "string" || typeof c.value === "number"),
+    )
+  ) {
+    return false;
+  }
+  // GHL probe 2026-05-15: operator `in` só funciona server-side em alguns
+  // fields (tags, etc). Se o field não suporta `in` server-side, deixa
+  // o compiler gerar N queries paralelas + union via set_op.
+  const cap = getFieldCapability(first.field);
+  if (!cap || !cap.server_side_ops.includes("in")) return false;
+  return true;
 }
 
 function mergeAsIn(conds: FilterCondition[]): FilterCondition {
