@@ -638,36 +638,53 @@ const listBulkJobs: ToolEntry = {
     }
     return {
       status: "ok",
-      data: (data || []).map((j) => ({
-        job_id: j.id,
-        status: j.status,
-        tag: (j.filter_config as { tag?: string })?.tag || null,
-        template_preview: String(j.message_template).slice(0, 60),
-        total: j.total_contacts,
-        sent: j.sent_count,
-        failed: j.failed_count,
-        skipped: j.skipped_count,
-        progress_percent:
-          j.total_contacts > 0
-            ? Math.round(((j.sent_count + j.failed_count + j.skipped_count) / j.total_contacts) * 100)
-            : 0,
-        created_at: j.created_at,
-        start_at: j.start_at,
-        eta_completion: j.estimated_completion_at,
-        completed_at: j.completed_at,
-      })),
+      data: (data || []).map((j) => {
+        const fc = j.filter_config as Record<string, unknown> | null;
+        const isMulti = fc && fc.type === "multi";
+        const segments = isMulti
+          ? ((fc.segments as Array<{ label: string; resolved_count: number }> | undefined) || [])
+          : [];
+        const strategy = isMulti ? (fc.delivery_strategy as Record<string, unknown> | undefined) : undefined;
+        return {
+          job_id: j.id,
+          status: j.status,
+          // V2 metadata (Pedro 2026-05-15)
+          is_multi_segment: !!isMulti,
+          segments: isMulti
+            ? segments.map((s) => `${s.label}=${s.resolved_count}`)
+            : undefined,
+          delivery_strategy_type: strategy?.type || (isMulti ? "today" : undefined),
+          // V1 legacy
+          tag: !isMulti ? (fc as { tag?: string } | null)?.tag || null : null,
+          template_preview: String(j.message_template).slice(0, 60),
+          total: j.total_contacts,
+          sent: j.sent_count,
+          failed: j.failed_count,
+          skipped: j.skipped_count,
+          progress_percent:
+            j.total_contacts > 0
+              ? Math.round(((j.sent_count + j.failed_count + j.skipped_count) / j.total_contacts) * 100)
+              : 0,
+          created_at: j.created_at,
+          start_at: j.start_at,
+          eta_completion: j.estimated_completion_at,
+          completed_at: j.completed_at,
+        };
+      }),
     };
   },
 };
 
 // =====================================================================
-// Tool: get_bulk_job_progress
+// Tool: get_bulk_job_progress (refatorada Pedro 2026-05-15)
 // =====================================================================
 const getBulkJobProgress: ToolEntry = {
   def: {
     name: "get_bulk_job_progress",
     description:
-      "Detalhes + progresso de UM disparo em massa pelo job_id (use list_bulk_jobs pra obter).",
+      "Detalhes + progresso de UM disparo em massa pelo job_id (use list_bulk_jobs pra obter o id). " +
+      "Retorna breakdown POR SEGMENTO (multi-segment V2) e POR DIA + resumo formatado pronto pra bot exibir. " +
+      "Use quando rep perguntar 'como tá o disparo?', 'quantos já receberam?', 'falta quanto?'.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -698,34 +715,127 @@ const getBulkJobProgress: ToolEntry = {
       .eq("status", "failed")
       .limit(5);
 
+    // Breakdown POR SEGMENT (V2 jobs têm segment_label; legacy é null)
+    const { data: recipientsStats } = await supabase
+      .from("bulk_message_recipients")
+      .select("segment_label, status, scheduled_at")
+      .eq("job_id", jobId);
+
+    const segmentMap = new Map<string, { total: number; sent: number; pending: number; failed: number }>();
+    const dailyMap = new Map<string, { sent: number; pending: number; failed: number }>();
+    let nextScheduledAt: string | null = null;
+
+    for (const r of recipientsStats || []) {
+      const segLabel = r.segment_label || "(single)";
+      const segStats = segmentMap.get(segLabel) || { total: 0, sent: 0, pending: 0, failed: 0 };
+      segStats.total++;
+      if (r.status === "sent") segStats.sent++;
+      else if (r.status === "failed") segStats.failed++;
+      else if (r.status === "pending" || r.status === "scheduled") segStats.pending++;
+      segmentMap.set(segLabel, segStats);
+
+      const day = (r.scheduled_at || "").slice(0, 10);
+      if (day) {
+        const dayStats = dailyMap.get(day) || { sent: 0, pending: 0, failed: 0 };
+        if (r.status === "sent") dayStats.sent++;
+        else if (r.status === "failed") dayStats.failed++;
+        else if (r.status === "pending" || r.status === "scheduled") dayStats.pending++;
+        dailyMap.set(day, dayStats);
+
+        if (r.status === "pending" || r.status === "scheduled") {
+          if (!nextScheduledAt || (r.scheduled_at || "") < nextScheduledAt) {
+            nextScheduledAt = r.scheduled_at;
+          }
+        }
+      }
+    }
+
+    const segmentsProgress = Array.from(segmentMap.entries()).map(([label, s]) => ({
+      label,
+      total: s.total,
+      sent: s.sent,
+      pending: s.pending,
+      failed: s.failed,
+    }));
+
+    const dailyProgress = Array.from(dailyMap.entries())
+      .sort()
+      .map(([day, s]) => ({
+        day: new Date(day + "T12:00:00Z").toLocaleDateString("pt-BR", {
+          weekday: "short",
+          day: "2-digit",
+          month: "2-digit",
+        }),
+        sent: s.sent,
+        pending: s.pending,
+        failed: s.failed,
+      }));
+
+    // Filter config V2 detect
+    const fc = job.filter_config as Record<string, unknown> | null;
+    const isMultiSegment = fc && fc.type === "multi";
+
+    const totalRecipients = job.total_contacts;
+    const sentCount = job.sent_count || 0;
+    const failedCount = job.failed_count || 0;
+    const skippedCount = job.skipped_count || 0;
+
+    // Importa formatter dinamicamente (evita circular)
+    const { formatProgressSummary } = await import("./bulk-summary-formatter");
+    const progressSummary = formatProgressSummary({
+      job_id: job.id,
+      status: job.status,
+      total: totalRecipients,
+      sent: sentCount,
+      failed: failedCount,
+      skipped: skippedCount,
+      pending: totalRecipients - sentCount - failedCount - skippedCount,
+      segments_progress: segmentsProgress,
+      daily_progress: dailyProgress,
+      start_at: job.start_at,
+      next_scheduled_at: nextScheduledAt || undefined,
+      eta_completion: job.estimated_completion_at,
+      delivery_strategy: isMultiSegment && fc
+        ? (fc.delivery_strategy as never) || undefined
+        : undefined,
+    });
+
     return {
       status: "ok",
       data: {
         job_id: job.id,
         status: job.status,
-        tag: (job.filter_config as { tag?: string })?.tag || null,
+        is_multi_segment: !!isMultiSegment,
+        // Legacy V1 backward-compat
+        tag: !isMultiSegment ? (fc as { tag?: string } | null)?.tag || null : null,
         message_template: job.message_template,
         variation_mode: job.variation_mode,
         interval_seconds: job.interval_seconds,
         jitter_seconds: job.jitter_seconds,
         delivery_channel: job.delivery_channel,
-        total: job.total_contacts,
-        sent: job.sent_count,
-        failed: job.failed_count,
-        skipped: job.skipped_count,
-        pending: job.total_contacts - job.sent_count - job.failed_count - job.skipped_count,
+        total: totalRecipients,
+        sent: sentCount,
+        failed: failedCount,
+        skipped: skippedCount,
+        pending: totalRecipients - sentCount - failedCount - skippedCount,
         progress_percent:
-          job.total_contacts > 0
-            ? Math.round(((job.sent_count + job.failed_count + job.skipped_count) / job.total_contacts) * 100)
+          totalRecipients > 0
+            ? Math.round(((sentCount + failedCount + skippedCount) / totalRecipients) * 100)
             : 0,
         created_at: job.created_at,
         start_at: job.start_at,
+        next_scheduled_at: nextScheduledAt,
         eta_completion: job.estimated_completion_at,
         completed_at: job.completed_at,
+        // Breakdown V2
+        segments_progress: segmentsProgress,
+        daily_progress: dailyProgress,
         failed_samples: (failed || []).map((f) => ({
           contact: f.contact_name,
           error: f.error_message,
         })),
+        // Resumo formatado pro bot exibir
+        progress_summary: progressSummary,
       },
     };
   },

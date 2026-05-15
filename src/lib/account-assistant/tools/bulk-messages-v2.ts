@@ -41,6 +41,10 @@ import {
   resolveAgentId,
 } from "./bulk-messages";
 import { computeBatchedScheduledAts, computeDeliveryOptions } from "./bulk-delivery-strategy";
+import {
+  formatPreviewSummary,
+  formatScheduleSummary,
+} from "./bulk-summary-formatter";
 import { generatePreviewVariations } from "../proactive/bulk-message-variator";
 import { getRepGhlUserId } from "./types";
 
@@ -296,6 +300,28 @@ const previewBulkMessageV2: ToolEntry = {
       list_temperature: listTemp,
     });
 
+    // Resumo formatado pro bot exibir pré-confirmação.
+    const previewSegments = resolveRes.segments.map((s) => ({
+      label: s.label,
+      count_after_dedup: s.count_after_dedup,
+      template_placeholders: parseTemplate(s.message_template),
+    }));
+    const confirmationSummary = formatPreviewSummary({
+      total_contacts: total,
+      segments: previewSegments,
+      list_temperature: listTemp,
+      delivery_options: deliveryOptions,
+      disclaimers: disclaimers.map((d) => ({
+        key: d.key,
+        severity: d.severity,
+        text: d.text,
+      })),
+      daily_cap: cap,
+      used_today: usedToday,
+      would_exceed_cap: wouldExceed,
+      risk_level: riskLevel,
+    });
+
     return {
       status: "ok",
       data: {
@@ -329,6 +355,8 @@ const previewBulkMessageV2: ToolEntry = {
         interleave_segments: interleave,
         // Pedro 2026-05-15: opções pré-calculadas pro bot apresentar como menu
         delivery_options: deliveryOptions,
+        // Resumo formatado pro bot exibir pré-confirmação (Pedro 2026-05-15)
+        confirmation_summary: confirmationSummary,
       },
     };
   },
@@ -643,18 +671,53 @@ const scheduleBulkMessageV2: ToolEntry = {
     }
 
     const eta = Math.ceil((recipientRows.length * intervalSeconds) / 60);
+
+    // Daily breakdown pro summary (agrupa scheduled_at por dia)
+    const dailyMap = new Map<string, number>();
+    for (const r of recipientRows) {
+      const day = r.scheduled_at.slice(0, 10); // YYYY-MM-DD
+      dailyMap.set(day, (dailyMap.get(day) || 0) + 1);
+    }
+    const dailyBreakdown = Array.from(dailyMap.entries())
+      .sort()
+      .map(([day, count]) => ({
+        day: new Date(day + "T12:00:00Z").toLocaleDateString("pt-BR", {
+          weekday: "short",
+          day: "2-digit",
+          month: "2-digit",
+        }),
+        count,
+      }));
+
+    const segmentsSummary = resolveRes.segments.map((s) => ({
+      label: s.label,
+      count: s.contacts.length,
+    }));
+
+    const scheduleSummary = formatScheduleSummary({
+      job_id: job.id,
+      total_enqueued: recipientRows.length,
+      segments_summary: segmentsSummary,
+      delivery_strategy: deliveryStrategy,
+      start_at: adjustedStartAt.toISOString(),
+      eta_minutes: eta,
+      delivery_channel: deliveryChannel,
+      daily_breakdown: dailyBreakdown,
+    });
+
     return {
       status: "ok",
       data: {
         job_id: job.id,
         total_enqueued: recipientRows.length,
-        segments_summary: resolveRes.segments.map((s) => ({
-          label: s.label,
-          count: s.contacts.length,
-        })),
+        segments_summary: segmentsSummary,
         start_at: adjustedStartAt.toISOString(),
         eta_minutes: eta,
         delivery_channel: deliveryChannel,
+        delivery_strategy: deliveryStrategy,
+        daily_breakdown: dailyBreakdown,
+        // Resumo formatado pro bot exibir confirmação (Pedro 2026-05-15)
+        schedule_summary: scheduleSummary,
         message: `Job ${job.id.slice(0, 8)} enfileirado: ${recipientRows.length} msgs em ${resolveRes.segments.length} segments. Runner dispara em ~${eta}min com intervalo ${intervalSeconds}s ± ${jitterSeconds}s.`,
       },
     };
