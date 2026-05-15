@@ -566,6 +566,9 @@ const scheduleBulkMessageV2: ToolEntry = {
       list_temperature: listTemp,
       dedup_across_segments: dedup,
       interleave_segments: interleave,
+      // Pedro 2026-05-15 (E2E test): guardar delivery_strategy pra
+      // list_bulk_jobs/get_bulk_job_progress mostrarem corretamente.
+      delivery_strategy: deliveryStrategy,
     };
 
     const { data: job, error: jobErr } = await supabase

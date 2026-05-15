@@ -106,17 +106,23 @@ async function fetchContactsByTag(
 export async function countRecipientsLast24h(locationId: string): Promise<number> {
   const supabase = createAdminClient();
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // Fix Pedro 2026-05-15: exclui jobs cancelled (recipients que
+  // NUNCA vão sair não devem contar pro cap diário).
   const { data: jobs } = await supabase
     .from("bulk_message_jobs")
     .select("id")
     .eq("location_id", locationId)
+    .neq("status", "cancelled")
     .gte("created_at", cutoff);
   if (!jobs || jobs.length === 0) return 0;
   const jobIds = jobs.map((j) => j.id);
+  // Também exclui recipients individuais com status=cancelled OU skipped
+  // (não saíram, não contam pro cap).
   const { count } = await supabase
     .from("bulk_message_recipients")
     .select("id", { count: "exact", head: true })
     .in("job_id", jobIds)
+    .not("status", "in", "(cancelled,skipped)")
     .gte("created_at", cutoff);
   return count ?? 0;
 }
