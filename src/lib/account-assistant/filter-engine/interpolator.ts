@@ -22,19 +22,29 @@
  */
 
 import type { ContactResult } from "./types";
-import { getCustomFields } from "./cache";
+import { getCustomFields, getOpportunityCustomFields } from "./cache";
 import type { GHLClient } from "@/lib/ghl/client";
 
 export interface InterpolationContext {
   contact: ContactResult;
-  /** Custom fields mapping pra resolver {custom.slug} → valor */
+  /** Contact custom fields slug → id resolver */
   custom_field_resolver?: Map<string, string>;
+  /** Opportunity custom fields slug → id resolver (Pedro 2026-05-15) */
+  opp_custom_field_resolver?: Map<string, string>;
   /** Opportunity ativa do contato (mais recente status=open) */
   active_opportunity?: {
     stage_name?: string;
     stage_id?: string;
     monetary_value?: number;
     pipeline_id?: string;
+    /** Opp CFs do GHL (formato embedded) */
+    custom_fields?: Array<{
+      id: string;
+      fieldValue?: string | number | string[];
+      fieldValueString?: string;
+      fieldValueNumber?: number;
+      fieldValueArray?: string[];
+    }>;
   };
 }
 
@@ -112,6 +122,23 @@ function resolvePlaceholder(key: string, ctx: InterpolationContext): unknown {
     return undefined;
   }
 
+  // opportunity.customField.slug
+  if (key.startsWith("opportunity.customField.")) {
+    const slug = key.slice("opportunity.customField.".length);
+    if (!ctx.active_opportunity?.custom_fields) return undefined;
+    const cfId = ctx.opp_custom_field_resolver?.get(slug.toLowerCase());
+    const cf = ctx.active_opportunity.custom_fields.find(
+      (f) => f.id === cfId || f.id === slug,
+    );
+    if (!cf) return undefined;
+    // DATE customField vem como timestamp ms — formata DD/MM/YYYY pra rep
+    const cfAny = cf as { fieldValueDate?: number };
+    if (typeof cfAny.fieldValueDate === "number") {
+      return new Date(cfAny.fieldValueDate).toLocaleDateString("pt-BR");
+    }
+    return cf.fieldValue ?? cf.fieldValueString ?? cf.fieldValueNumber ?? cf.fieldValueArray;
+  }
+
   // opportunity.X
   if (key.startsWith("opportunity.")) {
     const sub = key.slice("opportunity.".length);
@@ -169,15 +196,27 @@ export function parseTemplate(template: string): string[] {
  * Helper pra construir custom_field_resolver pra uma location.
  * Mapeia slug.toLowerCase() → id. Útil pra interpolation sem fetch
  * por contato.
+ *
+ * model='contact' (default) ou 'opportunity'.
  */
 export async function buildCustomFieldResolver(
   ghl: GHLClient,
   location_id: string,
+  model: "contact" | "opportunity" = "contact",
 ): Promise<Map<string, string>> {
-  const cfs = await getCustomFields(ghl, location_id);
+  const cfs =
+    model === "opportunity"
+      ? await getOpportunityCustomFields(ghl, location_id)
+      : await getCustomFields(ghl, location_id);
   const map = new Map<string, string>();
+  const stripPrefix = (s: string): string =>
+    s.replace(/^contact\./i, "").replace(/^opportunity\./i, "");
   for (const cf of cfs) {
-    if (cf.fieldKey) map.set(cf.fieldKey.toLowerCase(), cf.id);
+    if (cf.fieldKey) {
+      const lower = cf.fieldKey.toLowerCase();
+      map.set(lower, cf.id);
+      map.set(stripPrefix(lower), cf.id);
+    }
     if (cf.name) map.set(cf.name.toLowerCase(), cf.id);
     map.set(cf.id.toLowerCase(), cf.id); // self-reference
   }

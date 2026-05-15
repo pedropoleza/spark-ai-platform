@@ -352,7 +352,14 @@ function validateSemantic(expr: FilterExpression): void {
         { field: expr.field },
       );
     }
-    if (!isOpCompatibleWithType(expr.op, cap.type)) {
+    // Custom fields têm dataType dinâmico (TEXT, DATE, NUMERICAL, etc) que
+    // capability matrix não enumera estaticamente. Skipa validação semântica
+    // — executor faz o melhor esforço client-side; ops incompatíveis com
+    // valor real retornam false naturalmente.
+    const isCustomField =
+      expr.field.startsWith("customField.") ||
+      expr.field.startsWith("opportunity.customField.");
+    if (!isCustomField && !isOpCompatibleWithType(expr.op, cap.type)) {
       throw new FilterEngineError(
         `Operator '${expr.op}' não compatível com field '${expr.field}' (tipo ${cap.type}).`,
         "UNSUPPORTED_OPERATOR",

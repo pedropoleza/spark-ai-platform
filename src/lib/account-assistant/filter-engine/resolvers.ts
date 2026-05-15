@@ -16,7 +16,12 @@
 
 import type { FilterExecutionContext, FilterExpression, FilterCondition } from "./types";
 import { FilterEngineError, isComposite, isLeaf } from "./types";
-import { getPipelines, getCustomFields, type CachedCustomField } from "./cache";
+import {
+  getPipelines,
+  getCustomFields,
+  getOpportunityCustomFields,
+  type CachedCustomField,
+} from "./cache";
 
 const SELF_ALIASES = ["self", "me", "eu", "rep", "myself", "self_user"];
 
@@ -141,20 +146,42 @@ async function resolveLeaf(
     };
   }
 
-  // 2) customField.{slug-or-id} — se for slug, resolve pro id; se já é id, passa
+  // 2a) opportunity.customField.{slug-or-id} — Pedro 2026-05-15
+  if (cond.field.startsWith("opportunity.customField.")) {
+    const ref = cond.field.slice("opportunity.customField.".length);
+    if (looksLikeGhlUuid(ref)) return cond;
+    const cf = await resolveCustomFieldBySlug(ref, ctx, options, "opportunity");
+    if (!cf) {
+      throw new FilterEngineError(
+        `Custom field de opportunity '${ref}' não encontrado nesta location. ` +
+          `Use describe_filter_capabilities pra ver fields disponíveis.`,
+        "ALIAS_NOT_FOUND",
+        { slug: ref, model: "opportunity" },
+      );
+    }
+    applied[`opportunity.customField.${ref}`] = cf.id;
+    return {
+      field: `opportunity.customField.${cf.id}` as FilterCondition["field"],
+      op: cond.op,
+      value: cond.value,
+    };
+  }
+
+  // 2b) customField.{slug-or-id} (contact) — se for slug, resolve pro id
   if (cond.field.startsWith("customField.")) {
     const ref = cond.field.slice("customField.".length);
     if (looksLikeGhlUuid(ref)) {
       // Já é UUID — passa direto
       return cond;
     }
-    const cf = await resolveCustomFieldBySlug(ref, ctx, options);
+    const cf = await resolveCustomFieldBySlug(ref, ctx, options, "contact");
     if (!cf) {
       throw new FilterEngineError(
-        `Custom field '${ref}' não encontrado nesta location. ` +
-          `Use describe_filter_capabilities pra ver fields disponíveis.`,
+        `Custom field de contact '${ref}' não encontrado nesta location. ` +
+          `Use describe_filter_capabilities pra ver fields disponíveis. ` +
+          `Se '${ref}' for um custom field de OPPORTUNITY, use 'opportunity.customField.${ref}' no field.`,
         "ALIAS_NOT_FOUND",
-        { slug: ref },
+        { slug: ref, model: "contact" },
       );
     }
     applied[`customField.${ref}`] = cf.id;
@@ -254,12 +281,26 @@ async function resolveCustomFieldBySlug(
   slug: string,
   ctx: FilterExecutionContext,
   options: { bypass_cache?: boolean },
+  model: "contact" | "opportunity",
 ): Promise<CachedCustomField | null> {
-  const cfs = await getCustomFields(ctx.ghl_client, ctx.location_id, options);
+  const cfs =
+    model === "opportunity"
+      ? await getOpportunityCustomFields(ctx.ghl_client, ctx.location_id, options)
+      : await getCustomFields(ctx.ghl_client, ctx.location_id, options);
   const q = slug.toLowerCase().trim();
-  // Match por fieldKey ou name (case-insensitive)
+  // GHL fieldKey vem com prefix model (ex: 'opportunity.policy_anniversary')
+  // — tira prefix antes de comparar pra match user-friendly:
+  // user passou 'policy_anniversary', cf.fieldKey é 'opportunity.policy_anniversary'.
+  const stripPrefix = (s: string): string => {
+    const lower = s.toLowerCase();
+    if (lower.startsWith("contact.")) return lower.slice("contact.".length);
+    if (lower.startsWith("opportunity.")) return lower.slice("opportunity.".length);
+    return lower;
+  };
+  // Match exato no fieldKey (com OU sem prefix)
   for (const cf of cfs) {
     if ((cf.fieldKey || "").toLowerCase() === q) return cf;
+    if (stripPrefix(cf.fieldKey || "") === q) return cf;
   }
   for (const cf of cfs) {
     if ((cf.name || "").toLowerCase() === q) return cf;

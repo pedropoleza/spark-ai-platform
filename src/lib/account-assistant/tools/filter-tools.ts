@@ -27,6 +27,7 @@ import {
   listKnownFields,
   getPipelines,
   getCustomFields,
+  getOpportunityCustomFields,
 } from "../filter-engine";
 import { getRepGhlUserId } from "./types";
 
@@ -351,7 +352,12 @@ const describeFilterCapabilities: ToolEntry = {
   def: {
     name: "describe_filter_capabilities",
     description:
-      "Retorna catálogo completo de fields/ops que o Filter Engine suporta NESTA location. Use quando rep pergunta 'dá pra filtrar por X?' OU quando bot quer validar uma FEL ANTES de chamar get_contacts_filtered. Lista pipelines + stages (resolve stageName), custom fields (resolve customField.slug), e capability matrix (quais ops são server-side vs client-side).",
+      "Retorna catálogo completo de fields/ops que o Filter Engine suporta NESTA location. Use APENAS UMA VEZ por turn — resultado é volumoso, releia antes de chamar de novo.\n\n" +
+      "Lista: capability matrix (29 fields contact + opp), pipelines + stages (resolve stageName), e CUSTOM FIELDS SEPARADOS por model:\n" +
+      "  • custom_fields_contact[]: CFs com model=contact. FEL: `customField.{fieldKey-sem-prefix}` ou `customField.{UUID}`.\n" +
+      "  • custom_fields_opportunity[]: CFs com model=opportunity. FEL: `opportunity.customField.{fieldKey-sem-prefix}` ou `opportunity.customField.{UUID}`.\n\n" +
+      "⚠️ Cada CF retornado tem `fel_reference` pronto pra usar literalmente em FEL.\n\n" +
+      "Quando rep pergunta 'dá pra filtrar por X?' OU 'qual o nome do campo X?': chame UMA vez e use a info dos campos retornados pra responder. NUNCA chame 2+ vezes no mesmo turn (resposta é idêntica + cache 10min).",
     risk: "safe",
     parameters: {
       type: "object",
@@ -392,18 +398,40 @@ const describeFilterCapabilities: ToolEntry = {
     }
 
     if (include_custom_fields) {
+      // Pedro 2026-05-15: busca AMBOS modelos (contact + opportunity).
+      // Endpoint default GHL `/customFields` só retorna contact; opp precisa
+      // `?model=opportunity`. Rep tentou filtrar opp.policy_anniversary
+      // e engine não conhecia.
       try {
-        const cfs = await getCustomFields(ctx.ghlClient, ctx.locationId);
-        result.custom_fields = cfs.map((cf) => ({
+        const [contactCfs, oppCfs] = await Promise.all([
+          getCustomFields(ctx.ghlClient, ctx.locationId).catch(() => []),
+          getOpportunityCustomFields(ctx.ghlClient, ctx.locationId).catch(() => []),
+        ]);
+        const stripPrefix = (s: string): string =>
+          s.replace(/^contact\./i, "").replace(/^opportunity\./i, "");
+
+        result.custom_fields_contact = contactCfs.map((cf) => ({
           id: cf.id,
           field_key: cf.fieldKey,
           name: cf.name,
           data_type: cf.dataType,
-          // Mostra slug usável em FEL
           fel_reference: cf.fieldKey
-            ? `customField.${cf.fieldKey}`
+            ? `customField.${stripPrefix(cf.fieldKey)}`
             : `customField.${cf.id}`,
         }));
+        result.custom_fields_opportunity = oppCfs.map((cf) => ({
+          id: cf.id,
+          field_key: cf.fieldKey,
+          name: cf.name,
+          data_type: cf.dataType,
+          fel_reference: cf.fieldKey
+            ? `opportunity.customField.${stripPrefix(cf.fieldKey)}`
+            : `opportunity.customField.${cf.id}`,
+        }));
+        result.custom_fields_total =
+          contactCfs.length + oppCfs.length;
+        // Backward compat (já tinha tools antigas usando custom_fields)
+        result.custom_fields = result.custom_fields_contact;
       } catch (err) {
         result.custom_fields_error = err instanceof Error ? err.message : String(err);
       }

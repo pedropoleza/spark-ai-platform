@@ -185,6 +185,25 @@ export interface OpportunityResult {
   createdAt?: string;
   updatedAt?: string;
   lastStageChangeAt?: string;
+  /**
+   * Pedro 2026-05-15: opps têm `customFields` array embedded no response.
+   * GHL retorna valor em campo diferente conforme dataType:
+   *   TEXT → fieldValueString
+   *   NUMERICAL/MONETARY → fieldValueNumber
+   *   DATE → fieldValueDate (timestamp ms, ex: 1777766400000)
+   *   MULTIPLE_OPTIONS/CHECKBOX → fieldValueArray
+   *   SINGLE_OPTIONS/RADIO → fieldValue (string)
+   * `type` indica o dataType.
+   */
+  customFields?: Array<{
+    id: string;
+    type?: string;
+    fieldValue?: string | number | string[];
+    fieldValueString?: string;
+    fieldValueNumber?: number;
+    fieldValueDate?: number;     // timestamp ms
+    fieldValueArray?: string[];
+  }>;
 }
 
 /** Resultado de uma execução FEL. */

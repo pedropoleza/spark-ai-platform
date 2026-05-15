@@ -228,23 +228,36 @@ export const OPPORTUNITY_FIELDS: Record<string, FieldCapability> = {
 
 /** Resolve capability info pra um FilterableField. */
 export function getFieldCapability(field: string): FieldCapability | null {
-  // Opportunity prefix?
+  // Opportunity custom field? — Pedro 2026-05-15: novo tipo
+  if (field.startsWith("opportunity.customField.")) {
+    // GHL não expõe filter de CF em /opportunities/search via filters body
+    // (probe 2026-05-15: endpoint só aceita query params básicos). Engine
+    // pull all opps + filter client-side. Cap defensivo aplica.
+    return {
+      type: "string",
+      server_side_endpoint: "none",
+      ghl_field_name: "opportunity.customField",
+      server_side_ops: [],
+      client_side_ops: ["eq", "neq", "contains", "not_contains", "exists", "not_exists", "before", "after", "between", "date_eq", "month_day_eq"],
+      notes: "Opportunity custom field — pull all opps + filter client-side (GHL /opportunities/search não aceita filter por CF).",
+    };
+  }
+  // Opportunity standard field prefix?
   if (field.startsWith("opportunity.")) {
     const subfield = field.slice("opportunity.".length);
     return OPPORTUNITY_FIELDS[subfield] || null;
   }
-  // Custom field prefix?
+  // Contact custom field prefix?
   if (field.startsWith("customField.")) {
-    // Custom fields têm capability dinâmica baseada no type retornado por
-    // /locations/{id}/customFields. Default conservador: server-side
-    // `eq` apenas; resto vai client-side. Resolver decide.
+    // GHL /contacts/search V2 aceita filter de CF (probe 2026-05-15 confirmou
+    // operator `eq`). Outros operators caem em client-side.
     return {
       type: "string",
       server_side_endpoint: "contacts_search",
       ghl_field_name: "customField",
       server_side_ops: ["eq"],
       client_side_ops: ["eq", "neq", "contains", "not_contains", "exists", "not_exists"],
-      notes: "Custom field — capability completa depende do type detectado em runtime.",
+      notes: "Contact custom field — capability completa depende do type detectado em runtime.",
     };
   }
   return CONTACT_FIELDS[field] || null;

@@ -358,6 +358,13 @@ async function paginateOpportunitiesSearch(
   workspace: Workspace,
   cap: number,
 ): Promise<OpportunityResult[]> {
+  type GhlCustomFieldEntry = {
+    id: string;
+    fieldValue?: string | number | string[];
+    fieldValueString?: string;
+    fieldValueNumber?: number;
+    fieldValueArray?: string[];
+  };
   type Resp = {
     opportunities?: Array<{
       id: string;
@@ -371,6 +378,7 @@ async function paginateOpportunitiesSearch(
       createdAt?: string;
       updatedAt?: string;
       lastStageChangeAt?: string;
+      customFields?: GhlCustomFieldEntry[];
       contact?: { id: string; name?: string };
     }>;
     meta?: {
@@ -418,6 +426,9 @@ async function paginateOpportunitiesSearch(
         createdAt: o.createdAt,
         updatedAt: o.updatedAt,
         lastStageChangeAt: o.lastStageChangeAt,
+        // Pedro 2026-05-15: customFields embedded — engine usa pra client-side
+        // filter de `opportunity.customField.*`.
+        customFields: o.customFields,
       });
     }
 
@@ -587,6 +598,32 @@ function extractFieldValue(
   item: ContactResult | OpportunityResult,
 ): unknown {
   const rec = item as unknown as Record<string, unknown>;
+
+  // Opportunity custom field — Pedro 2026-05-15
+  if (field.startsWith("opportunity.customField.")) {
+    const ref = field.slice("opportunity.customField.".length);
+    const oppItem =
+      "opportunities" in item && item.opportunities && item.opportunities.length > 0
+        ? item.opportunities[0]
+        : (item as OpportunityResult);
+    const cfs = (oppItem as { customFields?: Array<Record<string, unknown>> }).customFields;
+    if (!Array.isArray(cfs)) return undefined;
+    const cf = cfs.find((c) => c.id === ref);
+    if (!cf) return undefined;
+    // GHL retorna valor em campos variados conforme dataType.
+    // fieldValueDate é timestamp ms — convert pra ISO string pra comparar
+    // com operators temporais (before, after, month_day_eq, etc).
+    if (typeof cf.fieldValueDate === "number") {
+      return new Date(cf.fieldValueDate).toISOString();
+    }
+    return (
+      cf.fieldValue ??
+      cf.fieldValueString ??
+      cf.fieldValueNumber ??
+      cf.fieldValueArray
+    );
+  }
+
   if (field.startsWith("opportunity.")) {
     const sub = field.slice("opportunity.".length);
     if ("opportunities" in item && item.opportunities && item.opportunities.length > 0) {
@@ -594,11 +631,18 @@ function extractFieldValue(
     }
     return rec[sub];
   }
+
+  // Contact custom field
   if (field.startsWith("customField.")) {
     const ref = field.slice("customField.".length);
-    if ("customFields" in item && item.customFields) {
-      const found = item.customFields.find((cf) => cf.id === ref || cf.key === ref);
-      return found?.value;
+    if ("customFields" in item && Array.isArray(item.customFields)) {
+      // Contact CFs têm shape { id, key?, value } — opp CFs têm shape diferente.
+      // Aqui só contact entra (compiler garante o roteamento por field prefix).
+      const found = item.customFields.find((cf) => {
+        const c = cf as { id?: string; key?: string };
+        return c.id === ref || c.key === ref;
+      });
+      return (found as { value?: unknown } | undefined)?.value;
     }
     return undefined;
   }

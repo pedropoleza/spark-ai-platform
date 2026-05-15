@@ -42,6 +42,8 @@ export {
 export {
   getPipelines,
   getCustomFields,
+  getOpportunityCustomFields,
+  getAllCustomFields,
   invalidateLocation,
   invalidateAll,
   getCacheStats,
