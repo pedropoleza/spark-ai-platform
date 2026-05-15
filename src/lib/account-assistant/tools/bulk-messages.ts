@@ -236,6 +236,83 @@ export async function adjustStartAtForQuietHours(
   }
 }
 
+/**
+ * Detecta bulk jobs ATIVOS (running ou paused) do rep nessa location.
+ * Pedro 2026-05-15: bot precisa avisar rep quando outro disparo tá em
+ * andamento ANTES de criar novo. Rep escolhe esperar OU paralelo (com
+ * risco de espaçamento desigual no WhatsApp do número de envio).
+ */
+export interface ActiveBulkJob {
+  job_id: string;
+  status: "running" | "paused";
+  total_contacts: number;
+  sent_count: number;
+  pending_count: number;
+  segments_labels: string[];
+  delivery_strategy_type: string;
+  next_scheduled_at: string | null;
+  estimated_completion_at: string | null;
+  is_multi_segment: boolean;
+}
+
+export async function getActiveBulkJobs(
+  repId: string,
+  locationId: string,
+): Promise<ActiveBulkJob[]> {
+  const supabase = createAdminClient();
+  const { data: jobs } = await supabase
+    .from("bulk_message_jobs")
+    .select(
+      "id, status, total_contacts, sent_count, filter_config, estimated_completion_at",
+    )
+    .eq("rep_id", repId)
+    .eq("location_id", locationId)
+    .in("status", ["running", "paused"])
+    .order("created_at", { ascending: false });
+  if (!jobs || jobs.length === 0) return [];
+
+  // Pra cada job ativo, pega next_scheduled_at do recipient pending mais próximo
+  const jobIds = jobs.map((j) => j.id);
+  const { data: nextScheduled } = await supabase
+    .from("bulk_message_recipients")
+    .select("job_id, scheduled_at")
+    .in("job_id", jobIds)
+    .eq("status", "pending")
+    .order("scheduled_at", { ascending: true });
+  const nextByJob = new Map<string, string>();
+  for (const r of nextScheduled || []) {
+    if (!nextByJob.has(r.job_id)) {
+      nextByJob.set(r.job_id, r.scheduled_at);
+    }
+  }
+
+  return jobs.map((j) => {
+    const fc = j.filter_config as Record<string, unknown> | null;
+    const isMulti = fc && fc.type === "multi";
+    const segments = isMulti
+      ? ((fc.segments as Array<{ label: string }> | undefined) || []).map(
+          (s) => s.label,
+        )
+      : [];
+    const strategy = isMulti
+      ? (fc.delivery_strategy as Record<string, unknown> | undefined)
+      : undefined;
+    const pending = j.total_contacts - (j.sent_count || 0);
+    return {
+      job_id: j.id,
+      status: j.status as "running" | "paused",
+      total_contacts: j.total_contacts,
+      sent_count: j.sent_count || 0,
+      pending_count: pending,
+      segments_labels: segments,
+      delivery_strategy_type: (strategy?.type as string) || "today",
+      next_scheduled_at: nextByJob.get(j.id) || null,
+      estimated_completion_at: j.estimated_completion_at,
+      is_multi_segment: !!isMulti,
+    };
+  });
+}
+
 export async function resolveAgentId(
   locationId: string,
 ): Promise<string | null> {

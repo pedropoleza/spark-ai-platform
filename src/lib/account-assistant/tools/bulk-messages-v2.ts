@@ -39,6 +39,8 @@ import {
   getDailyCap,
   adjustStartAtForQuietHours,
   resolveAgentId,
+  getActiveBulkJobs,
+  type ActiveBulkJob,
 } from "./bulk-messages";
 import { computeBatchedScheduledAts, computeDeliveryOptions } from "./bulk-delivery-strategy";
 import {
@@ -47,6 +49,92 @@ import {
 } from "./bulk-summary-formatter";
 import { generatePreviewVariations } from "../proactive/bulk-message-variator";
 import { getRepGhlUserId } from "./types";
+
+// Pedro 2026-05-15: recomendação de coexistência entre jobs.
+interface CoexistenceRecommendation {
+  has_active_jobs: boolean;
+  active_jobs_summary: Array<{
+    job_id: string;
+    label_short: string;     // ex: "M1 (12/14 pendentes)"
+    status: string;
+    next_scheduled_at: string | null;
+    estimated_completion_at: string | null;
+    segments: string[];
+  }>;
+  /** start_at sugerido pra evitar overlap (ETA do job mais demorado + 5min buffer) */
+  suggested_start_after: string | null;
+  /** Texto pronto pro bot exibir o menu de coexistência */
+  recommendation_text: string;
+}
+
+function computeCoexistenceRecommendation(
+  activeJobs: ActiveBulkJob[],
+): CoexistenceRecommendation {
+  // Job mais demorado pra calcular suggested_start_after
+  let latestEnd: number | null = null;
+  for (const j of activeJobs) {
+    const eta = j.estimated_completion_at ? new Date(j.estimated_completion_at).getTime() : null;
+    const next = j.next_scheduled_at ? new Date(j.next_scheduled_at).getTime() : null;
+    const candidate = eta ?? next;
+    if (candidate && (latestEnd === null || candidate > latestEnd)) latestEnd = candidate;
+  }
+  const suggestedStartAfter = latestEnd
+    ? new Date(latestEnd + 5 * 60_000).toISOString()  // +5min buffer
+    : null;
+
+  const summary = activeJobs.map((j) => {
+    const segmentsStr = j.segments_labels.length > 0
+      ? j.segments_labels.join(", ")
+      : "(legacy)";
+    return {
+      job_id: j.job_id,
+      label_short: `${segmentsStr} (${j.sent_count}/${j.total_contacts} enviadas, ${j.pending_count} pendentes)`,
+      status: j.status,
+      next_scheduled_at: j.next_scheduled_at,
+      estimated_completion_at: j.estimated_completion_at,
+      segments: j.segments_labels,
+    };
+  });
+
+  // Texto formatado pro bot exibir
+  const lines: string[] = [];
+  lines.push(`⚠️ *Você já tem ${activeJobs.length === 1 ? "1 disparo" : `${activeJobs.length} disparos`} em andamento:*`);
+  for (const s of summary) {
+    const eta = s.estimated_completion_at
+      ? new Date(s.estimated_completion_at).toLocaleString("pt-BR", {
+          timeZone: "America/New_York",
+          weekday: "short",
+          day: "2-digit",
+          month: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "(ETA n/d)";
+    lines.push(`   • ${s.label_short} — termina ~${eta}`);
+  }
+  lines.push("");
+  lines.push(`📋 *Como prefere fazer o novo disparo?*`);
+  lines.push(`*A.* Esperar o(s) atual(ais) terminar — agendo o novo pra começar depois (ZERO risco)`);
+  if (suggestedStartAfter) {
+    const sugg = new Date(suggestedStartAfter).toLocaleString("pt-BR", {
+      timeZone: "America/New_York",
+      weekday: "short",
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    lines.push(`     Sugestão de start: *${sugg}*`);
+  }
+  lines.push(`*B.* Rodar em paralelo agora (RISCO de espaçamento desigual no WhatsApp — pode disparar 2 msgs do seu número em <30s, aumentando chance de ban)`);
+
+  return {
+    has_active_jobs: true,
+    active_jobs_summary: summary,
+    suggested_start_after: suggestedStartAfter,
+    recommendation_text: lines.join("\n"),
+  };
+}
 
 interface SegmentInput {
   label?: string;
@@ -289,6 +377,13 @@ const previewBulkMessageV2: ToolEntry = {
       : total > 50 || (listTemp === "cold" && total > 5) ? "medium"
       : "low";
 
+    // Pedro 2026-05-15: detecta jobs ATIVOS antes de continuar.
+    // Se houver, bot apresenta menu de coexistência: esperar OU paralelo.
+    const activeJobs = await getActiveBulkJobs(ctx.rep.id, ctx.locationId);
+    const coexistence = activeJobs.length > 0
+      ? computeCoexistenceRecommendation(activeJobs)
+      : null;
+
     // Pedro 2026-05-15: computa OPÇÕES de delivery automaticamente pro bot
     // apresentar como menu numerado (em vez de pergunta aberta).
     const deliveryOptions = computeDeliveryOptions({
@@ -357,6 +452,8 @@ const previewBulkMessageV2: ToolEntry = {
         delivery_options: deliveryOptions,
         // Resumo formatado pro bot exibir pré-confirmação (Pedro 2026-05-15)
         confirmation_summary: confirmationSummary,
+        // Pedro 2026-05-15: coexistência com jobs ativos
+        coexistence: coexistence,
       },
     };
   },
@@ -423,6 +520,12 @@ const scheduleBulkMessageV2: ToolEntry = {
         confirmed_risk_cold: { type: "boolean" },
         confirmed_risk_volume: { type: "boolean" },
         confirmed_first_bulk: { type: "boolean" },
+        // Pedro 2026-05-15: pra rodar paralelo a outro job ativo
+        confirmed_parallel_run: {
+          type: "boolean",
+          description:
+            "OBRIGATÓRIO=true SE rep escolher rodar em paralelo a outro job ativo (opção B no menu de coexistência). Sem isso, schedule bloqueia.",
+        },
       },
       required: ["segments", "list_temperature"],
     },
@@ -452,6 +555,11 @@ const scheduleBulkMessageV2: ToolEntry = {
       confirmed_first_bulk: args.confirmed_first_bulk === true,
     };
 
+    // Pre-extrai delivery_strategy raw (precisa ANTES do guard de coexistência)
+    const rawDeliveryStrategy = args.delivery_strategy as
+      | { type?: string; days_count?: number; start_at?: string; end_at?: string; interval_seconds?: number; jitter_seconds?: number }
+      | undefined;
+
     // Re-resolve segments (não confiar em snapshot do preview — contatos podem ter mudado)
     const resolveRes = await resolveSegments(segmentsInput, ctx, dedup, 5000);
     if (!resolveRes.ok) {
@@ -461,6 +569,50 @@ const scheduleBulkMessageV2: ToolEntry = {
     const total = resolveRes.total_after_dedup;
     if (total === 0) {
       return { status: "not_found", message: "Nenhum contato bate os filtros após dedup." };
+    }
+
+    // Pedro 2026-05-15: GUARD de coexistência.
+    // Se há job ativo E rep NÃO confirmou parallel_run E NÃO programou start_at
+    // futuro (após ETA do job ativo), BLOQUEIA com erro estruturado pedindo bot
+    // apresentar menu A/B pro rep.
+    const activeJobs = await getActiveBulkJobs(ctx.rep.id, ctx.locationId);
+    if (activeJobs.length > 0 && args.confirmed_parallel_run !== true) {
+      // Verifica se o start_at (ou strategy custom_window.start_at) é DEPOIS
+      // do término dos ativos — nesse caso, OK passar (não-paralelo).
+      const requestedStartAt = (() => {
+        if (rawDeliveryStrategy?.type === "custom_window" && rawDeliveryStrategy.start_at) {
+          return new Date(rawDeliveryStrategy.start_at).getTime();
+        }
+        if (args.start_at) return new Date(String(args.start_at)).getTime();
+        return Date.now();
+      })();
+      const latestActiveEnd = activeJobs
+        .map((j) =>
+          j.estimated_completion_at
+            ? new Date(j.estimated_completion_at).getTime()
+            : j.next_scheduled_at
+              ? new Date(j.next_scheduled_at).getTime()
+              : Date.now(),
+        )
+        .reduce((a, b) => Math.max(a, b), 0);
+      const wouldOverlap = requestedStartAt < latestActiveEnd + 60_000; // 1min buffer
+
+      if (wouldOverlap) {
+        const coexist = computeCoexistenceRecommendation(activeJobs);
+        return {
+          status: "error",
+          message:
+            `🚦 Tem ${activeJobs.length} disparo(s) já em andamento. ` +
+            `Pra agendar esse novo, escolhe uma:\n\n` +
+            `*A.* Esperar — passa \`delivery_strategy={type:"custom_window", start_at:"${coexist.suggested_start_after}", end_at:"<calcula>"}\` pra começar APÓS o(s) atual(ais).\n` +
+            `*B.* Paralelo (risco) — passa \`confirmed_parallel_run:true\` no schedule e o disparo roda junto.\n\n` +
+            `Atual(is) ativo(s):\n` +
+            coexist.active_jobs_summary
+              .map((s) => `  • ${s.label_short}`)
+              .join("\n"),
+          retryable: false,
+        };
+      }
     }
 
     // Computa disclaimers requeridos com base no estado atual
@@ -507,10 +659,7 @@ const scheduleBulkMessageV2: ToolEntry = {
     // Custom field resolver pra interpolação
     const cfResolver = await buildCustomFieldResolver(ctx.ghlClient, ctx.locationId).catch(() => undefined);
 
-    // start_at + delivery_strategy
-    const rawDeliveryStrategy = args.delivery_strategy as
-      | { type?: string; days_count?: number; start_at?: string; end_at?: string; interval_seconds?: number; jitter_seconds?: number }
-      | undefined;
+    // start_at (rawDeliveryStrategy já extraído acima pro guard de coexistência)
     const startAt = args.start_at ? new Date(String(args.start_at)) : new Date();
     if (isNaN(startAt.getTime())) {
       return { status: "error", message: "start_at inválido.", retryable: false };
