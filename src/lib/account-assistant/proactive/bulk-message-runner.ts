@@ -65,19 +65,45 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
   const supabase = createAdminClient();
   const nowIso = new Date().toISOString();
 
+  // F1.5 Pedro 2026-05-16 (caso Gustavo): heartbeat upfront — registra que
+  // runner está vivo MESMO QUE não ache recipients pendentes. Antes, sem
+  // heartbeat, podia-se ter 21h sem tick sem ninguém saber.
+  let tickError: string | null = null;
+  try {
+    await supabase
+      .from("bulk_runner_health")
+      .update({
+        last_tick_at: nowIso,
+        updated_at: nowIso,
+        // Counters preenchidos ao fim da função abaixo
+      })
+      .eq("id", 1);
+  } catch (err) {
+    console.warn("[bulk-runner] heartbeat update falhou:", err);
+  }
+
   // Atomic claim: pega até MAX_PER_TICK pending vencidos. Update SQL atomic
   // marca como 'sending'. Mesmo padrão do reminder-runner.
-  const { data: claimedRaw } = await supabase
-    .from("bulk_message_recipients")
-    .update({ status: "sending" })
-    .eq("status", "pending")
-    .lte("scheduled_at", nowIso)
-    .select("*")
-    .order("scheduled_at", { ascending: true })
-    .limit(MAX_PER_TICK);
+  let claimed: BulkRecipientRow[] = [];
+  try {
+    const { data: claimedRaw } = await supabase
+      .from("bulk_message_recipients")
+      .update({ status: "sending" })
+      .eq("status", "pending")
+      .lte("scheduled_at", nowIso)
+      .select("*")
+      .order("scheduled_at", { ascending: true })
+      .limit(MAX_PER_TICK);
+    claimed = (claimedRaw || []) as BulkRecipientRow[];
+  } catch (err) {
+    tickError = err instanceof Error ? err.message : String(err);
+    await recordTickError(tickError);
+    throw err;
+  }
 
-  const claimed = (claimedRaw || []) as BulkRecipientRow[];
   if (claimed.length === 0) {
+    // Tick OK sem trabalho — reseta consecutive_errors
+    await resetConsecutiveErrors();
     return { fired: 0, failed: 0, skipped: 0, jobs_completed: 0 };
   }
 
@@ -187,7 +213,91 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
     if (completed) jobsCompleted++;
   }
 
+  // F1.5 Pedro 2026-05-16: registra resultado completo no heartbeat.
+  // Útil pro painel admin ver throughput em tempo real.
+  await recordTickSuccess({
+    fired,
+    failed,
+    skipped,
+    jobs_completed: jobsCompleted,
+  });
+
   return { fired, failed, skipped, jobs_completed: jobsCompleted };
+}
+
+/**
+ * F1.5: registra tick bem-sucedido + reseta error streak.
+ */
+async function recordTickSuccess(result: BulkRunResult): Promise<void> {
+  const supabase = createAdminClient();
+  try {
+    await supabase
+      .from("bulk_runner_health")
+      .update({
+        last_tick_at: new Date().toISOString(),
+        last_jobs_processed: result.jobs_completed,
+        last_fired: result.fired,
+        last_failed: result.failed,
+        last_skipped: result.skipped,
+        consecutive_errors: 0,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", 1);
+  } catch (err) {
+    console.warn("[bulk-runner] recordTickSuccess falhou:", err);
+  }
+}
+
+async function resetConsecutiveErrors(): Promise<void> {
+  const supabase = createAdminClient();
+  try {
+    await supabase
+      .from("bulk_runner_health")
+      .update({ consecutive_errors: 0, updated_at: new Date().toISOString() })
+      .eq("id", 1);
+  } catch {
+    // não fatal
+  }
+}
+
+/**
+ * F1.5: registra erro de tick + incrementa streak.
+ * Quando consecutive_errors >= 3, cria admin_signal pra avisar.
+ */
+async function recordTickError(errorMsg: string): Promise<void> {
+  const supabase = createAdminClient();
+  try {
+    const { data: current } = await supabase
+      .from("bulk_runner_health")
+      .select("consecutive_errors")
+      .eq("id", 1)
+      .maybeSingle();
+    const streak = (current?.consecutive_errors ?? 0) + 1;
+    await supabase
+      .from("bulk_runner_health")
+      .update({
+        last_error: errorMsg.slice(0, 500),
+        last_error_at: new Date().toISOString(),
+        consecutive_errors: streak,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", 1);
+
+    // Cria signal admin a partir de 3 erros consecutivos (evita spam transient)
+    if (streak >= 3) {
+      const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+      recordSignalAsync({
+        type: "error",
+        title: `bulk-runner: ${streak} erros consecutivos`,
+        description: errorMsg.slice(0, 500),
+        severity: "high",
+        source: "bot_auto",
+        metadata: { component: "bulk-message-runner", consecutive_errors: streak },
+      });
+    }
+  } catch (err) {
+    console.warn("[bulk-runner] recordTickError falhou:", err);
+  }
 }
 
 async function markRecipientSkipped(

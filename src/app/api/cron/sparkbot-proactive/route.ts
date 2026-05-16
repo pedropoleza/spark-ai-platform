@@ -188,6 +188,22 @@ export async function GET(request: NextRequest) {
   // praticamente sempre processa 0-1 por tick exceto após pausa/quiet_hours.
   const bulkResult = await fireBulkRecipients();
 
+  // F1.5 Pedro 2026-05-16 (caso Gustavo): checa se há jobs RUNNING com
+  // recipients pending mas runner NÃO está enviando há > 5min. Antes,
+  // 3 jobs ficaram 21h com 0 sent sem ninguém perceber.
+  // Strictly opcional — falha silenciosa não derruba cron.
+  try {
+    const { checkBulkRunnerStaleAndAlert } = await import(
+      "@/lib/account-assistant/proactive/bulk-runner-health-check"
+    );
+    await checkBulkRunnerStaleAndAlert();
+  } catch (err) {
+    console.warn(
+      "[cron] bulk runner stale check falhou (não-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   // Polling de delivery status (Stevo): verifica se mensagens proativas
   // recentes foram realmente entregues (status terminal), falharam ou
   // ainda estão pendentes. Atualiza metadata + auto-fallback pra web

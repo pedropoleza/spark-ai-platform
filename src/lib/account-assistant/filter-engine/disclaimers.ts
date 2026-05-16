@@ -55,15 +55,18 @@ export function computeDisclaimers(input: DisclaimerInput): Disclaimer[] {
   const temp = input.list_temperature || "unknown";
 
   // 1) SEMPRE pergunte temperatura ANTES de risk-tier (a menos que rep já confirmou)
+  // Pedro 2026-05-16 (caso Gustavo): só dispara em 'unknown'. Quando rep ou bot
+  // já infere warm/cold pelo contexto, NÃO mostra esse disclaimer separado —
+  // economiza turn no checklist final.
   if (temp === "unknown" && total >= 1) {
     list.push({
       key: "lista_quente_required",
       severity: "critical",
       required_flag: "confirmed_warm_list",
       text:
-        "⚠️ Antes de disparar em massa, preciso saber: essa é uma *lista quente* (pessoas que JÁ INTERAGIRAM com você no WhatsApp antes — te mandaram msg, responderam algo, são clientes ativos)? " +
-        "Ou é uma *lista fria* (números coletados de forma indireta, sem interação prévia)?\n\n" +
-        "Disparar pra lista fria = risco alto de denúncia e *banimento do número WhatsApp*. Pra fria, o cap seguro é ~10 msgs/dia. Pra quente, dá pra mandar mais.\n\n" +
+        "⚠️ Preciso saber a *temperatura da lista* pra calcular risco: " +
+        "QUENTE = pessoas que já interagiram com você antes. " +
+        "FRIA = números sem interação prévia (alto risco de ban WhatsApp). " +
         "Me confirma: *quente* ou *fria*?",
     });
   }
@@ -140,14 +143,22 @@ export function formatDisclaimersForWhatsApp(disclaimers: Disclaimer[]): string 
 
 /**
  * Combined disclaimer format (H31.2, Pedro 2026-05-15).
+ * Ativado em V2 por Pedro 2026-05-16 após caso Gustavo (loop de 5+ confirmações).
  * Quando há 2+ disclaimers, combina em CHECKLIST único pra rep dar
  * "tudo ok" como aceite global (reduz turns).
+ *
+ * Fix Pedro 2026-05-16: template literal interpolation estava quebrado
+ * (string literal usava ${...} em vez de backtick). Agora usa template
+ * literal corretamente.
  */
 export function formatDisclaimersChecklist(disclaimers: Disclaimer[]): string {
   if (disclaimers.length === 0) return "";
   if (disclaimers.length === 1) return disclaimers[0].text;
 
-  const lines: string[] = ["*Antes de confirmar, preciso de OK em ${disclaimers.length} pontos:*", ""];
+  const lines: string[] = [
+    `*Antes de confirmar, preciso de OK em ${disclaimers.length} pontos:*`,
+    "",
+  ];
   for (let i = 0; i < disclaimers.length; i++) {
     const d = disclaimers[i];
     // Extrai 1 linha resumida do disclaimer pra checklist (não o texto longo)
@@ -155,8 +166,8 @@ export function formatDisclaimersChecklist(disclaimers: Disclaimer[]): string {
     lines.push(`☐ *${i + 1}.* ${summary}`);
   }
   lines.push("");
-  lines.push(`Responda *"tudo ok"* pra aceitar todos, ou aponte o que mudar.`);
-  return lines.join("\n").replace("${disclaimers.length}", String(disclaimers.length));
+  lines.push(`Responda *"tudo ok"* pra aceitar todos, ou aponte o que mudar (ex: "1 ok, 2 não").`);
+  return lines.join("\n");
 }
 
 function extractDisclaimerSummary(d: Disclaimer): string {

@@ -29,6 +29,7 @@ import {
   computeDisclaimers,
   validateDisclaimerFlags,
   formatDisclaimersForWhatsApp,
+  formatDisclaimersChecklist,
   interpolate,
   parseTemplate,
   buildCustomFieldResolver,
@@ -339,7 +340,10 @@ const previewBulkMessageV2: ToolEntry = {
       list_temperature: listTemp,
     });
 
-    // Cap diário
+    // Cap diário — para PREVIEW, conta apenas o dia de envio efetivo
+    // (default = hoje). Bug Gustavo 2026-05-16: antes contava qualquer
+    // recipient nas últimas 24h independente de quando vai sair, então
+    // agendamento futuro era truncado pelo cap atual silenciosamente.
     const agentId = await resolveAgentId(ctx.locationId);
     const cap = await getDailyCap(agentId);
     const usedToday = await countRecipientsLast24h(ctx.locationId);
@@ -445,7 +449,15 @@ const previewBulkMessageV2: ToolEntry = {
           required_flag: d.required_flag,
           text: d.text,
         })),
-        disclaimers_for_whatsapp: formatDisclaimersForWhatsApp(disclaimers),
+        // Pedro 2026-05-16 (caso Gustavo): se 2+ disclaimers, retorna como
+        // CHECKLIST único pra rep dar "tudo ok" em 1 turn. Reduz loop de
+        // confirmação. Se 1 só, mantém texto completo.
+        disclaimers_for_whatsapp:
+          disclaimers.length >= 2
+            ? formatDisclaimersChecklist(disclaimers)
+            : formatDisclaimersForWhatsApp(disclaimers),
+        disclaimers_format:
+          disclaimers.length >= 2 ? "checklist" : "single",
         examples,
         interleave_segments: interleave,
         // Pedro 2026-05-15: opções pré-calculadas pro bot apresentar como menu
@@ -571,48 +583,30 @@ const scheduleBulkMessageV2: ToolEntry = {
       return { status: "not_found", message: "Nenhum contato bate os filtros após dedup." };
     }
 
-    // Pedro 2026-05-15: GUARD de coexistência.
-    // Se há job ativo E rep NÃO confirmou parallel_run E NÃO programou start_at
-    // futuro (após ETA do job ativo), BLOQUEIA com erro estruturado pedindo bot
-    // apresentar menu A/B pro rep.
+    // F1.6 Pedro 2026-05-16 (caso Gustavo): coexistência vira WARNING info,
+    // NÃO bloqueia mais. Rep pediu "fazer vários ao mesmo tempo" — não devemos
+    // forçar A/B menu. Bot fica informado (active_jobs no result) pra
+    // mencionar em prosa se útil ("vou criar paralelo aos 3 que já tão rodando").
+    //
+    // Antes: error 'Tem N disparos em andamento, escolhe A ou B'. Resultava em
+    // turn extra desnecessário. Agora: schedule passa direto, mas response
+    // carrega `active_jobs_warning` pra LLM mencionar com elegância.
     const activeJobs = await getActiveBulkJobs(ctx.rep.id, ctx.locationId);
-    if (activeJobs.length > 0 && args.confirmed_parallel_run !== true) {
-      // Verifica se o start_at (ou strategy custom_window.start_at) é DEPOIS
-      // do término dos ativos — nesse caso, OK passar (não-paralelo).
-      const requestedStartAt = (() => {
-        if (rawDeliveryStrategy?.type === "custom_window" && rawDeliveryStrategy.start_at) {
-          return new Date(rawDeliveryStrategy.start_at).getTime();
-        }
-        if (args.start_at) return new Date(String(args.start_at)).getTime();
-        return Date.now();
-      })();
-      const latestActiveEnd = activeJobs
-        .map((j) =>
-          j.estimated_completion_at
-            ? new Date(j.estimated_completion_at).getTime()
-            : j.next_scheduled_at
-              ? new Date(j.next_scheduled_at).getTime()
-              : Date.now(),
-        )
-        .reduce((a, b) => Math.max(a, b), 0);
-      const wouldOverlap = requestedStartAt < latestActiveEnd + 60_000; // 1min buffer
-
-      if (wouldOverlap) {
-        const coexist = computeCoexistenceRecommendation(activeJobs);
-        return {
-          status: "error",
-          message:
-            `🚦 Tem ${activeJobs.length} disparo(s) já em andamento. ` +
-            `Pra agendar esse novo, escolhe uma:\n\n` +
-            `*A.* Esperar — passa \`delivery_strategy={type:"custom_window", start_at:"${coexist.suggested_start_after}", end_at:"<calcula>"}\` pra começar APÓS o(s) atual(ais).\n` +
-            `*B.* Paralelo (risco) — passa \`confirmed_parallel_run:true\` no schedule e o disparo roda junto.\n\n` +
-            `Atual(is) ativo(s):\n` +
-            coexist.active_jobs_summary
-              .map((s) => `  • ${s.label_short}`)
-              .join("\n"),
-          retryable: false,
-        };
-      }
+    let coexistenceWarning: {
+      active_jobs_count: number;
+      active_jobs_summary: ReturnType<typeof computeCoexistenceRecommendation>["active_jobs_summary"];
+      note: string;
+    } | null = null;
+    if (activeJobs.length > 0) {
+      const coexist = computeCoexistenceRecommendation(activeJobs);
+      coexistenceWarning = {
+        active_jobs_count: activeJobs.length,
+        active_jobs_summary: coexist.active_jobs_summary,
+        note:
+          `ℹ️ Você já tem ${activeJobs.length} disparo(s) ativo(s). ` +
+          `Esse novo job vai rodar em paralelo. Risco baixo se respeitar interval 90s+, mas ` +
+          `WhatsApp pode espaçar desigual quando há múltiplos jobs.`,
+      };
     }
 
     // Computa disclaimers requeridos com base no estado atual
@@ -633,28 +627,95 @@ const scheduleBulkMessageV2: ToolEntry = {
       };
     }
 
-    // Cap diário
+    // Cap diário — Fix Pedro 2026-05-16 (caso Gustavo):
+    // Determina QUANDO os envios vão acontecer pra aplicar cap do dia correto.
+    // - "today" → cap do dia atual
+    // - "custom_window" → cap do dia de start_at
+    // - "spread_days" → cap divide entre os N dias (ver lógica abaixo)
+    //
+    // Antes, qualquer agendamento contava contra cap "now", então M3 pra
+    // terça 19/05 era truncado pelo cap do dia 16/05 (98/100). Truncamento
+    // silencioso = Gustavo viu 6 → 2 sem entender por quê.
     const agentId = await resolveAgentId(ctx.locationId);
     const cap = await getDailyCap(agentId);
-    const usedToday = await countRecipientsLast24h(ctx.locationId);
-    const remaining = cap === null ? Infinity : Math.max(0, cap - usedToday);
-    if (cap !== null && total > remaining) {
-      if (remaining === 0) {
+
+    // Calcula dia(s) de envio efetivo pra checar cap correto
+    const effectiveSendDate = (() => {
+      if (rawDeliveryStrategy?.type === "custom_window" && rawDeliveryStrategy.start_at) {
+        return new Date(rawDeliveryStrategy.start_at);
+      }
+      if (rawDeliveryStrategy?.type === "spread_days") {
+        // Spread divide entre N dias — vamos checar cap do PRIMEIRO dia
+        // (geralmente hoje); dias subsequentes têm cap "limpo" (futuro)
+        return args.start_at ? new Date(String(args.start_at)) : new Date();
+      }
+      return args.start_at ? new Date(String(args.start_at)) : new Date();
+    })();
+
+    const usedOnSendDate = await countRecipientsLast24h(ctx.locationId, effectiveSendDate);
+    const remaining = cap === null ? Infinity : Math.max(0, cap - usedOnSendDate);
+
+    // F1.4 Pedro 2026-05-16: expõe trim info pra LLM explicar com precisão.
+    let capTrimInfo: {
+      trimmed_count: number;
+      cap_value: number;
+      used_on_send_date: number;
+      send_date: string;
+      total_requested: number;
+      enqueued_after_trim: number;
+    } | null = null;
+
+    // Pra spread_days, divide o cap por dia — cada dia tem sua janela
+    const daysCount =
+      rawDeliveryStrategy?.type === "spread_days"
+        ? Math.min(Math.max(Number(rawDeliveryStrategy.days_count) || 2, 2), 7)
+        : 1;
+    const effectiveCap =
+      cap === null ? Infinity : daysCount === 1 ? remaining : remaining + cap * (daysCount - 1);
+
+    if (cap !== null && total > effectiveCap) {
+      if (effectiveCap === 0) {
+        const dateStr = effectiveSendDate.toLocaleDateString("pt-BR", {
+          weekday: "short",
+          day: "2-digit",
+          month: "2-digit",
+        });
         return {
           status: "error",
-          message: `Cap diário (${cap}) atingido — ${usedToday} já enfileiradas/enviadas nas últimas 24h. Tente amanhã.`,
+          message:
+            `⚠️ Cap diário (${cap}) já atingido pra ${dateStr} — ` +
+            `${usedOnSendDate} msgs já agendadas pra esse dia. ` +
+            `Tente outro dia ou use bulk_request_cap_override (em breve) pra liberar mais.`,
           retryable: false,
         };
       }
-      // Trim segments proporcionalmente até total ≤ remaining
-      let toRemove = total - remaining;
+      // Trim segments proporcionalmente até total ≤ effectiveCap
+      let toRemove = total - effectiveCap;
+      const trimmedCount = toRemove;
       for (let i = resolveRes.segments.length - 1; i >= 0 && toRemove > 0; i--) {
         const seg = resolveRes.segments[i];
         const take = Math.min(seg.contacts.length, toRemove);
         seg.contacts = seg.contacts.slice(0, seg.contacts.length - take);
         toRemove -= take;
       }
+      // F1.4 Pedro 2026-05-16: mensagem clara sobre trim do cap.
+      // Antes V2 trimmava silenciosamente e bot falava "pode ser stage no CRM".
+      // Agora trim é loggado E exposto no resultado pra LLM explicar com precisão.
+      console.log(
+        `[bulk-v2] trim por cap: trimou ${trimmedCount} recipients. ` +
+        `Cap dia ${effectiveSendDate.toISOString().slice(0, 10)}: ${cap}, ` +
+        `já usado: ${usedOnSendDate}, remaining: ${effectiveCap}, total pedido: ${total}.`,
+      );
+      capTrimInfo = {
+        trimmed_count: trimmedCount,
+        cap_value: cap,
+        used_on_send_date: usedOnSendDate,
+        send_date: effectiveSendDate.toISOString().slice(0, 10),
+        total_requested: total,
+        enqueued_after_trim: total - trimmedCount,
+      };
     }
+    const usedToday = usedOnSendDate; // alias pra resto do código
 
     // Custom field resolver pra interpolação
     const cfResolver = await buildCustomFieldResolver(ctx.ghlClient, ctx.locationId).catch(() => undefined);
@@ -868,6 +929,19 @@ const scheduleBulkMessageV2: ToolEntry = {
         delivery_channel: deliveryChannel,
         delivery_strategy: deliveryStrategy,
         daily_breakdown: dailyBreakdown,
+        // F1.6 Pedro 2026-05-16: warning de coexistência (não-bloqueante).
+        // Bot menciona em prosa quando útil ("vou criar paralelo aos 3 ativos").
+        coexistence_warning: coexistenceWarning,
+        // F1.4 Pedro 2026-05-16: se cap truncou recipients, expõe info clara
+        // pra LLM explicar pro rep. Antes bot inventava motivo ("pode ser stage").
+        cap_trim_info: capTrimInfo,
+        cap_trim_message: capTrimInfo
+          ? `⚠️ ATENÇÃO: Cap diário cortou ${capTrimInfo.trimmed_count} contatos. ` +
+            `Foram enfileirados ${capTrimInfo.enqueued_after_trim} de ${capTrimInfo.total_requested} pedidos. ` +
+            `Motivo: dia ${capTrimInfo.send_date} já tem ${capTrimInfo.used_on_send_date}/${capTrimInfo.cap_value} agendados. ` +
+            `EXPLIQUE ISSO PRO REP claramente — não atribua o trim a "stage no CRM" ou outro motivo. ` +
+            `Sugira: agendar os ${capTrimInfo.trimmed_count} restantes pra outro dia OU usar override de cap (em breve).`
+          : null,
         // Resumo formatado pro bot exibir confirmação (Pedro 2026-05-15)
         schedule_summary: scheduleSummary,
         message: `Job ${job.id.slice(0, 8)} enfileirado: ${recipientRows.length} msgs em ${resolveRes.segments.length} segments. Runner dispara em ~${eta}min com intervalo ${intervalSeconds}s ± ${jitterSeconds}s.`,

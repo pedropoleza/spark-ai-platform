@@ -82,5 +82,6 @@ export {
   computeDisclaimers,
   validateDisclaimerFlags,
   formatDisclaimersForWhatsApp,
+  formatDisclaimersChecklist,
 } from "./disclaimers";
 export type { Disclaimer, DisclaimerKey, DisclaimerInput } from "./disclaimers";

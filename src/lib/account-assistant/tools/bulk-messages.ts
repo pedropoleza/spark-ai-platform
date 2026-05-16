@@ -100,30 +100,59 @@ async function fetchContactsByTag(
 }
 
 /**
- * Conta quantas recipients foram criadas nas últimas 24h pra esta location.
- * Usado pra enforcement do daily_bulk_message_cap.
+ * Conta quantas recipients estão agendadas pra ENVIAR num dia específico
+ * (default: hoje, na timezone America/New_York). Usado pra enforcement do
+ * daily_bulk_message_cap.
+ *
+ * Fix Pedro 2026-05-16 (caso Gustavo): antes contava qualquer recipient
+ * criado nas últimas 24h — isso era errado porque um job agendado pra
+ * terça 19/05 era contado contra cap do dia 16/05 (data de criação),
+ * truncando silenciosamente 6 → 2 recipients. Agora conta por DIA DE
+ * ENVIO (scheduled_at), não por dia de criação. Cap do dia 19 só pesa
+ * recipients que VÃO SAIR no dia 19.
+ *
+ * @param locationId - location pra filtrar
+ * @param windowDate - opcional ISO date (YYYY-MM-DD). Default: hoje em ET.
  */
-export async function countRecipientsLast24h(locationId: string): Promise<number> {
+export async function countRecipientsLast24h(
+  locationId: string,
+  windowDate?: Date | string,
+): Promise<number> {
   const supabase = createAdminClient();
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  // Resolve janela [dayStart, dayEnd) baseado no windowDate (default hoje ET).
+  // Pra simplicidade usa UTC offset fixo do ET (-04:00 EDT, -05:00 EST) —
+  // pode dar +1h de drift na transição DST mas não é crítico pro cap.
+  const target = windowDate
+    ? typeof windowDate === "string"
+      ? new Date(windowDate)
+      : windowDate
+    : new Date();
+  // ET é UTC-4 (verão) ou UTC-5 (inverno). Usa -4h como aproximação.
+  // Pra cap diário, a precisão exata na borda da meia-noite não é crítica.
+  const etOffsetMs = 4 * 60 * 60 * 1000;
+  const targetEt = new Date(target.getTime() - etOffsetMs);
+  const dayStr = targetEt.toISOString().slice(0, 10); // YYYY-MM-DD em ET
+  const dayStartIso = new Date(dayStr + "T00:00:00-04:00").toISOString();
+  const dayEndIso = new Date(dayStr + "T23:59:59-04:00").toISOString();
+
   // Fix Pedro 2026-05-15: exclui jobs cancelled (recipients que
   // NUNCA vão sair não devem contar pro cap diário).
   const { data: jobs } = await supabase
     .from("bulk_message_jobs")
     .select("id")
     .eq("location_id", locationId)
-    .neq("status", "cancelled")
-    .gte("created_at", cutoff);
+    .neq("status", "cancelled");
   if (!jobs || jobs.length === 0) return 0;
   const jobIds = jobs.map((j) => j.id);
-  // Também exclui recipients individuais com status=cancelled OU skipped
-  // (não saíram, não contam pro cap).
+  // Conta recipients com scheduled_at DENTRO do dia alvo + exclui cancelled/skipped.
   const { count } = await supabase
     .from("bulk_message_recipients")
     .select("id", { count: "exact", head: true })
     .in("job_id", jobIds)
     .not("status", "in", "(cancelled,skipped)")
-    .gte("created_at", cutoff);
+    .gte("scheduled_at", dayStartIso)
+    .lte("scheduled_at", dayEndIso);
   return count ?? 0;
 }
 
@@ -539,7 +568,9 @@ const scheduleBulkMessage: ToolEntry = {
 
       const agentId = await resolveAgentId(ctx.locationId);
       const cap = await getDailyCap(agentId);
-      const usedToday = await countRecipientsLast24h(ctx.locationId);
+      // Fix Pedro 2026-05-16: cap só conta recipients agendados pro DIA de envio
+      // efetivo, não dia de criação. V1 usa start_at direto (sem strategy).
+      const usedToday = await countRecipientsLast24h(ctx.locationId, startAt);
       const remaining = cap === null ? Infinity : Math.max(0, cap - usedToday);
 
       let willEnqueue = contacts.length;
@@ -551,15 +582,24 @@ const scheduleBulkMessage: ToolEntry = {
       }
       if (cap !== null && contacts.length > remaining) {
         if (remaining === 0) {
+          const dateStr = startAt.toLocaleDateString("pt-BR", {
+            weekday: "short",
+            day: "2-digit",
+            month: "2-digit",
+          });
           return {
             status: "error",
-            message: `Cap diário de ${cap} msgs atingido (${usedToday} já enfileiradas/enviadas nas últimas 24h). Tente amanhã ou aumente daily_bulk_message_cap.`,
+            message:
+              `⚠️ Cap diário (${cap}) já atingido pra ${dateStr} — ` +
+              `${usedToday} msgs já agendadas pra esse dia. Tente outro dia.`,
             retryable: false,
           };
         }
         willEnqueue = remaining;
         noteParts.push(
-          `Cap diário cortou em ${remaining} (eram ${contacts.length}). ${contacts.length - remaining} ficaram de fora.`,
+          `⚠️ Cap diário cortou em ${remaining} (pedidos: ${contacts.length}). ` +
+          `${contacts.length - remaining} ficaram de fora porque o dia ${startAt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} já tem ${usedToday}/${cap} agendados. ` +
+          `Sugestão: agende os ${contacts.length - remaining} restantes pra outro dia.`,
         );
       }
 
