@@ -195,6 +195,52 @@ const HALLUCINATION_PATTERNS: Array<{
 const GENERIC_WRITE_VERB_REGEX =
   /\b(criei|criamos|agendei|agendamos|marquei|marcamos|salvei|salvamos|anotei|anotamos|registrei|registramos|removi|removemos|adicionei|adicionamos|mandei|mandamos|enviei|enviamos|disparei|disparamos|atualizei|atualizamos|atribu[ií]|atribu[ií]mos|deletei|deletamos|apaguei|apagamos|completei|completamos|fechei|fechamos|movi|movemos|troquei|trocamos|bloqueei|bloqueamos|cancelei|cancelamos|pausei|pausamos|configurei|configuramos|confirmei|confirmamos|inseri|inserimos|despachei|despachamos|cadastrei|cadastramos|importei|importamos|sincronizei|sincronizamos|reagendei|reagendamos|reatribu[ií]|reatribu[ií]mos)\b/i;
 
+/**
+ * Fix H32.7 (review 2026-05-16): checa se o match está em contexto NEGATIVO
+ * ou em PREVIEW de template. Reduz falsos positivos do detector.
+ *
+ * Casos vistos em prod (signal admin):
+ *   ❌ "Henry NÃO TEM oportunidade criada" → "oportunidade criada" pego como hallucination
+ *   ❌ "Não tem NENHUMA mensagens agendadas" → "mensagens agendadas" pego
+ *   ❌ "Mensagem que vai ser enviada: '...Agendamos pra X'" → "Agendamos" pego (é template)
+ *   ❌ "os disparos que agendamos já estão ativos" → "agendamos" pego (referência passada)
+ *
+ * Olha ~80 chars antes do match. Se achar negação OU contexto de preview,
+ * considera falso positivo e ignora.
+ */
+function isNegatedOrPreviewContext(
+  text: string,
+  matchIndex: number,
+): boolean {
+  // Olha 80 chars antes do match (ou desde o início)
+  const lookBehind = text.slice(Math.max(0, matchIndex - 80), matchIndex).toLowerCase();
+  if (lookBehind.length === 0) return false;
+
+  // 1) Negação direta IMEDIATA antes do verbo
+  // Match em: "não", "nenhum/a", "ainda não", "sem", "jamais", "nunca"
+  if (/\b(n[aã]o|nenhum[ao]?|jamais|nunca)\s+(automaticamente\s+|ainda\s+|mais\s+|tem\s+|tenho\s+|temos\s+|h[aá]\s+|existe\s+|existem\s+|nenhum[ao]?\s+)?[\w\s,]{0,15}$/i.test(lookBehind)) {
+    return true;
+  }
+  // 2) Negação distante mas referente: "não tem X" / "não há X" / "sem X agendado"
+  if (/\b(n[aã]o\s+(tem|tenho|temos|h[aá]|existe|existem|preciso|consegui|consigo|d[aá]|posso)|sem\s+nenhum[ao]?|nem\s+)[\w\s,]{0,60}$/i.test(lookBehind)) {
+    return true;
+  }
+  // 3) Contexto de PREVIEW/TEMPLATE — bot mostrando o que vai mandar, não
+  // afirmando que já mandou. "Mensagem que vai ser enviada: '...'"
+  if (/(mensagem|texto|template|preview)\s+(que\s+)?(vai|ser[aá]|vou)\s+[\w\s,]{0,30}$/i.test(lookBehind)) {
+    return true;
+  }
+  if (/(disparo|mensagem|texto)\s+(que\s+(vou\s+)?(mandar|enviar|disparar|ser[aá]|vai))/i.test(lookBehind)) {
+    return true;
+  }
+  // 4) Referência ao PASSADO conjunto (rep+bot) já fizemos — não claim atual
+  // "que agendamos antes", "que combinamos", "que decidimos"
+  if (/\b(que|os\s+que|disparos?\s+que|tarefas?\s+que|notas?\s+que|reuni[aã]o\s+que)\s+(j[aá]\s+)?$/i.test(lookBehind)) {
+    return true;
+  }
+  return false;
+}
+
 function detectHallucination(
   responseText: string,
   toolsCalled: string[],
@@ -210,6 +256,10 @@ function detectHallucination(
   for (const pattern of HALLUCINATION_PATTERNS) {
     const match = responseText.match(pattern.regex);
     if (!match) continue;
+    // Fix H32.7 2026-05-16: skip se contexto negativo/preview/passado
+    if (match.index !== undefined && isNegatedOrPreviewContext(responseText, match.index)) {
+      continue;
+    }
     matchedFamilies.add(pattern.family);
     const hasMatchingTool = pattern.satisfying_tools.some((t) =>
       toolsCalled.includes(t),
@@ -229,6 +279,10 @@ function detectHallucination(
   // sem qualquer write tool).
   const genericMatch = responseText.match(GENERIC_WRITE_VERB_REGEX);
   if (genericMatch) {
+    // Fix H32.7: skip se contexto negativo/preview/passado
+    if (genericMatch.index !== undefined && isNegatedOrPreviewContext(responseText, genericMatch.index)) {
+      return found;
+    }
     const writeToolsCalled = toolsCalled.filter(isWriteTool);
     if (writeToolsCalled.length === 0) {
       // Não tem nenhuma write tool no turn — afirmação totalmente sem suporte
