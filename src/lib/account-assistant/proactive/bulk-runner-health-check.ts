@@ -26,6 +26,7 @@ export interface HealthCheckResult {
   runner_stale: boolean;
   stalled_jobs_count: number;
   alerts_created: number;
+  reps_notified?: number;
 }
 
 export async function checkBulkRunnerStaleAndAlert(): Promise<HealthCheckResult> {
@@ -72,6 +73,8 @@ export async function checkBulkRunnerStaleAndAlert(): Promise<HealthCheckResult>
   // Procura jobs running com recipients pending vencidos há > 10min E
   // job não atualizado nos últimos 30min (sent_count parado).
   let stalledCount = 0;
+  // Track de reps a notificar (dedup por rep+job pra não notificar 5x se 5 jobs travam)
+  const repsToNotify = new Map<string, { reps: Set<string>; jobs: Map<string, string[]> }>();
   try {
     const cutoffStale = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const cutoffOverdue = new Date(Date.now() - 10 * 60 * 1000).toISOString();
@@ -79,7 +82,7 @@ export async function checkBulkRunnerStaleAndAlert(): Promise<HealthCheckResult>
     // Jobs running sem update recente
     const { data: jobs } = await supabase
       .from("bulk_message_jobs")
-      .select("id, rep_id, location_id, sent_count, total_contacts, updated_at, created_at")
+      .select("id, rep_id, location_id, sent_count, total_contacts, updated_at, created_at, label")
       .eq("status", "running")
       .lt("updated_at", cutoffStale);
 
@@ -114,15 +117,38 @@ export async function checkBulkRunnerStaleAndAlert(): Promise<HealthCheckResult>
           },
         });
         alertsCreated++;
+
+        // Pedro 2026-05-16: track rep pra notificar também via WhatsApp
+        const locBucket = repsToNotify.get(job.location_id) ?? { reps: new Set(), jobs: new Map() };
+        locBucket.reps.add(job.rep_id);
+        const repJobs = locBucket.jobs.get(job.rep_id) ?? [];
+        repJobs.push(job.label || `${job.id.slice(0, 8)} (${overdueCount} pending)`);
+        locBucket.jobs.set(job.rep_id, repJobs);
+        repsToNotify.set(job.location_id, locBucket);
       }
     }
   } catch (err) {
     console.warn("[bulk-health] check 2 (stalled jobs) falhou:", err);
   }
 
+  // === Check 3: notifica REPS afetados via WhatsApp ===
+  // Pedro 2026-05-16: além do signal admin, manda msg pro rep avisando que
+  // o disparo dele tá travado e o admin já foi notificado. Dedup: 1 notif
+  // por rep a cada 30min (em rep_identities.profile.bulk_stall_notified_at).
+  let repsNotified = 0;
+  try {
+    if (repsToNotify.size > 0) {
+      const { notifyRepsAboutStalledJobs } = await import("./bulk-runner-rep-notifier");
+      repsNotified = await notifyRepsAboutStalledJobs(repsToNotify);
+    }
+  } catch (err) {
+    console.warn("[bulk-health] rep notification falhou:", err);
+  }
+
   return {
     runner_stale: runnerStale,
     stalled_jobs_count: stalledCount,
     alerts_created: alertsCreated,
+    reps_notified: repsNotified,
   };
 }

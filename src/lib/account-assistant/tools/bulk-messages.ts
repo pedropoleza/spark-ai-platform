@@ -607,7 +607,10 @@ const previewBulkMessage: ToolEntry = {
   def: {
     name: "preview_bulk_message",
     description:
-      "Calcula PREVIEW de um disparo em massa SEM criar nada: total de contatos com a tag, ETA total, 2 exemplos variados, cap restante. Use SEMPRE antes de schedule_bulk_message — bot mostra preview pro rep, rep confirma, AÍ chama schedule_bulk_message.",
+      "⚠️ DEPRECATED (Pedro 2026-05-16): use `preview_bulk_message_v2` (Filter Engine) que suporta multi-segment, " +
+      "filtros complexos (tag + stage + custom field), disclaimers tier, delivery_strategy, etc. " +
+      "Esta tool V1 só aceita 1 tag e existe pra compat. " +
+      "Se rep pedir filtro simples por tag, AINDA prefira V2 com `{field:'tags', op:'contains', value:'<tag>'}`.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -728,7 +731,11 @@ const scheduleBulkMessage: ToolEntry = {
   def: {
     name: "schedule_bulk_message",
     description:
-      "Agenda disparo em massa pra contatos filtrados por tag, com drip mode (envio espaçado pra evitar ban WhatsApp) e variação leve por contato.\n\nFLUXO OBRIGATÓRIO: SEMPRE chame preview_bulk_message PRIMEIRO, mostre os números pro rep ('vou disparar pra X contatos, ETA Y, exemplos: ...'), pergunte 'Confirma?', e SÓ DEPOIS rechame esta tool com confirmed_by_rep:true.\n\nCanais:\n- 'whatsapp_web_sms' = via WhatsApp Web / SMS (Stevo/Evolution) — DEFAULT, suporta TODOS os contatos.\n- 'whatsapp_api' = WhatsApp API oficial (só funciona se rep tem WhatsApp Business API ativo).\n\nAnti-ban: drip 90s ± 30s (configurável), variação 'light' por contato (Haiku). Quiet_hours (ex: 22-7h) respeitadas — pausa e retoma.",
+      "⚠️ DEPRECATED (Pedro 2026-05-16): use `schedule_bulk_message_v2` que suporta " +
+      "multi-segment, filtros via FEL, delivery_strategy (today/spread_days/custom_window), " +
+      "disclaimers tier, label, priority, override de cap. " +
+      "Esta tool V1 só aceita filter por 1 tag e existe pra compat com sessões antigas. " +
+      "Pra todo schedule novo, use V2 com `segments:[{filter, message_template}]`.",
     risk: "high",
     parameters: {
       type: "object",

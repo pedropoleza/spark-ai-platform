@@ -25,6 +25,7 @@ import { runWithTools, type LLMMessage } from "./llm-client";
 import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 // H29/H30/H31 (Pedro 2026-05-15): Conversational UX layer
+// + 4.3 (Pedro 2026-05-16): silence recovery
 import {
   detectRepStyle,
   styleHintForRep,
@@ -33,6 +34,8 @@ import {
   createTurnContext,
   renderTurnContextForPrompt,
   autoRegisterFromToolResult,
+  detectSilenceGap,
+  renderSilenceRecoveryForPrompt,
   type TurnContextState,
 } from "./conversational";
 
@@ -526,6 +529,29 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   }
   const verbosityPref = (rep.profile?.preferences as { verbosity?: "brief" | "normal" | "detailed" } | undefined)?.verbosity;
 
+  // 4.3 Pedro 2026-05-16: detecta silence gap. Lê últimas 4 msgs do rep
+  // com created_at (ConversationTurn não tem timestamp, precisa query).
+  // Caso Gustavo: 5h15min de silêncio entre "cancela" e "você tá funcionando?".
+  let silenceRecoveryBlock = "";
+  try {
+    const { data: recent } = await supabase
+      .from("sparkbot_messages")
+      .select("role, content, created_at")
+      .eq("rep_identity_id", rep.id)
+      .order("created_at", { ascending: false })
+      .limit(6);
+    if (recent && recent.length >= 2) {
+      const msgs = recent.reverse() as Array<{ role: "user" | "assistant" | "system"; content: string; created_at: string }>;
+      const gap = detectSilenceGap(msgs, 30);
+      if (gap) {
+        silenceRecoveryBlock = renderSilenceRecoveryForPrompt(gap);
+        console.log(`[processor] silence gap detectado: ${gap.gap_minutes}min (bot_was_waiting=${gap.bot_was_waiting})`);
+      }
+    }
+  } catch (err) {
+    console.warn("[processor] silence-recovery check falhou (não-fatal):", err);
+  }
+
   const systemPrompt = buildSparkbotSystemPrompt({
     rep,
     locationName: activeLink.location_name || location.location_name || activeLocationId,
@@ -549,6 +575,8 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       // turnContextBlock vazio no início — preenchido conforme tools rodam
       turnContextBlock: renderTurnContextForPrompt(turnContextState),
       verbosityPref,
+      // 4.3 Pedro 2026-05-16: bloco silence recovery quando gap >30min
+      silenceRecoveryBlock,
     },
   });
 

@@ -16,6 +16,9 @@ export {
   registerEntity,
   registerSearch,
   registerWrite,
+  recordQuestion,
+  questionCount,
+  recordBulkChoice,
   autoRegisterFromToolResult,
   renderTurnContextForPrompt,
 } from "./turn-context";
@@ -63,3 +66,10 @@ export type { RecoveryPlan } from "./error-recovery";
 
 // Multi-action
 export { MULTI_ACTION_PROMPT_GUIDE } from "./multi-action";
+
+// Silence recovery (4.3)
+export {
+  detectSilenceGap,
+  renderSilenceRecoveryForPrompt,
+} from "./silence-recovery";
+export type { SilenceGapInfo, MessageForSilenceCheck } from "./silence-recovery";

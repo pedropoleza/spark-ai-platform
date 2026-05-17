@@ -52,6 +52,28 @@ export interface TurnContextState {
     label?: string;
     timestamp: string;
   };
+  /**
+   * Loop detection (4.1 Pedro 2026-05-16): conta quantas vezes bot fez
+   * mesma pergunta semântica na sessão. Quando >=2, prompt orienta
+   * "PARE de re-perguntar, assume escolha anterior". Caso Gustavo
+   * 14:55+14:56: bot mostrou MESMA tela de cap 2 vezes idênticas.
+   */
+  repeated_questions: Record<string, number>;
+  /**
+   * Bulk-specific session state (4.2 Pedro 2026-05-16): registra escolhas
+   * do rep durante flow de bulk pra próximas tools reusarem sem re-perguntar.
+   * Quando rep escolhe "A" no menu de coexistência, ou "tudo ok" no checklist,
+   * ou opção 2 (spread_days) — registra aqui.
+   */
+  bulk_session_state?: {
+    cap_choice?: "wait" | "parallel" | "override";
+    warm_status?: "warm" | "cold" | "mixed";
+    delivery_choice_id?: 1 | 2 | 3;
+    scheduled_at_chosen?: string;
+    accepted_disclaimers?: string[];
+    last_preview_job_id?: string;
+    last_preview_total_contacts?: number;
+  };
 }
 
 /**
@@ -60,7 +82,42 @@ export interface TurnContextState {
 export function createTurnContext(): TurnContextState {
   return {
     resolved: {},
+    repeated_questions: {},
   };
+}
+
+/**
+ * 4.1: registra que bot fez uma pergunta de categoria X. Incrementa counter.
+ * Categorias semânticas (não strings exatas):
+ *   - "warm_status" — "é quente ou fria?"
+ *   - "cap_choice" — "esperar ou paralelo?"
+ *   - "delivery_choice" — "menu hoje/spread/window"
+ *   - "disclaimer_ack" — "confirma os disclaimers?"
+ *   - "general_confirm" — "confirma?" genérico
+ *   - "contact_pick" — "qual contato?"
+ *   - "opp_pick" — "qual opportunity?"
+ */
+export function recordQuestion(state: TurnContextState, category: string): void {
+  state.repeated_questions[category] = (state.repeated_questions[category] ?? 0) + 1;
+}
+
+/**
+ * 4.1: lê quantas vezes pergunta X foi feita. >=2 indica loop iminente.
+ */
+export function questionCount(state: TurnContextState, category: string): number {
+  return state.repeated_questions[category] ?? 0;
+}
+
+/**
+ * 4.2: registra escolha do rep no fluxo bulk pra próximas tools reusarem.
+ */
+export function recordBulkChoice<K extends keyof NonNullable<TurnContextState["bulk_session_state"]>>(
+  state: TurnContextState,
+  key: K,
+  value: NonNullable<TurnContextState["bulk_session_state"]>[K],
+): void {
+  if (!state.bulk_session_state) state.bulk_session_state = {};
+  state.bulk_session_state[key] = value;
 }
 
 /**
@@ -216,6 +273,30 @@ export function autoRegisterFromToolResult(
     return;
   }
 
+  // 4.2 Pedro 2026-05-16: bulk preview/schedule registram session state
+  if (toolName === "preview_bulk_message_v2") {
+    const total = typeof data.total_contacts === "number" ? data.total_contacts : undefined;
+    const temp = typeof data.list_temperature === "string"
+      ? data.list_temperature as "warm" | "cold" | "mixed"
+      : undefined;
+    if (total !== undefined || temp !== undefined) {
+      if (!state.bulk_session_state) state.bulk_session_state = {};
+      if (total !== undefined) state.bulk_session_state.last_preview_total_contacts = total;
+      if (temp === "warm" || temp === "cold" || temp === "mixed") {
+        state.bulk_session_state.warm_status = temp;
+      }
+    }
+  }
+  if (toolName === "schedule_bulk_message_v2" && typeof data.job_id === "string") {
+    if (!state.bulk_session_state) state.bulk_session_state = {};
+    state.bulk_session_state.last_preview_job_id = data.job_id;
+    // Strategy choice persistida
+    const strat = data.delivery_strategy as { type?: string } | undefined;
+    if (strat?.type === "today") state.bulk_session_state.delivery_choice_id = 1;
+    else if (strat?.type === "spread_days") state.bulk_session_state.delivery_choice_id = 2;
+    else if (strat?.type === "custom_window") state.bulk_session_state.delivery_choice_id = 3;
+  }
+
   // === WRITE tools ===
   const writeToolMap: Record<string, string> = {
     create_contact: "contact",
@@ -263,8 +344,12 @@ export function renderTurnContextForPrompt(state: TurnContextState): string {
   const lines: string[] = [];
   const resolved = state.resolved;
   const hasResolved = Object.keys(resolved).some((k) => resolved[k as keyof typeof resolved]);
+  const hasBulkState = state.bulk_session_state && Object.keys(state.bulk_session_state).length > 0;
+  const repeatedAny = Object.entries(state.repeated_questions).some(([, c]) => c >= 2);
 
-  if (!hasResolved && !state.last_search && !state.last_write) return "";
+  if (!hasResolved && !state.last_search && !state.last_write && !hasBulkState && !repeatedAny) {
+    return "";
+  }
 
   lines.push("# CONTEXTO FRESCO DO TURN (entidades já resolvidas — NÃO re-pergunte)");
 
@@ -292,6 +377,37 @@ export function renderTurnContextForPrompt(state: TurnContextState): string {
     lines.push(
       `**Última write:** ${state.last_write.tool} → ${state.last_write.entity_type} ${state.last_write.entity_id.slice(0, 8)}...` +
         (state.last_write.label ? ` (${state.last_write.label})` : ""),
+    );
+  }
+
+  // 4.2: bulk session state
+  if (hasBulkState && state.bulk_session_state) {
+    const bs = state.bulk_session_state;
+    lines.push("");
+    lines.push("**Bulk session state (escolhas do rep já feitas):**");
+    if (bs.warm_status) lines.push(`  • Lista: ${bs.warm_status} (NÃO re-pergunte)`);
+    if (bs.cap_choice) lines.push(`  • Coexistência: ${bs.cap_choice}`);
+    if (bs.delivery_choice_id) lines.push(`  • Delivery: opção ${bs.delivery_choice_id}`);
+    if (bs.scheduled_at_chosen) lines.push(`  • Start_at: ${bs.scheduled_at_chosen}`);
+    if (bs.accepted_disclaimers && bs.accepted_disclaimers.length > 0) {
+      lines.push(`  • Disclaimers OK: ${bs.accepted_disclaimers.join(", ")}`);
+    }
+    if (bs.last_preview_job_id) lines.push(`  • Último job criado: ${bs.last_preview_job_id.slice(0, 8)}`);
+    if (bs.last_preview_total_contacts) lines.push(`  • Último preview: ${bs.last_preview_total_contacts} contatos`);
+  }
+
+  // 4.1: loop detection
+  if (repeatedAny) {
+    lines.push("");
+    lines.push("⚠️ **ALERTAS DE LOOP — você já fez essas perguntas várias vezes:**");
+    for (const [cat, count] of Object.entries(state.repeated_questions)) {
+      if (count >= 2) {
+        lines.push(`  • '${cat}' já perguntado ${count}x — PARE de re-perguntar.`);
+      }
+    }
+    lines.push(
+      "Se rep não respondeu CLARAMENTE ainda, ASSUMA escolha mais segura (esperar, lista quente, opção 1) " +
+      "OU pergunte UMA VEZ DIFERENTE ('me passa um 'sim' ou 'não'?'). NUNCA repita pergunta igual.",
     );
   }
 

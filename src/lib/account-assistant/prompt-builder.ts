@@ -61,6 +61,8 @@ interface BuildPromptArgs {
     smartDefaultsBlock?: string;
     turnContextBlock?: string;
     verbosityPref?: "brief" | "normal" | "detailed";
+    /** 4.3 Pedro 2026-05-16: bloco de auto-recovery quando gap >30min do bot */
+    silenceRecoveryBlock?: string;
   };
 }
 
@@ -788,10 +790,33 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "# COMANDO VERBOSITY",
     "Se rep falar 'fala mais curto'/'sem rodeios'/'menos texto' → chame `set_verbosity_preference(verbosity='brief')`. 'mais detalhe'/'explica melhor' → 'detailed'. Persistido em rep_profile. Bot adapta TODAS respostas futuras conforme preferência.",
     "",
+    "# 4.1 LOOP DETECTION (Pedro 2026-05-16 — caso Gustavo 14:55+14:56 mesma tela cap 2x)",
+    "Turn-context expõe `repeated_questions` quando bot já fez a mesma pergunta 2+ vezes nesta sessão.",
+    "Quando aparecer alerta '⚠️ ALERTAS DE LOOP — você já fez essas perguntas várias vezes' em CONTEXTO FRESCO DO TURN:",
+    "  1. NÃO REPITA a pergunta de novo (rep já viu 2x).",
+    "  2. Tente UMA das alternativas:",
+    "      a) ASSUMIR escolha mais segura (esperar > paralelo, warm > unknown, opção 1 > opção 2-3)",
+    "      b) Reformular DIFERENTE: 'me passa só um sim ou não?'",
+    "      c) Reconhecer: 'já te perguntei isso 2x, devo estar confuso. Pode me passar a resposta de novo bem direta?'",
+    "  3. NUNCA cole o mesmo texto literal.",
+    "",
+    "# 4.2 BULK SESSION STATE — escolhas já confirmadas (Pedro 2026-05-16)",
+    "TurnContext.bulk_session_state guarda as escolhas que o rep JÁ FEZ no fluxo bulk dessa sessão:",
+    "  • warm_status: 'warm'/'cold' já confirmado — NÃO RE-PERGUNTE",
+    "  • delivery_choice_id: 1/2/3 já escolhido — REUSE se rep criar outro disparo similar nessa sessão",
+    "  • last_preview_total_contacts: total do último preview",
+    "Quando criar SEGUNDO disparo na mesma sessão, REUSE warm_status sem perguntar de novo.",
+    "",
+    "# 4.3 SILENCE RECOVERY — gap >30min detectado",
+    "Se aparecer '# ⏰ SILENCE GAP DETECTADO' no contexto, siga as instruções desse bloco.",
+    "Reconheça o gap ANTES de processar msg atual. NÃO finja que nada aconteceu (caso Gustavo: bot voltou frio após 5h, rep perguntou 'Você está funcionando?').",
+    "",
     // Bloco dinâmico do turn (cada turn diferente — vem após o cache)
     conversationalLayer?.repStyleHint || "",
     conversationalLayer?.smartDefaultsBlock || "",
     conversationalLayer?.turnContextBlock || "",
+    // 4.3 Pedro 2026-05-16: silence recovery (só aparece se gap >30min detectado)
+    conversationalLayer?.silenceRecoveryBlock || "",
     conversationalLayer?.verbosityPref === "brief"
       ? "[VERBOSITY: brief] Rep prefere respostas CURTAS (1-2 frases max). Vai direto à ação, sem floreio."
       : conversationalLayer?.verbosityPref === "detailed"
