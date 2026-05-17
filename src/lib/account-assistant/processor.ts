@@ -532,12 +532,15 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // 4.3 Pedro 2026-05-16: detecta silence gap. Lê últimas 4 msgs do rep
   // com created_at (ConversationTurn não tem timestamp, precisa query).
   // Caso Gustavo: 5h15min de silêncio entre "cancela" e "você tá funcionando?".
+  // Fix M9 (review 2026-05-16): filtra por active_location_id pra evitar
+  // falso positivo quando rep alterna entre locations.
   let silenceRecoveryBlock = "";
   try {
     const { data: recent } = await supabase
       .from("sparkbot_messages")
       .select("role, content, created_at")
       .eq("rep_identity_id", rep.id)
+      .eq("active_location_id", activeLocationId)
       .order("created_at", { ascending: false })
       .limit(6);
     if (recent && recent.length >= 2) {

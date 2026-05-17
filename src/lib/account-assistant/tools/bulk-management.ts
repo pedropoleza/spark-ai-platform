@@ -18,7 +18,7 @@
  * Criação fica em preview_bulk_message_v2 + schedule_bulk_message_v2.
  */
 
-import type { ToolEntry, ToolContext } from "./types";
+import type { ToolEntry } from "./types";
 import type { ToolResult } from "@/types/account-assistant";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -27,6 +27,7 @@ import {
   getEffectiveDailyCap,
   getActiveBulkJobs,
   resolveAgentId,
+  toEtDayString,
 } from "./bulk-messages";
 
 // =====================================================================
@@ -126,8 +127,8 @@ async function getCapStatusNextDays(
 
   for (let i = 0; i < days; i++) {
     const d = new Date(Date.now() + i * 24 * 60 * 60 * 1000);
-    const etOffsetMs = 4 * 60 * 60 * 1000;
-    const dayStr = new Date(d.getTime() - etOffsetMs).toISOString().slice(0, 10);
+    // Fix H1 (review 2026-05-16): DST-correct
+    const dayStr = toEtDayString(d);
 
     const { data: overrides } = await supabase
       .from("bulk_cap_overrides")
@@ -220,30 +221,47 @@ const bulkDashboard: ToolEntry = {
     const capStatus = await getCapStatusNextDays(ctx.locationId, agentId, 3);
 
     // Alerts: jobs travados (running com pending overdue há >10min E sent_count parado >30min)
+    // Fix H4 (review 2026-05-16): batch query em vez de N+1.
+    // 1 query pra updated_at de todos jobs running de uma vez.
+    // 1 query pra overdue count agregado por job_id.
     const cutoffStale = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const cutoffOverdue = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     const stalledJobs: Array<{ job_id: string; pending: number; sent: number; total: number }> = [];
-    for (const j of activeJobs) {
-      if (j.status !== "running") continue;
-      const { data: jobRow } = await supabase
+    const runningJobIds = activeJobs.filter((j) => j.status === "running").map((j) => j.job_id);
+    if (runningJobIds.length > 0) {
+      const { data: jobRows } = await supabase
         .from("bulk_message_jobs")
-        .select("updated_at")
-        .eq("id", j.job_id)
-        .maybeSingle();
-      if (!jobRow || jobRow.updated_at > cutoffStale) continue;
-      const { count: overdue } = await supabase
-        .from("bulk_message_recipients")
-        .select("id", { count: "exact", head: true })
-        .eq("job_id", j.job_id)
-        .eq("status", "pending")
-        .lt("scheduled_at", cutoffOverdue);
-      if ((overdue ?? 0) > 0) {
-        stalledJobs.push({
-          job_id: j.job_id,
-          pending: overdue ?? 0,
-          sent: j.sent_count,
-          total: j.total_contacts,
-        });
+        .select("id, updated_at")
+        .in("id", runningJobIds)
+        .lt("updated_at", cutoffStale);
+      const staleJobIds = (jobRows || []).map((r) => r.id);
+      if (staleJobIds.length > 0) {
+        // 1 query agregada: lista todos overdue recipients de jobs stale
+        const { data: overdueRecs } = await supabase
+          .from("bulk_message_recipients")
+          .select("job_id")
+          .in("job_id", staleJobIds)
+          .eq("status", "pending")
+          .lt("scheduled_at", cutoffOverdue);
+        // Agrega por job_id client-side
+        const overdueByJob = new Map<string, number>();
+        for (const r of overdueRecs || []) {
+          overdueByJob.set(r.job_id, (overdueByJob.get(r.job_id) ?? 0) + 1);
+        }
+        for (const jobId of staleJobIds) {
+          const overdue = overdueByJob.get(jobId) ?? 0;
+          if (overdue > 0) {
+            const j = activeJobs.find((aj) => aj.job_id === jobId);
+            if (j) {
+              stalledJobs.push({
+                job_id: j.job_id,
+                pending: overdue,
+                sent: j.sent_count,
+                total: j.total_contacts,
+              });
+            }
+          }
+        }
       }
     }
 
@@ -629,6 +647,11 @@ const bulkRescheduleJob: ToolEntry = {
     }
 
     // Resolve job (suporta 8-char prefix)
+    // Fix M12 (review 2026-05-16): valida que prefix é hex puro pra evitar
+    // SQL LIKE injection (% / _ wildcards). UUIDs são [0-9a-f-].
+    if (!/^[0-9a-f-]+$/i.test(jobIdRaw)) {
+      return { status: "error", message: "job_id formato inválido (UUID ou prefix hex)", retryable: false };
+    }
     let job: { id: string; status: string; start_at: string } | null = null;
     if (jobIdRaw.length === 36) {
       const { data } = await supabase
@@ -636,6 +659,7 @@ const bulkRescheduleJob: ToolEntry = {
         .select("id, status, start_at")
         .eq("id", jobIdRaw)
         .eq("rep_id", ctx.rep.id)
+        .eq("location_id", ctx.locationId)
         .maybeSingle();
       job = data;
     } else {
@@ -644,6 +668,7 @@ const bulkRescheduleJob: ToolEntry = {
         .select("id, status, start_at")
         .ilike("id", `${jobIdRaw}%`)
         .eq("rep_id", ctx.rep.id)
+        .eq("location_id", ctx.locationId)
         .limit(2);
       if (data && data.length > 1) {
         return {
@@ -685,17 +710,24 @@ const bulkRescheduleJob: ToolEntry = {
     const oldFirstSchedule = new Date(pending[0].scheduled_at).getTime();
     const offsetMs = newStart.getTime() - oldFirstSchedule;
 
-    // Aplica offset em batch (PostgreSQL não tem UPDATE com expression cross-row em supabase-js;
-    // fazemos 1 UPDATE por recipient. Pra jobs >100 isso fica lento — mas aceitável pra raros casos
-    // de reschedule, geralmente <50 pending por reschedule.)
+    // Fix H3 (review 2026-05-16): batch update em paralelo (chunks de 50)
+    // pra não estourar lambda timeout em jobs >100 recipients (caso Black
+    // Friday: 300 recipients × 100-300ms cada = 30-90s serial).
+    // Supabase-js não tem UPDATE com expression cross-row, então fazemos
+    // chunks paralelos. ~50 RPS ainda evita PostgREST rate limit.
     let updated = 0;
-    for (const r of pending) {
-      const newScheduledAt = new Date(new Date(r.scheduled_at).getTime() + offsetMs);
-      await supabase
-        .from("bulk_message_recipients")
-        .update({ scheduled_at: newScheduledAt.toISOString() })
-        .eq("id", r.id);
-      updated++;
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < pending.length; i += CHUNK_SIZE) {
+      const chunk = pending.slice(i, i + CHUNK_SIZE);
+      const updates = chunk.map((r) => {
+        const newScheduledAt = new Date(new Date(r.scheduled_at).getTime() + offsetMs);
+        return supabase
+          .from("bulk_message_recipients")
+          .update({ scheduled_at: newScheduledAt.toISOString() })
+          .eq("id", r.id);
+      });
+      const results = await Promise.all(updates);
+      updated += results.filter((r) => !r.error).length;
     }
 
     // Atualiza job
@@ -780,6 +812,10 @@ const bulkEditPendingJob: ToolEntry = {
       };
     }
 
+    // Fix M12 (review 2026-05-16): valida hex puro pra LIKE injection.
+    if (!/^[0-9a-f-]+$/i.test(jobIdRaw)) {
+      return { status: "error", message: "job_id formato inválido (UUID ou prefix hex)", retryable: false };
+    }
     // Resolve job
     type EditJobRow = {
       id: string;
@@ -795,6 +831,7 @@ const bulkEditPendingJob: ToolEntry = {
         .select("id, status, filter_config, interval_seconds, jitter_seconds")
         .eq("id", jobIdRaw)
         .eq("rep_id", ctx.rep.id)
+        .eq("location_id", ctx.locationId)
         .maybeSingle();
       job = (data as EditJobRow | null) ?? null;
     } else {
@@ -803,6 +840,7 @@ const bulkEditPendingJob: ToolEntry = {
         .select("id, status, filter_config, interval_seconds, jitter_seconds")
         .ilike("id", `${jobIdRaw}%`)
         .eq("rep_id", ctx.rep.id)
+        .eq("location_id", ctx.locationId)
         .limit(2);
       if (data && data.length > 1) {
         return { status: "error", message: `Múltiplos jobs batem '${jobIdRaw}'.`, retryable: false };
@@ -928,8 +966,8 @@ const bulkRequestCapOverride: ToolEntry = {
       const parsed = new Date(fdInput);
       if (!isNaN(parsed.getTime())) forDate = parsed;
     }
-    const etOffsetMs = 4 * 60 * 60 * 1000;
-    const forDateStr = new Date(forDate.getTime() - etOffsetMs).toISOString().slice(0, 10);
+    // Fix H1 (review 2026-05-16): DST-correct day string
+    const forDateStr = toEtDayString(forDate);
 
     const agentId = await resolveAgentId(ctx.locationId);
     const baseCap = await getDailyCap(agentId);
@@ -942,6 +980,11 @@ const bulkRequestCapOverride: ToolEntry = {
     }
 
     const maxAllowed = baseCap * MAX_OVERRIDE_MULTIPLIER;
+    // Fix M7 clarification (review 2026-05-16): currentEffective JÁ inclui
+    // overrides anteriores via getEffectiveDailyCap. Próximo override soma
+    // a esse total. Hard ceiling vs baseCap*3 garante que múltiplos overrides
+    // pequenos no mesmo dia não estouram cumulativamente (cada um falha se
+    // proposedEffective > 3x base).
     const existingExtra = await getEffectiveDailyCap(ctx.locationId, baseCap, forDate);
     const currentEffective = existingExtra ?? baseCap;
     const proposedEffective = currentEffective + extra;
@@ -1013,6 +1056,3 @@ export const BULK_MANAGEMENT_TOOLS: ToolEntry[] = [
   bulkEditPendingJob,
   bulkRequestCapOverride,
 ];
-
-// silence unused import (ToolContext) — usado só pra type-check
-void (null as ToolContext | null);

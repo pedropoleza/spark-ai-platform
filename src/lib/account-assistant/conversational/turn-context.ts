@@ -260,14 +260,28 @@ export function autoRegisterFromToolResult(
     return;
   }
   if (toolName === "list_bulk_jobs") {
-    // Array — pega top
-    const jobs = data as unknown as Array<{ job_id: string }>;
+    // Fix M15 (review 2026-05-16): result.data pode ser array direto OU
+    // estar dentro de outro objeto. Robusto pra ambos.
+    const jobs = Array.isArray(data) ? data : (data as { data?: unknown }).data;
     if (Array.isArray(jobs) && jobs.length > 0) {
+      const top = jobs[0] as { job_id?: string };
       registerSearch(state, {
         tool: toolName,
         entity_type: "job",
         count_returned: jobs.length,
-        top_result_id: jobs[0].job_id,
+        top_result_id: typeof top.job_id === "string" ? top.job_id : undefined,
+      });
+    }
+    return;
+  }
+  if (toolName === "bulk_dashboard") {
+    const active = (data as { active_jobs?: Array<{ job_id: string }> }).active_jobs;
+    if (Array.isArray(active) && active.length > 0) {
+      registerSearch(state, {
+        tool: toolName,
+        entity_type: "job",
+        count_returned: active.length,
+        top_result_id: active[0].job_id,
       });
     }
     return;

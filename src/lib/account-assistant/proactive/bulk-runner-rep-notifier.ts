@@ -39,10 +39,14 @@ export async function notifyRepsAboutStalledJobs(
           .maybeSingle();
         if (!repRow) continue;
 
-        const profile = (repRow.profile || {}) as { bulk_stall_notified_at?: string };
-        const lastNotif = profile.bulk_stall_notified_at
-          ? new Date(profile.bulk_stall_notified_at).getTime()
-          : 0;
+        // C1 fix (review 2026-05-16): NÃO usar cast Pick que esconde outras
+        // keys do JSONB. profile pode ter preferences.verbosity, aliases, etc.
+        // Trabalhamos com profile cru pra merge defensivo no update abaixo.
+        const profileFull = (repRow.profile || {}) as Record<string, unknown>;
+        const lastNotif =
+          typeof profileFull.bulk_stall_notified_at === "string"
+            ? new Date(profileFull.bulk_stall_notified_at).getTime()
+            : 0;
         if (Date.now() - lastNotif < COOLDOWN_MS) {
           // Dedup — já avisamos esse rep faz <30min
           continue;
@@ -54,7 +58,7 @@ export async function notifyRepsAboutStalledJobs(
           `parece(m) travado(s):\n` +
           labels.slice(0, 5).map((l) => `  • ${l}`).join("\n") +
           (labels.length > 5 ? `\n  • ... +${labels.length - 5} mais` : "") +
-          `\n\nO admin já foi notificado e geralmente resolve em <1h. ` +
+          `\n\nO admin já foi notificado. ` +
           `Pode mandar "meus disparos" pra ver status atualizado, ou "pausa todos" se preferir parar enquanto investigamos.`;
 
         const result = await deliverProactiveMessage(
@@ -73,12 +77,14 @@ export async function notifyRepsAboutStalledJobs(
 
         if (result.ok) {
           notified++;
-          // Marca timestamp pra dedup
+          // C1 fix (review 2026-05-16): merge sobre profile COMPLETO pra
+          // preservar preferences.verbosity, aliases, e qualquer outra key
+          // que outros módulos possam ter adicionado.
           await supabase
             .from("rep_identities")
             .update({
               profile: {
-                ...profile,
+                ...profileFull,
                 bulk_stall_notified_at: new Date().toISOString(),
               },
             })

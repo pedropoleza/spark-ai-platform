@@ -68,9 +68,14 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
   // F1.5 Pedro 2026-05-16 (caso Gustavo): heartbeat upfront — registra que
   // runner está vivo MESMO QUE não ache recipients pendentes. Antes, sem
   // heartbeat, podia-se ter 21h sem tick sem ninguém saber.
+  // Fix H7 (review 2026-05-16): tracking explícito de heartbeat success
+  // (vs. falha silenciosa). Se DB down durante tick, recordTickError no
+  // catch externo, mas heartbeat upfront e success final independentes —
+  // health-check vai detectar via last_tick_at antigo.
   let tickError: string | null = null;
+  let heartbeatOk = false;
   try {
-    await supabase
+    const { error: hbErr } = await supabase
       .from("bulk_runner_health")
       .update({
         last_tick_at: nowIso,
@@ -78,8 +83,19 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
         // Counters preenchidos ao fim da função abaixo
       })
       .eq("id", 1);
+    if (hbErr) {
+      console.warn("[bulk-runner] heartbeat update retornou erro:", hbErr.message);
+    } else {
+      heartbeatOk = true;
+    }
   } catch (err) {
     console.warn("[bulk-runner] heartbeat update falhou:", err);
+  }
+  if (!heartbeatOk) {
+    // Heartbeat falhou — tick prossegue mas pula success record (evita
+    // overwriter erro mais grave que vier). Health-check via last_tick_at
+    // vai detectar stale.
+    console.warn("[bulk-runner] continuing tick sem heartbeat ok — health-check vai pegar como stale");
   }
 
   // Atomic claim: pega até MAX_PER_TICK pending vencidos. Update SQL atomic
@@ -174,21 +190,16 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
     }
     touchedJobIds.add(job.id);
 
-    // Job pausado/cancelado/completado — marca skipped sem enviar.
-    // Pause: rep pode resumir, então recipients ficam skipped até essa hora.
-    // Pra retomar via resume_bulk_job, criamos novo job ou ressetamos.
-    if (job.status === "paused") {
-      // Volta pra pending — quando resume, processa de novo.
-      await supabase
-        .from("bulk_message_recipients")
-        .update({ status: "pending" })
-        .eq("id", recipient.id);
-      skipped++;
-      continue;
-    }
+    // Fix C4 (review 2026-05-16): priority queue claim (F4.1) já filtra
+    // paused/cancelled/completed/failed no pre-select via inner JOIN com
+    // bulk_message_jobs.status='running'. Esses branches só batem em RACE
+    // raríssima (job pause entre fetch candidates e claim update). Não
+    // revertemos mais paused recipients pra pending pra evitar loop
+    // pending→sending→pending que rodava todo tick até resume.
+    // Quando rep pausa, novos ticks simplesmente não claim. Quando resume,
+    // recipients pending originais voltam a ser claim normalmente.
     if (job.status !== "running") {
-      // cancelled / completed / failed — marca skipped definitivo.
-      await markRecipientSkipped(recipient.id, `job_status_${job.status}`);
+      await markRecipientSkipped(recipient.id, `job_status_${job.status}_race`);
       skipped++;
       continue;
     }

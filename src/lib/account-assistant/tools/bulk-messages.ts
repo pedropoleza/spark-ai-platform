@@ -25,11 +25,10 @@
  */
 
 import type { ToolEntry } from "./types";
-import { ghlErrorToResult, validateGhlId } from "./types";
+import { ghlErrorToResult } from "./types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   generatePreviewVariations,
-  interpolateTemplate,
 } from "../proactive/bulk-message-variator";
 
 interface ContactSummary {
@@ -100,6 +99,33 @@ async function fetchContactsByTag(
 }
 
 /**
+ * Calcula a string YYYY-MM-DD do dia em America/New_York pra um Date.
+ * Fix H1 (review 2026-05-16): antes usava hardcoded -4h offset que quebra
+ * em winter (EST=UTC-5). Agora usa Intl.DateTimeFormat com timeZone que
+ * lida com DST automaticamente.
+ */
+export function toEtDayString(d: Date): string {
+  // en-CA dá ISO format YYYY-MM-DD direto
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+/**
+ * Calcula o offset em ms do ET pra um Date específico (lida com DST).
+ * Usado pra construir startISO/endISO de uma janela em ET.
+ */
+function etOffsetMsForDate(d: Date): number {
+  // Truque: pegar timestamp do mesmo "wall clock" em UTC vs em ET e ver diff
+  const dtUtc = new Date(d.toLocaleString("en-US", { timeZone: "UTC" }));
+  const dtEt = new Date(d.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  return dtUtc.getTime() - dtEt.getTime();
+}
+
+/**
  * Conta quantas recipients estão agendadas pra ENVIAR num dia específico
  * (default: hoje, na timezone America/New_York). Usado pra enforcement do
  * daily_bulk_message_cap.
@@ -111,6 +137,9 @@ async function fetchContactsByTag(
  * ENVIO (scheduled_at), não por dia de criação. Cap do dia 19 só pesa
  * recipients que VÃO SAIR no dia 19.
  *
+ * Fix H1 (review 2026-05-16): timezone math DST-correct (Intl.DateTimeFormat
+ * em vez de offset hardcoded -4h).
+ *
  * @param locationId - location pra filtrar
  * @param windowDate - opcional ISO date (YYYY-MM-DD). Default: hoje em ET.
  */
@@ -120,21 +149,19 @@ export async function countRecipientsLast24h(
 ): Promise<number> {
   const supabase = createAdminClient();
 
-  // Resolve janela [dayStart, dayEnd) baseado no windowDate (default hoje ET).
-  // Pra simplicidade usa UTC offset fixo do ET (-04:00 EDT, -05:00 EST) —
-  // pode dar +1h de drift na transição DST mas não é crítico pro cap.
+  // Resolve janela [dayStart, dayEnd) DST-correct em ET
   const target = windowDate
     ? typeof windowDate === "string"
       ? new Date(windowDate)
       : windowDate
     : new Date();
-  // ET é UTC-4 (verão) ou UTC-5 (inverno). Usa -4h como aproximação.
-  // Pra cap diário, a precisão exata na borda da meia-noite não é crítica.
-  const etOffsetMs = 4 * 60 * 60 * 1000;
-  const targetEt = new Date(target.getTime() - etOffsetMs);
-  const dayStr = targetEt.toISOString().slice(0, 10); // YYYY-MM-DD em ET
-  const dayStartIso = new Date(dayStr + "T00:00:00-04:00").toISOString();
-  const dayEndIso = new Date(dayStr + "T23:59:59-04:00").toISOString();
+  const dayStr = toEtDayString(target);
+  // Construa start/end usando offset DST-correto pra esse dia
+  const dayStartLocal = new Date(`${dayStr}T00:00:00`);
+  const dayEndLocal = new Date(`${dayStr}T23:59:59.999`);
+  const offsetMs = etOffsetMsForDate(dayStartLocal);
+  const dayStartIso = new Date(dayStartLocal.getTime() + offsetMs).toISOString();
+  const dayEndIso = new Date(dayEndLocal.getTime() + offsetMs).toISOString();
 
   // Fix Pedro 2026-05-15: exclui jobs cancelled (recipients que
   // NUNCA vão sair não devem contar pro cap diário).
@@ -145,12 +172,14 @@ export async function countRecipientsLast24h(
     .neq("status", "cancelled");
   if (!jobs || jobs.length === 0) return 0;
   const jobIds = jobs.map((j) => j.id);
-  // Conta recipients com scheduled_at DENTRO do dia alvo + exclui cancelled/skipped.
+  // Conta recipients com scheduled_at DENTRO do dia alvo + exclui status que
+  // NUNCA vão sair: cancelled, skipped, failed (review C2 2026-05-16).
+  // Antes contava failed, inflando cap em locations com runs com many failures.
   const { count } = await supabase
     .from("bulk_message_recipients")
     .select("id", { count: "exact", head: true })
     .in("job_id", jobIds)
-    .not("status", "in", "(cancelled,skipped)")
+    .not("status", "in", "(cancelled,skipped,failed)")
     .gte("scheduled_at", dayStartIso)
     .lte("scheduled_at", dayEndIso);
   return count ?? 0;
@@ -160,6 +189,13 @@ export async function countRecipientsLast24h(
  * Cap diário base. Pedro 2026-05-16 (F3.1): default 100 → 300 pra reduzir
  * fricção de override em uso normal. Override fica reservado pra picos.
  * Configurável per-agent via agent_configs.daily_bulk_message_cap.
+ *
+ * Fix M14 (review 2026-05-16): mudança silenciosa = reps com cap NULL
+ * (default) ganharam 3x. Recomendação operacional: admin verifique em
+ * SQL `SELECT agent_id, daily_bulk_message_cap FROM agent_configs WHERE
+ * daily_bulk_message_cap IS NULL OR daily_bulk_message_cap = 100` pra
+ * decidir caso a caso. Sem migration automática porque defaults são per-
+ * agent (não global) e mudança hard pode surpreender admins.
  */
 export const DEFAULT_DAILY_BULK_CAP = 300;
 
@@ -204,11 +240,12 @@ export async function countRecipientsLast7Days(locationId: string): Promise<numb
     .neq("status", "cancelled");
   if (!jobs || jobs.length === 0) return 0;
   const ids = jobs.map((j) => j.id);
+  // Fix C2 2026-05-16: exclui failed também (não conta pro cap rolling).
   const { count } = await supabase
     .from("bulk_message_recipients")
     .select("id", { count: "exact", head: true })
     .in("job_id", ids)
-    .not("status", "in", "(cancelled,skipped)")
+    .not("status", "in", "(cancelled,skipped,failed)")
     .gte("scheduled_at", cutoff);
   return count ?? 0;
 }
@@ -263,14 +300,23 @@ export interface SimilarJobMatch {
   pending_count: number;
 }
 
+/**
+ * Fix H2 (review 2026-05-16): tokens >= 1 char (não > 2) pra preservar
+ * palavras curtas PT-BR ("oi", "te", "me", "se", "ok", "ja"). Antes
+ * threshold 0.7 raramente batia em templates curtos PT por causa do filter.
+ * Também normaliza accents pra match "saúde" === "saude".
+ */
 function jaccardSimilarity(a: string, b: string): number {
   const tokenize = (s: string) =>
     new Set(
       s
         .toLowerCase()
-        .replace(/[^\w\sáéíóúâêôãõçà]+/g, " ")
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "") // strip accents
+        .replace(/\{[^}]*\}/g, " ") // remove placeholders {first_name} etc
+        .replace(/[^\w\s]+/g, " ")
         .split(/\s+/)
-        .filter((w) => w.length > 2),
+        .filter((w) => w.length >= 2), // 2+ chars (era 3+) pra incluir "oi", "te"
     );
   const sa = tokenize(a);
   const sb = tokenize(b);
@@ -383,14 +429,13 @@ export async function getEffectiveDailyCap(
 ): Promise<number | null> {
   if (baseCap === null) return null;
   const supabase = createAdminClient();
+  // Fix H1 (review 2026-05-16): usa toEtDayString DST-correct
   const target = forDate
     ? typeof forDate === "string"
       ? new Date(forDate)
       : forDate
     : new Date();
-  const etOffsetMs = 4 * 60 * 60 * 1000;
-  const targetEt = new Date(target.getTime() - etOffsetMs);
-  const dayStr = targetEt.toISOString().slice(0, 10);
+  const dayStr = toEtDayString(target);
 
   const { data: overrides } = await supabase
     .from("bulk_cap_overrides")
@@ -1234,12 +1279,15 @@ const pauseBulkJob: ToolEntry = {
     const jobId = String(args.job_id || "");
     if (!jobId) return { status: "error", message: "job_id obrigatório", retryable: false };
     const supabase = createAdminClient();
+    // Fix M2 (review 2026-05-16): RBAC location_id check pra evitar rep
+    // multi-location pausar job de OUTRA location se conhecer UUID.
     const { data: job } = await supabase
       .from("bulk_message_jobs")
-      .select("id, status, rep_id")
+      .select("id, status, rep_id, location_id")
       .eq("id", jobId)
+      .eq("location_id", ctx.locationId)
       .maybeSingle();
-    if (!job) return { status: "not_found", message: "Job não encontrado" };
+    if (!job) return { status: "not_found", message: "Job não encontrado nesta location" };
     if (job.rep_id !== ctx.rep.id) {
       return { status: "error", message: "Job não pertence a você", retryable: false };
     }
@@ -1252,7 +1300,7 @@ const pauseBulkJob: ToolEntry = {
     }
     await supabase
       .from("bulk_message_jobs")
-      .update({ status: "paused" })
+      .update({ status: "paused", paused_at: new Date().toISOString() })
       .eq("id", jobId);
     return { status: "ok", data: { job_id: jobId, status: "paused" } };
   },
@@ -1277,12 +1325,14 @@ const resumeBulkJob: ToolEntry = {
     const jobId = String(args.job_id || "");
     if (!jobId) return { status: "error", message: "job_id obrigatório", retryable: false };
     const supabase = createAdminClient();
+    // Fix M2 (review 2026-05-16): RBAC location_id check.
     const { data: job } = await supabase
       .from("bulk_message_jobs")
-      .select("id, status, rep_id")
+      .select("id, status, rep_id, location_id")
       .eq("id", jobId)
+      .eq("location_id", ctx.locationId)
       .maybeSingle();
-    if (!job) return { status: "not_found", message: "Job não encontrado" };
+    if (!job) return { status: "not_found", message: "Job não encontrado nesta location" };
     if (job.rep_id !== ctx.rep.id) {
       return { status: "error", message: "Job não pertence a você", retryable: false };
     }
@@ -1295,7 +1345,7 @@ const resumeBulkJob: ToolEntry = {
     }
     await supabase
       .from("bulk_message_jobs")
-      .update({ status: "running" })
+      .update({ status: "running", paused_at: null })
       .eq("id", jobId);
     return { status: "ok", data: { job_id: jobId, status: "running" } };
   },
@@ -1320,12 +1370,14 @@ const cancelBulkJob: ToolEntry = {
     const jobId = String(args.job_id || "");
     if (!jobId) return { status: "error", message: "job_id obrigatório", retryable: false };
     const supabase = createAdminClient();
+    // Fix M2 (review 2026-05-16): RBAC location_id check.
     const { data: job } = await supabase
       .from("bulk_message_jobs")
-      .select("id, status, rep_id, sent_count")
+      .select("id, status, rep_id, sent_count, location_id")
       .eq("id", jobId)
+      .eq("location_id", ctx.locationId)
       .maybeSingle();
-    if (!job) return { status: "not_found", message: "Job não encontrado" };
+    if (!job) return { status: "not_found", message: "Job não encontrado nesta location" };
     if (job.rep_id !== ctx.rep.id) {
       return { status: "error", message: "Job não pertence a você", retryable: false };
     }
@@ -1365,10 +1417,6 @@ const cancelBulkJob: ToolEntry = {
     };
   },
 };
-
-// Helpers que usam validateGhlId apenas pra silenciar import
-void validateGhlId;
-void interpolateTemplate;
 
 export const BULK_MESSAGES_TOOLS: ToolEntry[] = [
   previewBulkMessage,

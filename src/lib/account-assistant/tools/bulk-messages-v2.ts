@@ -422,23 +422,38 @@ const previewBulkMessageV2: ToolEntry = {
       }
     }
     // F3.4 Pedro 2026-05-16: check de weekly cap secundário (opcional).
+    // Fix M10 (review 2026-05-16): preview warning é INFORMATIVO — usa
+    // `total` pré-trim diário. Schedule_v2 valida hard contra weekly DEPOIS
+    // do trim diário. Se preview avisa "vai exceder" mas total efetivo
+    // pós-trim cabe no semanal, schedule passa sem erro. Comportamento
+    // intencional: preview é heads-up agressivo, schedule é fonte da verdade.
     const weeklyCap = await getWeeklyCap(agentId);
     const usedLast7d = weeklyCap !== null ? await countRecipientsLast7Days(ctx.locationId) : 0;
     const weeklyRemaining = weeklyCap !== null ? Math.max(0, weeklyCap - usedLast7d) : null;
     const weeklyCapWarning =
       weeklyCap !== null && usedLast7d + total > weeklyCap
-        ? `⚠️ Volume excede cap semanal (${weeklyCap}) — ${usedLast7d} já enfileiradas nos últimos 7d, esse disparo soma ${total}.`
+        ? `⚠️ Volume excede cap semanal (${weeklyCap}) — ${usedLast7d} já enfileiradas nos últimos 7d, esse disparo soma ${total} (pré-trim diário; schedule pode ainda passar se trim reduzir total).`
         : null;
 
-    // F4.3 Pedro 2026-05-16: anti-duplicação. Checa o template do PRIMEIRO
-    // segment (representativo) contra jobs ativos do rep. Threshold 0.7.
-    const firstTemplate = resolveRes.segments[0]?.message_template || "";
-    const similarJobs: SimilarJobMatch[] = await findSimilarActiveJobs(
-      ctx.rep.id,
-      ctx.locationId,
-      firstTemplate,
-      0.7,
-    );
+    // F4.3 Pedro 2026-05-16: anti-duplicação. Fix H5 (review 2026-05-16):
+    // checa CADA segment (não só primeiro). Multi-segment pode duplicar 2-5
+    // templates diferentes — todos merecem detect. Dedup por job_id no result.
+    const seenJobIds = new Set<string>();
+    const similarJobs: SimilarJobMatch[] = [];
+    for (const seg of resolveRes.segments) {
+      const segMatches = await findSimilarActiveJobs(
+        ctx.rep.id,
+        ctx.locationId,
+        seg.message_template,
+        0.7,
+      );
+      for (const m of segMatches) {
+        if (!seenJobIds.has(m.job_id)) {
+          seenJobIds.add(m.job_id);
+          similarJobs.push(m);
+        }
+      }
+    }
 
     // Pedro 2026-05-15: computa OPÇÕES de delivery automaticamente pro bot
     // apresentar como menu numerado (em vez de pergunta aberta).
@@ -730,17 +745,23 @@ const scheduleBulkMessageV2: ToolEntry = {
     const agentId = await resolveAgentId(ctx.locationId);
     const baseCap = await getDailyCap(agentId);
 
+    // Fix H8 (review 2026-05-16): adjustedStartAt PRIMEIRO pra cap usar
+    // o mesmo timestamp que vai ser persistido. Antes start_at era usado
+    // pro cap check mas adjustedStartAt (quiet hours) podia pular pro
+    // dia seguinte — cap do dia errado validado.
+    const rawStartAt = args.start_at ? new Date(String(args.start_at)) : new Date();
+    if (isNaN(rawStartAt.getTime())) {
+      return { status: "error", message: "start_at inválido.", retryable: false };
+    }
+    const preComputedAdjustedStartAt = await adjustStartAtForQuietHours(agentId, rawStartAt);
+
     // Calcula dia(s) de envio efetivo pra checar cap correto
     const effectiveSendDate = (() => {
       if (rawDeliveryStrategy?.type === "custom_window" && rawDeliveryStrategy.start_at) {
         return new Date(rawDeliveryStrategy.start_at);
       }
-      if (rawDeliveryStrategy?.type === "spread_days") {
-        // Spread divide entre N dias — vamos checar cap do PRIMEIRO dia
-        // (geralmente hoje); dias subsequentes têm cap "limpo" (futuro)
-        return args.start_at ? new Date(String(args.start_at)) : new Date();
-      }
-      return args.start_at ? new Date(String(args.start_at)) : new Date();
+      // today / spread_days usam adjustedStartAt (DST + quiet-hours aware)
+      return preComputedAdjustedStartAt;
     })();
 
     // F2 Pedro 2026-05-16: cap efetivo = base + overrides ativos pro dia.
@@ -779,13 +800,32 @@ const scheduleBulkMessageV2: ToolEntry = {
       enqueued_after_trim: number;
     } | null = null;
 
-    // Pra spread_days, divide o cap por dia — cada dia tem sua janela
-    const daysCount =
-      rawDeliveryStrategy?.type === "spread_days"
-        ? Math.min(Math.max(Number(rawDeliveryStrategy.days_count) || 2, 2), 7)
-        : 1;
+    // Fix C3 (review 2026-05-16): pra spread_days, cap efetivo = soma dos
+    // remaining de CADA dia (não assume cap cheio nos dias 2..N — outros
+    // disparos podem já ter agendado pra esses dias).
+    let spreadDaysAvailable: number[] | null = null;
+    if (rawDeliveryStrategy?.type === "spread_days") {
+      const daysCountVal = Math.min(Math.max(Number(rawDeliveryStrategy.days_count) || 2, 2), 7);
+      spreadDaysAvailable = [];
+      for (let d = 0; d < daysCountVal; d++) {
+        const dayDate = new Date(effectiveSendDate.getTime() + d * 24 * 60 * 60 * 1000);
+        const dayCap = await getEffectiveDailyCap(ctx.locationId, baseCap, dayDate);
+        const dayUsed = await countRecipientsLast24h(ctx.locationId, dayDate);
+        const dayRemaining = dayCap === null ? Infinity : Math.max(0, dayCap - dayUsed);
+        spreadDaysAvailable.push(dayRemaining === Infinity ? 9999 : dayRemaining);
+      }
+    }
+
+    // Pra spread_days, soma o remaining REAL de cada dia (fix C3 review
+    // 2026-05-16). Antes assumia cap cheio nos dias futuros — bug que
+    // ressuscitava trim silencioso quando outros disparos já tinham
+    // agendamento nos dias 2..N.
     const effectiveCap =
-      cap === null ? Infinity : daysCount === 1 ? remaining : remaining + cap * (daysCount - 1);
+      cap === null
+        ? Infinity
+        : spreadDaysAvailable !== null
+          ? spreadDaysAvailable.reduce((a, b) => a + b, 0)
+          : remaining;
 
     if (cap !== null && total > effectiveCap) {
       if (effectiveCap === 0) {
@@ -799,11 +839,14 @@ const scheduleBulkMessageV2: ToolEntry = {
           message:
             `⚠️ Cap diário (${cap}) já atingido pra ${dateStr} — ` +
             `${usedOnSendDate} msgs já agendadas pra esse dia. ` +
-            `Tente outro dia ou use bulk_request_cap_override (em breve) pra liberar mais.`,
+            `Tente outro dia ou use bulk_request_cap_override pra liberar mais (até 3x do cap base).`,
           retryable: false,
         };
       }
-      // Trim segments proporcionalmente até total ≤ effectiveCap
+      // Trim segments do ÚLTIMO pro PRIMEIRO até total ≤ effectiveCap
+      // Fix M13 doc (review 2026-05-16): rep DEVE ordenar segments por
+      // prioridade DESCENDENTE (mais importante primeiro). Trim remove
+      // do final → segments menos prioritários ficam de fora primeiro.
       let toRemove = total - effectiveCap;
       const trimmedCount = toRemove;
       for (let i = resolveRes.segments.length - 1; i >= 0 && toRemove > 0; i--) {
@@ -834,26 +877,34 @@ const scheduleBulkMessageV2: ToolEntry = {
     // Custom field resolver pra interpolação
     const cfResolver = await buildCustomFieldResolver(ctx.ghlClient, ctx.locationId).catch(() => undefined);
 
-    // start_at (rawDeliveryStrategy já extraído acima pro guard de coexistência)
-    const startAt = args.start_at ? new Date(String(args.start_at)) : new Date();
-    if (isNaN(startAt.getTime())) {
-      return { status: "error", message: "start_at inválido.", retryable: false };
-    }
-    const adjustedStartAt = await adjustStartAtForQuietHours(agentId, startAt);
+    // Fix H8 (review 2026-05-16): reusa adjustedStartAt pré-computado acima
+    // pro cap check + quiet hours estar consistente com persist.
+    const adjustedStartAt = preComputedAdjustedStartAt;
 
     // Pedro 2026-05-15: resolve delivery strategy. Default = single-day burst.
+    // Fix M5 (review 2026-05-16): rawDeliveryStrategy.interval_seconds/jitter
+    // têm prioridade quando passados (rep escolheu opção do menu com valores
+    // específicos). Fallback pra top-level intervalSeconds/jitterSeconds.
+    const stratInterval =
+      typeof rawDeliveryStrategy?.interval_seconds === "number"
+        ? Math.min(600, Math.max(30, rawDeliveryStrategy.interval_seconds))
+        : intervalSeconds;
+    const stratJitter =
+      typeof rawDeliveryStrategy?.jitter_seconds === "number"
+        ? Math.min(120, Math.max(0, rawDeliveryStrategy.jitter_seconds))
+        : jitterSeconds;
     let deliveryStrategy: import("./bulk-delivery-strategy").DeliveryStrategy = {
       type: "today",
-      interval_seconds: intervalSeconds,
-      jitter_seconds: jitterSeconds,
+      interval_seconds: stratInterval,
+      jitter_seconds: stratJitter,
     };
     if (rawDeliveryStrategy?.type === "spread_days") {
       const days = Math.min(Math.max(Number(rawDeliveryStrategy.days_count) || 2, 2), 7);
       deliveryStrategy = {
         type: "spread_days",
         days_count: days,
-        interval_seconds: intervalSeconds,
-        jitter_seconds: jitterSeconds,
+        interval_seconds: stratInterval,
+        jitter_seconds: stratJitter,
       };
     } else if (rawDeliveryStrategy?.type === "custom_window") {
       const sa = rawDeliveryStrategy.start_at;
@@ -869,8 +920,8 @@ const scheduleBulkMessageV2: ToolEntry = {
         type: "custom_window",
         start_at: sa,
         end_at: ea,
-        interval_seconds: intervalSeconds,
-        jitter_seconds: jitterSeconds,
+        interval_seconds: stratInterval,
+        jitter_seconds: stratJitter,
       };
     }
 
@@ -1002,7 +1053,17 @@ const scheduleBulkMessageV2: ToolEntry = {
         .insert(recipientRows);
       if (insErr) {
         // Rollback job
-        await supabase.from("bulk_message_jobs").update({ status: "cancelled", error: insErr.message }).eq("id", job.id);
+        // Fix C5 (review 2026-05-16): coluna se chama `cancelled_reason` (00065),
+        // não `error`. Antes supabase silently dropava o reason.
+        // Semanticamente o status correto é `failed` (insert quebrou, não foi
+        // o rep que cancelou).
+        await supabase
+          .from("bulk_message_jobs")
+          .update({
+            status: "failed",
+            cancelled_reason: `rollback insert recipients: ${insErr.message}`.slice(0, 500),
+          })
+          .eq("id", job.id);
         return { status: "error", message: `Falha ao enfileirar: ${insErr.message}`, retryable: false };
       }
     }
@@ -1064,7 +1125,7 @@ const scheduleBulkMessageV2: ToolEntry = {
             `Foram enfileirados ${capTrimInfo.enqueued_after_trim} de ${capTrimInfo.total_requested} pedidos. ` +
             `Motivo: dia ${capTrimInfo.send_date} já tem ${capTrimInfo.used_on_send_date}/${capTrimInfo.cap_value} agendados. ` +
             `EXPLIQUE ISSO PRO REP claramente — não atribua o trim a "stage no CRM" ou outro motivo. ` +
-            `Sugira: agendar os ${capTrimInfo.trimmed_count} restantes pra outro dia OU usar override de cap (em breve).`
+            `Sugira: agendar os ${capTrimInfo.trimmed_count} restantes pra outro dia OU usar bulk_request_cap_override(extra_count: ${capTrimInfo.trimmed_count}) pra liberar cap extra hoje.`
           : null,
         // Resumo formatado pro bot exibir confirmação (Pedro 2026-05-15)
         schedule_summary: scheduleSummary,
