@@ -38,6 +38,7 @@ import {
 import {
   countRecipientsLast24h,
   getDailyCap,
+  getEffectiveDailyCap,
   adjustStartAtForQuietHours,
   resolveAgentId,
   getActiveBulkJobs,
@@ -637,7 +638,7 @@ const scheduleBulkMessageV2: ToolEntry = {
     // terça 19/05 era truncado pelo cap do dia 16/05 (98/100). Truncamento
     // silencioso = Gustavo viu 6 → 2 sem entender por quê.
     const agentId = await resolveAgentId(ctx.locationId);
-    const cap = await getDailyCap(agentId);
+    const baseCap = await getDailyCap(agentId);
 
     // Calcula dia(s) de envio efetivo pra checar cap correto
     const effectiveSendDate = (() => {
@@ -651,6 +652,10 @@ const scheduleBulkMessageV2: ToolEntry = {
       }
       return args.start_at ? new Date(String(args.start_at)) : new Date();
     })();
+
+    // F2 Pedro 2026-05-16: cap efetivo = base + overrides ativos pro dia.
+    // Rep pode ter pedido bulk_request_cap_override pra esse dia específico.
+    const cap = await getEffectiveDailyCap(ctx.locationId, baseCap, effectiveSendDate);
 
     const usedOnSendDate = await countRecipientsLast24h(ctx.locationId, effectiveSendDate);
     const remaining = cap === null ? Infinity : Math.max(0, cap - usedOnSendDate);

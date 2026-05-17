@@ -169,6 +169,45 @@ export async function getDailyCap(agentId: string | null): Promise<number | null
 }
 
 /**
+ * Cap diário efetivo pra um dia específico, somando overrides ativos.
+ * Pedro 2026-05-16 (Fase 2): rep pode pedir cap_override pra dia específico
+ * via tool `bulk_request_cap_override`. Esta função soma todos os extras
+ * aprovados pro dia em questão.
+ *
+ * @param locationId — pra buscar overrides do dia
+ * @param baseCap — cap base do agente (null = sem cap)
+ * @param forDate — dia alvo (date local ET, YYYY-MM-DD ou Date)
+ */
+export async function getEffectiveDailyCap(
+  locationId: string,
+  baseCap: number | null,
+  forDate?: Date | string,
+): Promise<number | null> {
+  if (baseCap === null) return null;
+  const supabase = createAdminClient();
+  const target = forDate
+    ? typeof forDate === "string"
+      ? new Date(forDate)
+      : forDate
+    : new Date();
+  const etOffsetMs = 4 * 60 * 60 * 1000;
+  const targetEt = new Date(target.getTime() - etOffsetMs);
+  const dayStr = targetEt.toISOString().slice(0, 10);
+
+  const { data: overrides } = await supabase
+    .from("bulk_cap_overrides")
+    .select("extra_granted")
+    .eq("location_id", locationId)
+    .eq("for_date", dayStr);
+
+  const totalExtra = (overrides || []).reduce(
+    (sum, o) => sum + (o.extra_granted ?? 0),
+    0,
+  );
+  return baseCap + totalExtra;
+}
+
+/**
  * Calcula scheduled_at sequencial pra cada recipient com jitter.
  * baseStart é o timestamp do primeiro envio.
  */

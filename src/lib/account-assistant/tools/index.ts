@@ -28,6 +28,8 @@ import { FILTER_ENGINE_TOOLS } from "./filter-tools";
 import { BULK_MESSAGES_V2_TOOLS } from "./bulk-messages-v2";
 // H31.3 (review 2026-05-15): Recap mode
 import { RECAP_TOOLS } from "./recap";
+// H32 (review 2026-05-16): Bulk Management Hub — 7 tools de management de disparos
+import { BULK_MANAGEMENT_TOOLS } from "./bulk-management";
 
 const ALL_ENTRIES: ToolEntry[] = [
   ...CONTACTS_TOOLS,
@@ -46,6 +48,7 @@ const ALL_ENTRIES: ToolEntry[] = [
   ...FILTER_ENGINE_TOOLS,
   ...BULK_MESSAGES_V2_TOOLS,
   ...RECAP_TOOLS,
+  ...BULK_MANAGEMENT_TOOLS,
 ];
 
 export const TOOL_REGISTRY: Record<string, ToolEntry> = Object.fromEntries(
