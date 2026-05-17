@@ -84,17 +84,59 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
 
   // Atomic claim: pega até MAX_PER_TICK pending vencidos. Update SQL atomic
   // marca como 'sending'. Mesmo padrão do reminder-runner.
+  //
+  // F4.1 Pedro 2026-05-16: priority queue. Antes ordem era apenas
+  // scheduled_at ASC (FIFO global). Agora: priority DESC, scheduled_at ASC
+  // pra jobs urgentes furarem fila.
+  //
+  // Implementação em 2 passos pra usar JOIN com bulk_message_jobs.priority:
+  //   1. SELECT recipients pending vencidos JOIN jobs ORDER BY priority desc, sched asc
+  //   2. UPDATE atomico nos IDs selecionados
+  // O update individual evita race se 2 workers rodassem em paralelo
+  // (não é o caso hoje, mas defensivo).
   let claimed: BulkRecipientRow[] = [];
   try {
-    const { data: claimedRaw } = await supabase
+    // Pega top MAX_PER_TICK por priority+sched
+    const { data: candidates } = await supabase
       .from("bulk_message_recipients")
-      .update({ status: "sending" })
+      .select("id, job_id, contact_id, contact_name, contact_phone, scheduled_at, status, bulk_message_jobs!inner(priority, status)")
       .eq("status", "pending")
       .lte("scheduled_at", nowIso)
-      .select("*")
       .order("scheduled_at", { ascending: true })
-      .limit(MAX_PER_TICK);
-    claimed = (claimedRaw || []) as BulkRecipientRow[];
+      .limit(MAX_PER_TICK * 4); // buffer pra reordenar client-side por priority
+
+    if (candidates && candidates.length > 0) {
+      // Ordena client-side por priority DESC (do job), scheduled_at ASC
+      type CandRow = {
+        id: string; job_id: string; contact_id: string;
+        contact_name: string | null; contact_phone: string | null;
+        scheduled_at: string; status: string;
+        bulk_message_jobs: { priority: number | null; status: string } | { priority: number | null; status: string }[];
+      };
+      const sorted = (candidates as CandRow[])
+        .filter((r) => {
+          const j = Array.isArray(r.bulk_message_jobs) ? r.bulk_message_jobs[0] : r.bulk_message_jobs;
+          return j && j.status === "running";
+        })
+        .sort((a, b) => {
+          const pa = (Array.isArray(a.bulk_message_jobs) ? a.bulk_message_jobs[0] : a.bulk_message_jobs)?.priority ?? 50;
+          const pb = (Array.isArray(b.bulk_message_jobs) ? b.bulk_message_jobs[0] : b.bulk_message_jobs)?.priority ?? 50;
+          if (pa !== pb) return pb - pa;
+          return new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime();
+        })
+        .slice(0, MAX_PER_TICK);
+
+      if (sorted.length > 0) {
+        const ids = sorted.map((r) => r.id);
+        const { data: claimedRaw } = await supabase
+          .from("bulk_message_recipients")
+          .update({ status: "sending" })
+          .in("id", ids)
+          .eq("status", "pending") // double-check pra race
+          .select("*");
+        claimed = (claimedRaw || []) as BulkRecipientRow[];
+      }
+    }
   } catch (err) {
     tickError = err instanceof Error ? err.message : String(err);
     await recordTickError(tickError);
@@ -192,6 +234,14 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
           sent_at: new Date().toISOString(),
         })
         .eq("id", recipient.id);
+      // F3.2 Pedro 2026-05-16: registra cooldown pra preview futuro avisar
+      // duplicação. Async/silent — não bloqueia se falhar.
+      try {
+        const { recordContactBulkSent } = await import("@/lib/account-assistant/tools/bulk-messages");
+        await recordContactBulkSent(recipient.contact_id, job.location_id, job.id);
+      } catch {
+        // silent — cooldown é warn-only metadata
+      }
       fired++;
     } else {
       await supabase

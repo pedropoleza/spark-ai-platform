@@ -156,16 +156,214 @@ export async function countRecipientsLast24h(
   return count ?? 0;
 }
 
+/**
+ * Cap diário base. Pedro 2026-05-16 (F3.1): default 100 → 300 pra reduzir
+ * fricção de override em uso normal. Override fica reservado pra picos.
+ * Configurável per-agent via agent_configs.daily_bulk_message_cap.
+ */
+export const DEFAULT_DAILY_BULK_CAP = 300;
+
 export async function getDailyCap(agentId: string | null): Promise<number | null> {
-  if (!agentId) return 100;
+  if (!agentId) return DEFAULT_DAILY_BULK_CAP;
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("agent_configs")
     .select("daily_bulk_message_cap")
     .eq("agent_id", agentId)
     .maybeSingle();
-  if (!data) return 100;
+  if (!data) return DEFAULT_DAILY_BULK_CAP;
   return data.daily_bulk_message_cap ?? null;
+}
+
+/**
+ * Cap semanal opcional (F3.4 Pedro 2026-05-16). NULL = sem cap secundário.
+ * Quando setado, schedule_bulk_message_v2 checa total rolling 7 days antes
+ * de criar job. Proteção contra "rep dispara 300/dia × 7 dias = 2100 msgs".
+ */
+export async function getWeeklyCap(agentId: string | null): Promise<number | null> {
+  if (!agentId) return null;
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("agent_configs")
+    .select("weekly_bulk_message_cap")
+    .eq("agent_id", agentId)
+    .maybeSingle();
+  return data?.weekly_bulk_message_cap ?? null;
+}
+
+/**
+ * Conta recipients enviadas/agendadas nos últimos 7 dias (rolling).
+ */
+export async function countRecipientsLast7Days(locationId: string): Promise<number> {
+  const supabase = createAdminClient();
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: jobs } = await supabase
+    .from("bulk_message_jobs")
+    .select("id")
+    .eq("location_id", locationId)
+    .neq("status", "cancelled");
+  if (!jobs || jobs.length === 0) return 0;
+  const ids = jobs.map((j) => j.id);
+  const { count } = await supabase
+    .from("bulk_message_recipients")
+    .select("id", { count: "exact", head: true })
+    .in("job_id", ids)
+    .not("status", "in", "(cancelled,skipped)")
+    .gte("scheduled_at", cutoff);
+  return count ?? 0;
+}
+
+/**
+ * F3.2 Pedro 2026-05-16: detecta contatos que receberam bulk msg recentemente
+ * (default 24h). Usado pelo preview_bulk_message_v2 pra avisar duplicação.
+ * NÃO bloqueia schedule (Pedro escolheu warn-only).
+ *
+ * @returns Map<contact_id, {last_sent_at, hours_ago}>
+ */
+export async function getContactsWithRecentBulk(
+  locationId: string,
+  contactIds: string[],
+  hoursBack: number = 24,
+): Promise<Map<string, { last_sent_at: string; hours_ago: number }>> {
+  const result = new Map<string, { last_sent_at: string; hours_ago: number }>();
+  if (contactIds.length === 0) return result;
+  const supabase = createAdminClient();
+  const cutoff = new Date(Date.now() - hoursBack * 60 * 60 * 1000).toISOString();
+  // Supabase tem limite implícito de ~~1000 items em IN clauses — chunk se necessário
+  const CHUNK = 500;
+  for (let i = 0; i < contactIds.length; i += CHUNK) {
+    const chunk = contactIds.slice(i, i + CHUNK);
+    const { data } = await supabase
+      .from("bulk_contact_cooldown")
+      .select("contact_id, last_sent_at")
+      .eq("location_id", locationId)
+      .in("contact_id", chunk)
+      .gte("last_sent_at", cutoff);
+    for (const row of data || []) {
+      const lastSent = row.last_sent_at;
+      const hoursAgo = Math.floor((Date.now() - new Date(lastSent).getTime()) / (1000 * 60 * 60));
+      result.set(row.contact_id, { last_sent_at: lastSent, hours_ago: hoursAgo });
+    }
+  }
+  return result;
+}
+
+/**
+ * F4.3 Pedro 2026-05-16: detecta jobs ativos do rep com template SIMILAR
+ * (Jaccard >= 0.7 sobre palavras únicas). Anti-duplicação acidental.
+ * Usado pelo preview pra avisar "tem job similar rodando — quer mergear ou criar novo?"
+ */
+export interface SimilarJobMatch {
+  job_id: string;
+  status: string;
+  label: string | null;
+  template_preview: string;
+  similarity: number;
+  total_contacts: number;
+  pending_count: number;
+}
+
+function jaccardSimilarity(a: string, b: string): number {
+  const tokenize = (s: string) =>
+    new Set(
+      s
+        .toLowerCase()
+        .replace(/[^\w\sáéíóúâêôãõçà]+/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length > 2),
+    );
+  const sa = tokenize(a);
+  const sb = tokenize(b);
+  if (sa.size === 0 || sb.size === 0) return 0;
+  let inter = 0;
+  for (const w of sa) if (sb.has(w)) inter++;
+  const union = sa.size + sb.size - inter;
+  return union === 0 ? 0 : inter / union;
+}
+
+export async function findSimilarActiveJobs(
+  repId: string,
+  locationId: string,
+  newTemplate: string,
+  threshold: number = 0.7,
+): Promise<SimilarJobMatch[]> {
+  if (!newTemplate || newTemplate.length < 20) return [];
+  const supabase = createAdminClient();
+  const { data: jobs } = await supabase
+    .from("bulk_message_jobs")
+    .select("id, status, label, message_template, total_contacts, sent_count")
+    .eq("rep_id", repId)
+    .eq("location_id", locationId)
+    .in("status", ["running", "paused"])
+    .limit(50);
+
+  const matches: SimilarJobMatch[] = [];
+  for (const j of jobs || []) {
+    const sim = jaccardSimilarity(newTemplate, j.message_template || "");
+    if (sim >= threshold) {
+      matches.push({
+        job_id: j.id,
+        status: j.status,
+        label: j.label,
+        template_preview: String(j.message_template).slice(0, 80),
+        similarity: Math.round(sim * 100) / 100,
+        total_contacts: j.total_contacts,
+        pending_count: j.total_contacts - (j.sent_count ?? 0),
+      });
+    }
+  }
+  return matches.sort((a, b) => b.similarity - a.similarity);
+}
+
+/**
+ * F3.2: registra que um contato recebeu msg bulk (chamado pelo runner após send).
+ * UPSERT com increment de send_count_30d (rolling — não exato mas suficiente).
+ */
+export async function recordContactBulkSent(
+  contactId: string,
+  locationId: string,
+  jobId: string | null,
+): Promise<void> {
+  const supabase = createAdminClient();
+  const now = new Date().toISOString();
+  try {
+    // Tenta UPDATE primeiro (caso já exista)
+    const { data: existing } = await supabase
+      .from("bulk_contact_cooldown")
+      .select("send_count_30d, last_sent_at")
+      .eq("contact_id", contactId)
+      .eq("location_id", locationId)
+      .maybeSingle();
+
+    if (existing) {
+      // Se última msg foi >30d atrás, reseta counter; senão incrementa
+      const lastSent = new Date(existing.last_sent_at).getTime();
+      const isNew30dWindow = Date.now() - lastSent > 30 * 24 * 60 * 60 * 1000;
+      await supabase
+        .from("bulk_contact_cooldown")
+        .update({
+          last_sent_at: now,
+          job_id: jobId,
+          send_count_30d: isNew30dWindow ? 1 : (existing.send_count_30d ?? 0) + 1,
+          updated_at: now,
+        })
+        .eq("contact_id", contactId)
+        .eq("location_id", locationId);
+    } else {
+      await supabase
+        .from("bulk_contact_cooldown")
+        .insert({
+          contact_id: contactId,
+          location_id: locationId,
+          last_sent_at: now,
+          job_id: jobId,
+          send_count_30d: 1,
+        });
+    }
+  } catch (err) {
+    // Não-fatal — cooldown é metadado warn-only
+    console.warn("[bulk-cooldown] recordContactBulkSent falhou:", err);
+  }
 }
 
 /**
@@ -321,6 +519,10 @@ export interface ActiveBulkJob {
   next_scheduled_at: string | null;
   estimated_completion_at: string | null;
   is_multi_segment: boolean;
+  /** F4.2 Pedro 2026-05-16: label humana do job. */
+  label: string | null;
+  /** F4.1 Pedro 2026-05-16: priority 1-100. Default 50. */
+  priority: number;
 }
 
 export async function getActiveBulkJobs(
@@ -331,11 +533,12 @@ export async function getActiveBulkJobs(
   const { data: jobs } = await supabase
     .from("bulk_message_jobs")
     .select(
-      "id, status, total_contacts, sent_count, filter_config, estimated_completion_at",
+      "id, status, total_contacts, sent_count, filter_config, estimated_completion_at, label, priority",
     )
     .eq("rep_id", repId)
     .eq("location_id", locationId)
     .in("status", ["running", "paused"])
+    .order("priority", { ascending: false })
     .order("created_at", { ascending: false });
   if (!jobs || jobs.length === 0) return [];
 
@@ -377,6 +580,8 @@ export async function getActiveBulkJobs(
       next_scheduled_at: nextByJob.get(j.id) || null,
       estimated_completion_at: j.estimated_completion_at,
       is_multi_segment: !!isMulti,
+      label: j.label ?? null,
+      priority: j.priority ?? 50,
     };
   });
 }

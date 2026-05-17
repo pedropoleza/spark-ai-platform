@@ -287,14 +287,24 @@ const bulkDashboard: ToolEntry = {
     if (activeJobs.length === 0) {
       lines.push("🔭 Nenhum disparo ativo agora.");
     } else {
-      lines.push(`🚀 *${activeJobs.length} disparo(s) ativo(s):*`);
+      lines.push(`🚀 *${activeJobs.length} disparo(s) ativo(s):* (ordem = prioridade)`);
       for (const j of activeJobs) {
-        const segLabel = j.segments_labels.length > 0 ? j.segments_labels.join(", ") : "(legacy)";
+        // F4.2: prefere label se rep deu, senão usa segments
+        const displayName = j.label
+          ? j.label
+          : j.segments_labels.length > 0
+            ? j.segments_labels.join(", ")
+            : "(legacy)";
         const statusEmoji = j.status === "paused" ? "⏸" : "🟢";
         const pct = j.total_contacts > 0
           ? Math.round((j.sent_count / j.total_contacts) * 100)
           : 0;
-        lines.push(`  ${statusEmoji} *${segLabel}* — ${j.sent_count}/${j.total_contacts} (${pct}%)`);
+        // F4.1: badge de priority quando não-default
+        const priorityBadge =
+          j.priority >= 70 ? " 🔥urgente"
+          : j.priority <= 30 ? " 🐌background"
+          : "";
+        lines.push(`  ${statusEmoji} *${displayName}*${priorityBadge} — ${j.sent_count}/${j.total_contacts} (${pct}%)`);
         if (j.next_scheduled_at) {
           lines.push(`     ⏰ próx: ${formatDateTimeET(j.next_scheduled_at)}`);
         }

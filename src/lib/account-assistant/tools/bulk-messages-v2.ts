@@ -37,12 +37,17 @@ import {
 } from "../filter-engine";
 import {
   countRecipientsLast24h,
+  countRecipientsLast7Days,
   getDailyCap,
   getEffectiveDailyCap,
+  getWeeklyCap,
+  getContactsWithRecentBulk,
+  findSimilarActiveJobs,
   adjustStartAtForQuietHours,
   resolveAgentId,
   getActiveBulkJobs,
   type ActiveBulkJob,
+  type SimilarJobMatch,
 } from "./bulk-messages";
 import { computeBatchedScheduledAts, computeDeliveryOptions } from "./bulk-delivery-strategy";
 import {
@@ -389,6 +394,52 @@ const previewBulkMessageV2: ToolEntry = {
       ? computeCoexistenceRecommendation(activeJobs)
       : null;
 
+    // F3.2 Pedro 2026-05-16: detecta contatos que receberam bulk recentemente
+    // (24h). NÃO bloqueia — só avisa rep no preview ("Larissa já recebeu há 6h").
+    const allContactIds = resolveRes.segments.flatMap((s) => s.contacts.map((c) => c.id));
+    const recentBulkMap = await getContactsWithRecentBulk(
+      ctx.locationId,
+      allContactIds,
+      24,
+    );
+    const cooldownWarnings: Array<{
+      contact_id: string;
+      contact_name: string | null;
+      hours_ago: number;
+      segment: string;
+    }> = [];
+    for (const seg of resolveRes.segments) {
+      for (const c of seg.contacts) {
+        const recent = recentBulkMap.get(c.id);
+        if (recent) {
+          cooldownWarnings.push({
+            contact_id: c.id,
+            contact_name: c.name,
+            hours_ago: recent.hours_ago,
+            segment: seg.label,
+          });
+        }
+      }
+    }
+    // F3.4 Pedro 2026-05-16: check de weekly cap secundário (opcional).
+    const weeklyCap = await getWeeklyCap(agentId);
+    const usedLast7d = weeklyCap !== null ? await countRecipientsLast7Days(ctx.locationId) : 0;
+    const weeklyRemaining = weeklyCap !== null ? Math.max(0, weeklyCap - usedLast7d) : null;
+    const weeklyCapWarning =
+      weeklyCap !== null && usedLast7d + total > weeklyCap
+        ? `⚠️ Volume excede cap semanal (${weeklyCap}) — ${usedLast7d} já enfileiradas nos últimos 7d, esse disparo soma ${total}.`
+        : null;
+
+    // F4.3 Pedro 2026-05-16: anti-duplicação. Checa o template do PRIMEIRO
+    // segment (representativo) contra jobs ativos do rep. Threshold 0.7.
+    const firstTemplate = resolveRes.segments[0]?.message_template || "";
+    const similarJobs: SimilarJobMatch[] = await findSimilarActiveJobs(
+      ctx.rep.id,
+      ctx.locationId,
+      firstTemplate,
+      0.7,
+    );
+
     // Pedro 2026-05-15: computa OPÇÕES de delivery automaticamente pro bot
     // apresentar como menu numerado (em vez de pergunta aberta).
     const deliveryOptions = computeDeliveryOptions({
@@ -467,6 +518,33 @@ const previewBulkMessageV2: ToolEntry = {
         confirmation_summary: confirmationSummary,
         // Pedro 2026-05-15: coexistência com jobs ativos
         coexistence: coexistence,
+        // F3.2 Pedro 2026-05-16: warns de contatos com bulk recente (não bloqueia)
+        cooldown_warnings: cooldownWarnings,
+        cooldown_warning_summary:
+          cooldownWarnings.length > 0
+            ? `⚠️ ${cooldownWarnings.length} contato(s) já receberam bulk nas últimas 24h. ` +
+              `Pode disparar mesmo assim (warn-only, sem bloqueio), mas considere remover esses pra evitar saturação:\n` +
+              cooldownWarnings.slice(0, 5).map((w) =>
+                `  • ${w.contact_name || w.contact_id} (${w.segment}) — recebeu há ${w.hours_ago}h`
+              ).join("\n") +
+              (cooldownWarnings.length > 5 ? `\n  • ... +${cooldownWarnings.length - 5} mais` : "")
+            : null,
+        // F3.4 Pedro 2026-05-16: weekly cap secundário (opcional)
+        weekly_cap: weeklyCap,
+        weekly_used: usedLast7d,
+        weekly_remaining: weeklyRemaining,
+        weekly_cap_warning: weeklyCapWarning,
+        // F4.3 Pedro 2026-05-16: anti-duplicação — avisa se template já tá em job ativo
+        similar_active_jobs: similarJobs,
+        similar_jobs_warning:
+          similarJobs.length > 0
+            ? `⚠️ Já tem ${similarJobs.length} job(s) ativo(s) com texto MUITO PARECIDO ` +
+              `(>${Math.round(similarJobs[0].similarity * 100)}% similar):\n` +
+              similarJobs.slice(0, 3).map((s) =>
+                `  • ${s.label || s.template_preview} (${s.pending_count}/${s.total_contacts} pending, ${Math.round(s.similarity * 100)}% match)`
+              ).join("\n") +
+              `\n\nPergunte ao rep: criar NOVO (paralelo) OU usar bulk_edit_pending_job pra adicionar destinatários ao existente?`
+            : null,
       },
     };
   },
@@ -538,6 +616,18 @@ const scheduleBulkMessageV2: ToolEntry = {
           type: "boolean",
           description:
             "OBRIGATÓRIO=true SE rep escolher rodar em paralelo a outro job ativo (opção B no menu de coexistência). Sem isso, schedule bloqueia.",
+        },
+        // F4.2 Pedro 2026-05-16: label humana pro job
+        label: {
+          type: "string",
+          description:
+            "Nome humano do job pra rep identificar no dashboard (ex: 'M3 terça 19/05', 'Black Friday lead', 'Aniversário cliente'). Opcional mas RECOMENDADO — facilita gerenciamento. Max 100 chars. Se omitir, dashboard usa o template+segmento.",
+        },
+        // F4.1 Pedro 2026-05-16: priority queue
+        priority: {
+          type: "number",
+          description:
+            "Prioridade 1-100 (default 50). Runner processa jobs por priority DESC. Use 70-90 pra urgente (fura fila), 30-40 pra background (espera outros). 50 = normal.",
         },
       },
       required: ["segments", "list_temperature"],
@@ -656,6 +746,25 @@ const scheduleBulkMessageV2: ToolEntry = {
     // F2 Pedro 2026-05-16: cap efetivo = base + overrides ativos pro dia.
     // Rep pode ter pedido bulk_request_cap_override pra esse dia específico.
     const cap = await getEffectiveDailyCap(ctx.locationId, baseCap, effectiveSendDate);
+
+    // F3.4 Pedro 2026-05-16: weekly cap secundário (opcional). Se setado,
+    // bloqueia se total + usado 7d > weekly_cap. Diferente do daily — weekly
+    // é hard block sem override (proteção secundária contra abuso).
+    const weeklyCap = await getWeeklyCap(agentId);
+    if (weeklyCap !== null) {
+      const usedLast7d = await countRecipientsLast7Days(ctx.locationId);
+      if (usedLast7d + total > weeklyCap) {
+        return {
+          status: "error",
+          message:
+            `⚠️ Cap SEMANAL (${weeklyCap}) seria excedido: ` +
+            `${usedLast7d} já enfileiradas nos últimos 7d + ${total} desse disparo = ${usedLast7d + total}. ` +
+            `Sobra ${Math.max(0, weeklyCap - usedLast7d)}. ` +
+            `Weekly cap é proteção secundária e NÃO aceita override — reduza o volume desse disparo ou espere alguns dias.`,
+          retryable: false,
+        };
+      }
+    }
 
     const usedOnSendDate = await countRecipientsLast24h(ctx.locationId, effectiveSendDate);
     const remaining = cap === null ? Infinity : Math.max(0, cap - usedOnSendDate);
@@ -786,6 +895,14 @@ const scheduleBulkMessageV2: ToolEntry = {
       delivery_strategy: deliveryStrategy,
     };
 
+    // F4.1+F4.2 Pedro 2026-05-16: label + priority opcionais
+    const jobLabel = typeof args.label === "string" ? args.label.slice(0, 100) : null;
+    const jobPriority = (() => {
+      const p = Number(args.priority);
+      if (!Number.isFinite(p)) return 50;
+      return Math.min(100, Math.max(1, Math.round(p)));
+    })();
+
     const { data: job, error: jobErr } = await supabase
       .from("bulk_message_jobs")
       .insert({
@@ -802,6 +919,8 @@ const scheduleBulkMessageV2: ToolEntry = {
         status: "running",
         total_contacts: totalEnqueued,
         start_at: adjustedStartAt.toISOString(),
+        label: jobLabel,
+        priority: jobPriority,
       })
       .select("id, start_at")
       .single();
