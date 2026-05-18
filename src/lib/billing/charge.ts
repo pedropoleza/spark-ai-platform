@@ -136,12 +136,18 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
 }
 
 /**
- * Cobra do wallet da sub-account via GHL Marketplace API.
- * Retorna o ID da cobrança no GHL pra rastreamento (se disponível na resposta).
+ * Cobra do wallet da sub-account via GHL Marketplace API (Custom Event metered).
  *
- * Idempotency: passamos `Idempotency-Key` baseado no usage_record.id.
- * Se o GHL respeitar (atualmente honra Idempotency-Key em endpoints de
- * billing), retry do mesmo record não duplica cobrança.
+ * Pedro 2026-05-17: API GHL mudou pra modelo de metered billing.
+ * Schema antigo (`{locationId, amount, currency}`) retornava 422.
+ * Schema novo exige `appId + meterId + eventId + companyId + locationId + units + price`.
+ *
+ * Idempotency: passamos `eventId` baseado no usage_record.id — GHL usa
+ * isso pra dedupar (mesmo eventId não cobra 2x).
+ *
+ * Envs necessárias:
+ *   GHL_MARKETPLACE_APP_ID  — appId do app no Marketplace
+ *   GHL_BILLING_METER_ID    — meterId do Custom Event API criado no Pricing
  */
 async function chargeWallet(
   companyId: string,
@@ -150,26 +156,33 @@ async function chargeWallet(
   description: string,
   idempotencyKey?: string,
 ): Promise<string | null> {
+  const appId = process.env.GHL_MARKETPLACE_APP_ID;
+  const meterId = process.env.GHL_BILLING_METER_ID;
+  if (!appId || !meterId) {
+    throw new Error(
+      "GHL_MARKETPLACE_APP_ID e/ou GHL_BILLING_METER_ID não configurados em env",
+    );
+  }
+
   const token = await getLocationToken(companyId, locationId);
-
-  // Converter para centavos (GHL espera em centavos)
-  const amountCents = Math.ceil(amountUsd * 100);
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-    Version: "2021-07-28",
-  };
-  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+  const eventId = idempotencyKey || `evt-${Date.now()}-${locationId.slice(0, 6)}`;
 
   const response = await fetch(`${GHL_API_BASE}/marketplace/billing/charges`, {
     method: "POST",
-    headers,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Version: "2021-07-28",
+    },
     body: JSON.stringify({
+      appId,
+      meterId,
+      eventId,
+      companyId,
       locationId,
-      amount: amountCents,
+      units: 1, // 1 evento por charge
+      price: amountUsd, // dynamic price — valor exato em USD
       description: `Spark AI Hub - ${formatDescription(description)}`,
-      currency: "USD",
     }),
   });
 
@@ -178,10 +191,10 @@ async function chargeWallet(
     throw new Error(`GHL billing charge failed: ${response.status} - ${errorBody}`);
   }
 
-  // Tenta extrair ID retornado (formato pode variar)
+  // Response: {message, chargeId, maxDailyUnits, dailyUnitsConsumed, traceId}
   try {
-    const data = await response.json() as { id?: string; charge_id?: string };
-    return data.id || data.charge_id || null;
+    const data = (await response.json()) as { chargeId?: string; id?: string };
+    return data.chargeId || data.id || null;
   } catch {
     return null;
   }
@@ -338,47 +351,44 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
 
   if (!claimed || claimed.length === 0) return { charged: 0, failed: 0 };
 
-  // Agrupar por location para cobrar em batch
-  const byLocation = new Map<string, { totalUsd: number; ids: string[] }>();
-
-  for (const record of claimed) {
-    const key = record.location_id;
-    if (!byLocation.has(key)) {
-      byLocation.set(key, { totalUsd: 0, ids: [] });
-    }
-    const group = byLocation.get(key)!;
-    group.totalUsd += Number(record.total_charge_usd);
-    group.ids.push(record.id);
+  // Cache location → company_id pra evitar N queries
+  const locCompanyCache = new Map<string, string | null>();
+  async function getCompanyId(locationId: string): Promise<string | null> {
+    if (locCompanyCache.has(locationId)) return locCompanyCache.get(locationId)!;
+    const { data } = await supabase
+      .from("locations")
+      .select("company_id")
+      .eq("location_id", locationId)
+      .maybeSingle();
+    const companyId = data?.company_id ?? null;
+    locCompanyCache.set(locationId, companyId);
+    return companyId;
   }
 
-  for (const [locationId, group] of Array.from(byLocation.entries())) {
+  // Fix Pedro 2026-05-17: cobrar 1 record por vez (não agrupar em batch).
+  // Schema novo de metered billing tem Max Price per Unit ($5) — batches
+  // grandes (ex: rep com 30 records somando $3.85) podem somar acima do
+  // limite e retornar 400 "Price is not within the allowed range". Records
+  // individuais sempre cabem (price médio $0.01-$0.30 por turn).
+  // Idempotency: eventId = usage_record.id → GHL não duplica em retry.
+  for (const record of claimed) {
     try {
-      const { data: location } = await supabase
-        .from("locations")
-        .select("company_id")
-        .eq("location_id", locationId)
-        .single();
-
-      if (!location) {
-        failed += group.ids.length;
-        // Libera claim pra próxima rodada tentar de novo
+      const companyId = await getCompanyId(record.location_id);
+      if (!companyId) {
+        failed++;
         await supabase
           .from("usage_records")
           .update({ claim_token: null, claimed_at: null })
-          .in("id", group.ids);
+          .eq("id", record.id);
         continue;
       }
 
-      // Idempotency: hash dos ids do batch — se mesmo batch for retentado,
-      // o GHL deve ignorar a cobrança duplicada (se respeitar a header).
-      const batchIdempotencyKey = `batch-${group.ids.slice().sort().join(",").slice(0, 64)}`;
-
       const ghlChargeId = await chargeWallet(
-        location.company_id,
-        locationId,
-        group.totalUsd,
-        `Batch: ${group.ids.length} interacoes`,
-        batchIdempotencyKey,
+        companyId,
+        record.location_id,
+        Number(record.total_charge_usd),
+        record.action_type || "ai_turn",
+        record.id, // eventId pro GHL — idempotência por record
       );
 
       await supabase
@@ -386,18 +396,20 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
         .update({
           charged_to_wallet: true,
           wallet_charge_id: ghlChargeId ?? null,
+          charged_at: new Date().toISOString(),
         })
-        .in("id", group.ids);
+        .eq("id", record.id);
 
-      charged += group.ids.length;
+      charged++;
     } catch (err) {
-      failed += group.ids.length;
-      // Libera claim pra próxima tentativa
+      failed++;
+      // Libera claim pra próxima tentativa (não loga retries pra evitar spam)
       await supabase
         .from("usage_records")
         .update({ claim_token: null, claimed_at: null })
-        .in("id", group.ids);
-      console.error(`[Billing] Batch charge failed for ${locationId}:`, err);
+        .eq("id", record.id);
+      const msg = err instanceof Error ? err.message.slice(0, 200) : String(err);
+      console.warn(`[Billing] Single charge failed for record ${record.id}: ${msg}`);
     }
   }
 
