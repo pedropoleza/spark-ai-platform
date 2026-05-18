@@ -1,23 +1,14 @@
-import { SignalsClient } from "./signals-client";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "SparkBot Admin · Signals" };
 
 /**
- * Pedro 2026-05-04: painel admin pra rastrear signals do SparkBot.
+ * Pedro 2026-05-17: rota legada — redireciona pro novo dashboard
+ * com a tab signals ativa. Mantém bookmarks antigos funcionando.
  *
- * Auth via middleware Basic Auth (env ADMIN_PANEL_PASSWORD).
- * URL secreta — só Pedro tem.
- *
- * Mostra:
- *   - Failures (bot tentou e travou)
- *   - Missed capabilities (rep pediu, bot não tem)
- *   - Errors (técnicos recorrentes)
- *   - Ideas (manual via form)
- *
- * Tudo agrupado por fingerprint (occurrence_count++ pra repetidos),
- * ordenado por count desc. Permite triage: status, severity, notes.
+ * /admin/signals       → /admin/dashboard?tab=signals
+ * /admin/signals?...   → /admin/dashboard?tab=signals (descarta outros params)
  */
-export default function AdminSignalsPage() {
-  return <SignalsClient />;
+export default function AdminSignalsLegacyPage() {
+  redirect("/admin/dashboard?tab=signals");
 }

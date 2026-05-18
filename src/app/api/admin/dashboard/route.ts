@@ -1,0 +1,393 @@
+/**
+ * GET /api/admin/dashboard — agregação geral pro dashboard admin.
+ *
+ * Pedro 2026-05-17: substitui /api/admin/signals como principal endpoint;
+ * agrega KPIs, billing, features adoption, bulk, reps em 1 call.
+ * Cache in-memory 60s pra não saturar DB (admin pode refresh seguro).
+ *
+ * Auth: middleware Basic Auth (env ADMIN_PANEL_PASSWORD).
+ */
+
+import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/admin";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
+type CacheEntry = { at: number; data: unknown };
+const cache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 60_000;
+
+function cached(key: string) {
+  const e = cache.get(key);
+  if (e && Date.now() - e.at < CACHE_TTL_MS) return e.data;
+  return null;
+}
+function setCached(key: string, data: unknown) {
+  cache.set(key, { at: Date.now(), data });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Helpers de agregação
+// ─────────────────────────────────────────────────────────────
+
+async function getOverview() {
+  const supa = createAdminClient();
+  const now = new Date();
+  const d24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const d7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const d30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [
+    reps24h,
+    reps7d,
+    reps30d,
+    repsTotalExt,
+    msgs24h,
+    aiCalls24h,
+    aiCalls7d,
+    bulkRunning,
+    bulkPaused,
+    bulkLast7d,
+    signalsHigh,
+    signalsOpen,
+    runnerHealth,
+  ] = await Promise.all([
+    supa.from("rep_identities").select("id", { count: "exact", head: true }).gte("last_inbound_at", d24h),
+    supa.from("rep_identities").select("id", { count: "exact", head: true }).gte("last_inbound_at", d7d),
+    supa.from("rep_identities").select("id", { count: "exact", head: true }).gte("last_inbound_at", d30d),
+    supa.from("rep_identities").select("id", { count: "exact", head: true }).eq("is_internal", false),
+    supa.from("sparkbot_messages").select("role", { count: "exact" }).gte("created_at", d24h),
+    supa.from("usage_records").select("cost_usd, total_charge_usd").gte("created_at", d24h),
+    supa.from("usage_records").select("cost_usd, total_charge_usd").gte("created_at", d7d),
+    supa.from("bulk_message_jobs").select("id", { count: "exact", head: true }).eq("status", "running"),
+    supa.from("bulk_message_jobs").select("id", { count: "exact", head: true }).eq("status", "paused"),
+    supa.from("bulk_message_jobs").select("id", { count: "exact", head: true }).gte("created_at", d7d),
+    supa.from("admin_signals").select("id", { count: "exact", head: true }).eq("status", "open").eq("severity", "high"),
+    supa.from("admin_signals").select("id", { count: "exact", head: true }).eq("status", "open"),
+    supa.from("bulk_runner_health").select("last_tick_at, consecutive_errors, last_error").eq("id", 1).maybeSingle(),
+  ]);
+
+  // Conta msgs por role (in vs out) — query separada
+  let msgsIn24h = 0;
+  let msgsOut24h = 0;
+  try {
+    const { data: msgsByRole } = await supa
+      .from("sparkbot_messages")
+      .select("role")
+      .gte("created_at", d24h);
+    for (const m of msgsByRole || []) {
+      if (m.role === "user") msgsIn24h++;
+      else if (m.role === "agent" || m.role === "assistant") msgsOut24h++;
+    }
+  } catch {
+    // best-effort
+  }
+
+  const sumCost24h = (aiCalls24h.data || []).reduce((s, r) => s + Number(r.cost_usd ?? 0), 0);
+  const sumRevenue24h = (aiCalls24h.data || []).reduce((s, r) => s + Number(r.total_charge_usd ?? 0), 0);
+  const sumCost7d = (aiCalls7d.data || []).reduce((s, r) => s + Number(r.cost_usd ?? 0), 0);
+  const sumRevenue7d = (aiCalls7d.data || []).reduce((s, r) => s + Number(r.total_charge_usd ?? 0), 0);
+
+  // Runner stale?
+  const lastTickAt = runnerHealth.data?.last_tick_at;
+  const tickAgeSec = lastTickAt ? Math.floor((Date.now() - new Date(lastTickAt).getTime()) / 1000) : null;
+  const runnerStale = tickAgeSec !== null && tickAgeSec > 5 * 60;
+
+  return {
+    reps: {
+      active_24h: reps24h.count ?? 0,
+      active_7d: reps7d.count ?? 0,
+      active_30d: reps30d.count ?? 0,
+      total_external: repsTotalExt.count ?? 0,
+    },
+    messages_24h: {
+      total: msgs24h.count ?? 0,
+      inbound: msgsIn24h,
+      outbound: msgsOut24h,
+    },
+    ai_24h: {
+      calls: (aiCalls24h.data || []).length,
+      cost_usd: Math.round(sumCost24h * 10000) / 10000,
+      revenue_usd: Math.round(sumRevenue24h * 10000) / 10000,
+      margin_usd: Math.round((sumRevenue24h - sumCost24h) * 10000) / 10000,
+      margin_pct: sumRevenue24h > 0 ? Math.round(((sumRevenue24h - sumCost24h) / sumRevenue24h) * 1000) / 10 : 0,
+    },
+    ai_7d: {
+      calls: (aiCalls7d.data || []).length,
+      cost_usd: Math.round(sumCost7d * 100) / 100,
+      revenue_usd: Math.round(sumRevenue7d * 100) / 100,
+    },
+    bulk: {
+      running: bulkRunning.count ?? 0,
+      paused: bulkPaused.count ?? 0,
+      created_7d: bulkLast7d.count ?? 0,
+    },
+    signals: {
+      open: signalsOpen.count ?? 0,
+      high_open: signalsHigh.count ?? 0,
+    },
+    runner: {
+      last_tick_at: lastTickAt,
+      tick_age_seconds: tickAgeSec,
+      consecutive_errors: runnerHealth.data?.consecutive_errors ?? 0,
+      last_error: runnerHealth.data?.last_error ?? null,
+      is_stale: runnerStale,
+    },
+  };
+}
+
+async function getBillingTab() {
+  const supa = createAdminClient();
+  const d14d = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Revenue por dia (últimos 14d)
+  const { data: rows } = await supa
+    .from("usage_records")
+    .select("location_id, total_charge_usd, cost_usd, charged_to_wallet, cap_blocked, uses_custom_key, created_at, action_type")
+    .gte("created_at", d14d);
+
+  const byDay = new Map<string, { revenue: number; cost: number; calls: number }>();
+  const byLocation = new Map<string, { revenue: number; cost: number; calls: number; charged: number; pending: number }>();
+  let pendingTotal = 0;
+  let pendingCount = 0;
+  let chargedTotal = 0;
+
+  for (const r of rows || []) {
+    const day = (r.created_at as string).slice(0, 10);
+    const dayEntry = byDay.get(day) || { revenue: 0, cost: 0, calls: 0 };
+    dayEntry.revenue += Number(r.total_charge_usd ?? 0);
+    dayEntry.cost += Number(r.cost_usd ?? 0);
+    dayEntry.calls++;
+    byDay.set(day, dayEntry);
+
+    const locEntry = byLocation.get(r.location_id) || { revenue: 0, cost: 0, calls: 0, charged: 0, pending: 0 };
+    locEntry.revenue += Number(r.total_charge_usd ?? 0);
+    locEntry.cost += Number(r.cost_usd ?? 0);
+    locEntry.calls++;
+    if (r.charged_to_wallet) {
+      locEntry.charged += Number(r.total_charge_usd ?? 0);
+      chargedTotal += Number(r.total_charge_usd ?? 0);
+    } else if (!r.uses_custom_key && !r.cap_blocked && Number(r.total_charge_usd) > 0) {
+      locEntry.pending += Number(r.total_charge_usd ?? 0);
+      pendingTotal += Number(r.total_charge_usd ?? 0);
+      pendingCount++;
+    }
+    byLocation.set(r.location_id, locEntry);
+  }
+
+  return {
+    daily: Array.from(byDay.entries())
+      .sort()
+      .map(([day, v]) => ({
+        day,
+        revenue: Math.round(v.revenue * 10000) / 10000,
+        cost: Math.round(v.cost * 10000) / 10000,
+        margin: Math.round((v.revenue - v.cost) * 10000) / 10000,
+        calls: v.calls,
+      })),
+    top_locations: Array.from(byLocation.entries())
+      .map(([loc, v]) => ({
+        location_id: loc,
+        revenue: Math.round(v.revenue * 10000) / 10000,
+        cost: Math.round(v.cost * 10000) / 10000,
+        calls: v.calls,
+        charged: Math.round(v.charged * 10000) / 10000,
+        pending: Math.round(v.pending * 10000) / 10000,
+      }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10),
+    totals: {
+      charged_14d: Math.round(chargedTotal * 100) / 100,
+      pending_14d: Math.round(pendingTotal * 100) / 100,
+      pending_count: pendingCount,
+    },
+  };
+}
+
+async function getFeaturesTab() {
+  const supa = createAdminClient();
+  const d7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [{ data: usage }, { data: bulkJobs }, { data: filters }, { data: proactive }] = await Promise.all([
+    supa.from("usage_records").select("action_type, location_id, total_charge_usd").gte("created_at", d7d),
+    supa.from("bulk_message_jobs").select("id, location_id, filter_config, status").gte("created_at", d7d),
+    supa.from("filter_executions").select("id, location_id, consumer_tool").gte("created_at", d7d),
+    supa.from("assistant_proactive_rules").select("rule_type, enabled"),
+  ]);
+
+  // Top action_types (= tools/operações)
+  const byAction = new Map<string, { calls: number; locations: Set<string>; revenue: number }>();
+  for (const u of usage || []) {
+    const k = (u.action_type as string) || "unknown";
+    const entry = byAction.get(k) || { calls: 0, locations: new Set(), revenue: 0 };
+    entry.calls++;
+    entry.locations.add(u.location_id);
+    entry.revenue += Number(u.total_charge_usd ?? 0);
+    byAction.set(k, entry);
+  }
+
+  // Filter Engine breakdown por consumer_tool
+  const byFilterTool = new Map<string, { count: number; locations: Set<string> }>();
+  for (const f of filters || []) {
+    const k = (f.consumer_tool as string) || "unknown";
+    const entry = byFilterTool.get(k) || { count: 0, locations: new Set() };
+    entry.count++;
+    entry.locations.add(f.location_id);
+    byFilterTool.set(k, entry);
+  }
+
+  // Bulk adoption por location
+  const bulkLocations = new Set<string>();
+  let bulkMultiSegment = 0;
+  for (const j of bulkJobs || []) {
+    bulkLocations.add(j.location_id);
+    const fc = j.filter_config as { type?: string } | null;
+    if (fc?.type === "multi") bulkMultiSegment++;
+  }
+
+  // Proactive rules enabled
+  const proactiveStats = new Map<string, { enabled: number; disabled: number }>();
+  for (const r of proactive || []) {
+    const k = (r.rule_type as string) || "unknown";
+    const entry = proactiveStats.get(k) || { enabled: 0, disabled: 0 };
+    if (r.enabled) entry.enabled++;
+    else entry.disabled++;
+    proactiveStats.set(k, entry);
+  }
+
+  return {
+    top_actions: Array.from(byAction.entries())
+      .map(([action, v]) => ({
+        action,
+        calls: v.calls,
+        unique_locations: v.locations.size,
+        revenue: Math.round(v.revenue * 10000) / 10000,
+      }))
+      .sort((a, b) => b.calls - a.calls)
+      .slice(0, 15),
+    filter_engine: {
+      total_executions: (filters || []).length,
+      by_tool: Array.from(byFilterTool.entries())
+        .map(([tool, v]) => ({
+          tool,
+          executions: v.count,
+          unique_locations: v.locations.size,
+        }))
+        .sort((a, b) => b.executions - a.executions),
+    },
+    bulk_adoption: {
+      total_jobs_7d: (bulkJobs || []).length,
+      multi_segment_jobs: bulkMultiSegment,
+      unique_locations: bulkLocations.size,
+    },
+    proactive_rules: Array.from(proactiveStats.entries()).map(([rule, v]) => ({
+      rule,
+      enabled: v.enabled,
+      disabled: v.disabled,
+    })),
+  };
+}
+
+async function getBulkTab() {
+  const supa = createAdminClient();
+  const d7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [{ data: active }, { data: recent }, { data: health }] = await Promise.all([
+    supa
+      .from("bulk_message_jobs")
+      .select(
+        "id, label, status, total_contacts, sent_count, failed_count, location_id, rep_id, priority, created_at, estimated_completion_at, filter_config",
+      )
+      .in("status", ["running", "paused"])
+      .order("priority", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(50),
+    supa
+      .from("bulk_message_jobs")
+      .select("id, label, status, total_contacts, sent_count, failed_count, location_id, created_at, completed_at")
+      .in("status", ["completed", "cancelled", "failed"])
+      .gte("created_at", d7d)
+      .order("completed_at", { ascending: false, nullsFirst: false })
+      .limit(20),
+    supa.from("bulk_runner_health").select("*").eq("id", 1).maybeSingle(),
+  ]);
+
+  return {
+    active_jobs: active || [],
+    recent_completed: recent || [],
+    runner_health: health.data,
+  };
+}
+
+async function getRepsTab() {
+  const supa = createAdminClient();
+  const { data: reps } = await supa
+    .from("rep_identities")
+    .select("id, phone, name, active_location_id, is_internal, role, last_inbound_at, created_at")
+    .order("last_inbound_at", { ascending: false, nullsFirst: false })
+    .limit(200);
+
+  // Hidrata location names
+  const locIds = Array.from(new Set((reps || []).map((r) => r.active_location_id).filter(Boolean)));
+  const { data: locations } = await supa
+    .from("locations")
+    .select("location_id, location_name, timezone")
+    .in("location_id", locIds.length > 0 ? locIds : ["__none__"]);
+  const locMap = new Map((locations || []).map((l) => [l.location_id, l]));
+
+  return {
+    reps: (reps || []).map((r) => {
+      const loc = locMap.get(r.active_location_id);
+      return {
+        ...r,
+        location_name: loc?.location_name || null,
+        location_timezone: loc?.timezone || null,
+      };
+    }),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────
+// Handler
+// ─────────────────────────────────────────────────────────────
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const tab = url.searchParams.get("tab") || "all";
+  const fresh = url.searchParams.get("fresh") === "1";
+
+  const cacheKey = `dash:${tab}`;
+  if (!fresh) {
+    const c = cached(cacheKey);
+    if (c) {
+      return NextResponse.json({ ok: true, cached: true, ...(c as object) });
+    }
+  }
+
+  try {
+    let payload: Record<string, unknown> = {};
+    if (tab === "overview" || tab === "all") {
+      payload.overview = await getOverview();
+    }
+    if (tab === "billing" || tab === "all") {
+      payload.billing = await getBillingTab();
+    }
+    if (tab === "features" || tab === "all") {
+      payload.features = await getFeaturesTab();
+    }
+    if (tab === "bulk" || tab === "all") {
+      payload.bulk = await getBulkTab();
+    }
+    if (tab === "reps" || tab === "all") {
+      payload.reps = await getRepsTab();
+    }
+
+    setCached(cacheKey, payload);
+    return NextResponse.json({ ok: true, cached: false, ...payload });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[admin/dashboard] FAIL:", msg);
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+  }
+}
