@@ -561,10 +561,29 @@ async function refreshJobCounters(jobId: string): Promise<boolean> {
     update.completed_at = new Date().toISOString();
     completed = true;
   }
-  await supabase
+  // Atomic: só promove pra completed se ainda estava running. Retorna rows
+  // afetadas — se 0, alguém já fez transition antes (race entre 2 ticks).
+  const { data: affected } = await supabase
     .from("bulk_message_jobs")
     .update(update)
     .eq("id", jobId)
-    .eq("status", "running"); // só marca completed se ainda estava running
+    .eq("status", "running")
+    .select("id");
+
+  // Pedro 2026-05-18: dispara notif pro rep quando JUST transitioned to
+  // completed (atomic check garante 1 só notif). Async/silent — não bloqueia
+  // tick se notifier falhar.
+  if (completed && affected && affected.length > 0) {
+    try {
+      const { notifyRepJobCompleted } = await import("./bulk-completion-notifier");
+      await notifyRepJobCompleted(jobId);
+    } catch (err) {
+      console.warn(
+        `[bulk-runner] completion notify falhou job=${jobId}:`,
+        err instanceof Error ? err.message.slice(0, 200) : err,
+      );
+    }
+  }
+
   return completed;
 }
