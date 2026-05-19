@@ -37,3 +37,7 @@ next-env.d.ts
 
 .vercel
 .forge/
+
+# Claude Code worktrees (não commitar)
+.claude/worktrees/
+
