@@ -238,6 +238,35 @@ function isNegatedOrPreviewContext(
   if (/\b(que|os\s+que|disparos?\s+que|tarefas?\s+que|notas?\s+que|reuni[aã]o\s+que)\s+(j[aá]\s+)?$/i.test(lookBehind)) {
     return true;
   }
+  // 5) Bot CITANDO conteúdo de notas existentes do cliente (sumário/status).
+  //    Caso Gustavo 19/05: "Telma Camargo: Atendimento em andamento — segunda
+  //    reunião marcada para quarta". O bot resume info que JÁ ESTÁ nas notas.
+  if (/\b(atendimento\s+em\s+andamento|status|nota\s+mais\s+recente|resumo\s+das?\s+notas?|primeira\s+reuni[aã]o|segunda\s+reuni[aã]o|terceira\s+reuni[aã]o)[\w\s,—\-:.]{0,60}$/i.test(lookBehind)) {
+    return true;
+  }
+  // 6) SUGESTÃO de próximo passo (bot propondo ação, não afirmando que fez).
+  //    "Próximos passos sugeridos:", "acompanhar fechamento", "criar task pra
+  //    follow-up", "task pra checar status".
+  if (/\b(sugest[aã]o|sugiro|recomendo|pr[oó]ximo[s]?\s+passo|acompanhar|criar\s+task)[\w\s,—\-:.]{0,60}$/i.test(lookBehind)) {
+    return true;
+  }
+  // 7) ITEM em lista numerada/bullet — bot apresentando vários itens.
+  //    "*1. Telma Camargo*\nReunião marcada pra quarta..." — match começa na
+  //    segunda linha mas lookBehind pega o cabeçalho do item.
+  if (/(^|\n)\s*\*?\s*\d+\.\s*\*?[^\n]{0,40}\*?\s*\n[\w\s,—\-:.]{0,60}$/i.test(lookBehind)) {
+    return true;
+  }
+  // 8) Texto DENTRO de aspas — bot mostrando template de mensagem.
+  //    "Como foi a reunião de quarta?" entre aspas = template, não claim.
+  //    Heurística: lookBehind termina em " ou ' ou abriu aspas há <120 chars.
+  const lookBehindFull = text.slice(Math.max(0, matchIndex - 200), matchIndex);
+  const lastQuote = Math.max(lookBehindFull.lastIndexOf('"'), lookBehindFull.lastIndexOf("'"), lookBehindFull.lastIndexOf("“"));
+  if (lastQuote >= 0) {
+    // Checa se a aspa NÃO foi fechada antes do match (= ainda dentro de quote)
+    const afterQuote = lookBehindFull.slice(lastQuote + 1);
+    const hasClosingQuote = /["'”]/.test(afterQuote);
+    if (!hasClosingQuote) return true;
+  }
   return false;
 }
 

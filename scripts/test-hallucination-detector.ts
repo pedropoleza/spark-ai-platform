@@ -49,6 +49,16 @@ function isNegatedOrPreviewContext(text: string, matchIndex: number): boolean {
   if (/(mensagem|texto|template|preview)\s+(que\s+)?(vai|ser[aá]|vou)\s+[\w\s,]{0,30}$/i.test(lookBehind)) return true;
   if (/(disparo|mensagem|texto)\s+(que\s+(vou\s+)?(mandar|enviar|disparar|ser[aá]|vai))/i.test(lookBehind)) return true;
   if (/\b(que|os\s+que|disparos?\s+que|tarefas?\s+que|notas?\s+que|reuni[aã]o\s+que)\s+(j[aá]\s+)?$/i.test(lookBehind)) return true;
+  if (/\b(atendimento\s+em\s+andamento|status|nota\s+mais\s+recente|resumo\s+das?\s+notas?|primeira\s+reuni[aã]o|segunda\s+reuni[aã]o|terceira\s+reuni[aã]o)[\w\s,—\-:.]{0,60}$/i.test(lookBehind)) return true;
+  if (/\b(sugest[aã]o|sugiro|recomendo|pr[oó]ximo[s]?\s+passo|acompanhar|criar\s+task)[\w\s,—\-:.]{0,60}$/i.test(lookBehind)) return true;
+  if (/(^|\n)\s*\*?\s*\d+\.\s*\*?[^\n]{0,40}\*?\s*\n[\w\s,—\-:.]{0,60}$/i.test(lookBehind)) return true;
+  const lookBehindFull = text.slice(Math.max(0, matchIndex - 200), matchIndex);
+  const lastQuote = Math.max(lookBehindFull.lastIndexOf('"'), lookBehindFull.lastIndexOf("'"), lookBehindFull.lastIndexOf("“"));
+  if (lastQuote >= 0) {
+    const afterQuote = lookBehindFull.slice(lastQuote + 1);
+    const hasClosingQuote = /["'”]/.test(afterQuote);
+    if (!hasClosingQuote) return true;
+  }
   return false;
 }
 
@@ -130,6 +140,42 @@ const cases: Array<{ name: string; text: string; tools: string[]; expect: "hit" 
     tools: [],
     expect: "hit",
     reason: "Bot disse criei sem chamar tool",
+  },
+  // === Casos novos do Gustavo 19/05 (4 novos contexts H33.1) ===
+  {
+    name: "FALSO POS #6 — sumário de nota com 'segunda reunião marcada'",
+    text: "*Telma Camargo*\nAtendimento em andamento — segunda reunião marcada para quarta-feira, com chance de fechar o terceiro plano.",
+    tools: [],
+    expect: "skip",
+    reason: "Sumário de nota citando info do cliente (atendimento em andamento)",
+  },
+  {
+    name: "FALSO POS #7 — sugestão de próximos passos",
+    text: "Com base nas notas, aqui minha sugestão de próximos passos:\n\n*1. Telma Camargo*\nReunião marcada pra quarta — acompanhar o fechamento do 3º plano.",
+    tools: [],
+    expect: "skip",
+    reason: "Sugestão de próximos passos (acompanhar fechamento)",
+  },
+  {
+    name: "FALSO POS #8 — item em lista numerada",
+    text: "Aqui o status:\n*1. Telma Camargo*\nReunião marcada pra quarta.",
+    tools: [],
+    expect: "skip",
+    reason: "Item em lista numerada de status",
+  },
+  {
+    name: "FALSO POS #9 — template entre aspas",
+    text: "Aqui as mensagens:\n*Telma Camargo*\n\"Oi Telma! Como foi a reunião de quarta?\"",
+    tools: [],
+    expect: "skip",
+    reason: "Texto dentro de aspas (template de mensagem)",
+  },
+  {
+    name: "REAL #4 — afirmação clara de marcação sem tool",
+    text: "Pronto! Reunião marcada com a Ana amanhã às 10h.",
+    tools: [],
+    expect: "hit",
+    reason: "Bot afirmando que marcou (sem citação/sumário/aspa)",
   },
 ];
 

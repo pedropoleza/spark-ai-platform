@@ -980,7 +980,31 @@ const createAppointment: ToolEntry = {
     // calendar team". Helper resolve 'self'/'me'/'eu' → rep ativo.
     const resolvedUser = resolveAssignedUserId(ctx, args.assigned_user_id);
     if (!resolvedUser.ok) return resolvedUser.error;
-    const assignedUserId = resolvedUser.user_id;
+    let assignedUserId = resolvedUser.user_id;
+
+    // Fix Pedro 2026-05-19 (caso Bela Castro 15:32): LLM passou user_id de
+    // "Pedro Poleza" que veio de uma lista de users de OUTRA location
+    // (caché stale ou troca de location no meio do turn). GHL retornou 422
+    // "user id not part of calendar team". Pedro corrigiu manualmente
+    // passando o user_id certo.
+    //
+    // Safety: se rep TEM mapping conhecido em rep.ghl_users[locationId] e o
+    // assigned_user_id passado é DIFERENTE, prefira o mapping conhecido
+    // (mais confiável que lista de users que pode estar contaminada).
+    // O override SÓ ocorre se rep não passou explicitamente outro user
+    // (ex: "marca pro João" vs default "marca pra mim").
+    const knownRepUserId = getRepGhlUserId(ctx);
+    if (
+      assignedUserId &&
+      knownRepUserId &&
+      assignedUserId !== knownRepUserId &&
+      ctx.rep.is_internal // só faz override pra rep internal (eles costumam ser admin/owner)
+    ) {
+      console.warn(
+        `[create_appointment] user_id mismatch: passed=${assignedUserId} known=${knownRepUserId} loc=${ctx.locationId} rep=${ctx.rep.id}. Usando o known.`,
+      );
+      assignedUserId = knownRepUserId;
+    }
 
     // H26 (review 2026-05-14): auto-ativa overrideLocationConfig quando rep
     // especifica meeting location. Sem isso, GHL ignora silenciosamente

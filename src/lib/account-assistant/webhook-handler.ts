@@ -773,9 +773,10 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
         model: result.model_used,
         tools: result.tools_executed,
         // tool_calls completos (input + result) pra debug. Trunca cada
-        // resultado a 800 chars pra não estourar jsonb. Sample só os
-        // primeiros 5 calls — em raros casos LLM faz dezenas.
-        tool_calls: (result.tool_calls || []).slice(0, 5).map((tc) => ({
+        // resultado a 800 chars pra não estourar jsonb. Cap em 30 calls
+        // (Fix Pedro 2026-05-19: era 5, mascarava debug em turns com
+        // muitos search+write em sequência tipo "cria nota nos 8 agentes").
+        tool_calls: (result.tool_calls || []).slice(0, 30).map((tc) => ({
           name: tc.name,
           input: tc.input,
           result_preview: JSON.stringify(tc.result).slice(0, 800),
