@@ -14,6 +14,7 @@ import { BillingTab } from "./tabs/billing-tab";
 import { FeaturesTab } from "./tabs/features-tab";
 import { BulkTab } from "./tabs/bulk-tab";
 import { RepsTab } from "./tabs/reps-tab";
+import { FollowupsTab } from "./tabs/followups-tab";
 import { SignalsClient } from "../signals/signals-client";
 
 type DashboardData = {
@@ -29,6 +30,8 @@ type DashboardData = {
   bulk?: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   reps?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  followups?: any;
 };
 
 export function DashboardClient() {
@@ -40,7 +43,7 @@ export function DashboardClient() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get("tab");
-    if (tab && ["overview", "billing", "features", "bulk", "reps", "signals"].includes(tab)) {
+    if (tab && ["overview", "billing", "features", "bulk", "reps", "followups", "signals"].includes(tab)) {
       setActiveTab(tab);
     }
   }, []);
@@ -88,11 +91,12 @@ export function DashboardClient() {
       </div>
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="overview">📊 Overview</TabsTrigger>
           <TabsTrigger value="billing">💰 Billing</TabsTrigger>
           <TabsTrigger value="features">🚀 Features</TabsTrigger>
           <TabsTrigger value="bulk">📨 Bulk</TabsTrigger>
+          <TabsTrigger value="followups">🔄 Follow-ups</TabsTrigger>
           <TabsTrigger value="reps">👥 Reps</TabsTrigger>
           <TabsTrigger value="signals">🚨 Signals</TabsTrigger>
         </TabsList>
@@ -108,6 +112,9 @@ export function DashboardClient() {
         </TabsContent>
         <TabsContent value="bulk" className="mt-6">
           <BulkTab data={data?.bulk} loading={loading} />
+        </TabsContent>
+        <TabsContent value="followups" className="mt-6">
+          <FollowupsTab data={data?.followups} loading={loading} />
         </TabsContent>
         <TabsContent value="reps" className="mt-6">
           <RepsTab data={data?.reps} loading={loading} />

@@ -320,6 +320,72 @@ async function getBulkTab() {
   };
 }
 
+async function getFollowupsTab() {
+  const supa = createAdminClient();
+  const d7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const d30d = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const [{ data: active }, { data: recent }, { data: stats7d }, { data: events7d }] = await Promise.all([
+    supa
+      .from("followup_sequences")
+      .select(
+        "id, rep_id, location_id, contact_name, contact_phone, goal, sequence_type, status, approval_status, spam_risk, spam_score, total_messages, sent_messages, failed_messages, skipped_messages, created_at, started_at",
+      )
+      .in("status", ["draft", "scheduled", "running", "paused"])
+      .order("created_at", { ascending: false })
+      .limit(50),
+    supa
+      .from("followup_sequences")
+      .select(
+        "id, contact_name, status, spam_risk, total_messages, sent_messages, cancelled_reason, completed_at, cancelled_at, created_at",
+      )
+      .in("status", ["completed", "cancelled", "skipped_reply", "failed"])
+      .gte("created_at", d7d)
+      .order("created_at", { ascending: false })
+      .limit(20),
+    supa
+      .from("followup_sequences")
+      .select("status, spam_risk, approval_status, sequence_type")
+      .gte("created_at", d30d),
+    supa
+      .from("followup_events")
+      .select("event_type, created_at")
+      .gte("created_at", d7d)
+      .limit(500),
+  ]);
+
+  // Funnel breakdown
+  const byStatus = new Map<string, number>();
+  const byRisk = new Map<string, number>();
+  const byApproval = new Map<string, number>();
+  const byType = new Map<string, number>();
+  for (const s of stats7d || []) {
+    byStatus.set(s.status, (byStatus.get(s.status) ?? 0) + 1);
+    if (s.spam_risk) byRisk.set(s.spam_risk, (byRisk.get(s.spam_risk) ?? 0) + 1);
+    if (s.approval_status) byApproval.set(s.approval_status, (byApproval.get(s.approval_status) ?? 0) + 1);
+    if (s.sequence_type) byType.set(s.sequence_type, (byType.get(s.sequence_type) ?? 0) + 1);
+  }
+
+  // Events 7d
+  const eventCounts = new Map<string, number>();
+  for (const e of events7d || []) {
+    eventCounts.set(e.event_type, (eventCounts.get(e.event_type) ?? 0) + 1);
+  }
+
+  return {
+    active_sequences: active || [],
+    recent_completed: recent || [],
+    stats_30d: {
+      total: (stats7d || []).length,
+      by_status: Object.fromEntries(byStatus),
+      by_risk: Object.fromEntries(byRisk),
+      by_approval: Object.fromEntries(byApproval),
+      by_type: Object.fromEntries(byType),
+    },
+    events_7d: Object.fromEntries(eventCounts),
+  };
+}
+
 async function getRepsTab() {
   const supa = createAdminClient();
   const { data: reps } = await supa
@@ -381,6 +447,9 @@ export async function GET(req: Request) {
     }
     if (tab === "reps" || tab === "all") {
       payload.reps = await getRepsTab();
+    }
+    if (tab === "followups" || tab === "all") {
+      payload.followups = await getFollowupsTab();
     }
 
     setCached(cacheKey, payload);

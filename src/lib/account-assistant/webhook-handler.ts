@@ -74,6 +74,29 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     return;
   }
 
+  // H33 Pedro 2026-05-18: pause follow-up sequences IMEDIATAMENTE se o
+  // contato respondeu. Faster do que esperar followup-runner descobrir no
+  // próximo tick.
+  // Async/silent — não bloqueia processamento do inbound se falhar.
+  if (contactId) {
+    (async () => {
+      try {
+        const { onContactInboundReceived } = await import("./followup/sequence-monitor");
+        const r = await onContactInboundReceived(contactId, hubLocationId);
+        if (r.paused_sequences > 0) {
+          console.log(
+            `[Sparkbot] followup: pausou ${r.paused_sequences} sequence(s) por reply do contato ${contactId}`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          "[Sparkbot] followup pause-on-reply falhou:",
+          err instanceof Error ? err.message.slice(0, 150) : err,
+        );
+      }
+    })();
+  }
+
   // Idempotency (fix audit C3 + concurrent retry):
   // GHL retry de webhook com mesmo messageId não pode reprocessar
   // (2x Whisper bill, 2x LLM, 2x resposta enviada).

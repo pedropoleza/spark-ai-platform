@@ -168,11 +168,25 @@ export function parseRequestedAt(
   // Texto natural simples
   const lower = requested.toLowerCase().trim();
 
-  const hourMatch = lower.match(/(\d{1,2}):?(\d{2})?/);
+  // Procura hora EXPLÍCITA — formato HH:MM ou Hh ou HHam/pm.
+  // NÃO captura dígitos soltos pra evitar pegar "3" de "in 3 days".
+  const explicitHourMatch = lower.match(/\b(\d{1,2}):(\d{2})\b|\b(\d{1,2})\s*h\b|\b(\d{1,2})\s*(am|pm)\b/i);
   const defaultHour = 10;
   const defaultMinute = 0;
-  const hour = hourMatch ? parseInt(hourMatch[1]) : defaultHour;
-  const minute = hourMatch && hourMatch[2] ? parseInt(hourMatch[2]) : defaultMinute;
+  let hour = defaultHour;
+  let minute = defaultMinute;
+  if (explicitHourMatch) {
+    if (explicitHourMatch[1]) {
+      hour = parseInt(explicitHourMatch[1]);
+      minute = parseInt(explicitHourMatch[2]);
+    } else if (explicitHourMatch[3]) {
+      hour = parseInt(explicitHourMatch[3]);
+    } else if (explicitHourMatch[4]) {
+      hour = parseInt(explicitHourMatch[4]);
+      if (explicitHourMatch[5]?.toLowerCase() === "pm" && hour < 12) hour += 12;
+      if (explicitHourMatch[5]?.toLowerCase() === "am" && hour === 12) hour = 0;
+    }
+  }
 
   if (lower.startsWith("today") || lower.includes("hoje")) {
     const d = new Date();
