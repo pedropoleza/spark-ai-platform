@@ -432,7 +432,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    let payload: Record<string, unknown> = {};
+    const payload: Record<string, unknown> = {};
     if (tab === "overview" || tab === "all") {
       payload.overview = await getOverview();
     }
