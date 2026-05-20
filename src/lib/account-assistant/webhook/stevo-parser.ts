@@ -47,6 +47,9 @@ export type ParsedStevoMessage = {
    *  "https://smv2-3.stevo.chat"). Usado pra ENVIAR a resposta de volta pela
    *  MESMA instância que recebeu — robusto a migração de servidor do Stevo. */
   serverUrl: string;
+  /** Nome da instância no Stevo (top-level instanceName, ex: "sparkbot").
+   *  Só pra audit/logs e pra popular stevo_instances. */
+  instanceName: string;
 } & ParsedStevoContent;
 
 export type ParsedStevoContent =
@@ -116,9 +119,10 @@ export function parseStevoWebhook(body: unknown): ParsedStevoMessage | null {
   const pushName = asString(info.PushName);
   const instanceToken = asString(root.instanceToken);
   const serverUrl = asString(root.serverUrl);
+  const instanceName = asString(root.instanceName);
   const mediaType = asString(info.MediaType).toLowerCase();
 
-  const base = { messageId, phone, pushName, instanceToken, serverUrl };
+  const base = { messageId, phone, pushName, instanceToken, serverUrl, instanceName };
 
   // 1. Áudio (PTT / voice note) — MediaType "ptt" ou "audio".
   if (mediaType === "ptt" || mediaType === "audio") {

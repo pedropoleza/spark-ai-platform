@@ -69,6 +69,7 @@ function check(name: string, cond: boolean, detail?: string) {
   check("texto: pushName", r?.pushName === "Pedro Poleza");
   check("texto: instanceToken", r?.instanceToken === INSTANCE_TOKEN);
   check("texto: serverUrl extraído", r?.serverUrl === "https://smv2-3.stevo.chat", `got=${r?.serverUrl}`);
+  check("texto: instanceName extraído", r?.instanceName === "sparkbot", `got=${r?.instanceName}`);
 }
 
 // serverUrl ausente → string vazia (não quebra o parse).

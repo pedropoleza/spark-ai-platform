@@ -24,6 +24,7 @@ import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/
 import type { RepIdentity } from "@/types/account-assistant";
 import { findActiveSparkbotAgent } from "@/lib/repositories/agents.repo";
 import { insertSparkbotMessage, findLastInboundHubLocation } from "@/lib/repositories/sparkbot-messages.repo";
+import { getStevoInstance } from "@/lib/repositories/stevo-instances.repo";
 
 /**
  * Opt-in check: rep só pode receber proativo via WhatsApp se INICIOU
@@ -194,9 +195,53 @@ export async function deliverProactiveMessage(
   let sendError: string | null = null;
   let ghlMessageId: string | null = null;
   let ghlConversationId: string | null = null;
+  // Audit: marcado "stevo" quando o envio sai pelo Stevo. O caso "ghl" é
+  // derivado no metadata (sentViaWhatsapp && !sentVia) — não precisa setar aqui.
+  let sentVia: "stevo" | null = null;
 
-  // Tenta envio WhatsApp/SMS via Stevo se flag habilitada e rep tem phone real
+  // ===== Stevo-first (Pedro 2026-05-20: Stevo é o canal PADRÃO; GHL fallback) =====
+  // Envia o proativo via Stevo direto (mesma instância do hub, de stevo_instances),
+  // pelo phone do rep. Só quando STEVO_SEND_ENABLED=1 + temos a config da instância
+  // + phone real. Se Stevo falhar OU não houver config, cai no bloco GHL abaixo
+  // (fallback) — daí o `!sentViaWhatsapp` no guard do GHL.
+  const stevoEnabled = /^(1|true|yes)$/i.test(
+    process.env.STEVO_SEND_ENABLED?.trim() || "",
+  );
+  if (enabled && stevoEnabled && rep.phone && !rep.phone.startsWith("webonly:")) {
+    try {
+      const inst = await getStevoInstance(hubLocationId);
+      if (inst) {
+        const { sendStevoText } = await import("../webhook/stevo-send");
+        const r = await sendStevoText({
+          serverUrl: inst.serverUrl,
+          apiKey: inst.instanceToken,
+          number: rep.phone,
+          text: formattedMessage,
+        });
+        if (r.ok) {
+          sentViaWhatsapp = true;
+          sentVia = "stevo";
+        } else {
+          sendError = `stevo: ${r.error}`;
+          console.warn(
+            `[proactive-delivery] Stevo falhou pra rep ${rep.id} (${opts.source}), ` +
+              `fallback GHL: ${r.error}`,
+          );
+        }
+      }
+    } catch (err) {
+      sendError = `stevo: ${err instanceof Error ? err.message : String(err)}`;
+      console.warn(
+        `[proactive-delivery] Stevo lançou pra rep ${rep.id} (${opts.source}), ` +
+          `fallback GHL: ${sendError}`,
+      );
+    }
+  }
+
+  // Fallback GHL: só roda se o Stevo NÃO enviou (sentViaWhatsapp ainda false).
+  // Tenta envio WhatsApp/SMS via GHL se flag habilitada e rep tem phone real
   if (
+    !sentViaWhatsapp &&
     enabled &&
     hubCompanyId &&
     rep.phone &&
@@ -304,6 +349,9 @@ export async function deliverProactiveMessage(
         sendResp?.messageId || sendResp?.msg?.id || sendResp?.id || null;
       ghlConversationId = sendResp?.conversationId || null;
       sentViaWhatsapp = true;
+      // GHL (fallback) deu certo → limpa eventual erro do Stevo que ficou em
+      // sendError, pra audit não confundir (sent_via="ghl" diz o canal real).
+      sendError = null;
 
       // Imediato pós-send: GHL/Stevo mostra status final em ~1-3s pra
       // erros de instância inativa. Pollar 1x rapidamente pra detectar
@@ -397,6 +445,8 @@ export async function deliverProactiveMessage(
       whatsapp_sent: sentViaWhatsapp,
       whatsapp_send_error: sendError,
       whatsapp_delivery_enabled: enabled,
+      // Canal real do envio: "stevo" (padrão novo), "ghl" (fallback) ou null.
+      sent_via: sentVia ?? (sentViaWhatsapp ? "ghl" : null),
       ghl_message_id: ghlMessageId,
       ghl_conversation_id: ghlConversationId,
       delivery_status: sentViaWhatsapp ? "pending_confirm" : "failed_immediate",

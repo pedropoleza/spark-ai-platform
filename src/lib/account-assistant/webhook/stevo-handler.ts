@@ -33,6 +33,7 @@ import {
   insertSparkbotMessage,
   getSparkbotHistory,
 } from "@/lib/repositories/sparkbot-messages.repo";
+import { upsertStevoInstance } from "@/lib/repositories/stevo-instances.repo";
 import type { ParsedStevoMessage } from "./stevo-parser";
 import { sendStevoText, type StevoSendResult } from "./stevo-send";
 
@@ -140,6 +141,19 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       `[stevo-handler] hub ${hubLocationId} sem agentId resolvido (fallback env?) — abortando.`,
     );
     return;
+  }
+
+  // Mantém stevo_instances fresca: serverUrl + token desta instância por hub.
+  // É o que os PROATIVOS (deliverProactiveMessage) usam pra enviar via Stevo
+  // quando não há inbound de onde puxar. Fire-and-forget — não bloqueia o turno
+  // nem falha o handler se o upsert der erro.
+  if (parsed.serverUrl && parsed.instanceToken) {
+    void upsertStevoInstance({
+      hubLocationId,
+      serverUrl: parsed.serverUrl,
+      instanceToken: parsed.instanceToken,
+      instanceName: parsed.instanceName || null,
+    });
   }
 
   // 2. Dedup upfront por messageId (retry do Stevo com mesmo ID não reprocessa).
