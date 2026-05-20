@@ -38,296 +38,10 @@ import {
   renderSilenceRecoveryForPrompt,
   type TurnContextState,
 } from "./conversational";
-
-/**
- * Detector GENERALIZADO de hallucination POST-HOC.
- *
- * Pedro 2026-05-14, caso Gustavo: bot afirmou "Nota salva!" 8x seguidas
- * sem chamar create_note. Fix v1 cobria 4 famílias específicas. Pedro:
- * "talvez não é melhor criar uma regra geral?" → expandido pra 2 camadas:
- *
- *   1. ESPECÍFICO (8 famílias) — alta precisão, cita tool exata que
- *      satisfaz a claim. Pega o caso típico onde bot disse "X criado"
- *      mas chamou tool de família ERRADA (ex: "tag aplicada" mas chamou
- *      create_note).
- *
- *   2. GENÉRICO catch-all — qualquer verbo write em pretérito 1ª pessoa
- *      OU particípio passado + ZERO tools write chamadas no turn =
- *      hallucination. Pega famílias futuras (novas tools) sem update
- *      manual. Falso positivo aceitável (raro) — signal é só pra Pedro
- *      reviewar, não bloqueia resposta.
- *
- * Não bloqueia a resposta — só registra signal HIGH em admin_signals
- * pra Pedro reviewar no painel.
- */
-
-/**
- * Tools de WRITE (qualquer mutação no Spark Leads ou state do bot).
- * Identificadas por prefix de nome. Mantido em sync com tools/index.ts
- * — quando adicionar tool nova com mutação, garante que prefixo bate.
- *
- * Tools de READ (search_*, list_*, get_*, query_*, preview_*) NÃO
- * satisfazem claim de "feito" — não contam como write.
- */
-const WRITE_TOOL_NAME_PATTERNS = [
-  /^create_/,
-  /^update_/,
-  /^delete_/,
-  /^add_/,
-  /^remove_/,
-  /^complete_/,
-  /^send_/,
-  /^schedule_/,
-  /^import_/,
-  /^block_/,
-  /^cancel_/,
-  /^pause_/,
-  /^resume_/,
-  /^switch_/,
-  /^confirm_/,
-  /^set_/,
-  /^forget_/,
-  /^accept_/,
-  /^reject_/,
-  /^reply_/,
-  /^assign_/,
-  /^move_/,
-  /^report_missed_capability/, // exceção: registra estado no painel
-];
-
-function isWriteTool(toolName: string): boolean {
-  return WRITE_TOOL_NAME_PATTERNS.some((re) => re.test(toolName));
-}
-
-/**
- * Famílias específicas de claim → tools que satisfazem. Cada família tem
- * regex preciso (evita matches casuais). Se regex bate mas NENHUMA tool
- * da satisfying_tools foi chamada → hallucination específica.
- */
-const HALLUCINATION_PATTERNS: Array<{
-  family: string;
-  regex: RegExp;
-  satisfying_tools: string[];
-}> = [
-  {
-    family: "note",
-    regex:
-      /\b(nota\s+(salva|criada|adicionada)|notas?\s+(salvas?|criadas?|adicionadas?)|anotei|anota[çc][oõ]es?\s+salvas?|coloquei\s+nas?\s+notas?|salvei\s+a\s+nota|anotado\s+(nos?\s+)?notes?)\b/i,
-    satisfying_tools: ["create_note", "update_note"],
-  },
-  {
-    family: "task",
-    regex:
-      /\b(task\s+(criada|adicionada|salva|completada|conclu[ií]da)|tarefa\s+(criada|adicionada|salva|completada|conclu[ií]da)|marquei\s+(a\s+)?task)\b/i,
-    satisfying_tools: ["create_task", "update_task", "complete_task"],
-  },
-  {
-    family: "tag",
-    regex:
-      /\btags?\s+(adicionada|aplicada|colocada|removida|tirada|posta)s?\b/i,
-    satisfying_tools: ["add_tag", "remove_tag"],
-  },
-  {
-    family: "reminder",
-    regex:
-      /\blembrete\s+(agendado|marcado|criado|salvo|cancelado|removido)s?\b/i,
-    satisfying_tools: [
-      "schedule_reminder",
-      "schedule_recurring_reminder",
-      "cancel_reminder",
-    ],
-  },
-  {
-    family: "appointment",
-    regex:
-      /\b(appointment|reuni[aã]o|agenda\s+do\s+cliente)\s+(marcad[ao]|agendad[ao]|criad[ao]|reagendad[ao]|cancelad[ao]|movid[ao])s?\b|\b(marquei|agendei|reagendei|cancelei)\s+(a\s+)?(reuni[aã]o|appointment|encontro)/i,
-    satisfying_tools: [
-      "create_appointment",
-      "update_appointment",
-      "delete_appointment",
-      "block_calendar_slot",
-    ],
-  },
-  {
-    family: "message",
-    regex:
-      /\b(mensagem|msg|whatsapp|sms|email|mensagens|msgs)\s+(enviad[ao]|mandad[ao]|dispar[aá]d[ao]|agendad[ao]|cancelad[ao])s?\b|\b(mandei|enviei|disparei|despachei)\s+(a\s+|o\s+)?(mensagem|msg|whatsapp|sms|email|texto)\b/i,
-    satisfying_tools: [
-      "send_message_to_contact",
-      "schedule_message_to_contact",
-      "schedule_bulk_message",
-      "cancel_scheduled_message",
-      "pause_bulk_message",
-      "resume_bulk_message",
-      "cancel_bulk_message",
-    ],
-  },
-  {
-    family: "contact",
-    regex:
-      /\b(contato|lead|cliente)\s+(criad[ao]|adicionad[ao]|atualizad[ao]|alterad[ao]|deletad[ao]|apagad[ao]|removid[ao]|mergead[ao]|cadastrad[ao])s?\b|\b(criei|adicionei|atualizei|alterei|deletei|apaguei)\s+(o\s+)?(contato|lead|cliente)\b/i,
-    satisfying_tools: ["create_contact", "update_contact", "delete_contact"],
-  },
-  {
-    family: "opportunity",
-    regex:
-      /\b(oportunidade|opp|opportunity|deal|neg[oó]cio|pipeline)\s+(criad[ao]|adicionad[ao]|atualizad[ao]|movid[ao]|deletad[ao]|fechad[ao]|trocad[ao]|atribu[ií]d[ao])s?\b|\b(criei|movi|fechei|atualizei|atribu[ií])\s+(a\s+|o\s+)?(oportunidade|opp|deal|neg[oó]cio|pipeline)\b|\b(mov[ií])\s+pra\s+(M[0-9]|stage)/i,
-    satisfying_tools: [
-      "create_opportunity",
-      "update_opportunity",
-      "update_opportunity_status",
-      "delete_opportunity",
-    ],
-  },
-];
-
-/**
- * Detector GENÉRICO catch-all: verbos write em pretérito 1ª pessoa OU
- * particípio + 0 tools write chamadas = afirmação sem ação.
- *
- * Pega famílias futuras automaticamente (alias, briefing, switch_location,
- * confirm_timezone, etc) sem update manual de regex específico.
- *
- * Falsos positivos possíveis (raros): "Acabei de listar" sem write tool
- * = OK porque "listar" não bate nos verbos write. Mas "Acabei de mostrar"
- * também não bate. Verbos selecionados são DEFINITIVAMENTE write.
- */
-const GENERIC_WRITE_VERB_REGEX =
-  /\b(criei|criamos|agendei|agendamos|marquei|marcamos|salvei|salvamos|anotei|anotamos|registrei|registramos|removi|removemos|adicionei|adicionamos|mandei|mandamos|enviei|enviamos|disparei|disparamos|atualizei|atualizamos|atribu[ií]|atribu[ií]mos|deletei|deletamos|apaguei|apagamos|completei|completamos|fechei|fechamos|movi|movemos|troquei|trocamos|bloqueei|bloqueamos|cancelei|cancelamos|pausei|pausamos|configurei|configuramos|confirmei|confirmamos|inseri|inserimos|despachei|despachamos|cadastrei|cadastramos|importei|importamos|sincronizei|sincronizamos|reagendei|reagendamos|reatribu[ií]|reatribu[ií]mos)\b/i;
-
-/**
- * Fix H32.7 (review 2026-05-16): checa se o match está em contexto NEGATIVO
- * ou em PREVIEW de template. Reduz falsos positivos do detector.
- *
- * Casos vistos em prod (signal admin):
- *   ❌ "Henry NÃO TEM oportunidade criada" → "oportunidade criada" pego como hallucination
- *   ❌ "Não tem NENHUMA mensagens agendadas" → "mensagens agendadas" pego
- *   ❌ "Mensagem que vai ser enviada: '...Agendamos pra X'" → "Agendamos" pego (é template)
- *   ❌ "os disparos que agendamos já estão ativos" → "agendamos" pego (referência passada)
- *
- * Olha ~80 chars antes do match. Se achar negação OU contexto de preview,
- * considera falso positivo e ignora.
- */
-function isNegatedOrPreviewContext(
-  text: string,
-  matchIndex: number,
-): boolean {
-  // Olha 80 chars antes do match (ou desde o início)
-  const lookBehind = text.slice(Math.max(0, matchIndex - 80), matchIndex).toLowerCase();
-  if (lookBehind.length === 0) return false;
-
-  // 1) Negação direta IMEDIATA antes do verbo
-  // Match em: "não", "nenhum/a", "ainda não", "sem", "jamais", "nunca"
-  if (/\b(n[aã]o|nenhum[ao]?|jamais|nunca)\s+(automaticamente\s+|ainda\s+|mais\s+|tem\s+|tenho\s+|temos\s+|h[aá]\s+|existe\s+|existem\s+|nenhum[ao]?\s+)?[\w\s,]{0,15}$/i.test(lookBehind)) {
-    return true;
-  }
-  // 2) Negação distante mas referente: "não tem X" / "não há X" / "sem X agendado"
-  if (/\b(n[aã]o\s+(tem|tenho|temos|h[aá]|existe|existem|preciso|consegui|consigo|d[aá]|posso)|sem\s+nenhum[ao]?|nem\s+)[\w\s,]{0,60}$/i.test(lookBehind)) {
-    return true;
-  }
-  // 3) Contexto de PREVIEW/TEMPLATE — bot mostrando o que vai mandar, não
-  // afirmando que já mandou. "Mensagem que vai ser enviada: '...'"
-  if (/(mensagem|texto|template|preview)\s+(que\s+)?(vai|ser[aá]|vou)\s+[\w\s,]{0,30}$/i.test(lookBehind)) {
-    return true;
-  }
-  if (/(disparo|mensagem|texto)\s+(que\s+(vou\s+)?(mandar|enviar|disparar|ser[aá]|vai))/i.test(lookBehind)) {
-    return true;
-  }
-  // 4) Referência ao PASSADO conjunto (rep+bot) já fizemos — não claim atual
-  // "que agendamos antes", "que combinamos", "que decidimos"
-  if (/\b(que|os\s+que|disparos?\s+que|tarefas?\s+que|notas?\s+que|reuni[aã]o\s+que)\s+(j[aá]\s+)?$/i.test(lookBehind)) {
-    return true;
-  }
-  // 5) Bot CITANDO conteúdo de notas existentes do cliente (sumário/status).
-  //    Caso Gustavo 19/05: "Telma Camargo: Atendimento em andamento — segunda
-  //    reunião marcada para quarta". O bot resume info que JÁ ESTÁ nas notas.
-  if (/\b(atendimento\s+em\s+andamento|status|nota\s+mais\s+recente|resumo\s+das?\s+notas?|primeira\s+reuni[aã]o|segunda\s+reuni[aã]o|terceira\s+reuni[aã]o)[\w\s,—\-:.]{0,60}$/i.test(lookBehind)) {
-    return true;
-  }
-  // 6) SUGESTÃO de próximo passo (bot propondo ação, não afirmando que fez).
-  //    "Próximos passos sugeridos:", "acompanhar fechamento", "criar task pra
-  //    follow-up", "task pra checar status".
-  if (/\b(sugest[aã]o|sugiro|recomendo|pr[oó]ximo[s]?\s+passo|acompanhar|criar\s+task)[\w\s,—\-:.]{0,60}$/i.test(lookBehind)) {
-    return true;
-  }
-  // 7) ITEM em lista numerada/bullet — bot apresentando vários itens.
-  //    "*1. Telma Camargo*\nReunião marcada pra quarta..." — match começa na
-  //    segunda linha mas lookBehind pega o cabeçalho do item.
-  if (/(^|\n)\s*\*?\s*\d+\.\s*\*?[^\n]{0,40}\*?\s*\n[\w\s,—\-:.]{0,60}$/i.test(lookBehind)) {
-    return true;
-  }
-  // 8) Texto DENTRO de aspas — bot mostrando template de mensagem.
-  //    "Como foi a reunião de quarta?" entre aspas = template, não claim.
-  //    Heurística: lookBehind termina em " ou ' ou abriu aspas há <120 chars.
-  const lookBehindFull = text.slice(Math.max(0, matchIndex - 200), matchIndex);
-  const lastQuote = Math.max(lookBehindFull.lastIndexOf('"'), lookBehindFull.lastIndexOf("'"), lookBehindFull.lastIndexOf("“"));
-  if (lastQuote >= 0) {
-    // Checa se a aspa NÃO foi fechada antes do match (= ainda dentro de quote)
-    const afterQuote = lookBehindFull.slice(lastQuote + 1);
-    const hasClosingQuote = /["'”]/.test(afterQuote);
-    if (!hasClosingQuote) return true;
-  }
-  return false;
-}
-
-function detectHallucination(
-  responseText: string,
-  toolsCalled: string[],
-): Array<{ family: string; matched_text: string; detector: "specific" | "generic" }> {
-  const found: Array<{
-    family: string;
-    matched_text: string;
-    detector: "specific" | "generic";
-  }> = [];
-
-  // Camada 1: detectores específicos (precisos por família)
-  const matchedFamilies = new Set<string>();
-  for (const pattern of HALLUCINATION_PATTERNS) {
-    const match = responseText.match(pattern.regex);
-    if (!match) continue;
-    // Fix H32.7 2026-05-16: skip se contexto negativo/preview/passado
-    if (match.index !== undefined && isNegatedOrPreviewContext(responseText, match.index)) {
-      continue;
-    }
-    matchedFamilies.add(pattern.family);
-    const hasMatchingTool = pattern.satisfying_tools.some((t) =>
-      toolsCalled.includes(t),
-    );
-    if (!hasMatchingTool) {
-      found.push({
-        family: pattern.family,
-        matched_text: match[0],
-        detector: "specific",
-      });
-    }
-  }
-
-  // Camada 2: detector genérico catch-all (pega famílias não-cobertas).
-  // Só dispara se NENHUM detector específico bateu OU se bateu mas
-  // NENHUMA tool write foi chamada (cobre caso onde bot disse "feito"
-  // sem qualquer write tool).
-  const genericMatch = responseText.match(GENERIC_WRITE_VERB_REGEX);
-  if (genericMatch) {
-    // Fix H32.7: skip se contexto negativo/preview/passado
-    if (genericMatch.index !== undefined && isNegatedOrPreviewContext(responseText, genericMatch.index)) {
-      return found;
-    }
-    const writeToolsCalled = toolsCalled.filter(isWriteTool);
-    if (writeToolsCalled.length === 0) {
-      // Não tem nenhuma write tool no turn — afirmação totalmente sem suporte
-      const alreadyReported = found.some((f) => f.matched_text === genericMatch[0]);
-      if (!alreadyReported) {
-        found.push({
-          family: "generic_write",
-          matched_text: genericMatch[0],
-          detector: "generic",
-        });
-      }
-    }
-  }
-
-  return found;
-}
+import {
+  analyzeCoherence,
+  type ToolCallRecord,
+} from "./core/coherence-gate";
 
 export interface ProcessInput {
   rep: RepIdentity;
@@ -753,6 +467,109 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     }
   }
 
+  // ── Coherence gate (Onda 1 · V2 2026-05-20): VERDADE DE EXECUÇÃO ──
+  // Migrado para core/coherence-gate.ts. Antes o detector só gerava signal
+  // ("não bloqueava a resposta"); agora AGE. Se o bot afirma escrita sem a tool
+  // correspondente ter rodado COM SUCESSO no turno:
+  //   • 'rerun'  → re-roda 1× COM tools (seguro: nenhuma escrita ok no turno,
+  //     nada a duplicar) pra de fato executar/corrigir.
+  //   • 'rewrite'→ re-roda 1× SEM tools (zero side-effect) pra reescrever com
+  //     honestidade. NUNCA re-executa — não duplica ação de cliente em andamento.
+  // Roda ANTES do billing pra os tokens do re-run entrarem na cobrança.
+  if (result.text) {
+    const coherence = analyzeCoherence(result.text, result.tool_calls as ToolCallRecord[]);
+    if (!coherence.coherent) {
+      const toolNames = result.tool_calls.map((tc) => tc.name);
+      for (const v of coherence.violations) {
+        recordSignalAsync({
+          type: "failure",
+          title: `Coherence ${coherence.action}: ${v.family} sem tool (${v.detector})`,
+          description: `Bot afirmou "${v.matched_text}" sem a tool de escrita correspondente com sucesso no turno. Ação tomada: ${coherence.action}.`,
+          severity: "high",
+          source: "bot_auto",
+          metadata: {
+            rep_id: rep.id,
+            rep_phone: rep.phone,
+            location_id: activeLocationId,
+            agent_id: input.agentId,
+            family: v.family,
+            detector: v.detector,
+            matched_text: v.matched_text,
+            action: coherence.action,
+            response_preview: result.text.slice(0, 300),
+            tools_called: toolNames,
+            model_used: result.model_used,
+          },
+        });
+      }
+      console.warn(
+        `[Sparkbot] COHERENCE ${coherence.action} rep=${rep.id} families=[${coherence.violations
+          .map((v) => v.family)
+          .join(",")}] tools=[${toolNames.join(",")}]`,
+      );
+
+      if (!input.testSessionId) {
+        try {
+          const directive =
+            coherence.action === "rerun" ? coherence.correctiveDirective : coherence.rewriteDirective;
+          // 'rerun' re-executa COM tools (nada feito ainda); 'rewrite' SEM tools (não duplica).
+          const rerunTools =
+            coherence.action === "rerun"
+              ? getAllToolDefinitions(
+                  input.config.confirmation_mode || "high_only",
+                  input.config.disabled_tools,
+                )
+              : [];
+          const rerun = await runWithTools({
+            systemPrompt,
+            messages: [
+              ...history,
+              userMessage,
+              { role: "assistant", content: result.text },
+              { role: "user", content: directive },
+            ],
+            tools: rerunTools,
+            executor: (name, args) => executeTool(name, args, toolCtx),
+            model: input.config.ai_model,
+            fallbackModel: input.config.fallback_model,
+          });
+          result.prompt_tokens += rerun.prompt_tokens;
+          result.completion_tokens += rerun.completion_tokens;
+          result.cached_tokens += rerun.cached_tokens;
+          // Recheck contra a UNIÃO das tools (turno original + re-run): cobre
+          // 'rerun' (write nova) e 'rewrite' (write já feita no turno original).
+          const combined = [...result.tool_calls, ...rerun.tool_calls];
+          const recheck = analyzeCoherence(rerun.text, combined as ToolCallRecord[]);
+          if (rerun.text && recheck.coherent) {
+            result.text = rerun.text;
+            result.tool_calls = combined;
+          } else {
+            result.text = coherence.safeRewrite;
+            recordSignalAsync({
+              type: "failure",
+              title: "Coherence: re-run não resolveu → fallback honesto",
+              description: `Após re-run (${coherence.action}) ainda incoerente; resposta substituída por fallback seguro.`,
+              severity: "high",
+              source: "bot_auto",
+              metadata: {
+                rep_id: rep.id,
+                rep_phone: rep.phone,
+                location_id: activeLocationId,
+                agent_id: input.agentId,
+              },
+            });
+          }
+        } catch (err) {
+          console.error(
+            "[Sparkbot] coherence re-run falhou (non-fatal):",
+            err instanceof Error ? err.message : err,
+          );
+          result.text = coherence.safeRewrite; // não arrisca afirmação falsa
+        }
+      }
+    }
+  }
+
   // 6. Billing — internal team (agency owner/admins) NÃO é cobrado.
   // syncRepInternalFlag detecta via env phones / role agency / heurística
   // de muitas locations. Idempotente, atualiza DB só se valor mudou.
@@ -779,44 +596,8 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     }
   }
 
-  // Detector post-hoc de hallucination (Pedro 2026-05-14, caso Gustavo).
-  // 2 camadas: específico (8 famílias) + genérico (qualquer verbo write
-  // pretérito sem write tool no turn). Resposta do bot inclui afirmação
-  // de write SEM tool_call correspondente → signal HIGH no painel.
-  // Não bloqueia a resposta — UX preservada. Pedro reviewa no painel.
-  if (result.text) {
-    const toolsCalled = result.tool_calls.map((tc) => tc.name);
-    const hallucinations = detectHallucination(result.text, toolsCalled);
-    for (const h of hallucinations) {
-      recordSignalAsync({
-        type: "failure",
-        title: `Hallucination ${h.family} sem tool_call (${h.detector})`,
-        description:
-          `Bot afirmou "${h.matched_text}" mas ${
-            h.detector === "specific"
-              ? `nenhuma tool da família ${h.family} foi chamada no turn`
-              : `NENHUMA tool de write foi chamada no turn`
-          }. Caso Gustavo 2026-05-14 (8 hits create_note) deve servir de referência. Fingerprint dedupa repetições.`,
-        severity: "high",
-        source: "bot_auto",
-        metadata: {
-          rep_id: rep.id,
-          rep_phone: rep.phone,
-          location_id: activeLocationId,
-          agent_id: input.agentId,
-          family: h.family,
-          detector: h.detector,
-          matched_text: h.matched_text,
-          response_preview: result.text.slice(0, 300),
-          tools_called: toolsCalled,
-          model_used: result.model_used,
-        },
-      });
-      console.warn(
-        `[Sparkbot] HALLUCINATION DETECTED rep=${rep.id} family=${h.family} detector=${h.detector} matched="${h.matched_text}" tools=[${toolsCalled.join(",")}]`,
-      );
-    }
-  }
+  // (Coherence gate roda ANTES do billing — ver acima. Detector migrado para
+  // core/coherence-gate.ts e agora é blocking, não mais signal-only.)
 
   return {
     text: result.text || "Não consegui gerar resposta. Tenta de novo?",
