@@ -124,6 +124,31 @@ export async function POST(request: NextRequest) {
       console.log(`[Webhook:RAW] Media fields:`, JSON.stringify(rawMediaFields).substring(0, 800));
     }
 
+    // Debug Pedro 2026-05-19 v3: grava body INTEIRO de qualquer inbound do
+    // contato do Pedro (Hub) pra capturar shape do CSV via Stevo no ponto de
+    // ENTRADA (antes de qualquer filtro/roteamento). REMOVER após fix.
+    if (contactId === "61ZDGmCxZW0V2OODGcHo") {
+      try {
+        const fullBody: Record<string, unknown> = {};
+        for (const k of Object.keys(body)) {
+          const v = (body as Record<string, unknown>)[k];
+          if (typeof v === "string") fullBody[k] = v.slice(0, 250);
+          else if (Array.isArray(v)) fullBody[k] = `[arr ${v.length}] ${JSON.stringify(v).slice(0, 900)}`;
+          else if (v && typeof v === "object") fullBody[k] = JSON.stringify(v).slice(0, 900);
+          else fullBody[k] = v;
+        }
+        const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+        recordSignalAsync({
+          type: "error",
+          title: "DEBUG3: webhook raw Pedro",
+          description: `type=${messageType} keys=[${Object.keys(body).join(",")}]`,
+          severity: "low",
+          source: "bot_auto",
+          metadata: { full_body: fullBody, message_type: messageType },
+        });
+      } catch { /* nf */ }
+    }
+
     // ===== FILTRO: Apenas mensagens reais =====
     if (!isRealMessage(messageType, direction)) {
       console.log(`[Webhook] Skipped: not_a_real_message (type=${messageType})`);
