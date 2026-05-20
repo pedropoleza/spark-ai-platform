@@ -59,6 +59,18 @@ function looksLikeDocName(name: string): boolean {
  * que tiver extensão reconhecível (fileName tem prioridade — mais confiável
  * que URL de mídia assinada sem extensão).
  */
+/** Extrai o filename do final da URL (decode %20 etc). "" se não der. */
+function fileNameFromUrl(url: string): string | undefined {
+  try {
+    const path = url.split("?")[0]; // tira query string
+    const last = path.split("/").pop() || "";
+    const decoded = decodeURIComponent(last);
+    return decoded || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function guessContentType(url: string, fileName?: string): string {
   const sources = [fileName, url].filter(Boolean) as string[];
   for (const src of sources) {
@@ -99,7 +111,11 @@ export function extractMediaAttachments(body: Record<string, unknown>): MediaAtt
     for (const att of attachments) {
       if (typeof att === "string") {
         if (looksLikeImageUrl(att) || looksLikeDocUrl(att)) {
-          add(att, guessContentType(att));
+          // Fix Pedro 2026-05-19: extrai fileName da própria URL (Stevo manda
+          // attachment como URL-string sem objeto fileName). Sem isso o
+          // file-processor recebia filename="arquivo" e detectFileKind falhava
+          // pra text/plain. Agora passa o nome real com extensão.
+          add(att, guessContentType(att), fileNameFromUrl(att));
         }
         continue;
       }

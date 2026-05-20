@@ -62,7 +62,12 @@ export function detectFileKind(mime: string | undefined, filename: string | unde
   if (IMAGE_MIMES.some((x) => m.startsWith(x))) return "image";
   if (m === "application/pdf") return "pdf";
   if (XLSX_MIMES.some((x) => m === x)) return "xlsx";
-  if (CSV_MIMES.some((x) => m === x)) {
+  // Fix Pedro 2026-05-19: text/csv e application/csv são EXPLICITAMENTE CSV —
+  // não exigir extensão no filename (caso Stevo: attachment é URL-string sem
+  // fileName → filename vira "arquivo" sem ext, e o CSV era rejeitado como
+  // "Tipo não suportado: text/csv"). Só text/plain precisa confirmar extensão.
+  if (m === "text/csv" || m === "application/csv") return "csv";
+  if (m === "text/plain") {
     // text/plain pode ser muita coisa — checa extensão
     return fn.endsWith(".csv") ? "csv" : "unknown";
   }

@@ -825,22 +825,6 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
  * cobrar Whisper depois. Antes deste fix, extractRepInput transcrevia áudio
  * mas NUNCA cobrava — Sparkbot WhatsApp rodava Whisper free.
  */
-// Debug Pedro 2026-05-19: grava onde o pipeline de attachment falha em prod.
-// REMOVER após diagnosticar o CSV via Stevo.
-async function debugAttachSignal(stage: string, data: Record<string, unknown>): Promise<void> {
-  try {
-    const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
-    recordSignalAsync({
-      type: "error",
-      title: `DEBUG4: attach pipeline ${stage}`,
-      description: JSON.stringify(data).slice(0, 400),
-      severity: "low",
-      source: "bot_auto",
-      metadata: { stage, ...data },
-    });
-  } catch { /* nf */ }
-}
-
 async function extractRepInput(args: {
   body: Record<string, unknown>;
   messageBody: string;
@@ -867,35 +851,6 @@ async function extractRepInput(args: {
   }
 
   const attachments = extractMediaAttachments(body);
-
-  // Debug Pedro 2026-05-19 v2: captura shape do webhook STEVO pra doc.
-  // Via Stevo o body chega VAZIO (≠ Meta que manda filename). Grava shape
-  // quando 0 attachments + (body vazio OU filename) — REMOVER após fix.
-  if (attachments.length === 0) {
-    const bt = String(body.body || body.message || "").trim();
-    const ct = String(body.contentType || "").toLowerCase();
-    const suspect = bt === "" || /\.(csv|xlsx?|pdf|docx?)$/i.test(bt) || (ct !== "" && ct !== "text/plain");
-    if (suspect) {
-      const keys = Object.keys(body);
-      const sample: Record<string, unknown> = {};
-      for (const k of keys) {
-        const v = body[k];
-        if (typeof v === "string") sample[k] = v.slice(0, 200);
-        else if (Array.isArray(v)) sample[k] = `[arr ${v.length}] ${JSON.stringify(v).slice(0, 700)}`;
-        else if (v && typeof v === "object") sample[k] = JSON.stringify(v).slice(0, 700);
-        else sample[k] = v;
-      }
-      try {
-        const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
-        recordSignalAsync({
-          type: "error", title: "DEBUG2: doc shape Stevo",
-          description: `keys=[${keys.join(",")}] ct=${ct} bt="${bt.slice(0, 40)}"`,
-          severity: "low", source: "bot_auto",
-          metadata: { body_keys: keys, body_sample: sample },
-        });
-      } catch { /* nf */ }
-    }
-  }
 
   // Fix Pedro 2026-05-19: detecta documento "fantasma" — body é só o filename
   // (ex: "planilha.csv") + contentType text/plain + SEM URL de mídia em
@@ -943,13 +898,11 @@ async function extractRepInput(args: {
         const urlVal = validateExternalUrl(att.url);
         if (!urlVal.ok) {
           console.warn(`[Sparkbot] SSRF guard rejected attachment URL: ${urlVal.reason} (${att.url.slice(0, 80)})`);
-          await debugAttachSignal("SSRF_REJECT", { url: att.url.slice(0, 150), reason: urlVal.reason });
           continue;
         }
         const res = await fetch(att.url, { signal: AbortSignal.timeout(20_000) });
         if (!res.ok) {
           console.warn(`[Sparkbot] failed to fetch attachment ${att.url}: ${res.status}`);
-          await debugAttachSignal("FETCH_NOT_OK", { url: att.url.slice(0, 150), status: res.status });
           continue;
         }
         const buffer = Buffer.from(await res.arrayBuffer());
@@ -976,12 +929,6 @@ async function extractRepInput(args: {
           "[Sparkbot] file processing failed for", att.url, ":",
           err instanceof Error ? err.message : err,
         );
-        await debugAttachSignal("PROCESS_CATCH", {
-          url: att.url.slice(0, 150),
-          mime: att.contentType,
-          err: err instanceof Error ? err.message.slice(0, 300) : String(err),
-          code: (err as { code?: string })?.code,
-        });
         // Fix Track 8 H-MM-2 + H-MM-6 (review 2026-05-05): se erro tem
         // código user-friendly (HEIC, PDF vazio), propaga PRO REP em vez
         // de silenciar e responder texto. Antes: bot respondia só com
