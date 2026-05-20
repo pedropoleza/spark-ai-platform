@@ -69,10 +69,14 @@ async function buildRepInput(parsed: ParsedStevoMessage): Promise<RepInput | nul
   }
 
   // Tap em botão/lista → o rep "disse" o label/título. Trata como texto normal;
-  // o miolo (gate H8, coherence) age igual. O ID estável + stanza vão no
-  // metadata do insert (pra audit/correlação) — não no RepInput.
+  // o miolo (gate H8, coherence) age igual. AMARRA o tap à pergunta original
+  // (quotedText) pra o LLM saber EXATAMENTE qual ação confirmar quando há várias
+  // pendentes (stress test 2026-05-20: "Sim"/"Confirmar" se ligava na ação errada).
   if (parsed.kind === "interactive") {
-    return { kind: "text", text: parsed.text };
+    const txt = parsed.quotedText
+      ? `${parsed.text} — (resposta à pergunta: "${parsed.quotedText}")`
+      : parsed.text;
+    return { kind: "text", text: txt };
   }
 
   if (parsed.kind === "audio") {

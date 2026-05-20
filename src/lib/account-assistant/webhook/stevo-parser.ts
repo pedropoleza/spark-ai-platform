@@ -70,6 +70,10 @@ export type ParsedStevoContent =
       text: string;
       selectionId: string;
       replyToStanzaId: string;
+      /** Texto da PERGUNTA original que o rep respondeu (de contextInfo.
+       *  quotedMessage). Amarra o tap à ação certa quando há várias confirmações
+       *  pendentes — o handler injeta isso no turno pro LLM não se confundir. */
+      quotedText: string;
     };
 
 // ---------------------------------------------------------------------------
@@ -94,6 +98,35 @@ function normalizeStevoPhone(sender: string): string {
   const localPart = sender.split("@")[0] || "";
   const digits = localPart.replace(/\D/g, "");
   return digits ? `+${digits}` : "";
+}
+
+/**
+ * Extrai o texto da PERGUNTA original de um quotedMessage (o que o rep tocou).
+ * Cobre os formatos do Stevo: NativeFlow (interactiveMessage.body.text),
+ * listMessage.description/title, buttonsMessage legado, e texto puro. Tira
+ * marcação *negrito*, normaliza espaços e trunca em 200 chars.
+ */
+function extractQuotedText(qm: Record<string, unknown> | null): string {
+  if (!qm) return "";
+  let t = "";
+  const im = asRecord(qm.interactiveMessage);
+  if (im) {
+    const body = asRecord(im.body);
+    if (body) t = asString(body.text);
+  }
+  if (!t) {
+    const lm = asRecord(qm.listMessage);
+    if (lm) t = asString(lm.description) || asString(lm.title);
+  }
+  if (!t) {
+    const bm = asRecord(qm.buttonsMessage);
+    if (bm) t = asString(bm.contentText) || asString(bm.text);
+  }
+  if (!t) {
+    t = asString(qm.conversation) || asString(asRecord(qm.extendedTextMessage)?.text);
+  }
+  t = t.replace(/\*/g, "").replace(/\s+/g, " ").trim();
+  return t.length > 200 ? `${t.slice(0, 199)}…` : t;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +233,7 @@ export function parseStevoWebhook(body: unknown): ParsedStevoMessage | null {
       asString(btnResp.selectedButtonID) || asString(btnResp.selectedButtonId);
     const ctx = asRecord(btnResp.contextInfo);
     const stanza = asString(ctx?.stanzaID) || asString(ctx?.stanzaId);
+    const quotedText = extractQuotedText(asRecord(ctx?.quotedMessage));
     const textVal = display || selectionId;
     if (textVal) {
       return {
@@ -209,6 +243,7 @@ export function parseStevoWebhook(body: unknown): ParsedStevoMessage | null {
         text: textVal,
         selectionId,
         replyToStanzaId: stanza,
+        quotedText,
       };
     }
   }
@@ -221,6 +256,7 @@ export function parseStevoWebhook(body: unknown): ParsedStevoMessage | null {
     const display = asString(listResp.title);
     const ctx = asRecord(listResp.contextInfo);
     const stanza = asString(ctx?.stanzaID) || asString(ctx?.stanzaId);
+    const quotedText = extractQuotedText(asRecord(ctx?.quotedMessage));
     const textVal = display || selectionId;
     if (textVal) {
       return {
@@ -230,6 +266,7 @@ export function parseStevoWebhook(body: unknown): ParsedStevoMessage | null {
         text: textVal,
         selectionId,
         replyToStanzaId: stanza,
+        quotedText,
       };
     }
   }

@@ -176,7 +176,12 @@ function check(name: string, cond: boolean, detail?: string) {
         buttonsResponseMessage: {
           type: 1,
           Response: { SelectedDisplayText: "Confirmar ✅" },
-          contextInfo: { stanzaID: "3EB0BTN" },
+          contextInfo: {
+            stanzaID: "3EB0BTN",
+            quotedMessage: {
+              interactiveMessage: { body: { text: "*Confirmação*\n\nVou mandar pro João. Confirma?" } },
+            },
+          },
           selectedButtonID: "confirm_yes",
         },
       },
@@ -187,6 +192,11 @@ function check(name: string, cond: boolean, detail?: string) {
   check("botão resp: text=display", r?.kind === "interactive" && r.text === "Confirmar ✅");
   check("botão resp: selectionId", r?.kind === "interactive" && r.selectionId === "confirm_yes");
   check("botão resp: stanza", r?.kind === "interactive" && r.replyToStanzaId === "3EB0BTN");
+  check(
+    "botão resp: quotedText (sem *, espaços normalizados)",
+    r?.kind === "interactive" && r.quotedText === "Confirmação Vou mandar pro João. Confirma?",
+    r?.kind === "interactive" ? r.quotedText : "",
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +211,10 @@ function check(name: string, cond: boolean, detail?: string) {
       Message: {
         listResponseMessage: {
           title: "Opção 2",
-          contextInfo: { stanzaID: "3EB0LST" },
+          contextInfo: {
+            stanzaID: "3EB0LST",
+            quotedMessage: { listMessage: { title: "Escolha", description: "Qual contato?" } },
+          },
           singleSelectReply: { selectedRowID: "opt_2" },
         },
       },
@@ -212,6 +225,7 @@ function check(name: string, cond: boolean, detail?: string) {
   check("lista resp: text=title", r?.kind === "interactive" && r.text === "Opção 2");
   check("lista resp: selectionId=rowID", r?.kind === "interactive" && r.selectionId === "opt_2");
   check("lista resp: stanza", r?.kind === "interactive" && r.replyToStanzaId === "3EB0LST");
+  check("lista resp: quotedText=description", r?.kind === "interactive" && r.quotedText === "Qual contato?");
 }
 
 // ---------------------------------------------------------------------------

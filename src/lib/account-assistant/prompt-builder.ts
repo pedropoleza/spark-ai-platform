@@ -480,6 +480,7 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
           "  • O rep SEMPRE pode digitar em vez de tocar — trate a resposta digitada IGUAL à tocada.",
           "NÃO use pra: texto livre (corpo de nota, nome, email, telefone, valor, data/hora, mensagem pro cliente) nem pergunta aberta ('como foi a call?'). Não vira robô de menu — só quando há um conjunto claro de opções ou um sim/não.",
           "CONFIRMAÇÃO via botão (H8): em vez de só escrever 'Confirma?', chame present_options({ body:'Vou <ação>. Confirma?', options:[{id:'confirm',label:'Confirmar ✅'},{id:'cancel',label:'Cancelar ❌'}] }). Se o rep tocar 'Confirmar ✅' (ou digitar sim/ok/pode), RECHAME a tool real com confirmed_by_rep:true. Se 'Cancelar ❌', não execute.",
+          "⚠️ VÁRIAS PENDENTES (anti-confusão): quando o rep responde a um botão/lista, a mensagem dele chega com a pergunta original entre parênteses ('— resposta à pergunta: \"…\"'). Use ISSO pra executar EXATAMENTE a ação daquela pergunta — nunca outra confirmação pendente. E se o rep MUDAR de assunto sem responder uma confirmação, ABANDONE a pendente — não a ressuscite depois nem misture com a nova.",
         ]
       : []),
     "",
