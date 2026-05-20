@@ -234,6 +234,54 @@ function processXlsx(buffer: Buffer, filename: string): Extract<RepInput, { kind
   return { kind: "tabular", tabular };
 }
 
+/**
+ * Detecta o tipo do arquivo pelos magic bytes do conteúdo (fallback quando
+ * mime/filename não bastam). Pedro 2026-05-19.
+ */
+export function sniffFileKind(buffer: Buffer): FileKind {
+  if (buffer.length < 4) return "unknown";
+  const b = buffer;
+
+  // PDF: "%PDF"
+  if (b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46) return "pdf";
+
+  // JPEG: FF D8 FF
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image";
+  // PNG: 89 50 4E 47
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image";
+  // GIF: "GIF8"
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return "image";
+  // WEBP: "RIFF"..."WEBP"
+  if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+      b.length >= 12 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return "image";
+  // HEIC: bytes 4-11 contêm "ftypheic"/"ftypheif"/"ftypmif1"
+  if (b.length >= 12) {
+    const ftyp = b.toString("ascii", 4, 12);
+    if (/ftyp(heic|heif|hevc|mif1|msf1)/i.test(ftyp)) return "heic";
+  }
+
+  // XLSX (ZIP): "PK\x03\x04" — mas .docx/.pptx também são ZIP. Pra MVP
+  // assumimos planilha (caso de uso dominante). XLS velho: D0 CF 11 E0.
+  if (b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04) return "xlsx";
+  if (b[0] === 0xd0 && b[1] === 0xcf && b[2] === 0x11 && b[3] === 0xe0) return "xlsx";
+
+  // CSV/texto: primeiros bytes são ASCII/UTF-8 imprimível + tem delimitador.
+  // Heurística conservadora: amostra 500 bytes, >90% imprimível, tem vírgula
+  // ou ; ou tab + quebra de linha.
+  const sample = b.subarray(0, Math.min(500, b.length));
+  let printable = 0;
+  for (const byte of sample) {
+    if (byte === 0x09 || byte === 0x0a || byte === 0x0d || (byte >= 0x20 && byte <= 0x7e) || byte >= 0x80) {
+      printable++;
+    }
+  }
+  const ratio = printable / sample.length;
+  const text = sample.toString("utf8");
+  if (ratio > 0.9 && /[,;\t]/.test(text) && /[\r\n]/.test(text)) return "csv";
+
+  return "unknown";
+}
+
 // ============================================================
 // API pública
 // ============================================================
@@ -257,7 +305,17 @@ export interface ProcessFileResult {
  * RepInput pronto pra `processIncoming`. Caller só passa o buffer cru.
  */
 export async function processFile(input: ProcessFileInput): Promise<ProcessFileResult> {
-  const kind = input.kindHint || detectFileKind(input.mime, input.filename);
+  let kind = input.kindHint || detectFileKind(input.mime, input.filename);
+  // Fix Pedro 2026-05-19: quando mime+filename não bastam (ex: Stevo manda
+  // URL sem extensão + contentType genérico), faz sniffing dos magic bytes
+  // do conteúdo. Cobre foto tirada na hora, arquivo renomeado, etc.
+  if (kind === "unknown") {
+    const sniffed = sniffFileKind(input.buffer);
+    if (sniffed !== "unknown") {
+      console.log(`[file-processor] kind detectado via sniffing: ${sniffed} (mime=${input.mime}, fn=${input.filename})`);
+      kind = sniffed;
+    }
+  }
   if (kind === "unknown") {
     throw new FileProcessError("unsupported_type", `Tipo não suportado: ${input.mime || input.filename}`);
   }

@@ -116,6 +116,14 @@ export function extractMediaAttachments(body: Record<string, unknown>): MediaAtt
           // file-processor recebia filename="arquivo" e detectFileKind falhava
           // pra text/plain. Agora passa o nome real com extensão.
           add(att, guessContentType(att), fileNameFromUrl(att));
+        } else if (/\/(images?)\//i.test(att)) {
+          // Sem extensão mas path indica imagem (Stevo: .../media/image/...).
+          // file-processor confirma via sniffing de magic bytes.
+          add(att, "image/jpeg", fileNameFromUrl(att));
+        } else if (/\/(media|documents?|files?)\//i.test(att)) {
+          // Sem extensão mas path indica documento/mídia. octet-stream força
+          // o file-processor a fazer sniffing pra detectar o tipo real.
+          add(att, "application/octet-stream", fileNameFromUrl(att));
         }
         continue;
       }
