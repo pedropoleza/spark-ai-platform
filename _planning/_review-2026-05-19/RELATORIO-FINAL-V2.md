@@ -56,19 +56,21 @@
 - ✅ **Camada de repositório** (`repositories/`: 4 repos, 44 funções; call sites seguros migrados; idempotência do `webhook-handler` PRESERVADA; migração dos demais call-sites documentada — parcial por segurança).
 - ⬜ **Decomposição do `webhook-handler.ts`** (1.052 LOC, idempotência) + **dedup-guard por conteúdo** (resolve dupla-resposta na origem).
 - ✅ **Multi-tenant real** (`hub-resolver.ts`: DB-first + fallback env; 11 pontos migrados; backward-compat com 1 hub; build OK).
-- ✅ **Renomear colisões** (`queue-processor.ts`, `sales-prompt-builder.ts`; 10 imports) · ✅ **`confirmation_mode` default → high_only** (D3, migration 00069) · 📋 **Unificar loop** e **URL `pg_cron`** → diferidos (ver "Diferido pra V2.2").
+- ✅ **Renomear colisões** (`queue-processor.ts`, `sales-prompt-builder.ts`) · ✅ **`confirmation_mode` default → high_only** (D3, migration 00069) · ✅ **Unificar loop** (`run-sparkbot-turn.ts`) · ✅ **URL `pg_cron`** (migration 00070 — aplicar no smoke).
 
-## Diferido pra V2.2 (requer smoke dedicado — risco > valor sem deploy)
-Julgamento ("não pare até finalizar" + regra de ouro "não afetar operação em andamento"):
-estes mexem na ingestão crítica ou têm valor de manutenção que não justifica o risco numa
-sessão sem smoke. Ficam mapeados pra a próxima iteração:
-- **Decompor `webhook-handler.ts` + dedup-guard por conteúdo**: as 7 camadas de idempotência
-  são o coração da ingestão; a dupla-resposta já some na origem (Stevo-only). Mover sem smoke
-  E2E é o maior risco do sistema — não vale.
-- **Unificar loop `processor`×`dispatcher`**: valor de manutenção; toca o loop dos 2 pipelines.
-- **URL do `pg_cron` parametrizada**: mexe no job de cron de prod; valor só pra staging.
-- **Migração dos call-sites restantes pra repository** (billing claim atômico, tools/identity
-  com erro tipado, send/route) — incremental, documentado pelo agente.
+## Fase V2.2 — CONCLUÍDA (Pedro 2026-05-20: "faz todos os 4")
+Após a Fase Estrutural, o Pedro pediu pra fazer também os 4 itens que eu tinha diferido por
+risco. Feitos com backward-compat + validação build, sequencialmente:
+- ✅ **Decompor `webhook-handler.ts`** (1052→837 LOC): módulos `webhook/{input-parser,sparkbot-send,dedup-guard}.ts`. Camadas 2-7 de idempotência ficam INLINE (mover mudaria control-flow). + **camada 8** ADITIVA (dedup por conteúdo): lock atômico `(rep+hash, janela 2s)`, re-check por idade = zero falso-descarte. (commit `73fbdf8`)
+- ✅ **Unificar loop** `processor`×`dispatcher` → `core/run-sparkbot-turn.ts` (coherence gate/billing preservados). (`0ce55b6`)
+- ✅ **Migração restante pra repository** (billing/charge com `claimUnbilledBatch` atômico, send/route, identity, whatsapp-delivery, inbox; ~103→~82 acessos crus). (`6a3e6d5`)
+- ✅ **`pg_cron` parametrizado** (migration 00070, tabela `cron_config`) — ⚠️ **NÃO aplicada via MCP** (recria o job a cada-30s, operação contínua): **aplicar no smoke**, conferindo que o proativo volta a disparar.
+
+> Único item PENDENTE DE APLICAÇÃO: a migration 00070 (pg_cron) — implementada e pronta, mas
+> aplicá-la sem smoke (dono away) recriaria o cron de prod às cegas. Tudo o mais está
+> implementado, validado (golden 49/49 + build) e commitado. Smoke valida os itens estruturais.
+
+## Riscos residuais (pro smoke de amanhã cobrir)
 
 ## Riscos residuais (pro smoke de amanhã cobrir)
 1. **Re-run do coherence gate nunca rodou E2E** com LLM+tools reais (o caminho que de fato executa a escrita nova). 
