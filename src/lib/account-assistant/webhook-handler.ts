@@ -852,6 +852,35 @@ async function extractRepInput(args: {
 
   const attachments = extractMediaAttachments(body);
 
+  // Debug Pedro 2026-05-19 v2: captura shape do webhook STEVO pra doc.
+  // Via Stevo o body chega VAZIO (≠ Meta que manda filename). Grava shape
+  // quando 0 attachments + (body vazio OU filename) — REMOVER após fix.
+  if (attachments.length === 0) {
+    const bt = String(body.body || body.message || "").trim();
+    const ct = String(body.contentType || "").toLowerCase();
+    const suspect = bt === "" || /\.(csv|xlsx?|pdf|docx?)$/i.test(bt) || (ct !== "" && ct !== "text/plain");
+    if (suspect) {
+      const keys = Object.keys(body);
+      const sample: Record<string, unknown> = {};
+      for (const k of keys) {
+        const v = body[k];
+        if (typeof v === "string") sample[k] = v.slice(0, 200);
+        else if (Array.isArray(v)) sample[k] = `[arr ${v.length}] ${JSON.stringify(v).slice(0, 700)}`;
+        else if (v && typeof v === "object") sample[k] = JSON.stringify(v).slice(0, 700);
+        else sample[k] = v;
+      }
+      try {
+        const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+        recordSignalAsync({
+          type: "error", title: "DEBUG2: doc shape Stevo",
+          description: `keys=[${keys.join(",")}] ct=${ct} bt="${bt.slice(0, 40)}"`,
+          severity: "low", source: "bot_auto",
+          metadata: { body_keys: keys, body_sample: sample },
+        });
+      } catch { /* nf */ }
+    }
+  }
+
   // Fix Pedro 2026-05-19: detecta documento "fantasma" — body é só o filename
   // (ex: "planilha.csv") + contentType text/plain + SEM URL de mídia em
   // lugar nenhum (nem webhook nem API GHL). Acontece quando documento chega
