@@ -23,6 +23,7 @@ import { acceptTerms, rejectTerms, setActiveLocation, syncRepInternalFlag } from
 import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "./prompt-builder";
 import { runWithTools, type LLMMessage } from "./llm-client";
 import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
+import { runSparkbotTurn, buildToolCtx } from "./core/run-sparkbot-turn";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 // H29/H30/H31 (Pedro 2026-05-15): Conversational UX layer
 // + 4.3 (Pedro 2026-05-16): silence recovery
@@ -397,34 +398,36 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     content: t.content,
   }));
 
-  const ghlClient = ghlClientForCtx;
-  const toolCtx: ToolContext = {
+  // ToolContext explícito pra ser reutilizado pelo coherence gate re-run abaixo.
+  const toolCtx: ToolContext = buildToolCtx({
     rep,
     locationId: activeLocationId,
     companyId: location.company_id,
-    ghlClient,
-    testSessionId: input.testSessionId || null,
+    ghlClient: ghlClientForCtx,
+    testSessionId: input.testSessionId,
     confirmationMode: input.config.confirmation_mode || "high_only",
     // Tools (ex: import_contacts_from_data) acessam rows via ctx.attachment
     // pra economizar tokens vs LLM copiando rows no args.
-    attachment: input.input.kind === "tabular" || input.input.kind === "image" || input.input.kind === "document"
-      ? input.input
-      : null,
+    attachment:
+      input.input.kind === "tabular" || input.input.kind === "image" || input.input.kind === "document"
+        ? input.input
+        : null,
     enabledKbs: input.config.enabled_kbs,
-  };
+  });
 
-  const result = await runWithTools({
+  // P2 (2026-05-20): usa runSparkbotTurn (helper compartilhado com dispatcher).
+  // Passa o confirmationMode pra getAllToolDefinitions injetar `confirmed_by_rep`
+  // no schema das tools que o gate exige — sem isso o LLM fica em loop
+  // "Confirma? → sim → bloqueado de novo" (visto em prod 2026-04-30).
+  const result = await runSparkbotTurn({
     systemPrompt,
     messages: [...history, userMessage],
-    // Passa o confirmationMode pra getAllToolDefinitions injetar
-    // `confirmed_by_rep` no schema das tools que o gate exige — sem isso
-    // o LLM não tem como saber que precisa enviar o flag e fica em loop
-    // "Confirma? → sim → bloqueado de novo" (visto em prod 2026-04-30).
-    tools: getAllToolDefinitions(
-      input.config.confirmation_mode || "high_only",
-      input.config.disabled_tools,
-    ),
-    executor: (name, args) => executeTool(name, args, toolCtx),
+    toolCtx,
+    toolSelection: {
+      kind: "all",
+      confirmationMode: input.config.confirmation_mode || "high_only",
+      disabledTools: input.config.disabled_tools,
+    },
     model: input.config.ai_model,
     fallbackModel: input.config.fallback_model,
   });

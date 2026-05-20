@@ -21,8 +21,9 @@ import { GHLClient } from "@/lib/ghl/client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
-import { runWithTools, type LLMMessage } from "../llm-client";
-import { getToolDefinitions, executeTool, type ToolContext } from "../tools";
+import type { LLMMessage } from "../llm-client";
+import { type ToolContext } from "../tools";
+import { runSparkbotTurn, buildToolCtx } from "../core/run-sparkbot-turn";
 import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "../prompt-builder";
 import type {
   ProactiveRule,
@@ -415,7 +416,7 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     JSON.stringify(contextData, null, 2),
   ].join("\n");
 
-  // 7. LLM call com tool-calling
+  // 7. LLM call com tool-calling (P2 2026-05-20: usa runSparkbotTurn compartilhado)
   const ghlClient = new GHLClient(location.company_id, activeLocationId);
   const cm = (agentConfig?.confirmation_mode as
     | "always"
@@ -427,20 +428,19 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
   const enabledKbs = Array.isArray(agentConfig?.enabled_kbs)
     ? agentConfig.enabled_kbs as string[]
     : ["national_life_group", "agency_brazillionaires"];
-  const toolCtx: ToolContext = {
-    rep,
-    locationId: activeLocationId,
-    companyId: location.company_id,
-    ghlClient,
-    testSessionId: testSessionId || null,
-    confirmationMode: cm,
-    enabledKbs,
-  };
 
   // Passa confirmation_mode pra injetar `confirmed_by_rep` nos schemas das
   // tools com gate ativo — senão o LLM cai em loop quando precisa confirmar.
   // Disabled tools removidas do schema completamente (LLM nem vê).
-  const toolDefs = getToolDefinitions(rule.tools_allowed, cm, disabledTools);
+  const toolCtx: ToolContext = buildToolCtx({
+    rep,
+    locationId: activeLocationId,
+    companyId: location.company_id,
+    ghlClient,
+    testSessionId: testSessionId,
+    confirmationMode: cm,
+    enabledKbs,
+  });
 
   const initialUserMessage: LLMMessage = {
     role: "user",
@@ -448,11 +448,16 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
   };
 
   const startTs = Date.now();
-  const llmResult = await runWithTools({
+  const llmResult = await runSparkbotTurn({
     systemPrompt,
     messages: [initialUserMessage],
-    tools: toolDefs,
-    executor: (name, args) => executeTool(name, args, toolCtx),
+    toolCtx,
+    toolSelection: {
+      kind: "subset",
+      allowedNames: rule.tools_allowed,
+      confirmationMode: cm,
+      disabledTools,
+    },
     model: rule.ai_model || agentConfig?.ai_model || "claude-haiku-4-5-20251001",
     fallbackModel: agentConfig?.fallback_model ?? null,
   });
