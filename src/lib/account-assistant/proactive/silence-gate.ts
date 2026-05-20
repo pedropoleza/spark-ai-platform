@@ -51,12 +51,26 @@ export interface SilenceState {
  *      depois chamar recordProactiveSent(rep_id, decision)
  *   4. Se canSend=false: pular envio. Se shouldSetPaused, pausar.
  */
-export function checkSilenceGate(state: SilenceState): SilenceDecision {
+export type ProactiveKind = "nudge" | "requested";
+
+export function checkSilenceGate(
+  state: SilenceState,
+  kind: ProactiveKind = "nudge",
+): SilenceDecision {
   if (state.proactive_paused_at) {
     return { canSend: false, reason: "already_paused", shouldSetPaused: false };
   }
 
   const cur = state.consecutive_proactive_without_reply ?? 0;
+
+  // Onda 1 (V2 2026-05-20): proativo SOLICITADO pelo rep (lembrete que ele
+  // agendou via schedule_reminder) NUNCA ameaça nem conta como "silêncio" — ele
+  // pediu pra ser lembrado, não precisa "responder". Só respeita a pausa total
+  // (acima). Sem warningPrefix, sem incrementar o counter. Resolve o caso A2b
+  // (aviso/ameaça nocivo grudado num lembrete do próprio rep).
+  if (kind === "requested") {
+    return { canSend: true, warningPrefix: null, nextCounter: cur, markWarned: false };
+  }
 
   if (cur >= 3) {
     return { canSend: false, reason: "should_pause", shouldSetPaused: true };
@@ -130,6 +144,7 @@ export async function recordProactiveSent(
 export async function loadSilenceDecision(
   supabase: SupabaseClient,
   repId: string,
+  kind: ProactiveKind = "nudge",
 ): Promise<SilenceDecision> {
   const { data: rep, error } = await supabase
     .from("rep_identities")
@@ -159,5 +174,5 @@ export async function loadSilenceDecision(
     consecutive_proactive_without_reply: rep.consecutive_proactive_without_reply,
     proactive_paused_at: rep.proactive_paused_at,
     proactive_warned_at: rep.proactive_warned_at,
-  });
+  }, kind);
 }

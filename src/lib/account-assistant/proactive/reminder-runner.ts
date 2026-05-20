@@ -122,10 +122,12 @@ async function fireOne(task: ScheduledTaskRow): Promise<"fired" | "failed" | "sk
     }
   }
 
-  // Silence gate (fix audit Phase 3): se rep não tá respondendo, evita
-  // spam que dispara banimento WhatsApp. Soft warning no 2º, hard no 3º,
-  // pausa no 4º. Só aplica em entregas REAIS (não em test session).
-  const decision = await loadSilenceDecision(supabase, task.rep_id);
+  // Silence gate: protege contra spam/ban quando o rep some. Onda 1 (V2):
+  // lembrete é proativo SOLICITADO pelo rep ("requested") — respeita a PAUSA
+  // total (anti-ban), mas NÃO leva aviso de silêncio nem conta como "sem
+  // resposta". O rep pediu pra ser lembrado; não faz sentido ameaçá-lo por
+  // isso. Só aplica em entregas REAIS (não em test session).
+  const decision = await loadSilenceDecision(supabase, task.rep_id, "requested");
   if (!decision.canSend) {
     console.log(
       `[reminder-runner] task ${task.id} skipped (silence gate, reason=${decision.reason}) — ` +
