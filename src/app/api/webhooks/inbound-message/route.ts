@@ -125,9 +125,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Debug Pedro 2026-05-19 v3: grava body INTEIRO de qualquer inbound do
-    // contato do Pedro (Hub) pra capturar shape do CSV via Stevo no ponto de
-    // ENTRADA (antes de qualquer filtro/roteamento). REMOVER após fix.
-    if (contactId === "61ZDGmCxZW0V2OODGcHo") {
+    // Pedro (filtra por TELEFONE — estável em qualquer location, ≠ contactId).
+    // Captura shape do CSV via Stevo no ponto de ENTRADA. REMOVER após fix.
+    const bodyStrForPedro = JSON.stringify(body);
+    if (bodyStrForPedro.includes("7867717077")) {
       try {
         const fullBody: Record<string, unknown> = {};
         for (const k of Object.keys(body)) {
