@@ -864,15 +864,27 @@ async function extractRepInput(args: {
       const sample: Record<string, unknown> = {};
       for (const k of keys) {
         const v = body[k];
-        if (typeof v === "string") sample[k] = v.slice(0, 120);
-        else if (Array.isArray(v)) sample[k] = `[array len=${v.length}] ${JSON.stringify(v).slice(0, 300)}`;
-        else if (v && typeof v === "object") sample[k] = JSON.stringify(v).slice(0, 300);
+        if (typeof v === "string") sample[k] = v.slice(0, 200);
+        else if (Array.isArray(v)) sample[k] = `[array len=${v.length}] ${JSON.stringify(v).slice(0, 600)}`;
+        else if (v && typeof v === "object") sample[k] = JSON.stringify(v).slice(0, 600);
         else sample[k] = v;
       }
       console.warn(
-        `[Sparkbot] DOC ATTACHMENT MISS — body parece ter arquivo mas extractMediaAttachments=[]. ` +
-        `keys=[${keys.join(",")}] sample=${JSON.stringify(sample).slice(0, 1500)}`,
+        `[Sparkbot] DOC ATTACHMENT MISS — keys=[${keys.join(",")}] sample=${JSON.stringify(sample).slice(0, 1500)}`,
       );
+      // Debug Pedro 2026-05-19: grava signal pra ler via SQL (logs Vercel
+      // difíceis de capturar). REMOVER após diagnosticar.
+      try {
+        const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+        recordSignalAsync({
+          type: "error",
+          title: "DEBUG: doc attachment não extraído (body shape)",
+          description: `keys=[${keys.join(",")}]`,
+          severity: "low",
+          source: "bot_auto",
+          metadata: { body_keys: keys, body_sample: sample, body_text: bodyText.slice(0, 200) },
+        });
+      } catch { /* non-fatal */ }
     }
   }
 
