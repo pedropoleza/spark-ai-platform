@@ -10,43 +10,33 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { identifyRep } from "./identity";
 import { processIncoming } from "./processor";
-import { transcribeAudioFromUrl, extractAudioUrl } from "@/lib/ai/audio-transcriber";
-import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { trackAndCharge } from "@/lib/billing/charge";
-import { pickOutboundChannel, fallbackChannel } from "./outbound-channel";
-import { validateExternalUrl } from "@/lib/utils/url-allowlist";
+import { extractRepInput, type AudioMeta } from "./webhook/input-parser";
+import { sendResponseToRep } from "./webhook/sparkbot-send";
+import {
+  tryClaimInFlight,
+  releaseInFlight,
+  tryContentDedupLock,
+} from "./webhook/dedup-guard";
 import type { RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 
 const SPARKBOT_HISTORY_TURNS = 30;
 
-/**
- * Mutex em memória pra dedup concorrente dentro de uma única lambda.
- * Não substitui a UNIQUE constraint (multi-lambda) mas evita 2× Whisper
- * quando GHL faz dup-burst em <1s (caso raro mas mostrável).
- * TTL: 60s — depois disso a UNIQUE constraint cobre.
- */
-const inFlightMessages = new Map<string, number>();
-const IN_FLIGHT_TTL_MS = 60_000;
-function tryClaimInFlight(ghlMessageId: string): boolean {
-  const now = Date.now();
-  // GC entries expiradas
-  for (const [k, expiresAt] of inFlightMessages) {
-    if (expiresAt < now) inFlightMessages.delete(k);
-  }
-  if (inFlightMessages.has(ghlMessageId)) return false;
-  inFlightMessages.set(ghlMessageId, now + IN_FLIGHT_TTL_MS);
-  return true;
-}
-function releaseInFlight(ghlMessageId: string): void {
-  inFlightMessages.delete(ghlMessageId);
-}
-
-/** Acumulador de telemetria de áudio extraído (pra billing posterior). */
-interface AudioMeta {
-  audio_seconds: number;
-  model: string;
-}
+// ─────────────────────────────────────────────────────────────────────────
+// Decomposição V2.2 (ver _planning/_review-2026-05-19/B1-arquitetura.md §4):
+// este handler era um god-file de 1.052 LOC. Extraídos pra ./webhook/*:
+//   • input-parser.ts   → extractRepInput (+ tipo AudioMeta) — parsing puro.
+//   • sparkbot-send.ts   → sendResponseToRep + split de mensagens.
+//   • dedup-guard.ts     → mutex em memória (camada 1, BYTE-A-BYTE) +
+//                          camada 8 ADITIVA (content-hash lock, janela 2s).
+//
+// O que NÃO foi movido: as camadas 2–7 de idempotência (SELECTs CONTENT/
+// TIMING-MATCH, INSERT minute-bucket em sparkbot_dedup_locks, captura 23505)
+// continuam INLINE abaixo porque estão interleavadas com o fluxo (rep,
+// supabase, early-returns no meio do pipeline) — movê-las mudaria control-flow
+// e arriscaria a ingestão. O handler segue orquestrador, comportamento idêntico.
+// ─────────────────────────────────────────────────────────────────────────
 
 export interface HandleAssistantInboundArgs {
   hubLocationId: string;
@@ -275,6 +265,34 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
       }
       // Outro erro — não bloqueia (defensivo)
       console.warn("[Sparkbot] dedup lock insert falhou (não-bloqueante):", lockRes.error.message);
+    }
+  }
+
+  // CAMADA 8 — CONTENT-HASH LOCK, janela CURTA ~2s (ADITIVA, V2.2).
+  // Ver _planning/_review-2026-05-19/B2-tools-loop.md §3 P0 #2.
+  //
+  // Defesa pra dupla-resposta quando a WhatsApp Business API voltar (2
+  // providers → 2 webhooks <3ms com ghl_message_id DISTINTOS). A camada 4
+  // (minute-bucket acima) já dá uma rede multi-provider, mas seu key inclui o
+  // bucket de MINUTO — logo bloqueia até repeats legítimos a 50s de distância
+  // dentro do mesmo minuto. Esta camada é complementar e CIRÚRGICA: janela de
+  // 2s, com re-check de `created_at` no 23505 pra NUNCA descartar um repeat
+  // legítimo (rep que manda "sim" 2× de propósito vem segundos depois → key
+  // colide mas o lock está stale → NÃO aborta). 100% aditiva: não substitui
+  // nenhuma das 7 camadas; se o DB falhar, segue (isDuplicate=false).
+  //
+  // Hoje (Stevo-only) raramente dispara — é blindagem pra quando a API voltar.
+  if (messageBody && messageBody.length > 0) {
+    const contentLock = await tryContentDedupLock({
+      repId: rep.id,
+      content: messageBody,
+      ghlMessageId,
+    });
+    if (contentLock.isDuplicate) {
+      // Webhook concorrente do MESMO evento físico já está sendo processado.
+      // Aborta pra não gerar 2ª resposta LLM. (mutex in-flight é liberado no
+      // finally via cleanupInFlight.)
+      return;
     }
   }
 
@@ -815,238 +833,5 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   } finally {
     // Cleanup do in-flight mutex, qualquer caminho de saída
     cleanupInFlight();
-  }
-}
-
-/**
- * Extrai RepInput do webhook body (áudio → whisper, imagem → base64, doc → extract).
- *
- * C4 fix: caller pode passar `audioMetaSink` pra capturar audio_seconds e
- * cobrar Whisper depois. Antes deste fix, extractRepInput transcrevia áudio
- * mas NUNCA cobrava — Sparkbot WhatsApp rodava Whisper free.
- */
-async function extractRepInput(args: {
-  body: Record<string, unknown>;
-  messageBody: string;
-  audioMetaSink?: { current: AudioMeta | null };
-}): Promise<RepInput> {
-  const { body, messageBody, audioMetaSink } = args;
-
-  const audioInfo = extractAudioUrl(body);
-  if (audioInfo?.url) {
-    try {
-      const transcribed = await transcribeAudioFromUrl(audioInfo.url);
-      if (transcribed?.text) {
-        if (audioMetaSink && transcribed.audio_seconds > 0) {
-          audioMetaSink.current = {
-            audio_seconds: transcribed.audio_seconds,
-            model: transcribed.model,
-          };
-        }
-        return { kind: "audio", transcribed_text: transcribed.text, original_url: audioInfo.url };
-      }
-    } catch (err) {
-      console.warn("[Sparkbot] audio transcription failed:", err instanceof Error ? err.message : err);
-    }
-  }
-
-  const attachments = extractMediaAttachments(body);
-
-  // Fix Pedro 2026-05-19: detecta documento "fantasma" — body é só o filename
-  // (ex: "planilha.csv") + contentType text/plain + SEM URL de mídia em
-  // lugar nenhum (nem webhook nem API GHL). Acontece quando documento chega
-  // via WhatsApp Business API da Meta com a conta em estado problemático
-  // (locked/sem permissão de media), ou canal que não baixa o binário.
-  //
-  // Em vez de virar texto (filename) e o LLM tentar analyze_tabular_data e
-  // falhar com "Não consegui ler", devolve mensagem CLARA pro rep com
-  // alternativas. Detecção: body bate padrão de filename de doc/planilha,
-  // contentType não-rico, e zero attachments extraídos.
-  if (attachments.length === 0) {
-    const bodyText = String(body.body || body.message || "").trim();
-    const ctype = String(body.contentType || "").toLowerCase();
-    const isFilenameOnly =
-      /^[\w\s().\-]+\.(csv|xlsx?|pdf|docx?)$/i.test(bodyText) &&
-      bodyText.length < 120 &&
-      (ctype === "text/plain" || ctype === "");
-    if (isFilenameOnly) {
-      console.warn(
-        `[Sparkbot] DOC SEM URL: body="${bodyText}" ctype="${ctype}" — arquivo não veio do canal (Meta locked / sem media). Avisa rep.`,
-      );
-      return {
-        kind: "text",
-        text:
-          `__FILE_ERROR__:Recebi o nome do arquivo (*${bodyText}*) mas o conteúdo não chegou junto — ` +
-          `isso costuma rolar quando o WhatsApp não anexa o arquivo direito.\n\n` +
-          `Tenta uma destas:\n` +
-          `• *Reenvia* o arquivo (às vezes na 2ª vez vai)\n` +
-          `• *Cola os dados aqui* como texto (nome e telefone, um por linha)\n` +
-          `• Manda uma *foto/print* da planilha`,
-      };
-    }
-  }
-
-  if (attachments.length > 0) {
-    // Pega o PRIMEIRO anexo suportado e processa via file-processor unificado
-    // (mesmo parser que o painel web usa). Imagem/PDF/CSV/XLSX viram RepInput
-    // do tipo apropriado.
-    for (const att of attachments) {
-      try {
-        // SSRF guard (fix CRITICAL stress test 2026-05-03):
-        // attachment.url vem de webhook GHL que pode ser forjado se
-        // GHL_WEBHOOK_SECRET não for strict em prod. Allowlist de hosts.
-        const urlVal = validateExternalUrl(att.url);
-        if (!urlVal.ok) {
-          console.warn(`[Sparkbot] SSRF guard rejected attachment URL: ${urlVal.reason} (${att.url.slice(0, 80)})`);
-          continue;
-        }
-        const res = await fetch(att.url, { signal: AbortSignal.timeout(20_000) });
-        if (!res.ok) {
-          console.warn(`[Sparkbot] failed to fetch attachment ${att.url}: ${res.status}`);
-          continue;
-        }
-        const buffer = Buffer.from(await res.arrayBuffer());
-        const { processFile } = await import("./file-processor");
-        const result = await processFile({
-          buffer,
-          mime: att.contentType,
-          filename: att.fileName || "arquivo",
-        });
-
-        // Anexa caption do messageBody (rep pode mandar texto + arquivo)
-        const repInput = result.repInput;
-        if (repInput.kind === "image") {
-          return { ...repInput, caption: messageBody || undefined };
-        }
-        if (repInput.kind === "document") {
-          return { ...repInput, caption: messageBody || undefined };
-        }
-        if (repInput.kind === "tabular") {
-          return { ...repInput, caption: messageBody || undefined };
-        }
-      } catch (err) {
-        console.warn(
-          "[Sparkbot] file processing failed for", att.url, ":",
-          err instanceof Error ? err.message : err,
-        );
-        // Fix Track 8 H-MM-2 + H-MM-6 (review 2026-05-05): se erro tem
-        // código user-friendly (HEIC, PDF vazio), propaga PRO REP em vez
-        // de silenciar e responder texto. Antes: bot respondia só com
-        // base no caption text — rep pensava que bot leu o arquivo mas
-        // não, confusão.
-        const code = (err as { code?: string })?.code;
-        const userFacingCodes = ["heic_not_supported", "pdf_empty", "file_too_large"];
-        if (code && userFacingCodes.includes(code)) {
-          // Devolve como text especial pro processor montar resposta direta
-          return {
-            kind: "text",
-            text: `__FILE_ERROR__:${err instanceof Error ? err.message : "Falha processando arquivo."}`,
-          };
-        }
-        // Tenta próximo anexo
-      }
-    }
-  }
-
-  return { kind: "text", text: messageBody };
-}
-
-/**
- * Splitter: bot pode escrever resposta com `---` em linha sozinha pra
- * sinalizar break entre mensagens. No WhatsApp, vira múltiplas bolhas
- * (mais legível que bolha gigante). Web UI ignora — renderiza como hr.
- *
- * Limita a 3 partes por turn pra evitar spam. Cada parte recebe trim.
- * Linhas com só `---` ou `***` (qualquer comprimento >= 3) são separadores.
- */
-function splitResponseIntoMessages(text: string): string[] {
-  if (!text) return [];
-  // Regex: linha contendo APENAS 3+ dashes/asterisks (pode ter espaços ao redor)
-  const SPLITTER_REGEX = /^\s*[-*]{3,}\s*$/m;
-  const parts = text
-    .split(/\r?\n/)
-    .reduce<string[][]>((acc, line) => {
-      if (SPLITTER_REGEX.test(line)) {
-        if (acc.length === 0) acc.push([]);
-        acc.push([]);
-      } else {
-        if (acc.length === 0) acc.push([]);
-        acc[acc.length - 1].push(line);
-      }
-      return acc;
-    }, [])
-    .map((lines) => lines.join("\n").trim())
-    .filter((s) => s.length > 0);
-
-  // Sem splitter → retorna msg única
-  if (parts.length === 0) return [text.trim()].filter((s) => s.length > 0);
-  // Cap em 3 partes
-  return parts.slice(0, 3);
-}
-
-/**
- * Envia resposta pro rep via GHL.
- *
- * Default agora é SMS (Stevo/Evolution roteia pro WhatsApp do rep) porque
- * a WhatsApp Business API ainda tá em review. Quando liberada, basta setar
- * ASSISTANT_OUTBOUND_CHANNEL=auto e implementar checkConversationWindow.
- *
- * Mantém fallback pra outro canal em caso de falha (ex: SMS provider down →
- * tenta WhatsApp; ou WhatsApp 24h-window fechada → tenta SMS).
- *
- * Suporta SPLITTER: se text contém linhas `---`, manda múltiplas mensagens
- * separadas (delay 300ms entre) — cada uma vira uma bolha distinta no
- * WhatsApp. Bot decide via system prompt (channel='whatsapp' instructions).
- */
-async function sendResponseToRep(
-  client: GHLClient,
-  contactId: string,
-  conversationId: string,
-  incomingType: string,
-  text: string,
-): Promise<void> {
-  const messages = splitResponseIntoMessages(text);
-  for (let i = 0; i < messages.length; i++) {
-    if (i > 0) {
-      // Delay entre mensagens — garante ordem visual no WhatsApp
-      await new Promise((resolve) => setTimeout(resolve, 300));
-    }
-    await sendSingleMessageToRep(client, contactId, conversationId, incomingType, messages[i]);
-  }
-}
-
-async function sendSingleMessageToRep(
-  client: GHLClient,
-  contactId: string,
-  conversationId: string,
-  incomingType: string,
-  text: string,
-): Promise<void> {
-  const tryType = pickOutboundChannel(incomingType);
-  const payload: Record<string, unknown> = {
-    type: tryType,
-    contactId,
-    message: text,
-  };
-  if (conversationId) payload.conversationId = conversationId;
-
-  try {
-    await client.post("/conversations/messages", payload);
-  } catch (err) {
-    const fb = fallbackChannel(tryType);
-    console.warn(
-      `[Sparkbot] send failed on ${tryType} — trying fallback ${fb}:`,
-      err instanceof Error ? err.message : err,
-    );
-    try {
-      await client.post("/conversations/messages", {
-        type: fb,
-        contactId,
-        message: text,
-        ...(conversationId ? { conversationId } : {}),
-      });
-    } catch (err2) {
-      console.error("[Sparkbot] send fallback also failed:", err2 instanceof Error ? err2.message : err2);
-    }
   }
 }
