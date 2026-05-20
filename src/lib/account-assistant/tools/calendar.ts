@@ -9,6 +9,17 @@
 
 import type { ToolContext, ToolEntry } from "./types";
 import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult, resolveAssignedUserId } from "./types";
+import {
+  listCalendars as ghlListCalendars,
+  getCalendarFreeSlots,
+  listCalendarEvents,
+  getAppointment as ghlGetAppointment,
+  createAppointment as ghlCreateAppointment,
+  createBlockSlot,
+  updateAppointment as ghlUpdateAppointment,
+  deleteAppointment as ghlDeleteAppointment,
+  getCalendarDetails,
+} from "@/lib/ghl/operations";
 import type { ToolResult } from "@/types/account-assistant";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 
@@ -110,12 +121,7 @@ const listAppointments: ToolEntry = {
     const repUserId = getRepGhlUserId(ctx);
 
     try {
-      const res = await ctx.ghlClient.get<{
-        events?: Array<{
-          id: string; title?: string; startTime: string; endTime: string;
-          contactId?: string; appointmentStatus?: string; assignedUserId?: string; calendarId?: string;
-        }>;
-      }>("/calendars/events", {
+      const res = await listCalendarEvents(ctx.ghlClient, {
         locationId: ctx.locationId,
         startTime: String(startTs),
         endTime: String(endTs),
@@ -156,9 +162,7 @@ const listCalendars: ToolEntry = {
   },
   handler: async (ctx) => {
     try {
-      const res = await ctx.ghlClient.get<{
-        calendars?: Array<{ id: string; name?: string; description?: string; widgetSlug?: string }>;
-      }>("/calendars/", { locationId: ctx.locationId });
+      const res = await ghlListCalendars(ctx.ghlClient, ctx.locationId);
       return {
         status: "ok",
         data: (res.calendars || []).map((c) => ({
@@ -222,18 +226,13 @@ const getFreeSlots: ToolEntry = {
       // Confia no GHL pra agregar regras desse calendar específico (business
       // hours, Google Calendar synced, conflicts internos).
       // Pra "rep livre cross-calendar" use list_my_free_slots (separate tool).
-      const res = await ctx.ghlClient.get<Record<string, { slots?: string[] }>>(
-        // Fix HIGH-6 (audit 2026-05-05): encodeURIComponent defesa em
-        // profundidade pra ID corrompido escapar pra path injection.
-        `/calendars/${encodeURIComponent(calendarId)}/free-slots`,
-        {
-          startDate: String(startMs),
-          endDate: String(endMs),
-          ...(args.timezone ? { timezone: String(args.timezone) } : {}),
-          // userId pra round-robin filtrar slots pro user específico (B2 fix)
-          ...(repUserId ? { userId: repUserId } : {}),
-        },
-      );
+      const res = await getCalendarFreeSlots(ctx.ghlClient, calendarId, {
+        startDate: String(startMs),
+        endDate: String(endMs),
+        ...(args.timezone ? { timezone: String(args.timezone) } : {}),
+        // userId pra round-robin filtrar slots pro user específico (B2 fix)
+        ...(repUserId ? { userId: repUserId } : {}),
+      });
       const slotsByDate: Record<string, string[]> = {};
       for (const [key, value] of Object.entries(res)) {
         if (key === "traceId" || !value) continue;
@@ -395,19 +394,7 @@ const listMyFreeSlots: ToolEntry = {
       // Lista TODOS os calendars da location — necessário pra cross-calendar
       // event coverage (I5 fix): appt do rep pode estar em calendar onde ele
       // não é team_member (criado por colega).
-      const calRes = await ctx.ghlClient.get<{
-        calendars?: Array<{
-          id: string;
-          name?: string;
-          slotDuration?: number;
-          slotDurationUnit?: string;
-          openHours?: Array<{
-            daysOfTheWeek: number[];
-            hours: Array<{ openHour: number; openMinute: number; closeHour: number; closeMinute: number }>;
-          }>;
-          teamMembers?: Array<{ userId: string; selected?: boolean }>;
-        }>;
-      }>("/calendars/", { locationId: ctx.locationId });
+      const calRes = await ghlListCalendars(ctx.ghlClient, ctx.locationId);
 
       const allCalendars = calRes.calendars || [];
 
@@ -455,15 +442,11 @@ const listMyFreeSlots: ToolEntry = {
       const [freeSlotsResults, eventsResults] = await Promise.all([
         Promise.all(
           userCalendars.map((c) =>
-            ctx.ghlClient
-              .get<Record<string, unknown>>(
-                `/calendars/${encodeURIComponent(c.id)}/free-slots`,
-                {
-                  startDate: String(startMs),
-                  endDate: String(endMs),
-                  userId: repUserId,
-                },
-              )
+            getCalendarFreeSlots(ctx.ghlClient, c.id, {
+              startDate: String(startMs),
+              endDate: String(endMs),
+              userId: repUserId,
+            })
               .then((res) => ({
                 calendar: c,
                 raw: res as Record<string, { slots?: string[] }>,
@@ -478,22 +461,12 @@ const listMyFreeSlots: ToolEntry = {
         ),
         Promise.all<EventCalendarResult>(
           eventCalendars.map((c) =>
-            ctx.ghlClient
-              .get<{
-                events?: Array<{
-                  id?: string;
-                  startTime: string;
-                  endTime: string;
-                  appointmentStatus?: string;
-                  assignedUserId?: string;
-                  title?: string;
-                }>;
-              }>("/calendars/events", {
-                locationId: ctx.locationId,
-                calendarId: c.id,
-                startTime: String(startMs),
-                endTime: String(endMs),
-              })
+            listCalendarEvents(ctx.ghlClient, {
+              locationId: ctx.locationId,
+              calendarId: c.id,
+              startTime: String(startMs),
+              endTime: String(endMs),
+            })
               .then((res) => {
                 if (!Array.isArray(res?.events)) {
                   // 200 OK mas payload sem events array — silent GHL corruption
@@ -866,15 +839,7 @@ const getAppointment: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      const res = await ctx.ghlClient.get<{
-        appointment?: {
-          id: string; title?: string; startTime?: string; endTime?: string;
-          contactId?: string; appointmentStatus?: string;
-          assignedUserId?: string; calendarId?: string;
-          address?: string; meetingLocationType?: string;
-          notes?: string; createdAt?: string; updatedAt?: string;
-        };
-      }>(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`);
+      const res = await ghlGetAppointment(ctx.ghlClient, appointmentId);
       if (!res.appointment) return { status: "not_found", message: "Appointment não encontrado" };
       const a = res.appointment;
       return {
@@ -1036,11 +1001,7 @@ const createAppointment: ToolEntry = {
         ...overrideResult.body, // H26 admin flags — spread no fim pra garantir prioridade
       };
 
-      const res = await ctx.ghlClient.post<{
-        id?: string;
-        appointment?: { id: string };
-        assignedUserId?: string;
-      }>("/calendars/events/appointments", body);
+      const res = await ghlCreateAppointment(ctx.ghlClient, body);
       const apptId = res.id || res.appointment?.id;
 
       // H26 audit: signal só pras flags admin (não pro meeting location override).
@@ -1083,11 +1044,7 @@ const createAppointment: ToolEntry = {
       const isSlotBlock = /slot.*not.*available|no longer available/i.test(errMsg);
       if (assignedUserId && isSlotBlock) {
         try {
-          const calRes = await ctx.ghlClient.get<{
-            calendar?: {
-              teamMembers?: Array<{ userId?: string; isPrimary?: boolean }>;
-            };
-          }>(`/calendars/${encodeURIComponent(calendarId)}`);
+          const calRes = await getCalendarDetails(ctx.ghlClient, calendarId);
           const others = (calRes.calendar?.teamMembers || [])
             .map((tm) => tm.userId)
             .filter((id): id is string => !!id && id !== assignedUserId);
@@ -1174,10 +1131,7 @@ const blockCalendarSlot: ToolEntry = {
         endTime: new Date(String(args.end_time)).toISOString(),
         title: args.title ? String(args.title) : "Bloqueio de agenda",
       };
-      const res = await ctx.ghlClient.post<{
-        id?: string;
-        event?: { id: string };
-      }>("/calendars/events/block-slots", body);
+      const res = await createBlockSlot(ctx.ghlClient, body);
       const eventId = res.id || res.event?.id;
       return {
         status: "ok",
@@ -1296,7 +1250,7 @@ const updateAppointment: ToolEntry = {
     }
 
     try {
-      await ctx.ghlClient.put(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`, body);
+      await ghlUpdateAppointment(ctx.ghlClient, appointmentId, body);
 
       // H26 audit: signal pras flags admin (não pra meeting location).
       // Fingerprint estável → counter natural no painel /admin/signals.
@@ -1342,7 +1296,7 @@ const deleteAppointment: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      await ctx.ghlClient.delete(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`);
+      await ghlDeleteAppointment(ctx.ghlClient, appointmentId);
       return { status: "ok", data: { deleted: appointmentId } };
     } catch (err) {
       return ghlErrorToResult(err, "deleção de appointment");

@@ -5,6 +5,7 @@
 
 import type { ToolEntry } from "./types";
 import { ghlErrorToResult } from "./types";
+import { listLocationCustomFields, listLocationTags, listLocationUsers } from "@/lib/ghl/operations";
 
 const listCustomFields: ToolEntry = {
   def: {
@@ -16,12 +17,7 @@ const listCustomFields: ToolEntry = {
   },
   handler: async (ctx) => {
     try {
-      const res = await ctx.ghlClient.get<{
-        customFields?: Array<{
-          id: string; name?: string; fieldKey?: string; dataType?: string;
-          placeholder?: string; position?: number;
-        }>;
-      }>(`/locations/${ctx.locationId}/customFields`);
+      const res = await listLocationCustomFields(ctx.ghlClient, ctx.locationId);
       return {
         status: "ok",
         data: (res.customFields || []).map((f) => ({
@@ -46,9 +42,7 @@ const listTags: ToolEntry = {
   },
   handler: async (ctx) => {
     try {
-      const res = await ctx.ghlClient.get<{
-        tags?: Array<{ id?: string; name: string }>;
-      }>(`/locations/${ctx.locationId}/tags`);
+      const res = await listLocationTags(ctx.ghlClient, ctx.locationId);
       return {
         status: "ok",
         data: (res.tags || []).map((t) => ({ name: t.name, id: t.id })),
@@ -68,13 +62,7 @@ const listUsers: ToolEntry = {
   },
   handler: async (ctx) => {
     try {
-      const res = await ctx.ghlClient.get<{
-        users?: Array<{
-          id: string; firstName?: string; lastName?: string;
-          name?: string; email?: string; phone?: string;
-          roles?: { role?: string };
-        }>;
-      }>("/users/", { locationId: ctx.locationId });
+      const res = await listLocationUsers(ctx.ghlClient, ctx.locationId);
       const users = res.users || [];
       if (users.length === 0) {
         return {

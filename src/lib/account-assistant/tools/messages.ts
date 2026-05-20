@@ -7,7 +7,12 @@
 
 import type { ToolEntry } from "./types";
 import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult } from "./types";
-import { ensureContactAssignedTo } from "@/lib/ghl/operations";
+import {
+  ensureContactAssignedTo,
+  searchConversationsList,
+  getConversationMessages,
+  postConversationMessage,
+} from "@/lib/ghl/operations";
 
 const searchConversations: ToolEntry = {
   def: {
@@ -27,12 +32,7 @@ const searchConversations: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      const res = await ctx.ghlClient.get<{
-        conversations?: Array<{
-          id: string; contactId: string; lastMessageDate?: string;
-          unreadCount?: number; type?: string;
-        }>;
-      }>("/conversations/search", { locationId: ctx.locationId, contactId });
+      const res = await searchConversationsList(ctx.ghlClient, ctx.locationId, contactId);
       // Fix Track 3 CRITICAL #1 (review 2026-05-05): defesa em profundidade —
       // filtra resultado garantindo que contactId bate com requested. GHL
       // pode retornar conversas cross-tenant em edge cases (especialmente
@@ -84,17 +84,7 @@ const getConversationHistory: ToolEntry = {
     const limit = Math.min(Number(args.limit) || 30, 100);
 
     try {
-      const res = await ctx.ghlClient.get<{
-        messages?: {
-          messages?: Array<{
-            id: string; direction: string; body?: string; messageType?: string;
-            dateAdded: string; status?: string; userId?: string;
-          }>;
-        };
-      }>(`/conversations/${conversationId}/messages`, {
-        locationId: ctx.locationId,
-        limit: String(limit),
-      });
+      const res = await getConversationMessages(ctx.ghlClient, conversationId, ctx.locationId, limit);
       const msgs = res.messages?.messages || [];
       return {
         status: "ok",
@@ -187,10 +177,7 @@ const sendMessageToContact: ToolEntry = {
         message,
         ...(ch === "Email" && args.subject ? { subject: String(args.subject) } : {}),
       };
-      return ctx.ghlClient.post<{ messageId?: string; conversationId?: string }>(
-        "/conversations/messages",
-        body,
-      );
+      return postConversationMessage(ctx.ghlClient, body);
     };
 
     let effectiveChannel = channel;

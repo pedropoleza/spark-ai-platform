@@ -4,6 +4,15 @@
 
 import type { ToolEntry } from "./types";
 import { validateGhlId, getRepGhlUserId, ghlErrorToResult } from "./types";
+import {
+  getPipelines,
+  searchOpportunities,
+  getOpportunity as ghlGetOpportunity,
+  createOpportunity as ghlCreateOpportunity,
+  updateOpportunity as ghlUpdateOpportunity,
+  updateOpportunityStatus as ghlUpdateOpportunityStatus,
+  deleteOpportunity as ghlDeleteOpportunity,
+} from "@/lib/ghl/operations";
 
 const listOpportunities: ToolEntry = {
   def: {
@@ -44,12 +53,7 @@ const listOpportunities: ToolEntry = {
     let stageResolved: string | undefined;
     if (stageNameQuery && !stageId) {
       try {
-        const pipesRes = await ctx.ghlClient.get<{
-          pipelines?: Array<{
-            id: string; name?: string;
-            stages?: Array<{ id: string; name?: string }>;
-          }>;
-        }>("/opportunities/pipelines", { locationId: ctx.locationId });
+        const pipesRes = await getPipelines(ctx.ghlClient, ctx.locationId);
         const pipes = pipesRes.pipelines || [];
         const q = stageNameQuery.toLowerCase();
         const exact: Array<{ pipelineName: string; stageId: string; stageName: string }> = [];
@@ -141,7 +145,7 @@ const listOpportunities: ToolEntry = {
         if (cursor.startAfterId) params.startAfterId = cursor.startAfterId;
         if (cursor.startAfter !== undefined) params.startAfter = String(cursor.startAfter);
 
-        const res = await ctx.ghlClient.get<OppsResp>("/opportunities/search", params);
+        const res = await searchOpportunities(ctx.ghlClient, params) as OppsResp;
         pagesFetched++;
 
         // Captura total reportado pelo GHL na 1ª resposta (ground truth)
@@ -242,15 +246,7 @@ const getOpportunity: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      const res = await ctx.ghlClient.get<{
-        opportunity?: {
-          id: string; name?: string; monetaryValue?: number;
-          status?: string; pipelineId?: string; pipelineStageId?: string;
-          contactId?: string; assignedTo?: string;
-          source?: string; lastStatusChangeAt?: string; lastStageChangeAt?: string;
-          updatedAt?: string; createdAt?: string;
-        };
-      }>(`/opportunities/${oppId}`);
+      const res = await ghlGetOpportunity(ctx.ghlClient, oppId);
       if (!res.opportunity) return { status: "not_found", message: "Opportunity não encontrada" };
       const o = res.opportunity;
       return {
@@ -316,7 +312,7 @@ const createOpportunity: ToolEntry = {
       const repUser = getRepGhlUserId(ctx);
       if (repUser) body.assignedTo = repUser;
 
-      const res = await ctx.ghlClient.post<{ opportunity?: { id: string } }>("/opportunities/", body);
+      const res = await ghlCreateOpportunity(ctx.ghlClient, body);
       return { status: "ok", data: { opportunity_id: res.opportunity?.id } };
     } catch (err) {
       return ghlErrorToResult(err, "criação de opportunity");
@@ -358,7 +354,7 @@ const updateOpportunity: ToolEntry = {
     }
 
     try {
-      await ctx.ghlClient.put(`/opportunities/${oppId}`, body);
+      await ghlUpdateOpportunity(ctx.ghlClient, oppId, body);
       return { status: "ok", data: { opportunity_id: oppId, updated: Object.keys(body) } };
     } catch (err) {
       return ghlErrorToResult(err, "atualização de opportunity");
@@ -390,7 +386,7 @@ const updateOpportunityStatus: ToolEntry = {
     }
 
     try {
-      await ctx.ghlClient.put(`/opportunities/${oppId}/status`, { status });
+      await ghlUpdateOpportunityStatus(ctx.ghlClient, oppId, status);
       return { status: "ok", data: { opportunity_id: oppId, status } };
     } catch (err) {
       return ghlErrorToResult(err, "mudança de status da opportunity");
@@ -415,7 +411,7 @@ const deleteOpportunity: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      await ctx.ghlClient.delete(`/opportunities/${oppId}`);
+      await ghlDeleteOpportunity(ctx.ghlClient, oppId);
       return { status: "ok", data: { deleted: oppId } };
     } catch (err) {
       return ghlErrorToResult(err, "deleção de opportunity");
@@ -449,7 +445,7 @@ const moveOpportunity: ToolEntry = {
     if (args.pipeline_id) body.pipelineId = String(args.pipeline_id);
 
     try {
-      await ctx.ghlClient.put(`/opportunities/${oppId}`, body);
+      await ghlUpdateOpportunity(ctx.ghlClient, oppId, body);
       return { status: "ok", data: { opportunity_id: oppId, moved_to_stage: stageId } };
     } catch (err) {
       return ghlErrorToResult(err, "movimentação de opportunity");
@@ -466,12 +462,7 @@ const listPipelines: ToolEntry = {
   },
   handler: async (ctx) => {
     try {
-      const res = await ctx.ghlClient.get<{
-        pipelines?: Array<{
-          id: string; name?: string;
-          stages?: Array<{ id: string; name?: string; position?: number }>;
-        }>;
-      }>("/opportunities/pipelines", { locationId: ctx.locationId });
+      const res = await getPipelines(ctx.ghlClient, ctx.locationId);
       return {
         status: "ok",
         data: (res.pipelines || []).map((p) => ({

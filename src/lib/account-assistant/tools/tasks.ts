@@ -7,6 +7,13 @@
 
 import type { ToolEntry } from "./types";
 import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult, resolveAssignedUserId } from "./types";
+import {
+  createTaskOnContact,
+  getTaskOnContact,
+  updateTaskOnContact,
+  completeTaskOnContact,
+  deleteTaskOnContact,
+} from "@/lib/ghl/operations";
 
 const createTask: ToolEntry = {
   def: {
@@ -53,7 +60,7 @@ const createTask: ToolEntry = {
     const assignedTo = resolved.user_id || getRepGhlUserId(ctx);
 
     try {
-      const res = await ctx.ghlClient.post<{ id?: string }>(`/contacts/${contactId}/tasks`, {
+      const res = await createTaskOnContact(ctx.ghlClient, contactId, {
         title,
         body: args.body ? String(args.body) : undefined,
         dueDate: isoDueAt,
@@ -95,12 +102,7 @@ const getTask: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      const res = await ctx.ghlClient.get<{
-        task?: {
-          id: string; title: string; body?: string; completed: boolean;
-          dueDate: string; assignedTo?: string;
-        };
-      }>(`/contacts/${contactId}/tasks/${taskId}`);
+      const res = await getTaskOnContact(ctx.ghlClient, contactId, taskId);
       if (!res.task) return { status: "not_found", message: "Task não encontrada" };
       return {
         status: "ok",
@@ -168,7 +170,7 @@ const updateTask: ToolEntry = {
     }
 
     try {
-      await ctx.ghlClient.put(`/contacts/${contactId}/tasks/${taskId}`, body);
+      await updateTaskOnContact(ctx.ghlClient, contactId, taskId, body);
       return { status: "ok", data: { task_id: taskId, updated: Object.keys(body) } };
     } catch (err) {
       return ghlErrorToResult(err, "edição de task");
@@ -199,7 +201,7 @@ const completeTask: ToolEntry = {
     const completed = args.completed === false ? false : true;
 
     try {
-      await ctx.ghlClient.put(`/contacts/${contactId}/tasks/${taskId}/completed`, { completed });
+      await completeTaskOnContact(ctx.ghlClient, contactId, taskId, completed);
       return { status: "ok", data: { task_id: taskId, completed } };
     } catch (err) {
       return ghlErrorToResult(err, "marcação de task como completa");
@@ -228,7 +230,7 @@ const deleteTask: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      await ctx.ghlClient.delete(`/contacts/${contactId}/tasks/${taskId}`);
+      await deleteTaskOnContact(ctx.ghlClient, contactId, taskId);
       return { status: "ok", data: { deleted: taskId } };
     } catch (err) {
       return ghlErrorToResult(err, "deleção de task");

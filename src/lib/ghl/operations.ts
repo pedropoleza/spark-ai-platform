@@ -146,6 +146,503 @@ export async function ensureContactAssignedTo(
 }
 
 // =====================================================
+// Notes (extended)
+// =====================================================
+
+export async function getNoteOnContact(
+  client: GHLClient,
+  contactId: string,
+  noteId: string,
+): Promise<{ note?: { id: string; body: string; userId?: string; dateAdded?: string } }> {
+  return client.get<{ note?: { id: string; body: string; userId?: string; dateAdded?: string } }>(
+    `/contacts/${contactId}/notes/${noteId}`,
+  );
+}
+
+export async function updateNoteOnContact(
+  client: GHLClient,
+  contactId: string,
+  noteId: string,
+  body: string,
+): Promise<void> {
+  await client.put(`/contacts/${contactId}/notes/${noteId}`, { body });
+}
+
+export async function deleteNoteOnContact(
+  client: GHLClient,
+  contactId: string,
+  noteId: string,
+): Promise<void> {
+  await client.delete(`/contacts/${contactId}/notes/${noteId}`);
+}
+
+export async function listNotesOnContact(
+  client: GHLClient,
+  contactId: string,
+): Promise<{ notes?: Array<{ id: string; body: string; userId?: string; dateAdded?: string }> }> {
+  return client.get<{ notes?: Array<{ id: string; body: string; userId?: string; dateAdded?: string }> }>(
+    `/contacts/${contactId}/notes`,
+  );
+}
+
+// =====================================================
+// Tasks
+// =====================================================
+
+export async function createTaskOnContact(
+  client: GHLClient,
+  contactId: string,
+  payload: {
+    title: string;
+    body?: string;
+    dueDate: string;
+    completed: boolean;
+    assignedTo?: string;
+  },
+): Promise<{ id?: string }> {
+  return client.post<{ id?: string }>(`/contacts/${contactId}/tasks`, payload);
+}
+
+export async function getTaskOnContact(
+  client: GHLClient,
+  contactId: string,
+  taskId: string,
+): Promise<{
+  task?: { id: string; title: string; body?: string; completed: boolean; dueDate: string; assignedTo?: string };
+}> {
+  return client.get<{
+    task?: { id: string; title: string; body?: string; completed: boolean; dueDate: string; assignedTo?: string };
+  }>(`/contacts/${contactId}/tasks/${taskId}`);
+}
+
+export async function updateTaskOnContact(
+  client: GHLClient,
+  contactId: string,
+  taskId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  await client.put(`/contacts/${contactId}/tasks/${taskId}`, body);
+}
+
+export async function completeTaskOnContact(
+  client: GHLClient,
+  contactId: string,
+  taskId: string,
+  completed: boolean,
+): Promise<void> {
+  await client.put(`/contacts/${contactId}/tasks/${taskId}/completed`, { completed });
+}
+
+export async function deleteTaskOnContact(
+  client: GHLClient,
+  contactId: string,
+  taskId: string,
+): Promise<void> {
+  await client.delete(`/contacts/${contactId}/tasks/${taskId}`);
+}
+
+export async function listTasksOnContact(
+  client: GHLClient,
+  contactId: string,
+): Promise<{
+  tasks?: Array<{ id: string; title: string; body?: string; completed: boolean; dueDate: string; assignedTo?: string }>;
+}> {
+  return client.get<{
+    tasks?: Array<{ id: string; title: string; body?: string; completed: boolean; dueDate: string; assignedTo?: string }>;
+  }>(`/contacts/${contactId}/tasks`);
+}
+
+// =====================================================
+// Contacts CRUD
+// =====================================================
+
+export async function searchContactsList(
+  client: GHLClient,
+  locationId: string,
+  query: string,
+  limit: number,
+): Promise<{ contacts?: Array<Record<string, unknown>> }> {
+  return client.get<{ contacts?: Array<Record<string, unknown>> }>("/contacts/", {
+    locationId,
+    query,
+    limit: String(limit),
+  });
+}
+
+export async function getContact(
+  client: GHLClient,
+  contactId: string,
+): Promise<{ contact: Record<string, unknown> }> {
+  return client.get<{ contact: Record<string, unknown> }>(`/contacts/${contactId}`);
+}
+
+export async function createContact(
+  client: GHLClient,
+  body: Record<string, unknown>,
+): Promise<{ contact?: { id: string } }> {
+  return client.post<{ contact?: { id: string } }>("/contacts/", body);
+}
+
+export async function updateContact(
+  client: GHLClient,
+  contactId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  await client.put(`/contacts/${contactId}`, body);
+}
+
+export async function deleteContact(
+  client: GHLClient,
+  contactId: string,
+): Promise<void> {
+  await client.delete(`/contacts/${contactId}`);
+}
+
+export async function getContactAppointments(
+  client: GHLClient,
+  contactId: string,
+): Promise<{
+  events?: Array<{
+    id: string; title?: string; startTime: string; endTime: string;
+    appointmentStatus?: string; assignedUserId?: string; calendarId?: string;
+  }>;
+}> {
+  return client.get<{
+    events?: Array<{
+      id: string; title?: string; startTime: string; endTime: string;
+      appointmentStatus?: string; assignedUserId?: string; calendarId?: string;
+    }>;
+  }>(`/contacts/${contactId}/appointments`);
+}
+
+export async function upsertContact(
+  client: GHLClient,
+  payload: Record<string, unknown>,
+): Promise<{ contact?: { id: string } }> {
+  return client.post<{ contact?: { id: string } }>("/contacts/upsert", payload);
+}
+
+export async function postNoteOnContactRaw(
+  client: GHLClient,
+  contactId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  await client.post(`/contacts/${contactId}/notes`, body);
+}
+
+// =====================================================
+// Metadata (location-level)
+// =====================================================
+
+export async function listLocationCustomFields(
+  client: GHLClient,
+  locationId: string,
+): Promise<{
+  customFields?: Array<{ id: string; name?: string; fieldKey?: string; dataType?: string; placeholder?: string; position?: number }>;
+}> {
+  return client.get<{
+    customFields?: Array<{ id: string; name?: string; fieldKey?: string; dataType?: string; placeholder?: string; position?: number }>;
+  }>(`/locations/${locationId}/customFields`);
+}
+
+export async function listLocationTags(
+  client: GHLClient,
+  locationId: string,
+): Promise<{ tags?: Array<{ id?: string; name: string }> }> {
+  return client.get<{ tags?: Array<{ id?: string; name: string }> }>(
+    `/locations/${locationId}/tags`,
+  );
+}
+
+export async function listLocationUsers(
+  client: GHLClient,
+  locationId: string,
+): Promise<{
+  users?: Array<{
+    id: string; firstName?: string; lastName?: string; name?: string;
+    email?: string; phone?: string; roles?: { role?: string };
+  }>;
+}> {
+  return client.get<{
+    users?: Array<{
+      id: string; firstName?: string; lastName?: string; name?: string;
+      email?: string; phone?: string; roles?: { role?: string };
+    }>;
+  }>("/users/", { locationId });
+}
+
+// =====================================================
+// Opportunities
+// =====================================================
+
+export async function getPipelines(
+  client: GHLClient,
+  locationId: string,
+): Promise<{
+  pipelines?: Array<{
+    id: string; name?: string;
+    stages?: Array<{ id: string; name?: string; position?: number }>;
+  }>;
+}> {
+  return client.get<{
+    pipelines?: Array<{
+      id: string; name?: string;
+      stages?: Array<{ id: string; name?: string; position?: number }>;
+    }>;
+  }>("/opportunities/pipelines", { locationId });
+}
+
+export async function searchOpportunities(
+  client: GHLClient,
+  params: Record<string, string>,
+): Promise<{
+  opportunities?: Array<Record<string, unknown>>;
+  meta?: { total?: number; startAfterId?: string; startAfter?: number; nextPageUrl?: string };
+}> {
+  return client.get<{
+    opportunities?: Array<Record<string, unknown>>;
+    meta?: { total?: number; startAfterId?: string; startAfter?: number; nextPageUrl?: string };
+  }>("/opportunities/search", params);
+}
+
+export async function getOpportunity(
+  client: GHLClient,
+  oppId: string,
+): Promise<{
+  opportunity?: {
+    id: string; name?: string; monetaryValue?: number;
+    status?: string; pipelineId?: string; pipelineStageId?: string;
+    contactId?: string; assignedTo?: string;
+    source?: string; lastStatusChangeAt?: string; lastStageChangeAt?: string;
+    updatedAt?: string; createdAt?: string;
+  };
+}> {
+  return client.get<{
+    opportunity?: {
+      id: string; name?: string; monetaryValue?: number;
+      status?: string; pipelineId?: string; pipelineStageId?: string;
+      contactId?: string; assignedTo?: string;
+      source?: string; lastStatusChangeAt?: string; lastStageChangeAt?: string;
+      updatedAt?: string; createdAt?: string;
+    };
+  }>(`/opportunities/${oppId}`);
+}
+
+export async function createOpportunity(
+  client: GHLClient,
+  body: Record<string, unknown>,
+): Promise<{ opportunity?: { id: string } }> {
+  return client.post<{ opportunity?: { id: string } }>("/opportunities/", body);
+}
+
+export async function updateOpportunity(
+  client: GHLClient,
+  oppId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  await client.put(`/opportunities/${oppId}`, body);
+}
+
+export async function updateOpportunityStatus(
+  client: GHLClient,
+  oppId: string,
+  status: string,
+): Promise<void> {
+  await client.put(`/opportunities/${oppId}/status`, { status });
+}
+
+export async function deleteOpportunity(
+  client: GHLClient,
+  oppId: string,
+): Promise<void> {
+  await client.delete(`/opportunities/${oppId}`);
+}
+
+// =====================================================
+// Calendar
+// =====================================================
+
+export async function listCalendars(
+  client: GHLClient,
+  locationId: string,
+): Promise<{
+  calendars?: Array<{
+    id: string; name?: string; description?: string; widgetSlug?: string;
+    slotDuration?: number; slotDurationUnit?: string;
+    openHours?: Array<{
+      daysOfTheWeek: number[];
+      hours: Array<{ openHour: number; openMinute: number; closeHour: number; closeMinute: number }>;
+    }>;
+    teamMembers?: Array<{ userId: string; selected?: boolean }>;
+  }>;
+}> {
+  return client.get<{
+    calendars?: Array<{
+      id: string; name?: string; description?: string; widgetSlug?: string;
+      slotDuration?: number; slotDurationUnit?: string;
+      openHours?: Array<{
+        daysOfTheWeek: number[];
+        hours: Array<{ openHour: number; openMinute: number; closeHour: number; closeMinute: number }>;
+      }>;
+      teamMembers?: Array<{ userId: string; selected?: boolean }>;
+    }>;
+  }>("/calendars/", { locationId });
+}
+
+export async function getCalendarFreeSlots(
+  client: GHLClient,
+  calendarId: string,
+  params: Record<string, string>,
+): Promise<Record<string, { slots?: string[] }>> {
+  return client.get<Record<string, { slots?: string[] }>>(
+    `/calendars/${encodeURIComponent(calendarId)}/free-slots`,
+    params,
+  );
+}
+
+export async function listCalendarEvents(
+  client: GHLClient,
+  params: Record<string, string>,
+): Promise<{
+  events?: Array<{
+    id: string; title?: string; startTime: string; endTime: string;
+    contactId?: string; appointmentStatus?: string; assignedUserId?: string; calendarId?: string;
+  }>;
+}> {
+  return client.get<{
+    events?: Array<{
+      id: string; title?: string; startTime: string; endTime: string;
+      contactId?: string; appointmentStatus?: string; assignedUserId?: string; calendarId?: string;
+    }>;
+  }>("/calendars/events", params);
+}
+
+export async function getAppointment(
+  client: GHLClient,
+  appointmentId: string,
+): Promise<{
+  appointment?: {
+    id: string; title?: string; startTime?: string; endTime?: string;
+    contactId?: string; appointmentStatus?: string;
+    assignedUserId?: string; calendarId?: string;
+    address?: string; meetingLocationType?: string;
+    notes?: string; createdAt?: string; updatedAt?: string;
+  };
+}> {
+  return client.get<{
+    appointment?: {
+      id: string; title?: string; startTime?: string; endTime?: string;
+      contactId?: string; appointmentStatus?: string;
+      assignedUserId?: string; calendarId?: string;
+      address?: string; meetingLocationType?: string;
+      notes?: string; createdAt?: string; updatedAt?: string;
+    };
+  }>(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`);
+}
+
+export async function createAppointment(
+  client: GHLClient,
+  body: Record<string, unknown>,
+): Promise<{ id?: string; appointment?: { id: string }; assignedUserId?: string }> {
+  return client.post<{ id?: string; appointment?: { id: string }; assignedUserId?: string }>(
+    "/calendars/events/appointments",
+    body,
+  );
+}
+
+export async function createBlockSlot(
+  client: GHLClient,
+  body: Record<string, unknown>,
+): Promise<{ id?: string; event?: { id: string } }> {
+  return client.post<{ id?: string; event?: { id: string } }>(
+    "/calendars/events/block-slots",
+    body,
+  );
+}
+
+export async function updateAppointment(
+  client: GHLClient,
+  appointmentId: string,
+  body: Record<string, unknown>,
+): Promise<void> {
+  await client.put(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`, body);
+}
+
+export async function deleteAppointment(
+  client: GHLClient,
+  appointmentId: string,
+): Promise<void> {
+  await client.delete(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`);
+}
+
+export async function getCalendarDetails(
+  client: GHLClient,
+  calendarId: string,
+): Promise<{ calendar?: { teamMembers?: Array<{ userId?: string; isPrimary?: boolean }> } }> {
+  return client.get<{ calendar?: { teamMembers?: Array<{ userId?: string; isPrimary?: boolean }> } }>(
+    `/calendars/${encodeURIComponent(calendarId)}`,
+  );
+}
+
+// =====================================================
+// Conversations
+// =====================================================
+
+export async function searchConversationsList(
+  client: GHLClient,
+  locationId: string,
+  contactId: string,
+): Promise<{
+  conversations?: Array<{
+    id: string; contactId: string; lastMessageDate?: string;
+    unreadCount?: number; type?: string;
+  }>;
+}> {
+  return client.get<{
+    conversations?: Array<{
+      id: string; contactId: string; lastMessageDate?: string;
+      unreadCount?: number; type?: string;
+    }>;
+  }>("/conversations/search", { locationId, contactId });
+}
+
+export async function getConversationMessages(
+  client: GHLClient,
+  conversationId: string,
+  locationId: string,
+  limit: number,
+): Promise<{
+  messages?: {
+    messages?: Array<{
+      id: string; direction: string; body?: string; messageType?: string;
+      dateAdded: string; status?: string; userId?: string;
+    }>;
+  };
+}> {
+  return client.get<{
+    messages?: {
+      messages?: Array<{
+        id: string; direction: string; body?: string; messageType?: string;
+        dateAdded: string; status?: string; userId?: string;
+      }>;
+    };
+  }>(`/conversations/${conversationId}/messages`, {
+    locationId,
+    limit: String(limit),
+  });
+}
+
+export async function postConversationMessage(
+  client: GHLClient,
+  body: Record<string, unknown>,
+): Promise<{ messageId?: string; conversationId?: string }> {
+  return client.post<{ messageId?: string; conversationId?: string }>(
+    "/conversations/messages",
+    body,
+  );
+}
+
+// =====================================================
 // Messages (conversations)
 // =====================================================
 

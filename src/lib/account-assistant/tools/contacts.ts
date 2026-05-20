@@ -4,6 +4,16 @@
 
 import type { ToolEntry } from "./types";
 import { validateGhlId, ghlErrorToResult, getRepGhlUserId } from "./types";
+import {
+  searchContactsList as ghlSearchContactsList,
+  getContact as ghlGetContact,
+  createContact as ghlCreateContact,
+  updateContact as ghlUpdateContact,
+  deleteContact as ghlDeleteContact,
+  getContactAppointments as ghlGetContactAppointments,
+  listNotesOnContact,
+  listTasksOnContact,
+} from "@/lib/ghl/operations";
 import { executeContactsFilter, type FilterExpression } from "../filter-engine";
 
 const searchContacts: ToolEntry = {
@@ -48,11 +58,7 @@ const searchContacts: ToolEntry = {
         tags?: string[]; lastActivity?: string;
       };
       try {
-        const res = await ctx.ghlClient.get<{ contacts?: ContactItem[] }>("/contacts/", {
-          locationId: ctx.locationId,
-          query,
-          limit: String(Math.min(cap, 100)),
-        });
+        const res = await ghlSearchContactsList(ctx.ghlClient, ctx.locationId, query, Math.min(cap, 100)) as { contacts?: ContactItem[] };
         const contacts = (res.contacts || []).slice(0, cap);
         if (contacts.length === 0) {
           return { status: "not_found", message: `Nenhum contato encontrado pra "${query}"` };
@@ -161,7 +167,7 @@ const getContact: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      const res = await ctx.ghlClient.get<{
+      const res = await ghlGetContact(ctx.ghlClient, contactId) as {
         contact: {
           id: string;
           firstName?: string; lastName?: string; name?: string;
@@ -171,7 +177,7 @@ const getContact: ToolEntry = {
           address1?: string; city?: string; state?: string; postalCode?: string; country?: string;
           companyName?: string; dateOfBirth?: string;
         };
-      }>(`/contacts/${contactId}`);
+      };
 
       if (!res.contact) return { status: "not_found", message: `Contato ${contactId} não existe` };
       const c = res.contact;
@@ -242,7 +248,7 @@ const createContact: ToolEntry = {
       if (args.source) body.source = String(args.source);
       if (args.assigned_to) body.assignedTo = String(args.assigned_to);
 
-      const res = await ctx.ghlClient.post<{ contact?: { id: string } }>("/contacts/", body);
+      const res = await ghlCreateContact(ctx.ghlClient, body);
       return { status: "ok", data: { contact_id: res.contact?.id } };
     } catch (err) {
       return ghlErrorToResult(err, "criação de contato");
@@ -334,7 +340,7 @@ const updateContact: ToolEntry = {
     }
 
     try {
-      await ctx.ghlClient.put(`/contacts/${contactId}`, body);
+      await ghlUpdateContact(ctx.ghlClient, contactId, body);
       return { status: "ok", data: { updated: Object.keys(body) } };
     } catch (err) {
       return ghlErrorToResult(err, "atualização de contato");
@@ -360,7 +366,7 @@ const deleteContact: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      await ctx.ghlClient.delete(`/contacts/${contactId}`);
+      await ghlDeleteContact(ctx.ghlClient, contactId);
       return { status: "ok", data: { deleted: contactId } };
     } catch (err) {
       return ghlErrorToResult(err, "deleção de contato");
@@ -392,9 +398,7 @@ const getContactNotes: ToolEntry = {
     const limit = Math.min(Math.max(Number(args.limit) || 30, 1), 50);
 
     try {
-      const res = await ctx.ghlClient.get<{
-        notes?: Array<{ id: string; body: string; userId?: string; dateAdded?: string }>;
-      }>(`/contacts/${contactId}/notes`);
+      const res = await listNotesOnContact(ctx.ghlClient, contactId);
       const allNotes = res.notes || [];
       if (allNotes.length === 0) {
         return { status: "not_found", message: "Contato sem notas ainda." };
@@ -445,13 +449,7 @@ const getContactTasks: ToolEntry = {
     const includeCompleted = args.include_completed !== false;
 
     try {
-      const res = await ctx.ghlClient.get<{
-        tasks?: Array<{
-          id: string; title: string; body?: string;
-          completed: boolean; dueDate: string;
-          assignedTo?: string;
-        }>;
-      }>(`/contacts/${contactId}/tasks`);
+      const res = await listTasksOnContact(ctx.ghlClient, contactId);
       let allTasks = res.tasks || [];
       if (!includeCompleted) {
         allTasks = allTasks.filter((t) => !t.completed);
@@ -502,12 +500,7 @@ const getContactAppointments: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      const res = await ctx.ghlClient.get<{
-        events?: Array<{
-          id: string; title?: string; startTime: string; endTime: string;
-          appointmentStatus?: string; assignedUserId?: string; calendarId?: string;
-        }>;
-      }>(`/contacts/${contactId}/appointments`);
+      const res = await ghlGetContactAppointments(ctx.ghlClient, contactId);
       return {
         status: "ok",
         data: (res.events || []).map((e) => ({

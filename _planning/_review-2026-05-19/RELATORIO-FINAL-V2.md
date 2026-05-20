@@ -42,14 +42,17 @@
 | **Persona/jargão/segurança** ("sou seu criador", IDs crus) | ✅ Resolvido no prompt (a confirmar no smoke). |
 | **Spark Leads ≠ GHL** | ✅ **0 violações** LLM-facing (16 strings trocadas). |
 
-## Conscientemente adiado → Fase Estrutural V2.1 (iteração dedicada COM smoke)
+## Fase Estrutural V2.1 — EM EXECUÇÃO (Pedro 2026-05-20: "não pare até finalizar")
 
-Decisão de julgamento: estes tocam **ingestão/roteamento de prod**; refatorá-los numa sessão noturna sem smoke contraria a regra de ouro ("não afetar operação de cliente em andamento").
-- **Camada de repositório** (≈158 `createAdminClient()` crus — maior dívida do B1).
-- **Migração das 43 `ctx.ghlClient.*` → `operations.ts`** (fronteira GHL; subiu p/ 43 com o `move_opportunity`).
-- **Decomposição do `webhook-handler.ts`** (1.052 LOC, idempotência das 7 camadas) + **dedup-guard por conteúdo**.
-- **Multi-tenant real** (`resolveHubForLocation`; remover `ASSISTANT_HUB_LOCATION_ID` load-bearing, 21 refs).
-- **Renomear colisões** (2× `processor.ts`, 2× `prompt-builder.ts`); unificar loop `processor`×`dispatcher`; URL do `pg_cron` parametrizada.
+> Atualização: o Pedro pediu pra NÃO adiar. Executando nesta sessão com backward-compat
+> + testes + validação build entre cada item. O smoke em prod segue obrigatório antes do go-live.
+> Status: ⬜ pendente · ⏳ em andamento · ✅ feito (atualizado a cada commit).
+
+- ✅ **Migração das 43 `ctx.ghlClient.*` → `operations.ts`** (33 primitivas thin-wrapper; backward-compat; golden 49/49, tsc 0).
+- ⬜ **Camada de repositório** (≈158 `createAdminClient()` crus — maior dívida do B1).
+- ⬜ **Decomposição do `webhook-handler.ts`** (1.052 LOC, idempotência) + **dedup-guard por conteúdo** (resolve dupla-resposta na origem).
+- ⬜ **Multi-tenant real** (`resolveHubForLocation`; remover `ASSISTANT_HUB_LOCATION_ID` load-bearing).
+- ⬜ **Renomear colisões** (2× `processor.ts`, 2× `prompt-builder.ts`) + unificar loop `processor`×`dispatcher` + URL `pg_cron` + default `confirmation_mode` (high_only).
 
 ## Riscos residuais (pro smoke de amanhã cobrir)
 1. **Re-run do coherence gate nunca rodou E2E** com LLM+tools reais (o caminho que de fato executa a escrita nova). 

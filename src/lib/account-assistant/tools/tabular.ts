@@ -18,6 +18,7 @@
 
 import type { ToolEntry } from "./types";
 import { getRepGhlUserId } from "./types";
+import { upsertContact, postNoteOnContactRaw } from "@/lib/ghl/operations";
 import { normalizePhone, inferCountryFromTimezone } from "../identity";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { RepInput } from "@/types/account-assistant";
@@ -339,7 +340,7 @@ const importContactsFromData: ToolEntry = {
         batch.map(async (c) => {
           // GHL V2 /contacts/upsert é idempotente por phone/email — se rep
           // re-importa mesma planilha, não duplica.
-          const res = await ctx.ghlClient.post<{ contact?: { id: string } }>("/contacts/upsert", c.payload);
+          const res = await upsertContact(ctx.ghlClient, c.payload);
           const ghlId = res.contact?.id;
           if (!ghlId) throw new Error("response sem contact.id");
           return { idx: c.idx, ghl_id: ghlId, identifier: c.identifier, notes_text: c.notes_text };
@@ -368,7 +369,7 @@ const importContactsFromData: ToolEntry = {
         const batch = contactsWithNotes.slice(i, i + IMPORT_BATCH_SIZE);
         const noteResults = await Promise.allSettled(
           batch.map((c) =>
-            ctx.ghlClient.post(`/contacts/${c.ghl_id}/notes`, {
+            postNoteOnContactRaw(ctx.ghlClient, c.ghl_id, {
               body: c.notes_text,
               userId: repGhlUserId, // se undefined, GHL usa o user do token
             }),

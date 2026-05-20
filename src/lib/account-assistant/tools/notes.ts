@@ -5,7 +5,7 @@
 
 import type { ToolEntry } from "./types";
 import { validateGhlId, ghlErrorToResult } from "./types";
-import { createNoteOnContact } from "@/lib/ghl/operations";
+import { createNoteOnContact, getNoteOnContact, updateNoteOnContact, deleteNoteOnContact } from "@/lib/ghl/operations";
 
 const createNote: ToolEntry = {
   def: {
@@ -67,9 +67,7 @@ const getNote: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      const res = await ctx.ghlClient.get<{
-        note?: { id: string; body: string; userId?: string; dateAdded?: string };
-      }>(`/contacts/${contactId}/notes/${noteId}`);
+      const res = await getNoteOnContact(ctx.ghlClient, contactId, noteId);
       if (!res.note) return { status: "not_found", message: "Nota não encontrada" };
       return {
         status: "ok",
@@ -110,7 +108,7 @@ const updateNote: ToolEntry = {
     if (!body) return { status: "error", message: "body obrigatório", retryable: false };
 
     try {
-      await ctx.ghlClient.put(`/contacts/${contactId}/notes/${noteId}`, { body });
+      await updateNoteOnContact(ctx.ghlClient, contactId, noteId, body);
       return { status: "ok", data: { note_id: noteId } };
     } catch (err) {
       return ghlErrorToResult(err, "edição de nota");
@@ -139,7 +137,7 @@ const deleteNote: ToolEntry = {
     if (invalid) return invalid;
 
     try {
-      await ctx.ghlClient.delete(`/contacts/${contactId}/notes/${noteId}`);
+      await deleteNoteOnContact(ctx.ghlClient, contactId, noteId);
       return { status: "ok", data: { deleted: noteId } };
     } catch (err) {
       return ghlErrorToResult(err, "deleção de nota");
