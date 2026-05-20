@@ -234,6 +234,34 @@ export function ghlErrorToResult(err: unknown, action: string): ToolResult {
 
   const { statusCode, message: ghlMsg, meta } = extractGhlError(fullMsg);
 
+  // Onda 2 (2026-05-20): IAM-unsupported — erro PERMANENTE do endpoint.
+  // GHL retorna 5xx com "not yet supported by the IAM Service".
+  // client.ts já jogou imediatamente (sem retry); aqui classificamos pra
+  // flagScopeIssue em executeTool poder alertar o admin.
+  if (/not yet supported by the IAM|not supported by the IAM|IAM Service/i.test(fullMsg)) {
+    return {
+      status: "error",
+      message:
+        "Essa ação não é suportada pelo Spark Leads pra esse recurso — não dá pra fazer por aqui",
+      retryable: false,
+      code: "unsupported_endpoint",
+    };
+  }
+
+  // Onda 2 (2026-05-20): 403 — escopo insuficiente ou location sem acesso.
+  // Mantém mensagem existente mas injeta o code pra governança de escopo.
+  if (statusCode === 403 || /forbidden/i.test(fullMsg)) {
+    return {
+      status: "error",
+      message:
+        ghlMsg
+          ? `${action}: ${sanitizeGhlMessage(ghlMsg)} (código 403)`
+          : `${action}: permissão negada (token sem escopo necessário ou recurso de outra location)`,
+      retryable: false,
+      code: "scope_or_location",
+    };
+  }
+
   // Caso especial mantido: duplicate contacts (400 com meta.contactId).
   // Extrai contactId pra LLM oferecer update_contact em vez de create.
   if (

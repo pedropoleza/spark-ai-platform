@@ -226,7 +226,18 @@ export type ToolResult =
       candidates: Array<{ id: string; label: string; metadata?: Record<string, unknown> }>;
     }
   | { status: "not_found"; message: string }
-  | { status: "error"; message: string; retryable: boolean }
+  | {
+      status: "error";
+      message: string;
+      retryable: boolean;
+      /**
+       * Onda 2 (2026-05-20): código de classificação do erro de escopo/IAM.
+       * - "unsupported_endpoint": GHL retornou IAM 5xx permanente (ex: delete_appointment).
+       * - "scope_or_location": GHL retornou 403 por escopo insuficiente ou location sem acesso.
+       * Usado por executeTool pra chamar flagScopeIssue no admin.
+       */
+      code?: string;
+    }
   /**
    * Status "degraded" (review 2026-05-05): tool executou parcialmente mas
    * faltou info crítica (ex: list_my_free_slots conseguiu /free-slots mas

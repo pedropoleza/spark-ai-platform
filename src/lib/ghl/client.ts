@@ -61,7 +61,25 @@ export class GHLClient {
     // Fix Track 12 H3 (review 2026-05-05): 5xx com exponential backoff +
     // 2 retries (era só 1). Antes, GHL 502/503 transient quebrava a primeira
     // chamada do bot. Network errors já tinham 2 retries — alinhamos.
+    //
+    // Onda 2 (2026-05-20): IAM-unsupported é 5xx PERMANENTE (não transitório).
+    // "This route is not yet supported by the IAM Service" → throw imediato,
+    // sem retry. Antes: 3 chamadas desperdiçadas + latência por erro estrutural.
     if (response.status >= 500 && response.status < 600) {
+      // Lê o body UMA vez pra checar IAM; clona clone pra não consumir o stream
+      // principal (response.json() / response.text() downstream precisam dele).
+      const bodyText = await response.text();
+      if (/not yet supported by the IAM|not supported by the IAM|IAM Service/i.test(bodyText)) {
+        // Erro permanente de escopo/IAM — não retenta, joga pro ghlErrorToResult.
+        throw new Error(`GHL API ${response.status}: ${bodyText}`);
+      }
+      // Para os demais 5xx transitórios, reconstrói uma Response com o body lido
+      // pra o loop de retry continuar normalmente (não podemos reler o stream).
+      response = new Response(bodyText, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
       for (let attempt5xx = 0; attempt5xx < 2; attempt5xx++) {
         const delay = 300 * Math.pow(2, attempt5xx); // 300ms, 600ms
         console.warn(`[GHL] ${response.status} (attempt ${attempt5xx + 1}/2), retrying in ${delay}ms...`);

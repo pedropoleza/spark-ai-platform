@@ -9,6 +9,7 @@ import type { ToolDefinition } from "@/types/account-assistant";
 import type { ToolResult } from "@/types/account-assistant";
 import type { ToolContext, ToolEntry } from "./types";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
+import { flagScopeIssue } from "@/lib/ghl/scope-manager";
 import { CONTACTS_TOOLS } from "./contacts";
 import { NOTES_TOOLS } from "./notes";
 import { TASKS_TOOLS } from "./tasks";
@@ -227,6 +228,23 @@ export async function executeTool(
   };
   void _confirmed;
   const result = await entry.handler(ctx, handlerArgs);
+
+  // Onda 2 (2026-05-20): fire-and-forget de governança de escopo.
+  // Se a tool retornou code de escopo/IAM, alerta o admin sem bloquear o rep.
+  if (
+    result.status === "error" &&
+    (result.code === "scope_or_location" || result.code === "unsupported_endpoint")
+  ) {
+    flagScopeIssue(
+      ctx.locationId,
+      ctx.companyId,
+      name,
+      result.code,
+      result.message,
+    ).catch((err) => {
+      console.warn("[executeTool] flagScopeIssue fire-and-forget falhou:", err);
+    });
+  }
 
   // Auto-registra erros não-retryable como signals pro painel admin
   // (Pedro 2026-05-04). Filtros pra não poluir:
