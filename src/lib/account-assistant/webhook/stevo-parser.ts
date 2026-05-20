@@ -40,8 +40,13 @@ export type ParsedStevoMessage = {
   phone: string;
   /** Nome do contato no WhatsApp (Info.PushName) — pode ser vazio. */
   pushName: string;
-  /** Token da instância Stevo (top-level instanceToken) — pra validar origem. */
+  /** Token da instância Stevo (top-level instanceToken) — pra validar origem.
+   *  Dobra como `apikey` no header do envio (Stevo API /send/text). */
   instanceToken: string;
+  /** Base URL da instância no Stevo (top-level serverUrl, ex:
+   *  "https://smv2-3.stevo.chat"). Usado pra ENVIAR a resposta de volta pela
+   *  MESMA instância que recebeu — robusto a migração de servidor do Stevo. */
+  serverUrl: string;
 } & ParsedStevoContent;
 
 export type ParsedStevoContent =
@@ -110,9 +115,10 @@ export function parseStevoWebhook(body: unknown): ParsedStevoMessage | null {
 
   const pushName = asString(info.PushName);
   const instanceToken = asString(root.instanceToken);
+  const serverUrl = asString(root.serverUrl);
   const mediaType = asString(info.MediaType).toLowerCase();
 
-  const base = { messageId, phone, pushName, instanceToken };
+  const base = { messageId, phone, pushName, instanceToken, serverUrl };
 
   // 1. Áudio (PTT / voice note) — MediaType "ptt" ou "audio".
   if (mediaType === "ptt" || mediaType === "audio") {

@@ -34,8 +34,14 @@ import {
   getSparkbotHistory,
 } from "@/lib/repositories/sparkbot-messages.repo";
 import type { ParsedStevoMessage } from "./stevo-parser";
+import { sendStevoText, type StevoSendResult } from "./stevo-send";
 
 const SPARKBOT_HISTORY_TURNS = 30;
+
+/** Gate do envio via Stevo (fase 2). Default OFF — ligar só no cutover. */
+function isStevoSendEnabled(): boolean {
+  return /^(1|true|yes)$/i.test(process.env.STEVO_SEND_ENABLED?.trim() || "");
+}
 
 /**
  * Constrói o RepInput a partir do conteúdo parseado do Stevo. O binário já
@@ -259,16 +265,48 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
     return;
   }
 
-  // ⚠️ FASE 1: NÃO ENVIA via Stevo ainda. Só loga a resposta gerada.
-  // TODO(fase 2): enviar via Stevo API /send/text (POST com instanceToken +
-  // phone + result.text; reusar splitter de sparkbot-send.ts pra múltiplas
-  // bolhas). Por ora, só processamos + persistimos pra validar o pipeline.
-  console.log(
-    `[stevo-handler] resposta gerada (NÃO enviada — fase 1) pra ${parsed.phone}: ` +
-      `"${(result.text || "").slice(0, 200)}"`,
-  );
+  // ===== 8. ENVIO (fase 2) — gated por STEVO_SEND_ENABLED =====
+  // Default OFF: enquanto o cutover não acontece, o path Stevo só processa +
+  // persiste (igual fase 1) e o envio segue saindo pelo GHL — assim deployar
+  // este código NÃO muda o comportamento de prod. Quando STEVO_SEND_ENABLED=1
+  // (cutover supervisionado), a resposta sai pelo Stevo, pela MESMA instância
+  // que recebeu (parsed.serverUrl + parsed.instanceToken). Env é só fallback.
+  const sendEnabled = isStevoSendEnabled();
+  const replyText = result.text || "";
+  let sendResult: StevoSendResult | null = null;
 
-  // 8. Persiste a resposta do agente.
+  if (sendEnabled && replyText.trim()) {
+    const serverUrl = parsed.serverUrl || process.env.STEVO_API_BASE?.trim() || "";
+    const apiKey =
+      parsed.instanceToken ||
+      process.env.STEVO_SEND_APIKEY?.trim() ||
+      process.env.STEVO_INSTANCE_TOKEN?.trim() ||
+      "";
+    sendResult = await sendStevoText({
+      serverUrl,
+      apiKey,
+      number: parsed.phone,
+      text: replyText,
+    });
+    if (sendResult.ok) {
+      console.log(
+        `[stevo-handler] resposta enviada via Stevo pra ${parsed.phone} ` +
+          `(${sendResult.sent}/${sendResult.total} bolhas).`,
+      );
+    } else {
+      console.error(
+        `[stevo-handler] envio via Stevo FALHOU pra ${parsed.phone}: ${sendResult.error} ` +
+          `(${sendResult.sent}/${sendResult.total} enviadas).`,
+      );
+    }
+  } else {
+    console.log(
+      `[stevo-handler] resposta gerada (envio ${sendEnabled ? "vazio" : "OFF — STEVO_SEND_ENABLED desligado"}) ` +
+        `pra ${parsed.phone}: "${replyText.slice(0, 200)}"`,
+    );
+  }
+
+  // 9. Persiste a resposta do agente (com o status real do envio).
   await insertSparkbotMessage({
     rep_id: rep.id,
     hub_location_id: hubLocationId,
@@ -285,8 +323,12 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       completion_tokens: result.tokens?.completion,
       cached_tokens: result.tokens?.cached,
       llm_failed: result.llm_failed,
-      // Fase 1: marca que a resposta foi gerada mas ainda não foi enviada.
-      not_sent_phase1: true,
+      // Status de envio: sent_via="stevo" quando a resposta saiu de fato.
+      // not_sent=true quando o gate estava off OU o envio falhou (audit claro).
+      sent_via: sendResult?.ok ? "stevo" : null,
+      not_sent: !sendResult?.ok,
+      send_error: sendResult?.error ?? null,
+      send_bubbles: sendResult ? `${sendResult.sent}/${sendResult.total}` : null,
     },
   });
 }

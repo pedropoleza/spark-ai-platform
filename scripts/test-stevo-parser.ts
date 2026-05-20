@@ -55,6 +55,7 @@ function check(name: string, cond: boolean, detail?: string) {
     event: "Message",
     instanceName: "sparkbot",
     instanceToken: INSTANCE_TOKEN,
+    serverUrl: "https://smv2-3.stevo.chat",
     data: {
       Info: infoBase({ Type: "text", MediaType: "" }),
       Message: { conversation: "oi sparkbot" },
@@ -67,6 +68,17 @@ function check(name: string, cond: boolean, detail?: string) {
   check("texto: messageId", r?.messageId === "MSG_ID_123");
   check("texto: pushName", r?.pushName === "Pedro Poleza");
   check("texto: instanceToken", r?.instanceToken === INSTANCE_TOKEN);
+  check("texto: serverUrl extraído", r?.serverUrl === "https://smv2-3.stevo.chat", `got=${r?.serverUrl}`);
+}
+
+// serverUrl ausente → string vazia (não quebra o parse).
+{
+  const r = parseStevoWebhook({
+    event: "Message",
+    instanceToken: INSTANCE_TOKEN,
+    data: { Info: infoBase({ Type: "text", MediaType: "" }), Message: { conversation: "x" } },
+  });
+  check("serverUrl ausente → ''", r?.serverUrl === "");
 }
 
 // ---------------------------------------------------------------------------
