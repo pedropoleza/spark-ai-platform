@@ -4,28 +4,35 @@
  * Pedro 2026-05-20: mudança de fluxo — recebimento passa a vir do Stevo DIRETO
  * (o webhook do GHL vira fallback). Envio também migrará pra API do Stevo.
  *
- * ⚠️ FASE 1 — CAPTURA: por enquanto este endpoint SÓ registra o body cru de
- * cada webhook na tabela `stevo_webhook_samples`, pra a gente ver o formato
- * exato (texto / arquivo / áudio / imagem) ANTES de implementar o parsing e o
- * roteamento pro `handleAssistantInbound`. Responde 200 na hora pro Stevo não
- * retentar. NÃO processa nem responde mensagens ainda.
+ * FASE 2 — HANDLER: além de capturar o body cru em `stevo_webhook_samples`
+ * (mantido pra diagnóstico/auditoria), este endpoint agora:
+ *   1. Valida o `instanceToken` contra STEVO_INSTANCE_TOKEN (se a env estiver
+ *      setada; durante o setup, sem env, só loga warn e segue — não bloqueia).
+ *   2. Parseia o body via parseStevoWebhook (puro).
+ *   3. Se válido, dispara handleStevoInbound em background (waitUntil) — mesmo
+ *      padrão do webhook GHL (/api/webhooks/inbound-message).
+ *   4. Responde 200 SEMPRE — o Stevo não deve retentar.
  *
- * FASE 2 (próxima): adaptar o body do Stevo → args do handler + validar secret.
+ * ⚠️ O envio da resposta via Stevo ainda NÃO está ligado (fase 1 do handler):
+ * só processamos + persistimos. Ver TODO em stevo-handler.ts.
  */
 import { NextRequest, NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { parseStevoWebhook } from "@/lib/account-assistant/webhook/stevo-parser";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   let bodyText = "";
+  let parsedJson: unknown = null;
   try {
     bodyText = await req.text();
-    let parsed: unknown;
     try {
-      parsed = JSON.parse(bodyText);
+      parsedJson = JSON.parse(bodyText);
     } catch {
-      parsed = { _raw: bodyText };
+      parsedJson = { _raw: bodyText };
     }
     const headers: Record<string, string> = {};
     req.headers.forEach((v, k) => {
@@ -33,9 +40,10 @@ export async function POST(req: NextRequest) {
       if (!/authorization|cookie/i.test(k)) headers[k] = v;
     });
 
+    // Captura (mantida da fase 1) — diagnóstico/auditoria do formato cru.
     const supabase = createAdminClient();
     await supabase.from("stevo_webhook_samples").insert({
-      body: (typeof parsed === "object" && parsed) ? (parsed as Record<string, unknown>) : { _raw: bodyText },
+      body: (typeof parsedJson === "object" && parsedJson) ? (parsedJson as Record<string, unknown>) : { _raw: bodyText },
       headers,
     });
     console.log("[stevo-webhook] captured:", bodyText.slice(0, 3000));
@@ -45,10 +53,53 @@ export async function POST(req: NextRequest) {
       err instanceof Error ? err.message : err,
     );
   }
-  // SEMPRE 200 — fase de captura não deve fazer o Stevo retentar.
-  return NextResponse.json({ ok: true, phase: "capture" });
+
+  // ===== PARSING + ROTEAMENTO (fase 2) =====
+  try {
+    const parsed = parseStevoWebhook(parsedJson);
+    if (!parsed) {
+      // Evento não-processável (status, fromMe, grupo, conteúdo irreconhecível).
+      return NextResponse.json({ ok: true, skipped: "not_processable" });
+    }
+
+    // Validação do instanceToken. Se STEVO_INSTANCE_TOKEN não estiver setada,
+    // NÃO bloqueia (estamos em setup) — só loga warn. Quando setada, exige match.
+    const expectedToken = process.env.STEVO_INSTANCE_TOKEN?.trim();
+    if (expectedToken) {
+      if (parsed.instanceToken !== expectedToken) {
+        console.warn(
+          `[stevo-webhook] instanceToken inválido (recebido="${parsed.instanceToken.slice(0, 8)}…") — rejeitando.`,
+        );
+        return NextResponse.json({ ok: true, skipped: "invalid_token" });
+      }
+    } else {
+      console.warn(
+        "[stevo-webhook] ⚠️ STEVO_INSTANCE_TOKEN não configurado — pulando validação de origem (setup).",
+      );
+    }
+
+    const { handleStevoInbound } = await import(
+      "@/lib/account-assistant/webhook/stevo-handler"
+    );
+    waitUntil(
+      handleStevoInbound(parsed).catch((err) => {
+        console.error(
+          "[stevo-webhook:bg] handler failed:",
+          err instanceof Error ? err.message : err,
+        );
+      }),
+    );
+    return NextResponse.json({ ok: true, routed: "sparkbot-stevo" });
+  } catch (err) {
+    console.error(
+      "[stevo-webhook] parse/route failed (non-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+    // SEMPRE 200 — não deve fazer o Stevo retentar.
+    return NextResponse.json({ ok: true, error: "internal_non_fatal" });
+  }
 }
 
 export async function GET() {
-  return NextResponse.json({ ok: true, endpoint: "stevo-inbound-capture" });
+  return NextResponse.json({ ok: true, endpoint: "stevo-inbound" });
 }

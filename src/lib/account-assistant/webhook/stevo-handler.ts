@@ -1,0 +1,292 @@
+/**
+ * Handler do RECEBIMENTO via webhook do Stevo (canal WhatsApp direto).
+ *
+ * Pedro 2026-05-20: novo fluxo — recebimento vem do Stevo DIRETO (webhook do
+ * GHL vira fallback). Este handler é o orquestrador do path Stevo: recebe o
+ * `ParsedStevoMessage` (já puro, vindo de stevo-parser.ts) e:
+ *   1. Resolve o hub ativo (resolvePrimaryHub) → locationId + agentId.
+ *   2. Identifica o rep pelo telefone (identifyRep).
+ *   3. Dedup por messageId (findByGhlMessageId em sparkbot_messages).
+ *   4. Monta o RepInput (texto direto; doc/imagem via processFile a partir do
+ *      base64 decriptado; áudio via transcribeAudioFromBuffer).
+ *   5. Chama processIncoming (channel "whatsapp").
+ *   6. Persiste o turno (user + agent) em sparkbot_messages.
+ *
+ * ⚠️ FASE 1: NÃO ENVIA a resposta via Stevo ainda — só processa, persiste e
+ * loga. O envio (Stevo API /send/text) entra na FASE 2. Ver TODO abaixo.
+ *
+ * NÃO substitui o webhook-handler.ts (path GHL) — os dois coexistem durante a
+ * transição. Reusa os mesmos building blocks (identity, file-processor,
+ * processor, repos) pra manter comportamento idêntico.
+ */
+
+import { createAdminClient } from "@/lib/supabase/admin";
+import type { RepInput } from "@/types/account-assistant";
+import type { ConversationTurn } from "@/lib/ai/openai-client";
+import { resolvePrimaryHub } from "../hub-resolver";
+import { identifyRep } from "../identity";
+import { processFile } from "../file-processor";
+import { processIncoming } from "../processor";
+import { transcribeAudioFromBuffer } from "@/lib/ai/audio-transcriber";
+import {
+  findByGhlMessageId,
+  insertSparkbotMessage,
+  getSparkbotHistory,
+} from "@/lib/repositories/sparkbot-messages.repo";
+import type { ParsedStevoMessage } from "./stevo-parser";
+
+const SPARKBOT_HISTORY_TURNS = 30;
+
+/**
+ * Constrói o RepInput a partir do conteúdo parseado do Stevo. O binário já
+ * vem decriptado em base64 (doc/imagem/áudio), então convertemos pra Buffer e
+ * reusamos os mesmos parsers do painel web / webhook GHL.
+ *
+ * Retorna `null` se o conteúdo não pôde ser convertido (ex: file-processor
+ * rejeitou o tipo, transcrição falhou). Caller decide abortar nesse caso —
+ * na fase 1 não respondemos erro pro rep ainda.
+ */
+async function buildRepInput(parsed: ParsedStevoMessage): Promise<RepInput | null> {
+  if (parsed.kind === "text") {
+    return { kind: "text", text: parsed.text };
+  }
+
+  if (parsed.kind === "audio") {
+    try {
+      const buffer = Buffer.from(parsed.base64, "base64");
+      const { text } = await transcribeAudioFromBuffer(buffer, parsed.mimetype);
+      return { kind: "audio", transcribed_text: text };
+    } catch (err) {
+      console.warn(
+        "[stevo-handler] transcrição de áudio falhou:",
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    }
+  }
+
+  // document | image → buffer decriptado → file-processor unificado.
+  try {
+    const buffer = Buffer.from(parsed.base64, "base64");
+    const result = await processFile({
+      buffer,
+      mime: parsed.mimetype,
+      filename:
+        parsed.kind === "document" ? parsed.fileName || "arquivo" : "imagem",
+    });
+    // Anexa o caption do Stevo (rep pode mandar texto junto do arquivo/imagem).
+    const caption = parsed.caption || undefined;
+    const repInput = result.repInput;
+    if (
+      repInput.kind === "image" ||
+      repInput.kind === "document" ||
+      repInput.kind === "tabular"
+    ) {
+      return { ...repInput, caption };
+    }
+    return repInput;
+  } catch (err) {
+    // file-processor lança FileProcessError com `code` user-friendly em alguns
+    // casos (HEIC, PDF vazio, file too large). Na fase 1 só logamos — o envio
+    // dessas mensagens de erro pro rep entra na fase 2.
+    const code = (err as { code?: string })?.code;
+    console.warn(
+      `[stevo-handler] processFile falhou (code=${code ?? "?"}):`,
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+/**
+ * Snapshot textual do input do rep pra persistir em sparkbot_messages.content.
+ * Mesma convenção do webhook-handler.ts (emoji por tipo, nunca content="").
+ */
+function userMsgContent(input: RepInput): string {
+  if (input.kind === "text") return input.text.trim() || "[mensagem vazia]";
+  if (input.kind === "audio") return `🎤 "${input.transcribed_text}"`;
+  if (input.kind === "image") return input.caption || "[imagem]";
+  if (input.kind === "document") {
+    return `📎 ${input.filename}${input.extracted_text ? `\n${input.extracted_text.substring(0, 500)}` : ""}`;
+  }
+  if (input.kind === "tabular") {
+    return `📊 ${input.tabular.filename} (${input.tabular.total_rows} linhas)${input.caption ? `\n${input.caption}` : ""}`;
+  }
+  return "(input)";
+}
+
+/**
+ * Processa um inbound do Stevo. Idempotente por messageId. Não lança — captura
+ * tudo e loga; o caller chama via waitUntil e sempre responde 200 pro Stevo.
+ */
+export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<void> {
+  // 1. Resolve o hub ativo (locationId + agentId).
+  const hub = await resolvePrimaryHub();
+  if (!hub || !hub.locationId) {
+    console.error("[stevo-handler] nenhum hub Sparkbot ativo — abortando.");
+    return;
+  }
+  const { locationId: hubLocationId, agentId } = hub;
+  if (!agentId) {
+    // resolvePrimaryHub pode cair no fallback env (agentId vazio). Sem agentId
+    // não conseguimos cobrar/logar corretamente — aborta com log claro.
+    console.error(
+      `[stevo-handler] hub ${hubLocationId} sem agentId resolvido (fallback env?) — abortando.`,
+    );
+    return;
+  }
+
+  // 2. Dedup upfront por messageId (retry do Stevo com mesmo ID não reprocessa).
+  try {
+    const existing = await findByGhlMessageId(parsed.messageId);
+    if (existing) {
+      console.log(
+        `[stevo-handler] dedupe: messageId ${parsed.messageId} já processado — skipping`,
+      );
+      return;
+    }
+  } catch (err) {
+    console.warn(
+      "[stevo-handler] dedup lookup falhou — segue (UNIQUE constraint pega):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // 3. Identifica o rep pelo telefone (busca ou cria).
+  const rep = await identifyRep(parsed.phone);
+  if (!rep) {
+    console.warn(
+      `[stevo-handler] telefone ${parsed.phone} não cadastrado em nenhuma location — ignorando (fase 1 não envia aviso).`,
+    );
+    return;
+  }
+
+  // 4. Monta o RepInput multimodal.
+  const repInput = await buildRepInput(parsed);
+  if (!repInput) {
+    console.warn(
+      `[stevo-handler] não consegui montar RepInput pra messageId ${parsed.messageId} (kind=${parsed.kind}) — abortando.`,
+    );
+    return;
+  }
+
+  // 5. Carrega histórico recente pra processIncoming (senão bot fica amnésico).
+  let conversationHistory: ConversationTurn[] = [];
+  try {
+    const prior = await getSparkbotHistory(rep.id, hubLocationId, SPARKBOT_HISTORY_TURNS);
+    conversationHistory = prior
+      .reverse()
+      .filter((m) => (m.content || "").trim().length > 0)
+      .map((m) => ({
+        role: m.role === "user" ? "user" : "assistant",
+        content: m.content,
+      }));
+  } catch (err) {
+    console.warn(
+      "[stevo-handler] leitura de histórico falhou (segue sem histórico):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // 6. Persiste a msg do rep ANTES de processar (assim se LLM crashar, o
+  //    próximo turno ainda tem o histórico). Captura 23505 = dedup signal.
+  const insertedUser = await insertSparkbotMessage({
+    rep_id: rep.id,
+    hub_location_id: hubLocationId,
+    agent_id: agentId,
+    active_location_id: rep.active_location_id || null,
+    role: "user",
+    content: userMsgContent(repInput),
+    channel: "whatsapp",
+    ghl_message_id: parsed.messageId,
+    metadata: {
+      input_kind: repInput.kind,
+      source: "stevo",
+      push_name: parsed.pushName || null,
+    },
+  });
+  // insertSparkbotMessage devolve null em qualquer erro (inclusive 23505). Se a
+  // msg já existia (race com webhook GHL fallback), o dedup upfront geralmente
+  // pega; aqui é defesa extra mas seguimos pra processar de qualquer forma —
+  // pior caso, gera 1 turno duplicado raríssimo (Stevo não faz multi-provider).
+  if (!insertedUser) {
+    console.warn(
+      `[stevo-handler] insert da user msg falhou (messageId ${parsed.messageId}) — seguindo mesmo assim.`,
+    );
+  }
+
+  // Silence reset: qualquer inbound do rep limpa counter + pausa proativa.
+  try {
+    const supabase = createAdminClient();
+    await supabase
+      .from("rep_identities")
+      .update({
+        last_inbound_at: new Date().toISOString(),
+        consecutive_proactive_without_reply: 0,
+        proactive_paused_at: null,
+        proactive_warned_at: null,
+      })
+      .eq("id", rep.id);
+  } catch (err) {
+    console.warn(
+      "[stevo-handler] silence reset falhou (não-bloqueante):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // 7. Processa via pipeline padrão (mesma config default do webhook GHL).
+  let result;
+  try {
+    result = await processIncoming({
+      rep,
+      input: repInput,
+      agentId,
+      conversationHistory,
+      channel: "whatsapp",
+      config: {
+        confirmation_mode: "high_only",
+        enabled_kbs: ["national_life_group", "agency_brazillionaires"],
+        enable_audio_transcription: true,
+        enable_image_analysis: true,
+        enable_pdf_reading: true,
+      },
+    });
+  } catch (err) {
+    console.error(
+      "[stevo-handler] processIncoming lançou:",
+      err instanceof Error ? err.message : err,
+    );
+    return;
+  }
+
+  // ⚠️ FASE 1: NÃO ENVIA via Stevo ainda. Só loga a resposta gerada.
+  // TODO(fase 2): enviar via Stevo API /send/text (POST com instanceToken +
+  // phone + result.text; reusar splitter de sparkbot-send.ts pra múltiplas
+  // bolhas). Por ora, só processamos + persistimos pra validar o pipeline.
+  console.log(
+    `[stevo-handler] resposta gerada (NÃO enviada — fase 1) pra ${parsed.phone}: ` +
+      `"${(result.text || "").slice(0, 200)}"`,
+  );
+
+  // 8. Persiste a resposta do agente.
+  await insertSparkbotMessage({
+    rep_id: rep.id,
+    hub_location_id: hubLocationId,
+    agent_id: agentId,
+    active_location_id: rep.active_location_id || null,
+    role: "agent",
+    content: result.text || "(sem resposta)",
+    channel: "whatsapp",
+    metadata: {
+      source: "stevo",
+      model: result.model_used,
+      tools: result.tools_executed,
+      prompt_tokens: result.tokens?.prompt,
+      completion_tokens: result.tokens?.completion,
+      cached_tokens: result.tokens?.cached,
+      llm_failed: result.llm_failed,
+      // Fase 1: marca que a resposta foi gerada mas ainda não foi enviada.
+      not_sent_phase1: true,
+    },
+  });
+}

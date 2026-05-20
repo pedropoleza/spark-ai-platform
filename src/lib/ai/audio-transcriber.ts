@@ -170,6 +170,59 @@ export async function transcribeAudioFromUrl(
 }
 
 /**
+ * Transcreve áudio a partir de um Buffer já em memória (sem fetch/URL).
+ *
+ * Pedro 2026-05-20: o Stevo entrega o áudio JÁ DECRIPTADO em base64 dentro do
+ * webhook (a URL `.enc` do WhatsApp é E2E e não serve). Logo o caller monta o
+ * Buffer com `Buffer.from(base64, "base64")` e passa direto pra cá — sem
+ * download, sem SSRF guard (o binário já é confiável, veio do webhook).
+ *
+ * Reusa EXATAMENTE a mesma lógica de transcrição do path por URL (Whisper via
+ * `toFile`, language pt, verbose_json pra pegar a duração real). Difere só na
+ * origem do buffer: aqui ele já chega pronto.
+ */
+export async function transcribeAudioFromBuffer(
+  buffer: Buffer,
+  mimetype: string,
+): Promise<{ text: string; audio_seconds: number; model: string }> {
+  const startTime = Date.now();
+  // Extensão deduzida do mime (ogg/opus pro PTT do WhatsApp). Fallback "ogg".
+  let ext = getExtensionFromMime(mimetype || "");
+  if (!SUPPORTED_FORMATS.includes(ext)) ext = "ogg";
+
+  console.log(
+    `[Audio] Starting transcription from buffer: ${buffer.length} bytes (mime: ${mimetype || "unknown"}, ext: ${ext})`,
+  );
+
+  if (buffer.length < 100) {
+    throw new Error(`audio buffer too small: ${buffer.length} bytes`);
+  }
+  if (buffer.length > MAX_FILE_SIZE) {
+    throw new Error(`audio buffer too large: ${buffer.length} bytes`);
+  }
+
+  const file = await toFile(buffer, `audio.${ext}`, {
+    type: mimetype || `audio/${ext}`,
+  });
+  const transcription = (await getOpenAIClient().audio.transcriptions.create({
+    file,
+    model: "whisper-1",
+    language: "pt",
+    response_format: "verbose_json",
+  })) as { text?: string; duration?: number };
+
+  const text = transcription.text?.trim();
+  if (!text) {
+    throw new Error("Whisper retornou texto vazio");
+  }
+  const audioSeconds = typeof transcription.duration === "number" ? transcription.duration : 0;
+  console.log(
+    `[Audio] Transcribed buffer ${audioSeconds.toFixed(1)}s in ${Date.now() - startTime}ms: "${text.substring(0, 100)}"`,
+  );
+  return { text, audio_seconds: audioSeconds, model: "whisper-1" };
+}
+
+/**
  * Extrai URL de audio do payload do webhook GHL.
  * O GHL envia audio em formatos variados dependendo do canal (WhatsApp, SMS, etc).
  */
