@@ -14,6 +14,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { shouldFireCron } from "./cron-evaluator";
 import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
 import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
+import {
+  findRepPhoneById,
+  findRepFieldsById,
+  findLastInboundHubLocation,
+  findActiveSparkbotAgent,
+  insertSparkbotMessage,
+} from "@/lib/repositories";
 
 export interface ReminderRunResult {
   fired: number;
@@ -167,38 +174,21 @@ async function deliverReminderWeb(
   message: string,
   title: string | undefined,
 ): Promise<void> {
-  const supabase = createAdminClient();
   // H29 2026-05-20: hub via DB-first com fallback env (multi-hub ready)
   // Prioridade: último inbound do rep → hub ativo no DB → env fallback
   const hubEntry = await resolvePrimaryHub();
   const envHubLocationId = hubEntry?.locationId ?? getEnvHubLocationId();
-  const { data: lastInbound } = await supabase
-    .from("sparkbot_messages")
-    .select("hub_location_id")
-    .eq("rep_id", task.rep_id)
-    .eq("role", "user")
-    .not("hub_location_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const hubLocationId =
-    (lastInbound?.hub_location_id as string | null | undefined) ||
-    envHubLocationId;
+  const lastInboundHub = await findLastInboundHubLocation(task.rep_id);
+  const hubLocationId = lastInboundHub || envHubLocationId;
   if (!hubLocationId) {
     console.warn("[reminder-runner] hub não resolvido — pulando entrega web");
     return;
   }
   // Resolve agent_id (sparkbot do Hub)
-  const { data: hubAgent } = await supabase
-    .from("agents")
-    .select("id")
-    .eq("location_id", hubLocationId)
-    .eq("type", "account_assistant")
-    .eq("status", "active")
-    .maybeSingle();
+  const hubAgent = await findActiveSparkbotAgent(hubLocationId);
   if (!hubAgent) return;
 
-  await supabase.from("sparkbot_messages").insert({
+  await insertSparkbotMessage({
     rep_id: task.rep_id,
     hub_location_id: hubLocationId,
     agent_id: hubAgent.id,
@@ -222,12 +212,7 @@ async function deliverReminderWhatsapp(
   // Refatorado 2026-05-04: extraído pra whatsapp-delivery.ts pra reutilizar
   // entre lembretes (esta função) e regras proativas (dispatcher mode='real').
   // Comportamento e env vars iguais (WHATSAPP_DELIVERY_ENABLED, etc).
-  const supabase = createAdminClient();
-  const { data: rep } = await supabase
-    .from("rep_identities")
-    .select("id, phone")
-    .eq("id", task.rep_id)
-    .maybeSingle();
+  const rep = await findRepPhoneById(task.rep_id);
   if (!rep) {
     console.warn(`[reminder-runner] rep ${task.rep_id} não encontrado — pulando entrega`);
     return;
@@ -345,14 +330,12 @@ async function fireOutboundToContact(
     // Pra contas com múltiplas instâncias WhatsApp, GHL roteia outbound
     // baseado em assignedTo. Sem switch, msg sai pelo número errado.
     try {
-      const { data: rep } = await supabase
-        .from("rep_identities")
-        .select("ghl_users")
-        .eq("id", task.rep_id)
-        .maybeSingle();
-      const repGhlUserId = (
-        (rep?.ghl_users as Array<{ ghl_user_id: string; location_id: string }>) || []
-      ).find((u) => u.location_id === task.location_id)?.ghl_user_id;
+      const repForAssign = await findRepFieldsById<{ ghl_users: Array<{ ghl_user_id: string; location_id: string }> }>(
+        task.rep_id, "ghl_users"
+      );
+      const repGhlUserId = (repForAssign?.ghl_users || []).find(
+        (u) => u.location_id === task.location_id,
+      )?.ghl_user_id;
       if (repGhlUserId) {
         const { ensureContactAssignedTo } = await import("@/lib/ghl/operations");
         const r = await ensureContactAssignedTo(
@@ -434,13 +417,7 @@ async function fireOutboundToContact(
     const envHubLoc = hubEntryAudit?.locationId ?? getEnvHubLocationId();
     let auditAgentId = hubEntryAudit?.agentId || null;
     if (!auditAgentId && envHubLoc) {
-      const { data: hubAgentRow } = await supabase
-        .from("agents")
-        .select("id")
-        .eq("location_id", envHubLoc)
-        .eq("type", "account_assistant")
-        .eq("status", "active")
-        .maybeSingle();
+      const hubAgentRow = await findActiveSparkbotAgent(envHubLoc);
       auditAgentId = hubAgentRow?.id ?? null;
     }
     const hubAgent = auditAgentId ? { id: auditAgentId } : null;
@@ -448,7 +425,7 @@ async function fireOutboundToContact(
       const auditContent = sendError
         ? `⚠️ Falha ao enviar msg agendada pro contato: ${sendError.slice(0, 100)}`
         : `📤 Msg agendada enviada pro contato (${channel}): "${(payload.message || "").slice(0, 80)}${(payload.message || "").length > 80 ? "..." : ""}"`;
-      await supabase.from("sparkbot_messages").insert({
+      await insertSparkbotMessage({
         rep_id: task.rep_id,
         hub_location_id: envHubLoc,
         agent_id: hubAgent.id,

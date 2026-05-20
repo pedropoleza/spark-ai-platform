@@ -20,6 +20,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buildOnboardingMessage, formatTimezoneHumanFriendly, TERMS_ACCEPTED_TEXT } from "./terms";
+import { insertOnboardingMessage, setRepTimezone } from "@/lib/repositories";
 import type { RepIdentity } from "@/types/account-assistant";
 
 /**
@@ -48,30 +49,20 @@ export async function seedWebOnboardingMessage(args: {
     const tz = await confirmTimezoneFromLocation(args.rep);
     const text = buildOnboardingMessage(formatTimezoneHumanFriendly(tz));
 
-    const supabase = createAdminClient();
-    const { data, error } = await supabase
-      .from("sparkbot_messages")
-      .insert({
-        rep_id: args.rep.id,
-        hub_location_id: args.hubLocationId,
-        agent_id: args.hubAgentId,
-        active_location_id: args.rep.active_location_id || args.rep.ghl_users[0]?.location_id || null,
-        role: "agent",
-        content: text,
-        channel: "web_ui",
-        // Já lida — primeira interação que rep ainda nem viu, mas não queremos
-        // badge unread (UX pesada na primeira vez)
-        read_in_web_at: new Date().toISOString(),
-        metadata: { source: "web_onboarding" },
-      })
-      .select("id")
-      .single();
-
-    if (error) {
-      console.warn("[onboarding] seedWebOnboardingMessage failed:", error.message);
-      return null;
-    }
-    return data?.id || null;
+    const id = await insertOnboardingMessage({
+      rep_id: args.rep.id,
+      hub_location_id: args.hubLocationId,
+      agent_id: args.hubAgentId,
+      active_location_id: args.rep.active_location_id || args.rep.ghl_users[0]?.location_id || null,
+      role: "agent",
+      content: text,
+      channel: "web_ui",
+      // Já lida — primeira interação que rep ainda nem viu, mas não queremos
+      // badge unread (UX pesada na primeira vez)
+      read_in_web_at: new Date().toISOString(),
+      metadata: { source: "web_onboarding" },
+    });
+    return id;
   } catch (err) {
     console.warn(
       "[onboarding] seedWebOnboardingMessage crashed:",
@@ -102,14 +93,8 @@ async function confirmTimezoneFromLocation(rep: RepIdentity): Promise<string | n
   // Idempotente — só atualiza se ainda não foi confirmado, pra não sobrescrever
   // override manual via tool `confirm_rep_timezone`.
   if (!rep.timezone_confirmed_at) {
-    await supabase
-      .from("rep_identities")
-      .update({
-        timezone: tz,
-        timezone_confirmed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", rep.id);
+    const now = new Date().toISOString();
+    await setRepTimezone(rep.id, tz, now, now);
   }
   return tz;
 }

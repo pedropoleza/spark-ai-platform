@@ -1,5 +1,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
+import {
+  setTermsAccepted,
+  setTermsRejected,
+  setActiveLocation as repoSetActiveLocation,
+  mergeRepProfile,
+  updateRepById,
+} from "@/lib/repositories";
 import type { RepIdentity, GHLUserLink, RepProfile } from "@/types/account-assistant";
 
 /**
@@ -217,27 +224,12 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
  * passar apenas as chaves que quer atualizar. Usa update pra não sobrescrever.
  */
 export async function updateRepProfile(repId: string, profilePatch: Partial<RepProfile>): Promise<void> {
-  const supabase = createAdminClient();
-  const { data: current } = await supabase
-    .from("rep_identities")
-    .select("profile")
-    .eq("id", repId)
-    .maybeSingle();
-
-  const merged = { ...(current?.profile || {}), ...profilePatch };
-  await supabase
-    .from("rep_identities")
-    .update({ profile: merged, updated_at: new Date().toISOString() })
-    .eq("id", repId);
+  await mergeRepProfile(repId, profilePatch);
 }
 
 /** Marca terms como aceitos. */
 export async function acceptTerms(repId: string): Promise<void> {
-  const supabase = createAdminClient();
-  await supabase
-    .from("rep_identities")
-    .update({ terms_accepted_at: new Date().toISOString() })
-    .eq("id", repId);
+  await setTermsAccepted(repId, new Date().toISOString());
 }
 
 /**
@@ -247,20 +239,12 @@ export async function acceptTerms(repId: string): Promise<void> {
  * (UPDATE rep_identities SET terms_rejected_at = NULL WHERE id = X).
  */
 export async function rejectTerms(repId: string): Promise<void> {
-  const supabase = createAdminClient();
-  await supabase
-    .from("rep_identities")
-    .update({ terms_rejected_at: new Date().toISOString() })
-    .eq("id", repId);
+  await setTermsRejected(repId, new Date().toISOString());
 }
 
 /** Seta active_location_id (quando rep escolhe qual operar). */
 export async function setActiveLocation(repId: string, locationId: string): Promise<void> {
-  const supabase = createAdminClient();
-  await supabase
-    .from("rep_identities")
-    .update({ active_location_id: locationId, updated_at: new Date().toISOString() })
-    .eq("id", repId);
+  await repoSetActiveLocation(repId, locationId, new Date().toISOString());
 }
 
 /**
@@ -313,11 +297,7 @@ export async function syncRepInternalFlag(rep: RepIdentity): Promise<boolean> {
   const detected = detectIsInternal(rep);
   if (rep.is_internal === detected) return detected; // sem mudança
 
-  const supabase = createAdminClient();
-  await supabase
-    .from("rep_identities")
-    .update({ is_internal: detected, updated_at: new Date().toISOString() })
-    .eq("id", rep.id);
+  await updateRepById(rep.id, { is_internal: detected, updated_at: new Date().toISOString() });
   return detected;
 }
 

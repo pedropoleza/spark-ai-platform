@@ -14,6 +14,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { deliverProactiveMessage } from "./whatsapp-delivery";
+import { findRepFieldsById } from "@/lib/repositories";
 
 interface NotifyOutcome {
   notified: boolean;
@@ -35,11 +36,10 @@ export async function notifySequenceCompleted(sequenceId: string): Promise<Notif
       .maybeSingle();
     if (!seq) return { notified: false, skipped_reason: "not_found" };
 
-    const { data: rep } = await supabase
-      .from("rep_identities")
-      .select("id, phone, is_internal, profile, last_inbound_at")
-      .eq("id", seq.rep_id)
-      .maybeSingle();
+    const rep = await findRepFieldsById<{
+      id: string; phone: string; is_internal: boolean;
+      profile: Record<string, unknown> | null; last_inbound_at: string | null;
+    }>(seq.rep_id, "id, phone, is_internal, profile, last_inbound_at");
     if (!rep) return { notified: false, skipped_reason: "rep_not_found" };
     if (rep.is_internal) return { notified: false, skipped_reason: "rep_internal" };
 
@@ -98,11 +98,10 @@ export async function notifySequencePausedByReply(sequenceId: string): Promise<N
       .maybeSingle();
     if (!seq) return { notified: false, skipped_reason: "not_found" };
 
-    const { data: rep } = await supabase
-      .from("rep_identities")
-      .select("id, phone, is_internal, profile, last_inbound_at")
-      .eq("id", seq.rep_id)
-      .maybeSingle();
+    const rep = await findRepFieldsById<{
+      id: string; phone: string; is_internal: boolean;
+      profile: Record<string, unknown> | null; last_inbound_at: string | null;
+    }>(seq.rep_id, "id, phone, is_internal, profile, last_inbound_at");
     if (!rep) return { notified: false, skipped_reason: "rep_not_found" };
     if (rep.is_internal) return { notified: false, skipped_reason: "rep_internal" };
 
