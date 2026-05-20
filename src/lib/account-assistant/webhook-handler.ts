@@ -852,39 +852,37 @@ async function extractRepInput(args: {
 
   const attachments = extractMediaAttachments(body);
 
-  // Debug Pedro 2026-05-19: quando body parece conter doc/arquivo (filename
-  // no body, ou messageType doc) mas extração retornou vazio, loga as KEYS
-  // do body + samples pra entender o shape do webhook Stevo/Evolution.
+  // Fix Pedro 2026-05-19: detecta documento "fantasma" — body é só o filename
+  // (ex: "planilha.csv") + contentType text/plain + SEM URL de mídia em
+  // lugar nenhum (nem webhook nem API GHL). Acontece quando documento chega
+  // via WhatsApp Business API da Meta com a conta em estado problemático
+  // (locked/sem permissão de media), ou canal que não baixa o binário.
+  //
+  // Em vez de virar texto (filename) e o LLM tentar analyze_tabular_data e
+  // falhar com "Não consegui ler", devolve mensagem CLARA pro rep com
+  // alternativas. Detecção: body bate padrão de filename de doc/planilha,
+  // contentType não-rico, e zero attachments extraídos.
   if (attachments.length === 0) {
-    const bodyText = String(body.body || body.message || "");
-    const looksLikeFile = /\.(csv|xlsx?|pdf|docx?|png|jpe?g)\b/i.test(bodyText) ||
-      /document|spreadsheet|planilha|arquivo/i.test(bodyText);
-    if (looksLikeFile) {
-      const keys = Object.keys(body);
-      const sample: Record<string, unknown> = {};
-      for (const k of keys) {
-        const v = body[k];
-        if (typeof v === "string") sample[k] = v.slice(0, 200);
-        else if (Array.isArray(v)) sample[k] = `[array len=${v.length}] ${JSON.stringify(v).slice(0, 600)}`;
-        else if (v && typeof v === "object") sample[k] = JSON.stringify(v).slice(0, 600);
-        else sample[k] = v;
-      }
+    const bodyText = String(body.body || body.message || "").trim();
+    const ctype = String(body.contentType || "").toLowerCase();
+    const isFilenameOnly =
+      /^[\w\s().\-]+\.(csv|xlsx?|pdf|docx?)$/i.test(bodyText) &&
+      bodyText.length < 120 &&
+      (ctype === "text/plain" || ctype === "");
+    if (isFilenameOnly) {
       console.warn(
-        `[Sparkbot] DOC ATTACHMENT MISS — keys=[${keys.join(",")}] sample=${JSON.stringify(sample).slice(0, 1500)}`,
+        `[Sparkbot] DOC SEM URL: body="${bodyText}" ctype="${ctype}" — arquivo não veio do canal (Meta locked / sem media). Avisa rep.`,
       );
-      // Debug Pedro 2026-05-19: grava signal pra ler via SQL (logs Vercel
-      // difíceis de capturar). REMOVER após diagnosticar.
-      try {
-        const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
-        recordSignalAsync({
-          type: "error",
-          title: "DEBUG: doc attachment não extraído (body shape)",
-          description: `keys=[${keys.join(",")}]`,
-          severity: "low",
-          source: "bot_auto",
-          metadata: { body_keys: keys, body_sample: sample, body_text: bodyText.slice(0, 200) },
-        });
-      } catch { /* non-fatal */ }
+      return {
+        kind: "text",
+        text:
+          `__FILE_ERROR__:Recebi o nome do arquivo (*${bodyText}*) mas o conteúdo não chegou junto — ` +
+          `isso costuma rolar quando o WhatsApp não anexa o arquivo direito.\n\n` +
+          `Tenta uma destas:\n` +
+          `• *Reenvia* o arquivo (às vezes na 2ª vez vai)\n` +
+          `• *Cola os dados aqui* como texto (nome e telefone, um por linha)\n` +
+          `• Manda uma *foto/print* da planilha`,
+      };
     }
   }
 
