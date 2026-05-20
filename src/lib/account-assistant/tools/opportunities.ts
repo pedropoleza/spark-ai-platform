@@ -279,7 +279,8 @@ const getOpportunity: ToolEntry = {
 const createOpportunity: ToolEntry = {
   def: {
     name: "create_opportunity",
-    description: "Cria uma nova opportunity associada a um contato.",
+    description:
+      "Cria uma oportunidade NOVA pra um contato. ⚠️ NÃO use pra mover/atualizar/fechar uma opp existente — pra mudar de etapa use move_opportunity, pra ganho/perdido/abandonado use update_opportunity_status. Só crie se o contato ainda não tem opp nesse pipeline.",
     risk: "medium",
     parameters: {
       type: "object",
@@ -422,6 +423,40 @@ const deleteOpportunity: ToolEntry = {
   },
 };
 
+const moveOpportunity: ToolEntry = {
+  def: {
+    name: "move_opportunity",
+    description:
+      "Move uma oportunidade EXISTENTE pra outra etapa (stage) do pipeline. Use quando o rep disser 'mover/passar/colocar Fulano pra/em <etapa>'. Requer opportunity_id (ache via list/get) e stage_id.",
+    risk: "medium",
+    parameters: {
+      type: "object",
+      properties: {
+        opportunity_id: { type: "string", description: "ID da oportunidade existente." },
+        stage_id: { type: "string", description: "UUID do stage de destino. Use list_pipelines pra obter." },
+        pipeline_id: { type: "string", description: "OPCIONAL. Passe apenas se mover pra pipeline diferente." },
+      },
+      required: ["opportunity_id", "stage_id"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const oppId = String(args.opportunity_id || "");
+    const stageId = String(args.stage_id || "");
+    const invalid = validateGhlId(oppId, "opportunity") || validateGhlId(stageId, "stage");
+    if (invalid) return invalid;
+
+    const body: Record<string, unknown> = { pipelineStageId: stageId };
+    if (args.pipeline_id) body.pipelineId = String(args.pipeline_id);
+
+    try {
+      await ctx.ghlClient.put(`/opportunities/${oppId}`, body);
+      return { status: "ok", data: { opportunity_id: oppId, moved_to_stage: stageId } };
+    } catch (err) {
+      return ghlErrorToResult(err, "movimentação de opportunity");
+    }
+  },
+};
+
 const listPipelines: ToolEntry = {
   def: {
     name: "list_pipelines",
@@ -454,6 +489,7 @@ export const OPPORTUNITIES_TOOLS: ToolEntry[] = [
   listOpportunities,
   getOpportunity,
   createOpportunity,
+  moveOpportunity,
   updateOpportunity,
   updateOpportunityStatus,
   deleteOpportunity,

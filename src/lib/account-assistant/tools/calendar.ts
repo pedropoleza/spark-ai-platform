@@ -907,7 +907,7 @@ const createAppointment: ToolEntry = {
     description:
       "⚠️ AGENDA reunião pra um contato no calendário. AFETA o lead — sempre confirma com o rep ANTES. Use get_free_slots pra escolher horário válido.\n\n" +
       "Observação importante: pra calendars **round-robin/collective/group** (com vários team members), NÃO passe `assigned_user_id` — deixe o Spark Leads escolher automaticamente. Pra calendars **personal/service** (1 user só), opcional. Default: não passar (mais seguro pra qualquer tipo de calendar).\n\n" +
-      "⚙️ MEETING LOCATION (qualquer rep): se rep especificar onde/como — 'Zoom', 'Google Meet', 'presencial em [endereço]', 'telefone [num]', 'link [url]' — passe `meeting_location_type` E `meeting_location`. Sem isso, GHL ignora silenciosamente e usa default do calendar (bug histórico pré-H26).\n\n" +
+      "⚙️ MEETING LOCATION (qualquer rep): se rep especificar onde/como — 'Zoom', 'Google Meet', 'presencial em [endereço]', 'telefone [num]', 'link [url]' — passe `meeting_location_type` E `meeting_location`. Sem isso, o Spark Leads ignora silenciosamente e usa default do calendar (bug histórico pré-H26).\n\n" +
       "⚙️ OVERRIDE ADMIN (apenas internal team): se rep admin pedir pra forçar slot bloqueado (`ignore_free_slot_validation`), ignorar minimum notice (`ignore_date_range`), ou marcar sem notificação (`to_notify=false`), SEMPRE explicite o override na frase de confirmação: 'Vou marcar X mesmo com slot bloqueado — confirma?'. NUNCA use silenciosamente. Rep não-admin recebe erro do gate.",
     risk: "high",
     parameters: {
@@ -922,13 +922,13 @@ const createAppointment: ToolEntry = {
           type: "string",
           description:
             "OPCIONAL. Tipo de local da reunião. Valores: 'zoom' | 'gmeet' | 'phone' | 'address' | 'custom'. " +
-            "Passar este param ativa overrideLocationConfig automaticamente — GHL respeita o local que você manda em vez do default do calendar.",
+            "Passar este param ativa overrideLocationConfig automaticamente — o Spark Leads respeita o local que você manda em vez do default do calendar.",
         },
         meeting_location: {
           type: "string",
           description:
             "OPCIONAL. Link/endereço/telefone literal (ex: 'https://zoom.us/j/abc', 'Av. Paulista 100', '+5511987654321'). " +
-            "Use quando rep especificar link/endereço próprio. Pra 'zoom'/'gmeet' SEM link específico, omita — GHL gera automático.",
+            "Use quando rep especificar link/endereço próprio. Pra 'zoom'/'gmeet' SEM link específico, omita — o Spark Leads gera automático.",
         },
         assigned_user_id: {
           type: "string",
@@ -1199,7 +1199,7 @@ const updateAppointment: ToolEntry = {
     name: "update_appointment",
     description:
       "⚠️ Reagendar um appointment existente (mudar horário, status, OU meeting location). Confirma antes.\n\n" +
-      "⚙️ MEETING LOCATION (qualquer rep): se rep pedir pra TROCAR o local da reunião ('agora vai ser presencial', 'muda pra Google Meet', 'manda link do meu Zoom em vez do default'), passe `meeting_location_type` + `meeting_location`. Sem isso, GHL ignora silenciosamente.\n\n" +
+      "⚙️ MEETING LOCATION (qualquer rep): se rep pedir pra TROCAR o local da reunião ('agora vai ser presencial', 'muda pra Google Meet', 'manda link do meu Zoom em vez do default'), passe `meeting_location_type` + `meeting_location`. Sem isso, o Spark Leads ignora silenciosamente.\n\n" +
       "⚙️ OVERRIDE ADMIN (apenas internal team): se rep admin pedir pra REagendar em cima de bloqueio (`ignore_free_slot_validation`), pra horário fora do min notice (`ignore_date_range`), ou sem mandar notificação (`to_notify=false`), SEMPRE explicite na confirmação: 'Vou mover pra X mesmo bloqueado — confirma?'. NUNCA silencioso. Rep não-admin recebe erro do gate.",
     risk: "high",
     parameters: {
@@ -1223,7 +1223,7 @@ const updateAppointment: ToolEntry = {
           type: "string",
           description:
             "OPCIONAL. Link/endereço/telefone literal pro novo meeting location. " +
-            "Pra 'zoom'/'gmeet' SEM link específico, omita — GHL gera automático.",
+            "Pra 'zoom'/'gmeet' SEM link específico, omita — o Spark Leads gera automático.",
         },
         // H26: admin override flags
         ignore_free_slot_validation: {

@@ -1,7 +1,7 @@
 /**
  * Registry consolidado de todas as tools do Sparkbot.
  *
- * 45 tools no total, organizadas por categoria. A IA recebe a lista
+ * 90 tools no total, organizadas por categoria. A IA recebe a lista
  * inteira (ou um subset filtrado pelas regras de proatividade).
  */
 

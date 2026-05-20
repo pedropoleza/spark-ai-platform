@@ -201,7 +201,7 @@ const createContact: ToolEntry = {
   def: {
     name: "create_contact",
     description:
-      "Cria contato novo na location ativa. Spark Leads faz dedup automático por email/phone. Use quando o rep pedir 'cria um novo lead/cliente'.",
+      "Cria contato novo na location ativa. Spark Leads faz dedup automático por email/phone. Use quando o rep pedir 'cria um novo lead/cliente'. ⚠️ ANTES de criar, SEMPRE rode search_contacts por telefone/email pra ver se já existe — evita duplicata.",
     risk: "medium",
     parameters: {
       type: "object",

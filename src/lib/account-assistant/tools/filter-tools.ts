@@ -290,7 +290,7 @@ const countFiltered: ToolEntry = {
   def: {
     name: "count_filtered",
     description:
-      "Conta contatos ou opps que batem um FEL SEM puxar os dados. 1 chamada GHL otimizada (pageLimit:1, lê meta.total). Use ANTES de bulk message pra preview ('quantos do M0 vão receber? 23') OU quando rep só quer número ('quantos clientes no FL?').\n\n" +
+      "Conta contatos ou opps que batem um FEL SEM puxar os dados. 1 chamada do Spark Leads otimizada (pageLimit:1, lê meta.total). Use ANTES de bulk message pra preview ('quantos do M0 vão receber? 23') OU quando rep só quer número ('quantos clientes no FL?').\n\n" +
       FEL_DOCS,
     risk: "safe",
     parameters: {

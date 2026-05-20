@@ -17,7 +17,7 @@ const createTask: ToolEntry = {
       "  - 'self' / 'me' / 'eu' → rep ativo (default, redundante)\n" +
       "  - ghl_user_id válido (~20 chars alfanuméricos) → atribui a esse user\n" +
       "Se rep falar nome ('cria task pro João'), chame `list_users` ANTES pra resolver o ghl_user_id correto. NUNCA invente ID.\n\n" +
-      "TASKS FUTURAS/RECORRENTES: pra 'agenda 3 tasks pro João amanhã 9h/14h/18h', faça 3 chamadas separadas com mesmo `contact_id` + `assigned_to` + `due_at` diferentes. GHL aceita dueDate futuro nativamente — não precisa de cron separado.",
+      "TASKS FUTURAS/RECORRENTES: pra 'agenda 3 tasks pro João amanhã 9h/14h/18h', faça 3 chamadas separadas com mesmo `contact_id` + `assigned_to` + `due_at` diferentes. O Spark Leads aceita dueDate futuro nativamente — não precisa de cron separado.",
     risk: "medium",
     parameters: {
       type: "object",
