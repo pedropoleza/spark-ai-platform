@@ -57,6 +57,48 @@ const tc = (name: string, input: Record<string, unknown>) => ({ name, input, res
   check("style: force list", p?.kind === "list");
 }
 
+// 3b. rótulo longo (>20) → lista mesmo com 2 opções (caso calendários 15:34)
+{
+  const p = extractInteractiveFromToolCalls([
+    tc("present_options", {
+      body: "Qual calendário?",
+      options: [
+        { id: "c1", label: "Client Appointment - Spark Leads" },
+        { id: "c2", label: "Onboarding Spark Leads" },
+      ],
+    }),
+  ]);
+  check("rótulo longo → lista", p?.kind === "list", p?.kind);
+}
+
+// 3c. opção com descrição → lista (mesmo com ≤3) — desambiguação de contato
+{
+  const p = extractInteractiveFromToolCalls([
+    tc("present_options", {
+      body: "Qual contato?",
+      options: [
+        { id: "1", label: "João", description: "+55 11 99999" },
+        { id: "2", label: "Maria" },
+      ],
+    }),
+  ]);
+  check("descrição → lista", p?.kind === "list");
+}
+
+// 3d. ≤3 curtas sem descrição → botões
+{
+  const p = extractInteractiveFromToolCalls([
+    tc("present_options", {
+      body: "Confirma?",
+      options: [
+        { id: "y", label: "Sim" },
+        { id: "n", label: "Não" },
+      ],
+    }),
+  ]);
+  check("≤3 curtas → botões", p?.kind === "buttons");
+}
+
 // 4. sem present_options → null
 {
   const p = extractInteractiveFromToolCalls([tc("create_note", { body: "oi" })]);

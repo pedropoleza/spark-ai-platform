@@ -61,15 +61,16 @@ export function extractInteractiveFromToolCalls(
 
   if (!body || options.length < 1) return null;
 
+  // Regra de auto-escolha (refinada no caso 15:34: 3 calendários de nome longo
+  // viraram texto). Não é só pelo NÚMERO: usa LISTA quando 4+ opções OU rótulo
+  // longo (>20 chars, estoura o botão) OU quando uma descrição ajuda
+  // (telefone/email/data). Botão só pra ≤3 opções curtas e sem descrição.
   const style = String(input.style || "auto").toLowerCase();
+  const needsList =
+    options.length > 3 ||
+    options.some((o) => o.label.length > 20 || !!o.description);
   const kind: "buttons" | "list" =
-    style === "buttons"
-      ? "buttons"
-      : style === "list"
-        ? "list"
-        : options.length <= 3
-          ? "buttons"
-          : "list";
+    style === "buttons" ? "buttons" : style === "list" ? "list" : needsList ? "list" : "buttons";
 
   const title = input.title ? String(input.title).trim() : undefined;
   const footer = input.footer ? String(input.footer).trim() : undefined;

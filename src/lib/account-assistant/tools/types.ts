@@ -127,15 +127,16 @@ export function resolveAssignedUserId(
   const lower = original.toLowerCase();
   if (["self", "me", "eu", "rep", "self_user", "myself"].includes(lower)) {
     const repId = getRepGhlUserId(ctx);
+    // Pedro 2026-05-20 (fluxo 15:34): se não der pra resolver o user do rep,
+    // NÃO erra (antes a msg "use list_users + ID explícito" fazia o LLM listar
+    // users e perguntar "qual seu user?" + sugerir um aleatório). Em vez disso,
+    // segue SEM atribuir — a tool decide o default (ex: create_appointment já
+    // omite assignedUserId por padrão). Comportamento "self = silencioso".
     if (!repId) {
-      return {
-        ok: false,
-        error: {
-          status: "error",
-          message: "Não consegui resolver 'self' pro user_id do rep nessa location. Use list_users + ID explícito.",
-          retryable: false,
-        },
-      };
+      console.warn(
+        `[resolveAssignedUserId] 'self' irresolúvel pro rep ${ctx.rep.id} na location ${ctx.locationId} — seguindo SEM atribuir.`,
+      );
+      return { ok: true, user_id: undefined };
     }
     return { ok: true, user_id: repId };
   }
