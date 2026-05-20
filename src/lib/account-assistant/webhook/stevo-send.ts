@@ -224,6 +224,7 @@ const ROW_TITLE_MAX = 24;
 const ROW_DESC_MAX = 72;
 const HEADER_MAX = 60;
 const LIST_BTN_MAX = 20;
+const BODY_MAX = 1024; // limite do corpo (description) no interativo WhatsApp
 
 function truncate(s: string, n: number): string {
   const t = (s || "").trim();
@@ -277,7 +278,7 @@ export async function sendStevoButton(p: StevoButtonParams): Promise<StevoSendRe
   const payload: Record<string, unknown> = {
     number,
     title: truncate(p.title?.trim() || "SparkBot", HEADER_MAX),
-    description: p.body.trim(),
+    description: truncate(p.body.trim(), BODY_MAX),
     footer: truncate(p.footer?.trim() || "Toque uma opção 👇", HEADER_MAX),
     buttons,
   };
@@ -346,7 +347,7 @@ export async function sendStevoList(p: StevoListParams): Promise<StevoSendResult
   const payload: Record<string, unknown> = {
     number,
     title: truncate(p.title?.trim() || "SparkBot", HEADER_MAX),
-    description: p.body.trim(),
+    description: truncate(p.body.trim(), BODY_MAX),
     footerText: truncate(p.footer?.trim() || "Toque pra escolher 👇", HEADER_MAX),
     buttonText: truncate(p.buttonText, LIST_BTN_MAX),
     sections,

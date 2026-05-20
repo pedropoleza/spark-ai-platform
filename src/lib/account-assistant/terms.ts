@@ -3,29 +3,19 @@
  * do rep. Ele só começa a usar após aceitar explicitamente.
  */
 
-export const TERMS_OF_USE_TEXT = `Oi! Sou o SparkBot, o assistente da sua conta.
+export const TERMS_OF_USE_TEXT = `Oi! Sou o *SparkBot*, teu copiloto aqui no Spark Leads. 👋
 
-Antes de começar, só pra você saber como funciona:
+Antes de começar, rapidinho:
 
-1. ACESSO AO SEU CRM
-Consigo consultar e modificar dados dos seus contatos, oportunidades, tarefas e agenda no Spark Leads — sempre respeitando as permissões que você já tem por lá.
+*O que eu faço* — você me pede em texto, áudio, foto, planilha ou PDF e eu executo no seu CRM: notas, tarefas, lembretes, agendamentos, consultas, mover/criar oportunidades, disparos em massa, sequências de follow-up e busca por filtros. Também tiro dúvidas de produto (NLG/carriers).
 
-2. O QUE EU FAÇO
-Executo ações que você me pedir em linguagem natural (texto, áudio, foto ou documento). Exemplos: "adiciona nota no João", "cria tarefa pra ligar amanhã", "quais opportunities tão abertas?".
+*Suas informações* — acesso seus dados respeitando as permissões que você já tem, e aprendo suas preferências pra ficar mais útil. Fica privado, só seu.
 
-3. O QUE EU ANOTO DE VOCÊ
-Com o tempo vou aprendendo suas preferências (tom que gosta, horários que responde, leads importantes pra você) pra ficar mais útil. Isso fica salvo de forma privada, só associado a você.
+*Segurança* — sou IA e posso errar interpretando. Por isso, em ações que mexem em algo importante (mandar msg pro cliente, apagar, agendar) eu *confirmo antes*. Não falo de você nem dos seus contatos com mais ninguém.
 
-4. O QUE PODE DAR ERRADO
-Sou uma IA. Às vezes erro interpretando pedidos. Por isso, em ações que mudam algo importante, eu confirmo antes. Se algo sair errado, me fala e eu tento reverter.
+*Parar* — manda "parar" que eu silencio; "apagar meus dados" → o admin remove tudo.
 
-5. LIMITES
-Não mando mensagens pros seus leads sem você confirmar. Não apago nada sem você confirmar. Não falo com mais ninguém sobre você ou seus contatos.
-
-6. PARAR DE USAR
-É só mandar "parar" ou "desativar" que eu silencio. Pra apagar tudo que sei sobre você, manda "apagar meus dados" que o admin da sua conta remove.
-
-Tá ok? Responde "aceito" pra gente começar.`;
+Topa começar?`;
 
 /** Palavras que contam como aceite (whole-word match no início ou frase única). */
 const ACCEPT_KEYWORDS = [
@@ -53,7 +43,12 @@ function normalizeForParse(text: string): string {
 }
 
 export function parseTermsResponse(text: string): "accept" | "reject" | "unclear" {
-  const normalized = normalizeForParse(text);
+  // Tira o sufixo de amarração do tap interativo: "Aceito ✅ — (resposta à
+  // pergunta: '...termos cheios de não...')". Sem isso, os "não" do texto dos
+  // termos disparariam o NEGATION_PATTERN e "Aceito" viraria REJECT. O label do
+  // botão (antes do sufixo) é a fonte de verdade. (Pedro 2026-05-20)
+  const label = text.split("(resposta à pergunta:")[0].replace(/\s*—\s*$/, "").trim();
+  const normalized = normalizeForParse(label || text);
   if (!normalized) return "unclear";
 
   // Fix CRITICAL Track 1 C2 (review 2026-05-05): regex anti-falso-positivo.
@@ -100,18 +95,41 @@ export const TERMS_REJECTED_TEXT =
  */
 export function buildOnboardingMessage(humanLocation: string | null): string {
   const fusoBlock = humanLocation
-    ? `\n\nVi que tua conta tá em *${humanLocation}* — vou usar esse fuso pra agendamentos.\nSe tu mudar de cidade, é só me avisar ("tô em SP agora") que eu ajusto.\n\n`
+    ? `\nTua conta tá em *${humanLocation}* — uso esse fuso pros agendamentos. Mudou de cidade? Só falar.\n\n`
     : "\n\n";
   return (
-    "Beleza, termos aceitos. ✓" +
+    "Fechou! Tô pronto. ✅" +
     fusoBlock +
-    "Algumas coisas que eu posso fazer:\n" +
-    "• \"me lembra em 30min de ligar pro João\" — agendo lembrete\n" +
-    "• \"que appointments tenho hoje?\" — lista do CRM\n" +
-    "• \"cria nota no Pedro Silva: cliente quer Term\" — no Spark Leads\n" +
+    "Algumas coisas que dá pra pedir:\n" +
+    "• \"me lembra em 30min de ligar pro João\" — agendo o lembrete\n" +
+    "• \"que reuniões tenho hoje?\" — vejo tua agenda\n" +
+    "• \"cria nota no Pedro Silva: cliente quer Term\" — anoto no Spark Leads\n" +
+    "• \"manda 'oi, tudo bem?' pra +55 11 9…\" — eu confirmo e envio\n" +
+    "• \"me mostra os leads sem oportunidade aberta\" — filtro na hora\n" +
     "• \"qual o cap do FlexLife em FL?\" — consulto na NLG\n\n" +
-    "Manda áudio, foto ou doc também — eu processo. Qualquer dúvida, é só perguntar."
+    "Manda áudio, foto, planilha ou PDF que eu processo. E quando eu te der opções, é só *tocar nos botões* — sem digitar. Qualquer coisa, é só pedir. 🚀"
   );
+}
+
+/**
+ * Payload interativo dos termos: o texto dos termos no corpo + botões
+ * Aceito/Não. Usado no primeiro contato (processor). Ids estáveis
+ * `terms_accept`/`terms_reject`. No WhatsApp vira botão; em canal sem interativo
+ * (ou flag off) o caller usa o texto-fallback (termos + opções numeradas).
+ */
+export function buildTermsInteractive(): {
+  kind: "buttons";
+  body: string;
+  options: { id: string; label: string }[];
+} {
+  return {
+    kind: "buttons",
+    body: TERMS_OF_USE_TEXT,
+    options: [
+      { id: "terms_accept", label: "Aceito ✅" },
+      { id: "terms_reject", label: "Não aceito ❌" },
+    ],
+  };
 }
 
 /**

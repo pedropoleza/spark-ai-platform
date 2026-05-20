@@ -14,6 +14,7 @@ import type { RepIdentity, RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import {
   TERMS_OF_USE_TEXT,
+  buildTermsInteractive,
   TERMS_REJECTED_TEXT,
   TERMS_REMINDER_TEXT,
   parseTermsResponse,
@@ -158,7 +159,15 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     if (userText.trim().length >= 3) {
       return { text: TERMS_REMINDER_TEXT, should_send: true };
     }
-    return { text: TERMS_OF_USE_TEXT, should_send: true };
+    // Primeira msg → termos com botão Aceito/Não (Pedro 2026-05-20). No
+    // WhatsApp vira botão; em canal sem interativo o text-fallback traz os
+    // termos + opções numeradas. Aceite por tap OU "aceito" digitado.
+    const termsInteractive = buildTermsInteractive();
+    return {
+      text: interactiveFallbackText(termsInteractive),
+      interactive: termsInteractive,
+      should_send: true,
+    };
   }
 
   // 2. Resolver active_location_id
