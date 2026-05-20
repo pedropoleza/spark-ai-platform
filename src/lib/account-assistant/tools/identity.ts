@@ -14,8 +14,8 @@
  */
 
 import type { ToolEntry } from "./types";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
+import { updateRepById } from "@/lib/repositories/rep-identities.repo";
 
 /**
  * Valida IANA timezone usando Intl.DateTimeFormat. Inválido (typo, vazio,
@@ -68,21 +68,18 @@ const confirmRepTimezone: ToolEntry = {
       };
     }
 
-    const supabase = createAdminClient();
     const now = new Date().toISOString();
-    const { error } = await supabase
-      .from("rep_identities")
-      .update({
+    try {
+      await updateRepById(ctx.rep.id, {
         timezone: tz,
         timezone_confirmed_at: now,
         updated_at: now,
-      })
-      .eq("id", ctx.rep.id);
-
-    if (error) {
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       return {
         status: "error",
-        message: `Falha ao salvar timezone: ${error.message}`,
+        message: `Falha ao salvar timezone: ${msg}`,
         retryable: true,
       };
     }
@@ -231,6 +228,8 @@ const switchActiveLocation: ToolEntry = {
     // owner com multi-company), as próximas tools (que usam ctx.ghlClient)
     // ainda apontam pro company anterior. Pra esse caso edge, retornamos
     // aviso no message — rep deve mandar próxima request num turn novo.
+    // Busca company_id da target location (tabela não-quente — direto)
+    const { createAdminClient } = await import("@/lib/supabase/admin");
     const supabase = createAdminClient();
     const { data: targetLocation } = await supabase
       .from("locations")
@@ -238,17 +237,16 @@ const switchActiveLocation: ToolEntry = {
       .eq("location_id", target.location_id)
       .maybeSingle();
 
-    const { error } = await supabase
-      .from("rep_identities")
-      .update({
+    try {
+      await updateRepById(ctx.rep.id, {
         active_location_id: target.location_id,
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", ctx.rep.id);
-    if (error) {
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       return {
         status: "error",
-        message: `Falha ao trocar location: ${error.message}`,
+        message: `Falha ao trocar location: ${msg}`,
         retryable: true,
       };
     }
@@ -369,18 +367,16 @@ const setDailyBriefing: ToolEntry = {
   },
   handler: async (ctx, args) => {
     const enabled = args.enabled === true;
-    const supabase = createAdminClient();
-    const { error } = await supabase
-      .from("rep_identities")
-      .update({
+    try {
+      await updateRepById(ctx.rep.id, {
         daily_briefing_enabled: enabled,
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", ctx.rep.id);
-    if (error) {
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       return {
         status: "error",
-        message: `falha ao atualizar preferência: ${error.message}`,
+        message: `falha ao atualizar preferência: ${msg}`,
         retryable: false,
       };
     }
@@ -482,18 +478,16 @@ const setRepAlias: ToolEntry = {
     existingAliases[alias] = expansion;
 
     const newProfile = { ...(ctx.rep.profile || {}), aliases: existingAliases };
-    const supabase = createAdminClient();
-    const { error } = await supabase
-      .from("rep_identities")
-      .update({
+    try {
+      await updateRepById(ctx.rep.id, {
         profile: newProfile,
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", ctx.rep.id);
-    if (error) {
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       return {
         status: "error",
-        message: `Falha ao salvar alias: ${error.message}`,
+        message: `Falha ao salvar alias: ${msg}`,
         retryable: true,
       };
     }
@@ -545,18 +539,16 @@ const forgetRepAlias: ToolEntry = {
     }
     delete existing[alias];
     const newProfile = { ...(ctx.rep.profile || {}), aliases: existing };
-    const supabase = createAdminClient();
-    const { error } = await supabase
-      .from("rep_identities")
-      .update({
+    try {
+      await updateRepById(ctx.rep.id, {
         profile: newProfile,
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", ctx.rep.id);
-    if (error) {
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       return {
         status: "error",
-        message: `Falha ao remover alias: ${error.message}`,
+        message: `Falha ao remover alias: ${msg}`,
         retryable: true,
       };
     }
@@ -638,19 +630,18 @@ const setVerbosityPreference: ToolEntry = {
     if (!["brief", "normal", "detailed"].includes(verbosity)) {
       return { status: "error", message: "verbosity inválido", retryable: false };
     }
-    const supabase = createAdminClient();
     const currentProfile = (ctx.rep.profile || {}) as Record<string, unknown>;
     const currentPrefs = (currentProfile.preferences || {}) as Record<string, unknown>;
     const newProfile = {
       ...currentProfile,
       preferences: { ...currentPrefs, verbosity },
     };
-    const { error } = await supabase
-      .from("rep_identities")
-      .update({ profile: newProfile, updated_at: new Date().toISOString() })
-      .eq("id", ctx.rep.id);
-    if (error) {
-      return { status: "error", message: `Falha ao salvar: ${error.message}`, retryable: true };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await updateRepById(ctx.rep.id, { profile: newProfile as any, updated_at: new Date().toISOString() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { status: "error", message: `Falha ao salvar: ${msg}`, retryable: true };
     }
     ctx.rep.profile = newProfile as typeof ctx.rep.profile;
     return {

@@ -15,6 +15,9 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import type { RepIdentity } from "@/types/account-assistant";
+// sparkbot_messages — as 4 queries de count abaixo usam filtros JSONB específicos
+// (metadata->tools cs [...]) que não estão cobertos pelo repo genérico.
+// Mantemos createAdminClient pra essas queries; o resto (locations) também fica aqui.
 
 export interface BriefingAppointment {
   start_time_iso: string;

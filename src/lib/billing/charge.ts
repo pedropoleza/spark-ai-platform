@@ -1,7 +1,18 @@
-import { createAdminClient } from "@/lib/supabase/admin";
 import { getLocationToken } from "@/lib/ghl/auth";
 import { GHL_API_BASE } from "@/lib/utils/constants";
 import { calculateCost } from "./pricing";
+import {
+  insertUsageRecord,
+  markCustomKeyCharged,
+  markCapBlocked,
+  getMonthlySpend,
+  findStaleUnbilledRecords,
+  claimUnbilledBatch,
+  releaseClaimForRecord,
+  markWalletCharged,
+} from "@/lib/repositories/usage-records.repo";
+import { getMonthlySpendCap } from "@/lib/repositories/agents.repo";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 interface TrackUsageParams {
   locationId: string;
@@ -35,7 +46,6 @@ interface TrackUsageParams {
  * pra ficar visível no Vercel log se a tabela não existir / RLS bloquear.
  */
 export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
-  const supabase = createAdminClient();
   const cost = calculateCost({
     model: params.model,
     promptTokens: params.promptTokens ?? 0,
@@ -46,32 +56,28 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
     audioModel: params.audioModel,
   });
 
-  // Registrar uso
-  const { data: record, error: insertError } = await supabase
-    .from("usage_records")
-    .insert({
-      location_id: params.locationId,
-      agent_id: params.agentId,
-      contact_id: params.contactId || null,
-      action_type: params.actionType,
-      ai_model: cost.model,
-      prompt_tokens: cost.promptTokens,
-      completion_tokens: cost.completionTokens,
-      cached_tokens: cost.cachedTokens,
-      total_tokens: cost.totalTokens,
-      audio_seconds: cost.audioSeconds,
-      image_count: params.imageCount ?? 0,
-      cost_usd: cost.costUsd,
-      markup_usd: cost.markupUsd,
-      total_charge_usd: cost.totalChargeUsd,
-      uses_custom_key: params.usesCustomKey,
-      charged_to_wallet: false,
-    })
-    .select("id")
-    .single();
+  // Registrar uso via repo
+  const record = await insertUsageRecord({
+    location_id: params.locationId,
+    agent_id: params.agentId,
+    contact_id: params.contactId || null,
+    action_type: params.actionType,
+    ai_model: cost.model,
+    prompt_tokens: cost.promptTokens,
+    completion_tokens: cost.completionTokens,
+    cached_tokens: cost.cachedTokens,
+    total_tokens: cost.totalTokens,
+    audio_seconds: cost.audioSeconds,
+    image_count: params.imageCount ?? 0,
+    cost_usd: cost.costUsd,
+    markup_usd: cost.markupUsd,
+    total_charge_usd: cost.totalChargeUsd,
+    uses_custom_key: params.usesCustomKey,
+    charged_to_wallet: false,
+  });
 
-  if (insertError) {
-    console.error("[Billing] Failed to insert usage_record:", insertError.message);
+  if (!record) {
+    // insertUsageRecord já logou o erro
     return;
   }
 
@@ -79,19 +85,14 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
   // Audit trail mantido em usage_records (charged_to_wallet=true só pra
   // marcar "tratado" e não voltar no cron de retry).
   if (params.usesCustomKey) {
-    if (record) {
-      await supabase
-        .from("usage_records")
-        .update({ charged_to_wallet: true })
-        .eq("id", record.id);
-    }
+    await markCustomKeyCharged(record.id);
     return;
   }
 
   // Hard cap mensal (Pedro 2026-05-04): se atingiu cap da location, marca
   // cap_blocked=true e SKIP charge. Bot continua respondendo (UX preservada),
   // mas custo fica com Pedro até reset mensal ou liberação manual.
-  if (cost.totalChargeUsd > 0 && record) {
+  if (cost.totalChargeUsd > 0) {
     const capCheck = await isMonthlyCapReached(
       params.agentId,
       params.locationId,
@@ -104,10 +105,7 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
         `spent=$${capCheck.spentSoFar.toFixed(2)} + newCharge=$${cost.totalChargeUsd.toFixed(4)} ` +
         `> cap=$${capCheck.cap.toFixed(2)}. Skipping charge.`,
       );
-      await supabase
-        .from("usage_records")
-        .update({ cap_blocked: true })
-        .eq("id", record.id);
+      await markCapBlocked(record.id);
       return;
     }
 
@@ -121,13 +119,7 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
         record.id, // idempotency key
       );
 
-      await supabase
-        .from("usage_records")
-        .update({
-          charged_to_wallet: true,
-          wallet_charge_id: ghlChargeId ?? null,
-        })
-        .eq("id", record.id);
+      await markWalletCharged(record.id, ghlChargeId, new Date().toISOString());
     } catch (error) {
       console.error("[Billing] Failed to charge wallet:", error);
       // Nao bloqueia o processamento — cron chargeUnbilledRecords retenta.
@@ -245,14 +237,8 @@ export async function isMonthlyCapReached(
   locationId: string,
   newChargeUsd: number,
 ): Promise<{ blocked: boolean; cap: number; spentSoFar: number }> {
-  const supabase = createAdminClient();
-
   // 1. Lê cap da config (default 100). Se NULL explicitamente, sem cap.
-  const { data: agentConfig } = await supabase
-    .from("agent_configs")
-    .select("monthly_spend_cap_usd")
-    .eq("agent_id", agentId)
-    .maybeSingle();
+  const agentConfig = await getMonthlySpendCap(agentId);
 
   const cap = agentConfig?.monthly_spend_cap_usd;
   if (cap === null || cap === undefined) {
@@ -268,20 +254,11 @@ export async function isMonthlyCapReached(
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
 
-  // Fix Track 10 C2 (review 2026-05-05): antes filtrava só `charged_to_wallet=true`.
-  // Mas trackAndCharge pode falhar transient (GHL 5xx) deixando record com
-  // `charged_to_wallet=false` mas tracked → usage_records já existe. Esses
-  // contam pro cap mensal logicamente, senão rep pode acumular $500 em
-  // pending e cap nunca disparar. Solução: contar TODOS tracked com
-  // total_charge_usd > 0 (exceto cap_blocked que já são fora do cap).
-  const { data: rows } = await supabase
-    .from("usage_records")
-    .select("total_charge_usd")
-    .eq("location_id", locationId)
-    .gte("created_at", startOfMonth.toISOString())
-    .gt("total_charge_usd", 0);
+  // Fix Track 10 C2 (review 2026-05-05): conta TODOS tracked com
+  // total_charge_usd > 0 (exceto cap_blocked) — ver getMonthlySpend no repo.
+  const rows = await getMonthlySpend(locationId, startOfMonth.toISOString());
 
-  const spent = (rows || []).reduce(
+  const spent = rows.reduce(
     (acc, r) => acc + (Number(r.total_charge_usd) || 0),
     0,
   );
@@ -310,15 +287,9 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
 
   // Alerta: registros unbilled antigos indicam problema recorrente com o GHL wallet.
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const { data: staleStats } = await supabase
-    .from("usage_records")
-    .select("id, total_charge_usd")
-    .eq("charged_to_wallet", false)
-    .eq("uses_custom_key", false)
-    .gt("total_charge_usd", 0)
-    .lt("created_at", oneHourAgo);
+  const staleStats = await findStaleUnbilledRecords(oneHourAgo);
 
-  if (staleStats && staleStats.length > 0) {
+  if (staleStats.length > 0) {
     const totalStale = staleStats.reduce((s, r) => s + Number(r.total_charge_usd || 0), 0);
     if (staleStats.length >= 100 || totalStale >= 10) {
       console.error(
@@ -331,25 +302,12 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
     }
   }
 
-  // Atomic claim: UPDATE pega rows livres e marca com nosso token.
-  // Fix Track 10 H4 (review 2026-05-05): adicionado `cap_blocked.eq.false`
-  // — antes, records cap_blocked ficavam sendo retentados em loop pelo
-  // cron (filtro só excluía charged=true). Agora cron pula records
-  // que já bateram cap (esperam reset mensal ou cap aumentado).
+  // Atomic claim via repo — query EXATA: UPDATE...RETURNING com filters de
+  // idempotência (P1 review 2026-04-28, Fix Track 10 H4 review 2026-05-05).
   const claimToken = (globalThis.crypto as Crypto).randomUUID();
-  const { data: claimed } = await supabase
-    .from("usage_records")
-    .update({ claim_token: claimToken, claimed_at: new Date().toISOString() })
-    .eq("charged_to_wallet", false)
-    .eq("uses_custom_key", false)
-    .eq("cap_blocked", false)
-    .gt("total_charge_usd", 0)
-    .is("claim_token", null)
-    .select("*")
-    .order("created_at", { ascending: true })
-    .limit(50);
+  const claimed = await claimUnbilledBatch(claimToken, new Date().toISOString(), 50);
 
-  if (!claimed || claimed.length === 0) return { charged: 0, failed: 0 };
+  if (claimed.length === 0) return { charged: 0, failed: 0 };
 
   // Cache location → company_id pra evitar N queries
   const locCompanyCache = new Map<string, string | null>();
@@ -376,10 +334,7 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
       const companyId = await getCompanyId(record.location_id);
       if (!companyId) {
         failed++;
-        await supabase
-          .from("usage_records")
-          .update({ claim_token: null, claimed_at: null })
-          .eq("id", record.id);
+        await releaseClaimForRecord(record.id);
         continue;
       }
 
@@ -391,23 +346,12 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
         record.id, // eventId pro GHL — idempotência por record
       );
 
-      await supabase
-        .from("usage_records")
-        .update({
-          charged_to_wallet: true,
-          wallet_charge_id: ghlChargeId ?? null,
-          charged_at: new Date().toISOString(),
-        })
-        .eq("id", record.id);
-
+      await markWalletCharged(record.id, ghlChargeId, new Date().toISOString());
       charged++;
     } catch (err) {
       failed++;
       // Libera claim pra próxima tentativa (não loga retries pra evitar spam)
-      await supabase
-        .from("usage_records")
-        .update({ claim_token: null, claimed_at: null })
-        .eq("id", record.id);
+      await releaseClaimForRecord(record.id);
       const msg = err instanceof Error ? err.message.slice(0, 200) : String(err);
       console.warn(`[Billing] Single charge failed for record ${record.id}: ${msg}`);
     }

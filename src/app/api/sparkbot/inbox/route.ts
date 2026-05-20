@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
+import { updateRepById } from "@/lib/repositories/rep-identities.repo";
 
 export const maxDuration = 30;
 
@@ -55,10 +56,8 @@ export async function GET(request: NextRequest) {
 
   // Heartbeat fire-and-forget: atualiza web_session_active_at. Reminder
   // runner consulta isso pra decidir 'auto' channel.
-  void supabase
-    .from("rep_identities")
-    .update({ web_session_active_at: new Date().toISOString() })
-    .eq("id", tok.rep_id);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  void updateRepById(tok.rep_id, { web_session_active_at: new Date().toISOString() } as any);
 
   // Busca msgs
   let query = supabase

@@ -199,3 +199,70 @@ export async function markCapBlocked(recordId: string): Promise<void> {
     .update({ cap_blocked: true })
     .eq("id", recordId);
 }
+
+/**
+ * Claim atômico de batch de records não cobrados (para chargeUnbilledRecords).
+ *
+ * Replica EXATAMENTE a query de billing/charge.ts:chargeUnbilledRecords —
+ * UPDATE ... WHERE charged_to_wallet=false AND uses_custom_key=false AND
+ * cap_blocked=false AND total_charge_usd>0 AND claim_token IS NULL
+ * RETURNING *.
+ *
+ * Postgres garante que cada row é atribuída a UM claim (sem race condition).
+ * Em caso de falha, caller deve resetar claim_token=null nos records falhos.
+ *
+ * P1 (review 2026-04-28): idempotência por claimToken (UUID por execução).
+ * Fix Track 10 H4 (review 2026-05-05): cap_blocked.eq.false evita loop de
+ * retry em records que já bateram cap mensal.
+ */
+export async function claimUnbilledBatch(
+  claimToken: string,
+  claimedAt: string,
+  limit: number,
+): Promise<UsageRecordRow[]> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("usage_records")
+    .update({ claim_token: claimToken, claimed_at: claimedAt })
+    .eq("charged_to_wallet", false)
+    .eq("uses_custom_key", false)
+    .eq("cap_blocked", false)
+    .gt("total_charge_usd", 0)
+    .is("claim_token", null)
+    .select("*")
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  return (data ?? []) as UsageRecordRow[];
+}
+
+/**
+ * Reseta o claim de um record (em caso de falha) para que o próximo cron
+ * possa retentar. Replica o UPDATE de billing/charge.ts dentro do catch.
+ */
+export async function releaseClaimForRecord(recordId: string): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase
+    .from("usage_records")
+    .update({ claim_token: null, claimed_at: null })
+    .eq("id", recordId);
+}
+
+/**
+ * Marca record como cobrado com sucesso via wallet GHL.
+ * Replica o UPDATE de billing/charge.ts após chargeWallet bem-sucedido.
+ */
+export async function markWalletCharged(
+  recordId: string,
+  ghlChargeId: string | null,
+  chargedAt: string,
+): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase
+    .from("usage_records")
+    .update({
+      charged_to_wallet: true,
+      wallet_charge_id: ghlChargeId ?? null,
+      charged_at: chargedAt,
+    })
+    .eq("id", recordId);
+}

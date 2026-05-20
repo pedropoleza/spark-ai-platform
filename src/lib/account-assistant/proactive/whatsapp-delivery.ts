@@ -20,9 +20,10 @@
  * reminder-runner já fazem checkSilenceGate antes).
  */
 
-import { createAdminClient } from "@/lib/supabase/admin";
 import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import type { RepIdentity } from "@/types/account-assistant";
+import { findActiveSparkbotAgent } from "@/lib/repositories/agents.repo";
+import { insertSparkbotMessage, findLastInboundHubLocation } from "@/lib/repositories/sparkbot-messages.repo";
 
 /**
  * Opt-in check: rep só pode receber proativo via WhatsApp se INICIOU
@@ -43,11 +44,11 @@ import type { RepIdentity } from "@/types/account-assistant";
  * Defense in depth: tanto getEligibleReps no cron filtra, quanto aqui no
  * delivery rejeitamos pre-send (caso algum caller bypassa o filter do cron).
  */
-async function hasOptedInViaWhatsApp(
-  repId: string,
-  supabase: ReturnType<typeof createAdminClient>,
-): Promise<boolean> {
-  const { data, error } = await supabase
+async function hasOptedInViaWhatsApp(repId: string): Promise<boolean> {
+  // Busca direta — query específica de opt-in (não cobre pelo repo genérico)
+  const { createAdminClient: adminClient } = await import("@/lib/supabase/admin");
+  const db = adminClient();
+  const { data, error } = await db
     .from("sparkbot_messages")
     .select("id")
     .eq("rep_id", repId)
@@ -105,13 +106,11 @@ export async function deliverProactiveMessage(
   formattedMessage: string,
   opts: DeliveryOptions,
 ): Promise<DeliveryResult> {
-  const supabase = createAdminClient();
-
   // Fix CRIT-C1 (deep audit 2026-05-06): opt-in agora é via channel='whatsapp'
   // específico, não last_inbound_at genérico (que aceitava Web UI-only).
   // Rep que SÓ usou Web UI: msg vai como channel='system' (badge no painel),
   // não tenta WhatsApp (evita ban Meta).
-  const hasOptIn = await hasOptedInViaWhatsApp(rep.id, supabase);
+  const hasOptIn = await hasOptedInViaWhatsApp(rep.id);
   if (!hasOptIn) {
     console.warn(
       `[proactive-delivery] rep ${rep.id} sem inbound prévio VIA WHATSAPP ` +
@@ -126,13 +125,7 @@ export async function deliverProactiveMessage(
       noOptInHub?.locationId ?? getEnvHubLocationId() ?? opts.activeLocationId;
     let noOptInAgentId = noOptInHub?.agentId || null;
     if (!noOptInAgentId) {
-      const { data: hubAgentRow } = await supabase
-        .from("agents")
-        .select("id")
-        .eq("location_id", envHubLocationId)
-        .eq("type", "account_assistant")
-        .eq("status", "active")
-        .maybeSingle();
+      const hubAgentRow = await findActiveSparkbotAgent(envHubLocationId);
       noOptInAgentId = hubAgentRow?.id ?? null;
     }
     const hubAgent = noOptInAgentId ? { id: noOptInAgentId } : null;
@@ -143,7 +136,7 @@ export async function deliverProactiveMessage(
       );
       return { ok: false, via: "system", error: "no_hub_agent_no_optin" };
     }
-    await supabase.from("sparkbot_messages").insert({
+    await insertSparkbotMessage({
       rep_id: rep.id,
       hub_location_id: envHubLocationId,
       agent_id: hubAgent.id,
@@ -176,18 +169,7 @@ export async function deliverProactiveMessage(
   // → env single-hub → activeLocationId fallback. Multi-hub: rep pode operar
   // em hubs diferentes, então o último inbound mostra qual hub está em uso.
   let repActualHub: string | null = null;
-  const { data: lastInbound } = await supabase
-    .from("sparkbot_messages")
-    .select("hub_location_id")
-    .eq("rep_id", rep.id)
-    .eq("role", "user")
-    .not("hub_location_id", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (lastInbound?.hub_location_id) {
-    repActualHub = lastInbound.hub_location_id as string;
-  }
+  repActualHub = await findLastInboundHubLocation(rep.id);
 
   const hubLocationId =
     process.env.WHATSAPP_DELIVERY_LOCATION_ID?.trim() ||
@@ -199,13 +181,7 @@ export async function deliverProactiveMessage(
     return { ok: false, via: "system", error: "no_hub_resolved" };
   }
 
-  const { data: hubAgent } = await supabase
-    .from("agents")
-    .select("id")
-    .eq("location_id", hubLocationId)
-    .eq("type", "account_assistant")
-    .eq("status", "active")
-    .maybeSingle();
+  const hubAgent = await findActiveSparkbotAgent(hubLocationId);
   if (!hubAgent) {
     console.warn(
       `[proactive-delivery] hub agent não encontrado em ${hubLocationId} (${opts.source})`,
@@ -404,7 +380,7 @@ export async function deliverProactiveMessage(
   // ghl_conversation_id pra polling backfill verificar status real depois.
   // delivery_status segue tracking pós-poll: "pending" (acabou de enviar,
   // sem confirmação), "delivered", "failed". Backfill cron atualiza depois.
-  await supabase.from("sparkbot_messages").insert({
+  await insertSparkbotMessage({
     rep_id: rep.id,
     hub_location_id: hubLocationId,
     agent_id: hubAgent.id,

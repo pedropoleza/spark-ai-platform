@@ -20,6 +20,9 @@ import { corsHeadersFor } from "@/lib/utils/cors";
 import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import type { RepInput } from "@/types/account-assistant";
+import { findRepById, updateRepById } from "@/lib/repositories/rep-identities.repo";
+import { getSparkbotHistory, insertSparkbotMessage } from "@/lib/repositories/sparkbot-messages.repo";
+import { findActiveSparkbotAgent, findAgentConfig } from "@/lib/repositories/agents.repo";
 
 export const maxDuration = 60;
 
@@ -57,11 +60,7 @@ export async function POST(request: NextRequest) {
 
   // 2. Busca rep_identity completo (token só tem rep_id; processIncoming
   // precisa do objeto inteiro pra resolver active_location, ghl_users etc).
-  const { data: rep } = await supabase
-    .from("rep_identities")
-    .select("*")
-    .eq("id", tok.rep_id)
-    .maybeSingle();
+  const rep = await findRepById(tok.rep_id);
   if (!rep) return json({ ok: false, reason: "rep_not_found" }, { status: 404 });
 
   // 3. Busca agent Sparkbot do hub — H29 2026-05-20: DB-first com fallback env
@@ -71,40 +70,19 @@ export async function POST(request: NextRequest) {
 
   let hubAgentId = hubEntry?.agentId || null;
   if (!hubAgentId) {
-    const { data: hubAgentRow } = await supabase
-      .from("agents")
-      .select("id")
-      .eq("location_id", hubLocationId)
-      .eq("type", "account_assistant")
-      .eq("status", "active")
-      .maybeSingle();
+    const hubAgentRow = await findActiveSparkbotAgent(hubLocationId);
     hubAgentId = hubAgentRow?.id ?? null;
   }
   if (!hubAgentId) return json({ ok: false, reason: "no_sparkbot_agent" }, { status: 404 });
   const hubAgent = { id: hubAgentId };
 
-  const { data: agentConfig } = await supabase
-    .from("agent_configs")
-    .select("*")
-    .eq("agent_id", hubAgent.id)
-    .maybeSingle();
+  const agentConfig = await findAgentConfig(hubAgent.id);
 
   // 4. Histórico unificado: lê últimos N turns de sparkbot_messages
   // (mesma lógica do webhook handler — bot lembra do WhatsApp aqui)
   let priorMsgs: Array<{ role: string; content: string; created_at: string }> = [];
   try {
-    const r = await supabase
-      .from("sparkbot_messages")
-      .select("role, content, created_at")
-      .eq("rep_id", rep.id)
-      .eq("hub_location_id", hubLocationId)
-      .order("created_at", { ascending: false })
-      .limit(30);
-    if (r.data) priorMsgs = r.data;
-    if (r.error) {
-      // Migration 00040 ainda não aplicada — segue sem histórico.
-      console.warn("[Sparkbot:send] sparkbot_messages read err:", r.error.message);
-    }
+    priorMsgs = await getSparkbotHistory(rep.id, hubLocationId, 30);
   } catch { /* tabela ausente — segue sem hist */ }
 
   const conversationHistory: ConversationTurn[] = priorMsgs
@@ -124,6 +102,7 @@ export async function POST(request: NextRequest) {
   if (!attachment) {
     try {
       const cutoff = new Date(Date.now() - ATTACHMENT_TTL_MIN * 60 * 1000).toISOString();
+      // Busca direta (não no repo genérico — query específica de cache de attachment)
       const r = await supabase
         .from("sparkbot_messages")
         .select("metadata, created_at")
@@ -183,38 +162,31 @@ export async function POST(request: NextRequest) {
       attachment.kind === "tabular" &&
       !attachmentRestoredFromCache;
 
-    const r = await supabase
-      .from("sparkbot_messages")
-      .insert({
-        rep_id: rep.id,
-        hub_location_id: hubLocationId,
-        agent_id: hubAgent.id,
-        active_location_id: tok.location_id,
-        role: "user",
-        content: persistContent,
-        channel: "web_ui",
-        metadata: {
-          ghl_user_id: tok.ghl_user_id,
-          attachment_kind: attachment?.kind || null,
-          attachment_filename: !attachment
-            ? null
-            : attachment.kind === "tabular"
-            ? attachment.tabular.filename
-            : attachment.kind === "image"
-            ? (attachment.filename ?? null)
-            : attachment.kind === "document"
-            ? attachment.filename
-            : null,
-          attachment_restored_from_cache: attachmentRestoredFromCache,
-          ...(shouldCacheAttachment ? { attachment_full: attachment } : {}),
-        },
-      })
-      .select("id")
-      .single();
-    userInsertId = r.data?.id || null;
-    if (r.error) {
-      console.warn("[Sparkbot:send] sparkbot_messages insert err:", r.error.message);
-    }
+    const inserted = await insertSparkbotMessage({
+      rep_id: rep.id,
+      hub_location_id: hubLocationId,
+      agent_id: hubAgent.id,
+      active_location_id: tok.location_id,
+      role: "user",
+      content: persistContent,
+      channel: "web_ui",
+      metadata: {
+        ghl_user_id: tok.ghl_user_id,
+        attachment_kind: attachment?.kind || null,
+        attachment_filename: !attachment
+          ? null
+          : attachment.kind === "tabular"
+          ? attachment.tabular.filename
+          : attachment.kind === "image"
+          ? (attachment.filename ?? null)
+          : attachment.kind === "document"
+          ? attachment.filename
+          : null,
+        attachment_restored_from_cache: attachmentRestoredFromCache,
+        ...(shouldCacheAttachment ? { attachment_full: attachment } : {}),
+      },
+    });
+    userInsertId = inserted?.id || null;
   } catch (err) {
     console.warn("[Sparkbot:send] sparkbot_messages insert crashed:", err instanceof Error ? err.message : err);
   }
@@ -224,16 +196,17 @@ export async function POST(request: NextRequest) {
   // - last_inbound_at + reset counter: limpa qualquer pausa por silêncio,
   //   já que o rep falou. Espelha lógica do webhook-handler.ts WhatsApp.
   try {
-    await supabase
-      .from("rep_identities")
-      .update({
-        web_session_active_at: new Date().toISOString(),
-        last_inbound_at: new Date().toISOString(),
-        consecutive_proactive_without_reply: 0,
-        proactive_paused_at: null,
-        proactive_warned_at: null,
-      })
-      .eq("id", rep.id);
+    const nowIso = new Date().toISOString();
+    const heartbeatPatch = {
+      web_session_active_at: nowIso,
+      last_inbound_at: nowIso,
+      consecutive_proactive_without_reply: 0,
+      proactive_paused_at: null,
+      proactive_warned_at: null,
+    };
+    // web_session_active_at existe no DB mas não no tipo RepIdentity
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await updateRepById(rep.id, heartbeatPatch as any);
   } catch { /* coluna ausente — sem heartbeat */ }
 
   // 7. Monta RepInput. Se tem attachment, usa ele; message vira caption.
@@ -267,7 +240,7 @@ export async function POST(request: NextRequest) {
       confirmation_mode:
         (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
         "high_only",
-      ai_model: agentConfig?.ai_model,
+      ai_model: agentConfig?.ai_model ?? undefined,
       fallback_model: agentConfig?.fallback_model || null,
       custom_instructions: agentConfig?.custom_instructions || null,
       knowledge_base_instructions: agentConfig?.knowledge_base_instructions || null,
@@ -289,7 +262,7 @@ export async function POST(request: NextRequest) {
   // 8. Persiste resposta (channel='web_ui'); marca como já lida (foi sent
   // diretamente pro browser, não é proativa pendente). Defensivo.
   try {
-    await supabase.from("sparkbot_messages").insert({
+    await insertSparkbotMessage({
       rep_id: rep.id,
       hub_location_id: hubLocationId,
       agent_id: hubAgent.id,
