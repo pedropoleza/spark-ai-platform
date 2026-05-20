@@ -24,6 +24,11 @@ import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier
 import { runWithTools, type LLMMessage } from "./llm-client";
 import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
 import { runSparkbotTurn, buildToolCtx } from "./core/run-sparkbot-turn";
+import {
+  extractInteractiveFromToolCalls,
+  interactiveFallbackText,
+  type InteractivePayload,
+} from "./core/interactive";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 // H29/H30/H31 (Pedro 2026-05-15): Conversational UX layer
 // + 4.3 (Pedro 2026-05-16): silence recovery
@@ -99,6 +104,10 @@ export interface ProcessOutput {
   primary_error?: string;
   /** Erro do model secundário (Claude Haiku) se também falhou. */
   secondary_error?: string;
+  /** Payload interativo (botões/listas) quando o LLM chamou present_options.
+   *  O canal de envio decide renderizar (WhatsApp) ou cair pro `text` (web/GHL).
+   *  `text` SEMPRE traz o fallback (corpo + opções numeradas). */
+  interactive?: InteractivePayload;
 }
 
 export async function processIncoming(input: ProcessInput): Promise<ProcessOutput> {
@@ -419,6 +428,16 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // Passa o confirmationMode pra getAllToolDefinitions injetar `confirmed_by_rep`
   // no schema das tools que o gate exige — sem isso o LLM fica em loop
   // "Confirma? → sim → bloqueado de novo" (visto em prod 2026-04-30).
+  // Stevo interativo (Pedro 2026-05-20): esconde present_options do LLM quando o
+  // gate STEVO_INTERACTIVE_ENABLED tá off → bot idêntico a hoje. On = LLM pode usar
+  // (e o prompt-builder ensina). Pareia com o gate de envio no stevo-handler.
+  const interactiveEnabled = /^(1|true|yes)$/i.test(
+    process.env.STEVO_INTERACTIVE_ENABLED?.trim() || "",
+  );
+  const disabledTools = interactiveEnabled
+    ? input.config.disabled_tools
+    : [...(input.config.disabled_tools || []), "present_options"];
+
   const result = await runSparkbotTurn({
     systemPrompt,
     messages: [...history, userMessage],
@@ -426,7 +445,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     toolSelection: {
       kind: "all",
       confirmationMode: input.config.confirmation_mode || "high_only",
-      disabledTools: input.config.disabled_tools,
+      disabledTools,
     },
     model: input.config.ai_model,
     fallbackModel: input.config.fallback_model,
@@ -520,7 +539,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
             coherence.action === "rerun"
               ? getAllToolDefinitions(
                   input.config.confirmation_mode || "high_only",
-                  input.config.disabled_tools,
+                  disabledTools,
                 )
               : [];
           const rerun = await runWithTools({
@@ -602,8 +621,14 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // (Coherence gate roda ANTES do billing — ver acima. Detector migrado para
   // core/coherence-gate.ts e agora é blocking, não mais signal-only.)
 
+  // Interativo (Etapa 3): se o LLM chamou present_options, monta o payload e usa
+  // o texto numerado como fallback (web/GHL e quando o envio interativo falha).
+  // O texto-fallback é o que persiste em content (histórico legível).
+  const interactive = extractInteractiveFromToolCalls(result.tool_calls);
+  const finalText = interactive ? interactiveFallbackText(interactive) : result.text;
+
   return {
-    text: result.text || "Não consegui gerar resposta. Tenta de novo?",
+    text: finalText || "Não consegui gerar resposta. Tenta de novo?",
     should_send: true,
     tokens: {
       prompt: result.prompt_tokens,
@@ -616,6 +641,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     llm_failed: llmFailed,
     primary_error: result.primary_error,
     secondary_error: result.secondary_error,
+    interactive: interactive ?? undefined,
   };
 }
 

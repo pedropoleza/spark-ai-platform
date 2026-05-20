@@ -35,13 +35,23 @@ import {
 } from "@/lib/repositories/sparkbot-messages.repo";
 import { upsertStevoInstance } from "@/lib/repositories/stevo-instances.repo";
 import type { ParsedStevoMessage } from "./stevo-parser";
-import { sendStevoText, type StevoSendResult } from "./stevo-send";
+import {
+  sendStevoText,
+  sendStevoButton,
+  sendStevoList,
+  type StevoSendResult,
+} from "./stevo-send";
 
 const SPARKBOT_HISTORY_TURNS = 30;
 
 /** Gate do envio via Stevo (fase 2). Default OFF — ligar só no cutover. */
 function isStevoSendEnabled(): boolean {
   return /^(1|true|yes)$/i.test(process.env.STEVO_SEND_ENABLED?.trim() || "");
+}
+
+/** Gate do interativo (botões/listas). Default OFF — ligar só no go-live. */
+function isStevoInteractiveEnabled(): boolean {
+  return /^(1|true|yes)$/i.test(process.env.STEVO_INTERACTIVE_ENABLED?.trim() || "");
 }
 
 /**
@@ -301,31 +311,76 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
   // (cutover supervisionado), a resposta sai pelo Stevo, pela MESMA instância
   // que recebeu (parsed.serverUrl + parsed.instanceToken). Env é só fallback.
   const sendEnabled = isStevoSendEnabled();
+  const interactiveEnabled = isStevoInteractiveEnabled();
   const replyText = result.text || "";
+  const interactive = result.interactive;
+  // Canal real do envio (audit): "buttons" | "list" | "text" | null.
+  let sentKind: "buttons" | "list" | "text" | null = null;
   let sendResult: StevoSendResult | null = null;
 
-  if (sendEnabled && replyText.trim()) {
+  if (sendEnabled && (replyText.trim() || interactive)) {
     const serverUrl = parsed.serverUrl || process.env.STEVO_API_BASE?.trim() || "";
     const apiKey =
       parsed.instanceToken ||
       process.env.STEVO_SEND_APIKEY?.trim() ||
       process.env.STEVO_INSTANCE_TOKEN?.trim() ||
       "";
-    sendResult = await sendStevoText({
-      serverUrl,
-      apiKey,
-      number: parsed.phone,
-      text: replyText,
-    });
+
+    // Interativo (botão/lista) quando o gate tá ligado e o turno tem payload.
+    // Se o envio interativo falhar, cai pro texto (o fallback já traz as opções
+    // numeradas) — rep nunca fica sem resposta.
+    if (interactiveEnabled && interactive) {
+      if (interactive.kind === "buttons") {
+        sentKind = "buttons";
+        sendResult = await sendStevoButton({
+          serverUrl,
+          apiKey,
+          number: parsed.phone,
+          title: interactive.title,
+          body: interactive.body,
+          footer: interactive.footer,
+          buttons: interactive.options.map((o) => ({ id: o.id, label: o.label })),
+        });
+      } else {
+        sentKind = "list";
+        sendResult = await sendStevoList({
+          serverUrl,
+          apiKey,
+          number: parsed.phone,
+          title: interactive.title,
+          body: interactive.body,
+          footer: interactive.footer,
+          buttonText: interactive.buttonText || "Ver opções",
+          sections: [
+            {
+              rows: interactive.options.map((o) => ({
+                rowId: o.id,
+                title: o.label,
+                description: o.description,
+              })),
+            },
+          ],
+        });
+      }
+      if (!sendResult.ok && replyText.trim()) {
+        console.warn(
+          `[stevo-handler] envio ${sentKind} falhou (${sendResult.error}) — fallback texto.`,
+        );
+        sentKind = "text";
+        sendResult = await sendStevoText({ serverUrl, apiKey, number: parsed.phone, text: replyText });
+      }
+    } else {
+      sentKind = "text";
+      sendResult = await sendStevoText({ serverUrl, apiKey, number: parsed.phone, text: replyText });
+    }
+
     if (sendResult.ok) {
       console.log(
-        `[stevo-handler] resposta enviada via Stevo pra ${parsed.phone} ` +
-          `(${sendResult.sent}/${sendResult.total} bolhas).`,
+        `[stevo-handler] resposta enviada via Stevo pra ${parsed.phone} (${sentKind}; ${sendResult.sent}/${sendResult.total}).`,
       );
     } else {
       console.error(
-        `[stevo-handler] envio via Stevo FALHOU pra ${parsed.phone}: ${sendResult.error} ` +
-          `(${sendResult.sent}/${sendResult.total} enviadas).`,
+        `[stevo-handler] envio via Stevo FALHOU pra ${parsed.phone} (${sentKind}): ${sendResult.error}`,
       );
     }
   } else {
@@ -355,6 +410,7 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       // Status de envio: sent_via="stevo" quando a resposta saiu de fato.
       // not_sent=true quando o gate estava off OU o envio falhou (audit claro).
       sent_via: sendResult?.ok ? "stevo" : null,
+      sent_kind: sentKind,
       not_sent: !sendResult?.ok,
       send_error: sendResult?.error ?? null,
       send_bubbles: sendResult ? `${sendResult.sent}/${sendResult.total}` : null,

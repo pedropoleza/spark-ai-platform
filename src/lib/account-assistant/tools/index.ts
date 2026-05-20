@@ -33,6 +33,8 @@ import { RECAP_TOOLS } from "./recap";
 import { BULK_MANAGEMENT_TOOLS } from "./bulk-management";
 // H33 (Pedro 2026-05-18): Follow-up Feature — 8 tools
 import { FOLLOWUP_TOOLS } from "./followup";
+// Stevo interativo (Pedro 2026-05-20): present_options (botões/listas)
+import { PRESENTATION_TOOLS } from "./presentation";
 
 const ALL_ENTRIES: ToolEntry[] = [
   ...CONTACTS_TOOLS,
@@ -53,6 +55,7 @@ const ALL_ENTRIES: ToolEntry[] = [
   ...RECAP_TOOLS,
   ...BULK_MANAGEMENT_TOOLS,
   ...FOLLOWUP_TOOLS,
+  ...PRESENTATION_TOOLS,
 ];
 
 export const TOOL_REGISTRY: Record<string, ToolEntry> = Object.fromEntries(
