@@ -13,6 +13,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { shouldFireCron } from "./cron-evaluator";
 import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
+import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 
 export interface ReminderRunResult {
   fired: number;
@@ -167,8 +168,10 @@ async function deliverReminderWeb(
   title: string | undefined,
 ): Promise<void> {
   const supabase = createAdminClient();
-  // Multi-hub: lookup do hub real do rep (mesma lógica do whatsapp delivery)
-  const envHubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  // H29 2026-05-20: hub via DB-first com fallback env (multi-hub ready)
+  // Prioridade: último inbound do rep → hub ativo no DB → env fallback
+  const hubEntry = await resolvePrimaryHub();
+  const envHubLocationId = hubEntry?.locationId ?? getEnvHubLocationId();
   const { data: lastInbound } = await supabase
     .from("sparkbot_messages")
     .select("hub_location_id")
@@ -426,15 +429,21 @@ async function fireOutboundToContact(
   // Channel='system' = badge no painel web do rep ("manda msg pra Maria
   // enviado: ...") — rep vê histórico dos agendamentos executados.
   try {
-    // Resolve hub agent_id
-    const envHubLoc = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
-    const { data: hubAgent } = await supabase
-      .from("agents")
-      .select("id")
-      .eq("location_id", envHubLoc)
-      .eq("type", "account_assistant")
-      .eq("status", "active")
-      .maybeSingle();
+    // H29 2026-05-20: hub via DB-first com fallback env
+    const hubEntryAudit = await resolvePrimaryHub();
+    const envHubLoc = hubEntryAudit?.locationId ?? getEnvHubLocationId();
+    let auditAgentId = hubEntryAudit?.agentId || null;
+    if (!auditAgentId && envHubLoc) {
+      const { data: hubAgentRow } = await supabase
+        .from("agents")
+        .select("id")
+        .eq("location_id", envHubLoc)
+        .eq("type", "account_assistant")
+        .eq("status", "active")
+        .maybeSingle();
+      auditAgentId = hubAgentRow?.id ?? null;
+    }
+    const hubAgent = auditAgentId ? { id: auditAgentId } : null;
     if (hubAgent && envHubLoc) {
       const auditContent = sendError
         ? `⚠️ Falha ao enviar msg agendada pro contato: ${sendError.slice(0, 100)}`

@@ -17,6 +17,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { processIncoming } from "@/lib/account-assistant/processor";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
+import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import type { RepInput } from "@/types/account-assistant";
 
@@ -63,18 +64,24 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
   if (!rep) return json({ ok: false, reason: "rep_not_found" }, { status: 404 });
 
-  // 3. Busca agent Sparkbot do hub (mesma lógica do webhook handler)
-  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  // 3. Busca agent Sparkbot do hub — H29 2026-05-20: DB-first com fallback env
+  const hubEntry = await resolvePrimaryHub();
+  const hubLocationId = hubEntry?.locationId ?? getEnvHubLocationId();
   if (!hubLocationId) return json({ ok: false, reason: "hub_not_configured" }, { status: 500 });
 
-  const { data: hubAgent } = await supabase
-    .from("agents")
-    .select("id")
-    .eq("location_id", hubLocationId)
-    .eq("type", "account_assistant")
-    .eq("status", "active")
-    .maybeSingle();
-  if (!hubAgent) return json({ ok: false, reason: "no_sparkbot_agent" }, { status: 404 });
+  let hubAgentId = hubEntry?.agentId || null;
+  if (!hubAgentId) {
+    const { data: hubAgentRow } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("location_id", hubLocationId)
+      .eq("type", "account_assistant")
+      .eq("status", "active")
+      .maybeSingle();
+    hubAgentId = hubAgentRow?.id ?? null;
+  }
+  if (!hubAgentId) return json({ ok: false, reason: "no_sparkbot_agent" }, { status: 404 });
+  const hubAgent = { id: hubAgentId };
 
   const { data: agentConfig } = await supabase
     .from("agent_configs")

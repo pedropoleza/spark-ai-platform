@@ -5,6 +5,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { identifyRep, normalizePhone, acceptTerms } from "@/lib/account-assistant/identity";
 import { processIncoming } from "@/lib/account-assistant/processor";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
+import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import type { RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 
@@ -89,22 +90,27 @@ export async function POST(request: NextRequest) {
     rep.terms_accepted_at = new Date().toISOString();
   }
 
-  // Sparkbot agent
-  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  // H29 2026-05-20: hub via DB-first com fallback env
+  const hubEntryTest = await resolvePrimaryHub();
+  const hubLocationId = hubEntryTest?.locationId ?? getEnvHubLocationId();
   if (!hubLocationId) return errorResponse("Hub não configurado", 500, "hub_not_configured");
 
   const supabase = createAdminClient();
-  const { data: hubAgent } = await supabase
-    .from("agents")
-    .select("id")
-    .eq("location_id", hubLocationId)
-    .eq("type", "account_assistant")
-    .eq("status", "active")
-    .maybeSingle();
-
-  if (!hubAgent) {
+  let hubAgentId = hubEntryTest?.agentId || null;
+  if (!hubAgentId) {
+    const { data: hubAgentRow } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("location_id", hubLocationId)
+      .eq("type", "account_assistant")
+      .eq("status", "active")
+      .maybeSingle();
+    hubAgentId = hubAgentRow?.id ?? null;
+  }
+  if (!hubAgentId) {
     return errorResponse("Sparkbot não está ativo no Hub", 404, "sparkbot_inactive");
   }
+  const hubAgent = { id: hubAgentId };
   const { data: agentConfig } = await supabase
     .from("agent_configs")
     .select("*")

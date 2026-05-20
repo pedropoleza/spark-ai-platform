@@ -16,6 +16,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { corsHeadersFor } from "@/lib/utils/cors";
+import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import OpenAI, { toFile } from "openai";
 
 export const maxDuration = 30;
@@ -80,18 +81,20 @@ export async function POST(request: NextRequest) {
     // de rep_identities, não de agents). Antes deste fix, INSERT de
     // usage_records falhava em FK violation silenciosamente → Whisper Web 100% free.
     try {
+      // H29 2026-05-20: hub via DB-first com fallback env
+      const hubEntry = await resolvePrimaryHub();
+      const hubLocationIdTx = hubEntry?.locationId ?? getEnvHubLocationId();
       const supabase = createAdminClient();
-      const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
-      let hubAgentId: string | null = null;
-      if (hubLocationId) {
-        const { data: hubAgent } = await supabase
+      let hubAgentId: string | null = hubEntry?.agentId || null;
+      if (!hubAgentId && hubLocationIdTx) {
+        const { data: hubAgentRow } = await supabase
           .from("agents")
           .select("id")
-          .eq("location_id", hubLocationId)
+          .eq("location_id", hubLocationIdTx)
           .eq("type", "account_assistant")
           .eq("status", "active")
           .maybeSingle();
-        hubAgentId = hubAgent?.id || null;
+        hubAgentId = hubAgentRow?.id || null;
       }
 
       const { data: ls } = await supabase
@@ -115,8 +118,8 @@ export async function POST(request: NextRequest) {
         });
       } else {
         console.warn(
-          "[transcribe] ASSISTANT_HUB_LOCATION_ID não setada ou hub agent inativo — " +
-          "Whisper rodando sem billing. Setar env var no Vercel.",
+          "[transcribe] hub agent não encontrado (DB + env) — " +
+          "Whisper rodando sem billing. Verificar agents account_assistant ativos.",
         );
       }
     } catch (e) {

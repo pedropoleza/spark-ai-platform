@@ -17,6 +17,7 @@
 
 import type { ToolEntry } from "./types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import {
   createFollowupRequest,
   approveSequence,
@@ -445,8 +446,10 @@ async function resolveAgentId(locationId: string): Promise<string | null> {
     .eq("status", "active")
     .maybeSingle();
   if (directAgent?.id) return directAgent.id;
-  // fallback: usa hub agent (env var)
-  const hubLoc = process.env.ASSISTANT_HUB_LOCATION_ID;
+  // H29 2026-05-20: fallback via hub-resolver (DB-first) em vez de env direto
+  const hubEntry = await resolvePrimaryHub();
+  if (hubEntry?.agentId) return hubEntry.agentId;
+  const hubLoc = hubEntry?.locationId ?? getEnvHubLocationId();
   if (hubLoc) {
     const { data: hubAgent } = await supabase
       .from("agents")

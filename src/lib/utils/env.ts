@@ -60,8 +60,12 @@ export function validateEnv(): void {
       console.warn("[env] ⚠️  GHL_WEBHOOK_SECRET não configurado — webhook aceita requests sem assinatura. Configure + WEBHOOK_REQUIRE_SIGNATURE=true para prod.");
     }
     if (!process.env.ASSISTANT_HUB_LOCATION_ID?.trim()) {
-      console.error(
-        "[env] 🚨 ASSISTANT_HUB_LOCATION_ID não configurado — Sparkbot fica inacessível e msgs do Hub caem em sales/recruitment routing. Configure imediatamente.",
+      // H29 2026-05-20: env virou opcional — hub agora é resolvido via DB
+      // (resolveActiveHubAgents em hub-resolver.ts). Env mantida como fallback
+      // de segurança. Se o DB tiver ≥1 agent account_assistant ativo, tudo ok.
+      console.warn(
+        "[env] ⚠️  ASSISTANT_HUB_LOCATION_ID não configurado — hub será resolvido via DB. " +
+          "Configure a env como fallback de segurança se o DB ficar inacessível.",
       );
     }
     if (!process.env.ASSISTANT_HUB_COMPANY_ID?.trim()) {

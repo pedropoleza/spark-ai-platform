@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { identifyRep, normalizePhone, acceptTerms } from "@/lib/account-assistant/identity";
 import { processIncoming } from "@/lib/account-assistant/processor";
 import { errorResponse } from "@/lib/utils/api";
+import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import type { RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 
@@ -69,19 +70,25 @@ export async function POST(request: NextRequest) {
     rep.terms_accepted_at = new Date().toISOString();
   }
 
-  // Sparkbot agent
-  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  // H29 2026-05-20: hub via DB-first com fallback env
+  const hubEntrySynth = await resolvePrimaryHub();
+  const hubLocationId = hubEntrySynth?.locationId ?? getEnvHubLocationId();
   if (!hubLocationId) return errorResponse("Hub não configurado", 500, "hub_not_configured");
 
   const supabase = createAdminClient();
-  const { data: hubAgent } = await supabase
-    .from("agents")
-    .select("id")
-    .eq("location_id", hubLocationId)
-    .eq("type", "account_assistant")
-    .eq("status", "active")
-    .maybeSingle();
-  if (!hubAgent) return errorResponse("Sparkbot inativo no Hub", 404, "no_sparkbot");
+  let hubAgentIdSynth = hubEntrySynth?.agentId || null;
+  if (!hubAgentIdSynth) {
+    const { data: hubAgentRow } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("location_id", hubLocationId)
+      .eq("type", "account_assistant")
+      .eq("status", "active")
+      .maybeSingle();
+    hubAgentIdSynth = hubAgentRow?.id ?? null;
+  }
+  if (!hubAgentIdSynth) return errorResponse("Sparkbot inativo no Hub", 404, "no_sparkbot");
+  const hubAgent = { id: hubAgentIdSynth };
   const { data: agentConfig } = await supabase
     .from("agent_configs")
     .select("*")

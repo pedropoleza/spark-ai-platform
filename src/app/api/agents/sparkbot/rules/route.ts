@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
+import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 
 /**
  * GET /api/agents/sparkbot/rules
@@ -13,19 +14,27 @@ export async function GET() {
   const session = await getSession();
   if (!session) return unauthorized();
 
-  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  // H29 2026-05-20: hub via DB-first (hub-resolver) com fallback env
+  const hub = await resolvePrimaryHub();
+  const hubLocationId = hub?.locationId ?? getEnvHubLocationId();
   if (!hubLocationId) return errorResponse("Hub não configurado", 500, "hub_not_configured");
 
   const supabase = createAdminClient();
 
-  // Sparkbot agent
-  const { data: agent } = await supabase
-    .from("agents")
-    .select("id")
-    .eq("location_id", hubLocationId)
-    .eq("type", "account_assistant")
-    .maybeSingle();
-  if (!agent) return NextResponse.json({ rules: [] });
+  // Sparkbot agent — se já temos agentId do resolver, usa direto
+  let agentId = hub?.agentId || null;
+  if (!agentId) {
+    const { data: agent } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("location_id", hubLocationId)
+      .eq("type", "account_assistant")
+      .maybeSingle();
+    agentId = agent?.id ?? null;
+  }
+  if (!agentId) return NextResponse.json({ rules: [] });
+  // Alias pra compatibilidade com código abaixo
+  const agent = { id: agentId };
 
   const { data: rules } = await supabase
     .from("assistant_proactive_rules")
@@ -82,17 +91,24 @@ export async function POST(request: NextRequest) {
     return errorResponse("cooldown_minutes deve ser número entre 0 e 10080 (1 semana)", 400, "invalid_cooldown");
   }
 
-  const hubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
-  if (!hubLocationId) return errorResponse("Hub não configurado", 500, "hub_not_configured");
+  // H29 2026-05-20: hub via DB-first com fallback env
+  const hubPost = await resolvePrimaryHub();
+  const hubLocationIdPost = hubPost?.locationId ?? getEnvHubLocationId();
+  if (!hubLocationIdPost) return errorResponse("Hub não configurado", 500, "hub_not_configured");
 
   const supabase = createAdminClient();
-  const { data: agent } = await supabase
-    .from("agents")
-    .select("id")
-    .eq("location_id", hubLocationId)
-    .eq("type", "account_assistant")
-    .maybeSingle();
-  if (!agent) return errorResponse("Sparkbot agent não existe", 500, "no_agent");
+  let agentIdPost = hubPost?.agentId || null;
+  if (!agentIdPost) {
+    const { data: agentRow } = await supabase
+      .from("agents")
+      .select("id")
+      .eq("location_id", hubLocationIdPost)
+      .eq("type", "account_assistant")
+      .maybeSingle();
+    agentIdPost = agentRow?.id ?? null;
+  }
+  if (!agentIdPost) return errorResponse("Sparkbot agent não existe", 500, "no_agent");
+  const agent = { id: agentIdPost };
 
   const { data: rule, error } = await supabase
     .from("assistant_proactive_rules")

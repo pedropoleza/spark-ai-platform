@@ -21,6 +21,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import type { RepIdentity } from "@/types/account-assistant";
 
 /**
@@ -119,15 +120,22 @@ export async function deliverProactiveMessage(
     );
     // Não envia via Stevo. Persiste como 'system' (badge web). Quando rep
     // mandar 1ª msg, próximos proativos serão entregues normalmente.
+    // H29 2026-05-20: hub via DB-first com fallback env
+    const noOptInHub = await resolvePrimaryHub();
     const envHubLocationId =
-      process.env.ASSISTANT_HUB_LOCATION_ID?.trim() || opts.activeLocationId;
-    const { data: hubAgent } = await supabase
-      .from("agents")
-      .select("id")
-      .eq("location_id", envHubLocationId)
-      .eq("type", "account_assistant")
-      .eq("status", "active")
-      .maybeSingle();
+      noOptInHub?.locationId ?? getEnvHubLocationId() ?? opts.activeLocationId;
+    let noOptInAgentId = noOptInHub?.agentId || null;
+    if (!noOptInAgentId) {
+      const { data: hubAgentRow } = await supabase
+        .from("agents")
+        .select("id")
+        .eq("location_id", envHubLocationId)
+        .eq("type", "account_assistant")
+        .eq("status", "active")
+        .maybeSingle();
+      noOptInAgentId = hubAgentRow?.id ?? null;
+    }
+    const hubAgent = noOptInAgentId ? { id: noOptInAgentId } : null;
     if (!hubAgent) {
       // Sem hub não dá nem pra persistir — log + sai
       console.warn(
@@ -157,14 +165,16 @@ export async function deliverProactiveMessage(
     return { ok: true, via: "system", error: "blocked_no_optin", hubLocationId: envHubLocationId };
   }
 
-  const envHubLocationId = process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  // H29 2026-05-20: hub via DB-first com fallback env
+  const mainHub = await resolvePrimaryHub();
+  const envHubLocationId = mainHub?.locationId ?? getEnvHubLocationId();
   const hubCompanyId =
     process.env.ASSISTANT_HUB_COMPANY_ID?.trim() ||
     process.env.NEXT_PUBLIC_GHL_COMPANY_ID?.trim();
 
-  // Hub resolution: env override → último inbound do rep → env single-hub
-  // → activeLocationId fallback. Multi-hub: rep pode operar em hubs
-  // diferentes, então o último inbound mostra qual hub está em uso.
+  // Hub resolution: env override → último inbound do rep → hub ativo no DB
+  // → env single-hub → activeLocationId fallback. Multi-hub: rep pode operar
+  // em hubs diferentes, então o último inbound mostra qual hub está em uso.
   let repActualHub: string | null = null;
   const { data: lastInbound } = await supabase
     .from("sparkbot_messages")
