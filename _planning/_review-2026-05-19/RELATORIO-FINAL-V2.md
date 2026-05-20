@@ -84,5 +84,29 @@ risco. Feitos com backward-compat + validação build, sequencialmente:
 3. **Smoke (sua conta):** nota em 3 contatos · mover opp (conferir no app que **moveu, não duplicou** — caso Henry) · fechar/criar opp · lembrete solicitado vindo **limpo** (sem ameaça) · envio a cliente com **1 confirmação** sem re-perguntar (caso Phil) · provocar um erro e ver mensagem **sem jargão** · `get_contact_notes` na location `dF2FDDZzSv715e1av4gr`.
 4. Monitorar `admin_signals` (coherence/scope) por alguns dias (hypercare).
 
+## Fluxo Stevo direto — recebimento + envio (Pedro 2026-05-20)
+
+Mudança de fluxo: o WhatsApp do rep passa a **entrar e sair pela API do Stevo direto**;
+o **GHL vira fallback**. Motivo: o webhook do GHL chega **sem o binário** do arquivo
+(perdia CSV/imagem/áudio); o Stevo entrega o binário **decriptado em base64** no próprio
+webhook.
+
+- **Recebimento** (`4d2bd9c` captura, `a07cd99` handler): `/api/webhooks/stevo` →
+  `parseStevoWebhook` (puro; filtra fromMe/grupo/status) → `handleStevoInbound` (hub-resolver
+  + identity + dedup por messageId → RepInput via base64 → processFile/Whisper → processIncoming
+  → persiste channel `whatsapp`). **Provado nos 4 tipos reais**: texto, imagem 623KB, áudio 9s,
+  CSV **58×12** (o arquivo que o GHL perdia).
+- **Envio** (`608ea13`): `stevo-send.ts` → `POST {serverUrl}/send/text`, header
+  `apikey=instanceToken`, body `{number,text}` — `serverUrl` + token vêm do **próprio inbound**
+  (robusto a troca de servidor smv2-*). Splitter `---` multi-bolha. **Teste de envio real ✅**
+  (HTTP 2xx pra smv2-3).
+
+**Dois gates pro cutover (default OFF — rollback = desligar):**
+- `STEVO_SEND_ENABLED=1` → handler do Stevo responde via `/send/text`.
+- `SPARKBOT_INBOUND_PRIMARY=stevo` → path GHL **ignora inbound do Hub** (vira fallback),
+  evitando dupla-resposta (GHL + Stevo disparam os dois pro mesmo inbound).
+
+Validação: parser **31/31** · send **32/32** · `tsc` 0 · `next build` ✅.
+
 ## Índice
 `RV1-confiabilidade.md` · `RV2-arquitetura.md` · `RV3-prontidao.md` · + os 10 relatórios do review original + `RELATORIO-EXECUTIVO.md`.

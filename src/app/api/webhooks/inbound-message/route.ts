@@ -57,6 +57,18 @@ import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { processMessageQueue } from "@/lib/queue/queue-processor";
 import type { TargetingRule } from "@/types/agent";
 
+// ===== Cutover Stevo (Pedro 2026-05-20) =====
+// Quando SPARKBOT_INBOUND_PRIMARY="stevo", o recebimento do Hub passa a ser
+// servido pelo webhook do Stevo (que entrega o binário decriptado + responde
+// via /send/text). Este path GHL vira FALLBACK: ignora o inbound do Hub pra
+// NÃO processar/responder em dobro (o GHL e o Stevo disparam os dois pro mesmo
+// inbound). Default (env ausente ou "ghl") = GHL primário, comportamento atual
+// inalterado. Pareia com STEVO_SEND_ENABLED no stevo-handler: ligar os DOIS no
+// cutover supervisionado; desligar qualquer um faz rollback imediato.
+function isStevoInboundPrimary(): boolean {
+  return (process.env.SPARKBOT_INBOUND_PRIMARY || "").trim().toLowerCase() === "stevo";
+}
+
 export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.text();
@@ -184,6 +196,14 @@ export async function POST(request: NextRequest) {
     // de um hub Sparkbot (ex: WhatsApp via Stevo numa location dedicada).
     // Cache em memória 5min pra evitar query a cada webhook.
     if (await isSparkbotHub(locationId)) {
+      // Cutover: se o Stevo é o primário, o GHL não processa o inbound do Hub
+      // (vira fallback). Só inbound — outbound o handler já ignora internamente.
+      if (direction === "inbound" && isStevoInboundPrimary()) {
+        console.log(
+          `[Webhook] Sparkbot inbound suprimido — Stevo é primário (loc=${locationId}, contact=${contactId})`,
+        );
+        return NextResponse.json({ received: true, skipped: "stevo_primary" });
+      }
       const { handleAssistantInbound } = await import("@/lib/account-assistant/webhook-handler");
       waitUntil(
         handleAssistantInbound({
