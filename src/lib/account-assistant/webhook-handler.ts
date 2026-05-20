@@ -851,6 +851,31 @@ async function extractRepInput(args: {
   }
 
   const attachments = extractMediaAttachments(body);
+
+  // Debug Pedro 2026-05-19: quando body parece conter doc/arquivo (filename
+  // no body, ou messageType doc) mas extração retornou vazio, loga as KEYS
+  // do body + samples pra entender o shape do webhook Stevo/Evolution.
+  if (attachments.length === 0) {
+    const bodyText = String(body.body || body.message || "");
+    const looksLikeFile = /\.(csv|xlsx?|pdf|docx?|png|jpe?g)\b/i.test(bodyText) ||
+      /document|spreadsheet|planilha|arquivo/i.test(bodyText);
+    if (looksLikeFile) {
+      const keys = Object.keys(body);
+      const sample: Record<string, unknown> = {};
+      for (const k of keys) {
+        const v = body[k];
+        if (typeof v === "string") sample[k] = v.slice(0, 120);
+        else if (Array.isArray(v)) sample[k] = `[array len=${v.length}] ${JSON.stringify(v).slice(0, 300)}`;
+        else if (v && typeof v === "object") sample[k] = JSON.stringify(v).slice(0, 300);
+        else sample[k] = v;
+      }
+      console.warn(
+        `[Sparkbot] DOC ATTACHMENT MISS — body parece ter arquivo mas extractMediaAttachments=[]. ` +
+        `keys=[${keys.join(",")}] sample=${JSON.stringify(sample).slice(0, 1500)}`,
+      );
+    }
+  }
+
   if (attachments.length > 0) {
     // Pega o PRIMEIRO anexo suportado e processa via file-processor unificado
     // (mesmo parser que o painel web usa). Imagem/PDF/CSV/XLSX viram RepInput
