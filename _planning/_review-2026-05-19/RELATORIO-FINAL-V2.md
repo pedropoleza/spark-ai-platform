@@ -8,9 +8,13 @@
 | Dimensão | Baseline (review 19/05) | Pós-V2 | Δ | Fonte |
 |---|---|---|---|---|
 | **Comportamento** ("funcionário humano") | 6,0/10 | **7,3/10** (projetado) | +1,3 | RV1 |
-| **Arquitetura** | 6,5/10 | **7,0/10** | +0,5 | RV2 |
-| **Organização / limpeza** | 5,5/10 | **6,5/10** | +1,0 | RV2 |
-| **Prontidão pra deploy** | — | **8,5/10 → GO** | — | RV3 |
+| **Arquitetura** | 6,5/10 | **7,8/10** (pós-V2.1) | +1,3 | RV2→RV4 |
+| **Organização / limpeza** | 5,5/10 | **7,3/10** (pós-V2.1) | +1,8 | RV2→RV4 |
+| **Prontidão pra deploy** | — | **GO** (RV3 8,5 + RV4) | — | RV3/RV4 |
+
+> A **Fase Estrutural V2.1** (executada após o "não pare até finalizar") elevou arquitetura
+> 7,0→7,8 e organização 6,5→7,3 — fechou a fronteira GHL (operations.ts), o multi-tenant
+> (hub-resolver) e introduziu a camada de repositório. Detalhe em `RV4-pos-v21.md`.
 
 > O score de **comportamento é PROJETADO**: o código resolve os P0/P1, mas a calibração de
 > persona/confirmação é prompt-only — só o **smoke de amanhã + dados pós-deploy** confirmam a
@@ -49,10 +53,22 @@
 > Status: ⬜ pendente · ⏳ em andamento · ✅ feito (atualizado a cada commit).
 
 - ✅ **Migração das 43 `ctx.ghlClient.*` → `operations.ts`** (33 primitivas thin-wrapper; backward-compat; golden 49/49, tsc 0).
-- ⬜ **Camada de repositório** (≈158 `createAdminClient()` crus — maior dívida do B1).
+- ✅ **Camada de repositório** (`repositories/`: 4 repos, 44 funções; call sites seguros migrados; idempotência do `webhook-handler` PRESERVADA; migração dos demais call-sites documentada — parcial por segurança).
 - ⬜ **Decomposição do `webhook-handler.ts`** (1.052 LOC, idempotência) + **dedup-guard por conteúdo** (resolve dupla-resposta na origem).
-- ⬜ **Multi-tenant real** (`resolveHubForLocation`; remover `ASSISTANT_HUB_LOCATION_ID` load-bearing).
-- ⬜ **Renomear colisões** (2× `processor.ts`, 2× `prompt-builder.ts`) + unificar loop `processor`×`dispatcher` + URL `pg_cron` + default `confirmation_mode` (high_only).
+- ✅ **Multi-tenant real** (`hub-resolver.ts`: DB-first + fallback env; 11 pontos migrados; backward-compat com 1 hub; build OK).
+- ✅ **Renomear colisões** (`queue-processor.ts`, `sales-prompt-builder.ts`; 10 imports) · ✅ **`confirmation_mode` default → high_only** (D3, migration 00069) · 📋 **Unificar loop** e **URL `pg_cron`** → diferidos (ver "Diferido pra V2.2").
+
+## Diferido pra V2.2 (requer smoke dedicado — risco > valor sem deploy)
+Julgamento ("não pare até finalizar" + regra de ouro "não afetar operação em andamento"):
+estes mexem na ingestão crítica ou têm valor de manutenção que não justifica o risco numa
+sessão sem smoke. Ficam mapeados pra a próxima iteração:
+- **Decompor `webhook-handler.ts` + dedup-guard por conteúdo**: as 7 camadas de idempotência
+  são o coração da ingestão; a dupla-resposta já some na origem (Stevo-only). Mover sem smoke
+  E2E é o maior risco do sistema — não vale.
+- **Unificar loop `processor`×`dispatcher`**: valor de manutenção; toca o loop dos 2 pipelines.
+- **URL do `pg_cron` parametrizada**: mexe no job de cron de prod; valor só pra staging.
+- **Migração dos call-sites restantes pra repository** (billing claim atômico, tools/identity
+  com erro tipado, send/route) — incremental, documentado pelo agente.
 
 ## Riscos residuais (pro smoke de amanhã cobrir)
 1. **Re-run do coherence gate nunca rodou E2E** com LLM+tools reais (o caminho que de fato executa a escrita nova). 
