@@ -54,7 +54,7 @@ async function isSparkbotHub(locationId: string | undefined): Promise<boolean> {
 import { GHLClient } from "@/lib/ghl/client";
 import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
-import { processMessageQueue } from "@/lib/queue/processor";
+import { processMessageQueue } from "@/lib/queue/queue-processor";
 import type { TargetingRule } from "@/types/agent";
 
 export async function POST(request: NextRequest) {

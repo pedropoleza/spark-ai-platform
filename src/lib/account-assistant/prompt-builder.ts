@@ -11,7 +11,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { RepIdentity, RepProfile } from "@/types/account-assistant";
-import type { KnowledgeBaseItem } from "@/lib/ai/prompt-builder";
+import type { KnowledgeBaseItem } from "@/lib/ai/sales-prompt-builder";
 import {
   TEMPLATE_DOCS,
   ERROR_RECOVERY_PROMPT_GUIDE,

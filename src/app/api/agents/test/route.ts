@@ -3,7 +3,7 @@ import { waitUntil } from "@vercel/functions";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
 import { GHLClient } from "@/lib/ghl/client";
-import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/prompt-builder";
+import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import { withRetry } from "@/lib/utils/retry";
@@ -333,7 +333,7 @@ export async function POST(request: NextRequest) {
     .eq("agent_id", agent_id)
     .order("created_at", { ascending: true });
 
-  const knowledgeBase = (kbData || []) as import("@/lib/ai/prompt-builder").KnowledgeBaseItem[];
+  const knowledgeBase = (kbData || []) as import("@/lib/ai/sales-prompt-builder").KnowledgeBaseItem[];
 
   // contactName: usa nome real do GHL ou do collected_data. NUNCA placeholder
   // tipo "Usuário Teste" — isso aparecia literal em {contact.name}, estragava

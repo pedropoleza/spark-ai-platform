@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
 import { GHLClient } from "@/lib/ghl/client";
-import { buildFollowUpPrompt } from "@/lib/ai/prompt-builder";
+import { buildFollowUpPrompt } from "@/lib/ai/sales-prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
 
 /**

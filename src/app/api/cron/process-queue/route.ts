@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { processMessageQueue } from "@/lib/queue/processor";
+import { processMessageQueue } from "@/lib/queue/queue-processor";
 import { processScheduledFollowUps } from "@/lib/queue/follow-up-scheduler";
 import { chargeUnbilledRecords } from "@/lib/billing/charge";
 import { processInactivitySummaries } from "@/lib/queue/summary-note-generator";

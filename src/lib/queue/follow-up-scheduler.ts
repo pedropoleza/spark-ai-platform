@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
-import { buildFollowUpPrompt } from "@/lib/ai/prompt-builder";
+import { buildFollowUpPrompt } from "@/lib/ai/sales-prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import type { FollowUpConfig } from "@/types/agent";

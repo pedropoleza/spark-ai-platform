@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
-import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/prompt-builder";
+import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ImageInput, ConversationTurn } from "@/lib/ai/openai-client";
 import { compressHistory } from "@/lib/ai/history-compressor";
@@ -555,7 +555,7 @@ async function processGroup(
       .order("created_at", { ascending: true }),
   ]);
 
-  const knowledgeBase = (kbData || []) as import("@/lib/ai/prompt-builder").KnowledgeBaseItem[];
+  const knowledgeBase = (kbData || []) as import("@/lib/ai/sales-prompt-builder").KnowledgeBaseItem[];
 
   const promptCtx = {
     config,
