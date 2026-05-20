@@ -34,6 +34,7 @@ import {
   getSparkbotHistory,
 } from "@/lib/repositories/sparkbot-messages.repo";
 import { upsertStevoInstance } from "@/lib/repositories/stevo-instances.repo";
+import { resolveBurstTurn } from "../core/debounce";
 import type { ParsedStevoMessage } from "./stevo-parser";
 import {
   sendStevoText,
@@ -52,6 +53,12 @@ function isStevoSendEnabled(): boolean {
 /** Gate do interativo (botões/listas). Default OFF — ligar só no go-live. */
 function isStevoInteractiveEnabled(): boolean {
   return /^(1|true|yes)$/i.test(process.env.STEVO_INTERACTIVE_ENABLED?.trim() || "");
+}
+
+/** Janela de debounce (ms) pra juntar rajada de texto. 0 = desliga (default 4000). */
+function getDebounceMs(): number {
+  const raw = parseInt(process.env.STEVO_DEBOUNCE_MS?.trim() || "4000", 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 4000;
 }
 
 /**
@@ -211,24 +218,6 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
     return;
   }
 
-  // 5. Carrega histórico recente pra processIncoming (senão bot fica amnésico).
-  let conversationHistory: ConversationTurn[] = [];
-  try {
-    const prior = await getSparkbotHistory(rep.id, hubLocationId, SPARKBOT_HISTORY_TURNS);
-    conversationHistory = prior
-      .reverse()
-      .filter((m) => (m.content || "").trim().length > 0)
-      .map((m) => ({
-        role: m.role === "user" ? "user" : "assistant",
-        content: m.content,
-      }));
-  } catch (err) {
-    console.warn(
-      "[stevo-handler] leitura de histórico falhou (segue sem histórico):",
-      err instanceof Error ? err.message : err,
-    );
-  }
-
   // 6. Persiste a msg do rep ANTES de processar (assim se LLM crashar, o
   //    próximo turno ainda tem o histórico). Captura 23505 = dedup signal.
   const insertedUser = await insertSparkbotMessage({
@@ -283,12 +272,67 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
     );
   }
 
+  // ===== DEBOUNCE (Pedro 2026-05-20): junta rajada de texto numa resposta só =====
+  // O path Stevo processava cada msg na hora → 2 msgs em 3s viravam 2 respostas
+  // fragmentadas (visto no fluxo 15:34 EDT). Estratégia "latest-wins": espera uma
+  // janela; se chegou msg mais nova do mesmo rep, esta invocação BAILA (a mais
+  // nova processa o lote). Só pra TEXTO/interativo — mídia (áudio/imagem/doc)
+  // segue na hora (vem isolada e é cara de reprocessar). STEVO_DEBOUNCE_MS=0 desliga.
+  const debounceMs = getDebounceMs();
+  const isTextLike = repInput.kind === "text";
+  if (isTextLike && debounceMs > 0) {
+    await new Promise((r) => setTimeout(r, debounceMs));
+    try {
+      const sb = createAdminClient();
+      const { data: latest } = await sb
+        .from("sparkbot_messages")
+        .select("ghl_message_id")
+        .eq("rep_id", rep.id)
+        .eq("role", "user")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latest?.ghl_message_id && latest.ghl_message_id !== parsed.messageId) {
+        console.log(
+          `[stevo-handler] debounce: ${parsed.messageId} superada por ${latest.ghl_message_id} — bail`,
+        );
+        return; // a invocação mais nova processa o lote
+      }
+    } catch (err) {
+      console.warn(
+        "[stevo-handler] debounce check falhou — segue processando:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  // Carrega histórico DEPOIS do debounce (pega o lote completo) e resolve o
+  // turno: combina rajada de texto num input só / exclui a mídia atual do
+  // histórico. Lógica pura testável em core/debounce.ts.
+  let conversationHistory: ConversationTurn[] = [];
+  let finalInput: RepInput = repInput;
+  try {
+    const prior = await getSparkbotHistory(rep.id, hubLocationId, SPARKBOT_HISTORY_TURNS);
+    const chrono = prior.reverse().filter((m) => (m.content || "").trim().length > 0);
+    const resolved = resolveBurstTurn(chrono, isTextLike, repInput);
+    finalInput = resolved.input;
+    conversationHistory = resolved.history;
+    if (finalInput !== repInput) {
+      console.log("[stevo-handler] debounce: rajada de texto combinada num turno.");
+    }
+  } catch (err) {
+    console.warn(
+      "[stevo-handler] leitura de histórico falhou (segue sem histórico):",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   // 7. Processa via pipeline padrão (mesma config default do webhook GHL).
   let result;
   try {
     result = await processIncoming({
       rep,
-      input: repInput,
+      input: finalInput,
       agentId,
       conversationHistory,
       channel: "whatsapp",
