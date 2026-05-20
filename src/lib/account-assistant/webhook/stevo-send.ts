@@ -272,9 +272,15 @@ export async function sendStevoButton(p: StevoButtonParams): Promise<StevoSendRe
     };
   }
 
-  const payload: Record<string, unknown> = { number, description: p.body.trim(), buttons };
-  if (p.title) payload.title = truncate(p.title, HEADER_MAX);
-  if (p.footer) payload.footer = truncate(p.footer, HEADER_MAX);
+  // Stevo EXIGE title E footer em /send/button (400 "title/footer is required"
+  // sem eles). Default seguro quando o present_options não passou.
+  const payload: Record<string, unknown> = {
+    number,
+    title: truncate(p.title?.trim() || "SparkBot", HEADER_MAX),
+    description: p.body.trim(),
+    footer: truncate(p.footer?.trim() || "Toque uma opção 👇", HEADER_MAX),
+    buttons,
+  };
 
   const r = await stevoPostJson(base, apiKey, "/send/button", payload, timeoutMs);
   return { ok: r.ok, sent: r.ok ? 1 : 0, total: 1, ids: r.id ? [r.id] : [], error: r.error };
@@ -336,14 +342,15 @@ export async function sendStevoList(p: StevoListParams): Promise<StevoSendResult
     };
   }
 
+  // Stevo EXIGE title E footerText em /send/list também. Default seguro.
   const payload: Record<string, unknown> = {
     number,
+    title: truncate(p.title?.trim() || "SparkBot", HEADER_MAX),
     description: p.body.trim(),
+    footerText: truncate(p.footer?.trim() || "Toque pra escolher 👇", HEADER_MAX),
     buttonText: truncate(p.buttonText, LIST_BTN_MAX),
     sections,
   };
-  if (p.title) payload.title = truncate(p.title, HEADER_MAX);
-  if (p.footer) payload.footerText = truncate(p.footer, HEADER_MAX);
 
   const r = await stevoPostJson(base, apiKey, "/send/list", payload, timeoutMs);
   return { ok: r.ok, sent: r.ok ? 1 : 0, total: 1, ids: r.id ? [r.id] : [], error: r.error };

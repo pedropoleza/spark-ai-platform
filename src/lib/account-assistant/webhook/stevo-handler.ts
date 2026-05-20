@@ -316,6 +316,8 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
   const interactive = result.interactive;
   // Canal real do envio (audit): "buttons" | "list" | "text" | null.
   let sentKind: "buttons" | "list" | "text" | null = null;
+  // Erro do envio interativo (preservado mesmo quando cai pro fallback texto).
+  let interactiveError: string | null = null;
   let sendResult: StevoSendResult | null = null;
 
   if (sendEnabled && (replyText.trim() || interactive)) {
@@ -363,8 +365,9 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
         });
       }
       if (!sendResult.ok && replyText.trim()) {
+        interactiveError = sendResult.error ?? null;
         console.warn(
-          `[stevo-handler] envio ${sentKind} falhou (${sendResult.error}) — fallback texto.`,
+          `[stevo-handler] envio ${sentKind} falhou (${interactiveError}) — fallback texto.`,
         );
         sentKind = "text";
         sendResult = await sendStevoText({ serverUrl, apiKey, number: parsed.phone, text: replyText });
@@ -411,6 +414,7 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       // not_sent=true quando o gate estava off OU o envio falhou (audit claro).
       sent_via: sendResult?.ok ? "stevo" : null,
       sent_kind: sentKind,
+      interactive_error: interactiveError,
       not_sent: !sendResult?.ok,
       send_error: sendResult?.error ?? null,
       send_bubbles: sendResult ? `${sendResult.sent}/${sendResult.total}` : null,

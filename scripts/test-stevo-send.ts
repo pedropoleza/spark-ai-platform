@@ -192,6 +192,9 @@ async function run() {
     });
     const label = ((calls[0]?.body.buttons as Array<Record<string, unknown>>) || [])[0]?.displayText as string;
     check("botão: label truncado <=20", label.length <= 20, `len=${label.length} "${label}"`);
+    // Stevo exige title+footer (400 sem) → sempre presentes mesmo sem passar.
+    check("botão: title default presente", typeof calls[0]?.body.title === "string" && (calls[0]?.body.title as string).length > 0, String(calls[0]?.body.title));
+    check("botão: footer default presente", typeof calls[0]?.body.footer === "string" && (calls[0]?.body.footer as string).length > 0, String(calls[0]?.body.footer));
   }
 
   // -------------------------------------------------------------------------
@@ -218,6 +221,8 @@ async function run() {
     const secs = (calls[0]?.body.sections as Array<Record<string, unknown>>) || [];
     const rows = (secs[0]?.rows as unknown[]) || [];
     check("lista: cap 10 rows", rows.length === 10, `len=${rows.length}`);
+    check("lista: title presente", typeof calls[0]?.body.title === "string" && (calls[0]?.body.title as string).length > 0);
+    check("lista: footerText presente", typeof calls[0]?.body.footerText === "string" && (calls[0]?.body.footerText as string).length > 0);
     check("lista: id extraído", r.ids[0] === "MID_LIST");
   }
 
