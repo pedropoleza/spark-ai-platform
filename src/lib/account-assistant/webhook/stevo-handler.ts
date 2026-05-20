@@ -55,10 +55,12 @@ function isStevoInteractiveEnabled(): boolean {
   return /^(1|true|yes)$/i.test(process.env.STEVO_INTERACTIVE_ENABLED?.trim() || "");
 }
 
-/** Janela de debounce (ms) pra juntar rajada de texto. 0 = desliga (default 4000). */
+/** Janela de debounce (ms) pra juntar rajada de texto. 0 = desliga.
+ *  Default OFF (0) — ligar via STEVO_DEBOUNCE_MS=4000 no go-live supervisionado.
+ *  Assim deployar NÃO muda o timing das respostas até a gente validar junto. */
 function getDebounceMs(): number {
-  const raw = parseInt(process.env.STEVO_DEBOUNCE_MS?.trim() || "4000", 10);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 4000;
+  const raw = parseInt(process.env.STEVO_DEBOUNCE_MS?.trim() || "0", 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 0;
 }
 
 /**
