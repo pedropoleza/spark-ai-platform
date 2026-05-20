@@ -56,7 +56,21 @@ export type ParsedStevoContent =
   | { kind: "text"; text: string }
   | { kind: "document"; base64: string; mimetype: string; fileName: string; caption: string }
   | { kind: "image"; base64: string; mimetype: string; caption: string }
-  | { kind: "audio"; base64: string; mimetype: string; seconds: number };
+  | { kind: "audio"; base64: string; mimetype: string; seconds: number }
+  /**
+   * Resposta a botão/lista (o rep TOCOU). Normalizada pra texto: `text` é o que
+   * ele "disse" (label do botão / título da row). `selectionId` é o ID estável
+   * que definimos no envio (selectedButtonID / selectedRowID) e `replyToStanzaId`
+   * é o ID da mensagem original (correlação/recência). O handler converte isso
+   * num turno de texto normal — o miolo (gate H8, coherence) não muda.
+   */
+  | {
+      kind: "interactive";
+      interactiveType: "button" | "list";
+      text: string;
+      selectionId: string;
+      replyToStanzaId: string;
+    };
 
 // ---------------------------------------------------------------------------
 // Helpers internos
@@ -170,6 +184,54 @@ export function parseStevoWebhook(body: unknown): ParsedStevoMessage | null {
       mimetype: asString(imgMsg.mimetype) || "image/jpeg",
       caption: asString(imgMsg.caption),
     };
+  }
+
+  // 3b. Resposta interativa — tap em BOTÃO (buttonsResponseMessage) ou seleção
+  // de LISTA (listResponseMessage). Normaliza pra texto + carrega o ID estável
+  // e o stanzaID da msg original. (Formato real capturado em prod 2026-05-20.)
+  const btnResp = asRecord(message.buttonsResponseMessage);
+  if (btnResp) {
+    const resp = asRecord(btnResp.Response) || asRecord(btnResp.response);
+    const display =
+      asString(resp?.SelectedDisplayText) ||
+      asString(resp?.selectedDisplayText) ||
+      asString(btnResp.selectedDisplayText);
+    const selectionId =
+      asString(btnResp.selectedButtonID) || asString(btnResp.selectedButtonId);
+    const ctx = asRecord(btnResp.contextInfo);
+    const stanza = asString(ctx?.stanzaID) || asString(ctx?.stanzaId);
+    const textVal = display || selectionId;
+    if (textVal) {
+      return {
+        ...base,
+        kind: "interactive",
+        interactiveType: "button",
+        text: textVal,
+        selectionId,
+        replyToStanzaId: stanza,
+      };
+    }
+  }
+
+  const listResp = asRecord(message.listResponseMessage);
+  if (listResp) {
+    const sel = asRecord(listResp.singleSelectReply);
+    const selectionId =
+      asString(sel?.selectedRowID) || asString(sel?.selectedRowId);
+    const display = asString(listResp.title);
+    const ctx = asRecord(listResp.contextInfo);
+    const stanza = asString(ctx?.stanzaID) || asString(ctx?.stanzaId);
+    const textVal = display || selectionId;
+    if (textVal) {
+      return {
+        ...base,
+        kind: "interactive",
+        interactiveType: "list",
+        text: textVal,
+        selectionId,
+        replyToStanzaId: stanza,
+      };
+    }
   }
 
   // 4. Texto — conversation OU extendedTextMessage.text.

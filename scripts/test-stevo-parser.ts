@@ -164,6 +164,57 @@ function check(name: string, cond: boolean, detail?: string) {
 }
 
 // ---------------------------------------------------------------------------
+// 5. RESPOSTA DE BOTÃO (buttons_response) — formato real capturado
+// ---------------------------------------------------------------------------
+{
+  const r = parseStevoWebhook({
+    event: "Message",
+    instanceToken: INSTANCE_TOKEN,
+    data: {
+      Info: infoBase({ Type: "media", MediaType: "buttons_response" }),
+      Message: {
+        buttonsResponseMessage: {
+          type: 1,
+          Response: { SelectedDisplayText: "Confirmar ✅" },
+          contextInfo: { stanzaID: "3EB0BTN" },
+          selectedButtonID: "confirm_yes",
+        },
+      },
+    },
+  });
+  check("botão resp: kind=interactive", r?.kind === "interactive");
+  check("botão resp: type=button", r?.kind === "interactive" && r.interactiveType === "button");
+  check("botão resp: text=display", r?.kind === "interactive" && r.text === "Confirmar ✅");
+  check("botão resp: selectionId", r?.kind === "interactive" && r.selectionId === "confirm_yes");
+  check("botão resp: stanza", r?.kind === "interactive" && r.replyToStanzaId === "3EB0BTN");
+}
+
+// ---------------------------------------------------------------------------
+// 6. RESPOSTA DE LISTA (list_response) — formato real capturado
+// ---------------------------------------------------------------------------
+{
+  const r = parseStevoWebhook({
+    event: "Message",
+    instanceToken: INSTANCE_TOKEN,
+    data: {
+      Info: infoBase({ Type: "media", MediaType: "list_response" }),
+      Message: {
+        listResponseMessage: {
+          title: "Opção 2",
+          contextInfo: { stanzaID: "3EB0LST" },
+          singleSelectReply: { selectedRowID: "opt_2" },
+        },
+      },
+    },
+  });
+  check("lista resp: kind=interactive", r?.kind === "interactive");
+  check("lista resp: type=list", r?.kind === "interactive" && r.interactiveType === "list");
+  check("lista resp: text=title", r?.kind === "interactive" && r.text === "Opção 2");
+  check("lista resp: selectionId=rowID", r?.kind === "interactive" && r.selectionId === "opt_2");
+  check("lista resp: stanza", r?.kind === "interactive" && r.replyToStanzaId === "3EB0LST");
+}
+
+// ---------------------------------------------------------------------------
 // NULL RETURNS
 // ---------------------------------------------------------------------------
 {

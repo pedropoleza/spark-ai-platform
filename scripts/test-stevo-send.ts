@@ -9,7 +9,12 @@
  *
  * Run: npx tsx -r tsconfig-paths/register scripts/test-stevo-send.ts
  */
-import { sendStevoText, normalizeStevoNumber } from "@/lib/account-assistant/webhook/stevo-send";
+import {
+  sendStevoText,
+  normalizeStevoNumber,
+  sendStevoButton,
+  sendStevoList,
+} from "@/lib/account-assistant/webhook/stevo-send";
 
 // ---------------------------------------------------------------------------
 // Mock de fetch
@@ -145,6 +150,87 @@ async function run() {
     const r = await sendStevoText({ serverUrl: BASE, apiKey: KEY, number: "17867717077", text: "x" });
     check("sucesso não-json: ok", r.ok && r.sent === 1);
     check("sucesso não-json: ids vazio", r.ids.length === 0);
+  }
+
+  // -------------------------------------------------------------------------
+  // 8. BOTÃO — payload + mapeamento + cap 3 + truncagem
+  // -------------------------------------------------------------------------
+  reset(() => new Response(JSON.stringify({ data: { Info: { ID: "MID_BTN" } } }), { status: 200 }));
+  {
+    const r = await sendStevoButton({
+      serverUrl: BASE,
+      apiKey: KEY,
+      number: "+17867717077",
+      title: "Confirmação",
+      body: "Vou criar a nota. Confirma?",
+      footer: "SparkBot",
+      buttons: [
+        { id: "confirm", label: "Confirmar ✅" },
+        { id: "cancel", label: "Cancelar ❌" },
+        { id: "x3", label: "Terceiro" },
+        { id: "x4", label: "Quarto (descartado)" },
+      ],
+    });
+    check("botão: ok", r.ok && r.sent === 1, JSON.stringify(r));
+    check("botão: URL /send/button", calls[0]?.url === `${BASE}/send/button`, calls[0]?.url);
+    check("botão: header apikey", calls[0]?.headers["apikey"] === KEY);
+    check("botão: body.number normalizado", calls[0]?.body.number === "17867717077");
+    check("botão: body.description = body", calls[0]?.body.description === "Vou criar a nota. Confirma?");
+    const btns = (calls[0]?.body.buttons as Array<Record<string, unknown>>) || [];
+    check("botão: cap 3 botões", btns.length === 3, `len=${btns.length}`);
+    check("botão: type=reply", btns[0]?.type === "reply");
+    check("botão: displayText + id mapeados", btns[0]?.displayText === "Confirmar ✅" && btns[0]?.id === "confirm");
+    check("botão: id extraído (data.Info.ID)", r.ids[0] === "MID_BTN", JSON.stringify(r.ids));
+  }
+
+  // truncagem de label > 20
+  reset(() => new Response(JSON.stringify({ id: "X" }), { status: 200 }));
+  {
+    await sendStevoButton({
+      serverUrl: BASE, apiKey: KEY, number: "17867717077", body: "b",
+      buttons: [{ id: "a", label: "Esse label é absurdamente longo demais" }],
+    });
+    const label = ((calls[0]?.body.buttons as Array<Record<string, unknown>>) || [])[0]?.displayText as string;
+    check("botão: label truncado <=20", label.length <= 20, `len=${label.length} "${label}"`);
+  }
+
+  // -------------------------------------------------------------------------
+  // 9. LISTA — payload + cap 10 rows + buttonText
+  // -------------------------------------------------------------------------
+  reset(() => new Response(JSON.stringify({ data: { Info: { ID: "MID_LIST" } } }), { status: 200 }));
+  {
+    const manyRows = Array.from({ length: 14 }, (_, i) => ({ rowId: `r${i}`, title: `Item ${i}` }));
+    const r = await sendStevoList({
+      serverUrl: BASE,
+      apiKey: KEY,
+      number: "17867717077",
+      title: "Escolha",
+      body: "Qual contato?",
+      footer: "SparkBot",
+      buttonText: "Ver opções",
+      sections: [{ title: "Contatos", rows: manyRows }],
+    });
+    check("lista: ok", r.ok && r.sent === 1, JSON.stringify(r));
+    check("lista: URL /send/list", calls[0]?.url === `${BASE}/send/list`);
+    check("lista: buttonText", calls[0]?.body.buttonText === "Ver opções");
+    check("lista: body.description", calls[0]?.body.description === "Qual contato?");
+    check("lista: footerText", calls[0]?.body.footerText === "SparkBot");
+    const secs = (calls[0]?.body.sections as Array<Record<string, unknown>>) || [];
+    const rows = (secs[0]?.rows as unknown[]) || [];
+    check("lista: cap 10 rows", rows.length === 10, `len=${rows.length}`);
+    check("lista: id extraído", r.ids[0] === "MID_LIST");
+  }
+
+  // -------------------------------------------------------------------------
+  // 10. Interativo — params inválidos NÃO chamam fetch
+  // -------------------------------------------------------------------------
+  reset();
+  {
+    const b1 = await sendStevoButton({ serverUrl: BASE, apiKey: KEY, number: "1786", body: "x", buttons: [] });
+    const l1 = await sendStevoList({ serverUrl: BASE, apiKey: KEY, number: "1786", body: "x", buttonText: "v", sections: [] });
+    check("botão: 0 botões → ok=false", b1.ok === false);
+    check("lista: 0 rows → ok=false", l1.ok === false);
+    check("interativo inválido: nenhum fetch", calls.length === 0, `got=${calls.length}`);
   }
 
   // -------------------------------------------------------------------------

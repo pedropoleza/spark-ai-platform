@@ -58,6 +58,13 @@ async function buildRepInput(parsed: ParsedStevoMessage): Promise<RepInput | nul
     return { kind: "text", text: parsed.text };
   }
 
+  // Tap em botão/lista → o rep "disse" o label/título. Trata como texto normal;
+  // o miolo (gate H8, coherence) age igual. O ID estável + stanza vão no
+  // metadata do insert (pra audit/correlação) — não no RepInput.
+  if (parsed.kind === "interactive") {
+    return { kind: "text", text: parsed.text };
+  }
+
   if (parsed.kind === "audio") {
     try {
       const buffer = Buffer.from(parsed.base64, "base64");
@@ -223,6 +230,14 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       input_kind: repInput.kind,
       source: "stevo",
       push_name: parsed.pushName || null,
+      // Audit do tap interativo (rep tocou botão/lista em vez de digitar).
+      ...(parsed.kind === "interactive"
+        ? {
+            interactive_reply: parsed.interactiveType,
+            selection_id: parsed.selectionId,
+            reply_to_stanza: parsed.replyToStanzaId,
+          }
+        : {}),
     },
   });
   // insertSparkbotMessage devolve null em qualquer erro (inclusive 23505). Se a

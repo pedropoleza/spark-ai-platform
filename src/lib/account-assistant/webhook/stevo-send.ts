@@ -82,24 +82,22 @@ const INTER_BUBBLE_GAP_MS = 350;
 // ---------------------------------------------------------------------------
 
 /**
- * Envia UMA bolha via Stevo. Não lança — devolve {ok, id?, error?}.
+ * POST genérico pra um endpoint de `/send/*` do Stevo. Header `apikey` +
+ * timeout. NÃO lança — devolve {ok, id?, error?}. Reusado por text/button/list.
+ * Extrai o ID da mensagem do response (vários formatos, incl. data.Info.ID —
+ * que é o `stanzaID` usado pra correlacionar o tap depois).
  */
-async function sendOneBubble(
+async function stevoPostJson(
   base: string,
   apiKey: string,
-  number: string,
-  text: string,
-  typingDelayMs: number,
+  path: string,
+  body: Record<string, unknown>,
   timeoutMs: number,
 ): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const url = `${base}/send/text`;
-  const body: Record<string, unknown> = { number, text };
-  if (typingDelayMs > 0) body.delay = typingDelayMs;
-
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
+    const res = await fetch(`${base}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -123,6 +121,8 @@ async function sendOneBubble(
         (json?.id as string) ||
         (json?.messageId as string) ||
         ((json?.key as Record<string, unknown>)?.id as string) ||
+        (((json?.data as Record<string, unknown>)?.Info as Record<string, unknown>)
+          ?.ID as string) ||
         undefined;
     } catch {
       /* corpo não-JSON em sucesso — ok, sem ID */
@@ -134,6 +134,23 @@ async function sendOneBubble(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Envia UMA bolha de texto via Stevo (`/send/text`). Wrapper fino sobre
+ * stevoPostJson. Não lança — devolve {ok, id?, error?}.
+ */
+async function sendOneBubble(
+  base: string,
+  apiKey: string,
+  number: string,
+  text: string,
+  typingDelayMs: number,
+  timeoutMs: number,
+): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const body: Record<string, unknown> = { number, text };
+  if (typingDelayMs > 0) body.delay = typingDelayMs;
+  return stevoPostJson(base, apiKey, "/send/text", body, timeoutMs);
 }
 
 /**
@@ -189,4 +206,145 @@ export async function sendStevoText(params: StevoSendParams): Promise<StevoSendR
     ids,
     error: firstError,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Interativo — botões e listas (v1) · vCard (v2)
+// ---------------------------------------------------------------------------
+
+export type StevoButton = { id: string; label: string };
+export type StevoListRow = { rowId: string; title: string; description?: string };
+export type StevoListSection = { title?: string; rows: StevoListRow[] };
+
+// Limites do WhatsApp (regras duras — truncamos/capamos antes de enviar).
+const MAX_BUTTONS = 3;
+const MAX_LIST_ROWS = 10;
+const BTN_LABEL_MAX = 20;
+const ROW_TITLE_MAX = 24;
+const ROW_DESC_MAX = 72;
+const HEADER_MAX = 60;
+const LIST_BTN_MAX = 20;
+
+function truncate(s: string, n: number): string {
+  const t = (s || "").trim();
+  return t.length <= n ? t : `${t.slice(0, n - 1)}…`;
+}
+
+export type StevoButtonParams = {
+  serverUrl: string;
+  apiKey: string;
+  number: string;
+  /** Corpo (body) da mensagem. */
+  body: string;
+  /** Header opcional (acima do body). */
+  title?: string;
+  /** Footer opcional (abaixo). */
+  footer?: string;
+  /** Até 3 botões de quick-reply. Excedente é descartado. */
+  buttons: StevoButton[];
+  timeoutMs?: number;
+};
+
+/**
+ * Envia uma mensagem de BOTÕES (quick-reply) via Stevo (`/send/button`).
+ * `type:"reply"` → o Stevo traduz pra NativeFlow quick_reply (confirmado no
+ * probe). O tap volta com `selectedButtonID` = o `id` que passamos aqui.
+ * Capa em 3 botões e trunca labels. NÃO lança.
+ */
+export async function sendStevoButton(p: StevoButtonParams): Promise<StevoSendResult> {
+  const base = (p.serverUrl || "").trim().replace(/\/+$/, "");
+  const apiKey = (p.apiKey || "").trim();
+  const number = normalizeStevoNumber(p.number);
+  const timeoutMs = p.timeoutMs ?? 15_000;
+  const buttons = (p.buttons || []).slice(0, MAX_BUTTONS).map((b) => ({
+    displayText: truncate(b.label, BTN_LABEL_MAX),
+    id: b.id,
+    type: "reply",
+  }));
+
+  if (!base || !apiKey || !number || !p.body?.trim() || buttons.length === 0) {
+    return {
+      ok: false,
+      sent: 0,
+      total: 1,
+      ids: [],
+      error: `params inválidos (base=${!!base} apiKey=${!!apiKey} number=${!!number} body=${!!p.body?.trim()} buttons=${buttons.length})`,
+    };
+  }
+
+  const payload: Record<string, unknown> = { number, description: p.body.trim(), buttons };
+  if (p.title) payload.title = truncate(p.title, HEADER_MAX);
+  if (p.footer) payload.footer = truncate(p.footer, HEADER_MAX);
+
+  const r = await stevoPostJson(base, apiKey, "/send/button", payload, timeoutMs);
+  return { ok: r.ok, sent: r.ok ? 1 : 0, total: 1, ids: r.id ? [r.id] : [], error: r.error };
+}
+
+export type StevoListParams = {
+  serverUrl: string;
+  apiKey: string;
+  number: string;
+  body: string;
+  title?: string;
+  footer?: string;
+  /** Label do botão que abre a lista (ex: "Ver opções"). */
+  buttonText: string;
+  /** Seções com rows. Total de rows capado em 10 (excedente descartado). */
+  sections: StevoListSection[];
+  timeoutMs?: number;
+};
+
+/**
+ * Envia uma mensagem de LISTA via Stevo (`/send/list`). O tap volta com
+ * `singleSelectReply.selectedRowID` = o `rowId` que passamos. Capa o total em
+ * 10 rows (across sections) e trunca títulos/descrições. NÃO lança.
+ */
+export async function sendStevoList(p: StevoListParams): Promise<StevoSendResult> {
+  const base = (p.serverUrl || "").trim().replace(/\/+$/, "");
+  const apiKey = (p.apiKey || "").trim();
+  const number = normalizeStevoNumber(p.number);
+  const timeoutMs = p.timeoutMs ?? 15_000;
+
+  // Capa o total de rows em 10 ao longo das seções; trunca campos.
+  let budget = MAX_LIST_ROWS;
+  const sections = (p.sections || [])
+    .map((sec) => {
+      const rows = (sec.rows || []).slice(0, Math.max(0, budget)).map((row) => {
+        const r: Record<string, unknown> = {
+          rowId: row.rowId,
+          title: truncate(row.title, ROW_TITLE_MAX),
+        };
+        if (row.description) r.description = truncate(row.description, ROW_DESC_MAX);
+        return r;
+      });
+      budget -= rows.length;
+      const out: Record<string, unknown> = { rows };
+      if (sec.title) out.title = truncate(sec.title, ROW_TITLE_MAX);
+      return out;
+    })
+    .filter((s) => (s.rows as unknown[]).length > 0);
+
+  const totalRows = sections.reduce((n, s) => n + (s.rows as unknown[]).length, 0);
+
+  if (!base || !apiKey || !number || !p.body?.trim() || !p.buttonText?.trim() || totalRows === 0) {
+    return {
+      ok: false,
+      sent: 0,
+      total: 1,
+      ids: [],
+      error: `params inválidos (base=${!!base} apiKey=${!!apiKey} number=${!!number} body=${!!p.body?.trim()} buttonText=${!!p.buttonText?.trim()} rows=${totalRows})`,
+    };
+  }
+
+  const payload: Record<string, unknown> = {
+    number,
+    description: p.body.trim(),
+    buttonText: truncate(p.buttonText, LIST_BTN_MAX),
+    sections,
+  };
+  if (p.title) payload.title = truncate(p.title, HEADER_MAX);
+  if (p.footer) payload.footerText = truncate(p.footer, HEADER_MAX);
+
+  const r = await stevoPostJson(base, apiKey, "/send/list", payload, timeoutMs);
+  return { ok: r.ok, sent: r.ok ? 1 : 0, total: 1, ids: r.id ? [r.id] : [], error: r.error };
 }
