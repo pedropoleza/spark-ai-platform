@@ -825,6 +825,22 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
  * cobrar Whisper depois. Antes deste fix, extractRepInput transcrevia áudio
  * mas NUNCA cobrava — Sparkbot WhatsApp rodava Whisper free.
  */
+// Debug Pedro 2026-05-19: grava onde o pipeline de attachment falha em prod.
+// REMOVER após diagnosticar o CSV via Stevo.
+async function debugAttachSignal(stage: string, data: Record<string, unknown>): Promise<void> {
+  try {
+    const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+    recordSignalAsync({
+      type: "error",
+      title: `DEBUG4: attach pipeline ${stage}`,
+      description: JSON.stringify(data).slice(0, 400),
+      severity: "low",
+      source: "bot_auto",
+      metadata: { stage, ...data },
+    });
+  } catch { /* nf */ }
+}
+
 async function extractRepInput(args: {
   body: Record<string, unknown>;
   messageBody: string;
@@ -927,11 +943,13 @@ async function extractRepInput(args: {
         const urlVal = validateExternalUrl(att.url);
         if (!urlVal.ok) {
           console.warn(`[Sparkbot] SSRF guard rejected attachment URL: ${urlVal.reason} (${att.url.slice(0, 80)})`);
+          await debugAttachSignal("SSRF_REJECT", { url: att.url.slice(0, 150), reason: urlVal.reason });
           continue;
         }
         const res = await fetch(att.url, { signal: AbortSignal.timeout(20_000) });
         if (!res.ok) {
           console.warn(`[Sparkbot] failed to fetch attachment ${att.url}: ${res.status}`);
+          await debugAttachSignal("FETCH_NOT_OK", { url: att.url.slice(0, 150), status: res.status });
           continue;
         }
         const buffer = Buffer.from(await res.arrayBuffer());
@@ -958,6 +976,12 @@ async function extractRepInput(args: {
           "[Sparkbot] file processing failed for", att.url, ":",
           err instanceof Error ? err.message : err,
         );
+        await debugAttachSignal("PROCESS_CATCH", {
+          url: att.url.slice(0, 150),
+          mime: att.contentType,
+          err: err instanceof Error ? err.message.slice(0, 300) : String(err),
+          code: (err as { code?: string })?.code,
+        });
         // Fix Track 8 H-MM-2 + H-MM-6 (review 2026-05-05): se erro tem
         // código user-friendly (HEIC, PDF vazio), propaga PRO REP em vez
         // de silenciar e responder texto. Antes: bot respondia só com
