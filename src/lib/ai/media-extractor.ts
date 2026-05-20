@@ -40,18 +40,42 @@ function looksLikeDocUrl(url: string): boolean {
   return DOC_EXTS.some((ext) => lower.includes(ext));
 }
 
-function guessContentType(url: string): string {
-  const lower = url.toLowerCase();
-  if (lower.includes(".pdf")) return "application/pdf";
-  if (lower.includes(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  if (lower.includes(".doc")) return "application/msword";
-  if (lower.includes(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-  if (lower.includes(".xls")) return "application/vnd.ms-excel";
-  if (lower.includes(".txt")) return "text/plain";
-  if (lower.includes(".csv")) return "text/csv";
-  if (lower.includes(".png")) return "image/png";
-  if (lower.includes(".webp")) return "image/webp";
-  if (lower.includes(".gif")) return "image/gif";
+// Fix Pedro 2026-05-19: Stevo/Evolution manda planilha do Google Sheets com
+// URL de mídia SEM extensão (ex: .../media/UUID?token=...) mas com fileName
+// que TEM a extensão (".csv"/".xlsx"). Antes só checávamos a URL → CSV
+// ignorado → "Não consegui ler o arquivo". Agora checa fileName também.
+function looksLikeImageName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return IMAGE_EXTS.some((ext) => lower.endsWith(ext));
+}
+
+function looksLikeDocName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return DOC_EXTS.some((ext) => lower.endsWith(ext));
+}
+
+/**
+ * Adivinha content-type a partir de URL e/ou fileName. Tenta primeiro o
+ * que tiver extensão reconhecível (fileName tem prioridade — mais confiável
+ * que URL de mídia assinada sem extensão).
+ */
+function guessContentType(url: string, fileName?: string): string {
+  const sources = [fileName, url].filter(Boolean) as string[];
+  for (const src of sources) {
+    const lower = src.toLowerCase();
+    if (lower.includes(".pdf")) return "application/pdf";
+    if (lower.includes(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    if (lower.includes(".doc")) return "application/msword";
+    if (lower.includes(".xlsx")) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    if (lower.includes(".xls")) return "application/vnd.ms-excel";
+    if (lower.includes(".txt")) return "text/plain";
+    if (lower.includes(".csv")) return "text/csv";
+    if (lower.includes(".png")) return "image/png";
+    if (lower.includes(".webp")) return "image/webp";
+    if (lower.includes(".gif")) return "image/gif";
+    if (lower.includes(".jpg") || lower.includes(".jpeg")) return "image/jpeg";
+    if (lower.includes(".heic")) return "image/heic";
+  }
   return "image/jpeg";
 }
 
@@ -87,20 +111,29 @@ export function extractMediaAttachments(body: Record<string, unknown>): MediaAtt
       if (isAudioMime(mime)) continue;
       if (isSupportedMime(mime)) {
         add(url, mime, name || undefined);
-      } else if (!mime && (looksLikeImageUrl(url) || looksLikeDocUrl(url))) {
-        add(url, guessContentType(url), name || undefined);
+      } else if (!mime && (looksLikeImageUrl(url) || looksLikeDocUrl(url) || looksLikeImageName(name) || looksLikeDocName(name))) {
+        // Fix Pedro 2026-05-19: aceita anexo cuja extensão está no fileName
+        // (URL de mídia Stevo/Evolution não tem extensão). guessContentType
+        // usa o fileName como fonte primária.
+        add(url, guessContentType(url, name), name || undefined);
       }
     }
   }
 
-  // 2. mediaUrl direto
+  // 2. mediaUrl direto (+ fileName top-level — Stevo manda assim pra docs)
   const mediaUrl = String(body.mediaUrl || body.media_url || body.mediaURL || "");
   const mediaContentType = String(body.contentType || "").toLowerCase().split(";")[0].trim();
+  const topLevelName = String(body.fileName || body.file_name || body.filename || body.name || "");
   if (mediaUrl && mediaUrl.startsWith("http")) {
     if (isSupportedMime(mediaContentType)) {
-      add(mediaUrl, mediaContentType);
-    } else if (looksLikeImageUrl(mediaUrl) || looksLikeDocUrl(mediaUrl)) {
-      add(mediaUrl, guessContentType(mediaUrl));
+      add(mediaUrl, mediaContentType, topLevelName || undefined);
+    } else if (
+      looksLikeImageUrl(mediaUrl) ||
+      looksLikeDocUrl(mediaUrl) ||
+      looksLikeImageName(topLevelName) ||
+      looksLikeDocName(topLevelName)
+    ) {
+      add(mediaUrl, guessContentType(mediaUrl, topLevelName), topLevelName || undefined);
     }
   }
 
