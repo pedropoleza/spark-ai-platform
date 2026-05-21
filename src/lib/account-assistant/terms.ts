@@ -51,10 +51,18 @@ export function parseTermsResponse(text: string): "accept" | "reject" | "unclear
   const normalized = normalizeForParse(label || text);
   if (!normalized) return "unclear";
 
-  // Fix CRITICAL Track 1 C2 (review 2026-05-05): regex anti-falso-positivo.
-  // Antes, "não tá ok" virava ACCEPT por causa do `.includes(" ok")`.
-  // Agora: SE houver QUALQUER negação detectada, é REJECT (fail-safe).
-  if (NEGATION_PATTERN.test(normalized)) {
+  // Fix CRITICAL Track 1 C2 (review 2026-05-05): "não tá ok" não pode virar
+  // ACCEPT. Negação → REJECT.
+  // Fix 2026-05-20 (bug observado: rep silenciado por comando): REJECT só pra
+  // recusa CURTA e clara — NÃO uma negação enterrada num comando longo (ex:
+  // áudio "cadastra o lead João, NÃO o frio" não é recusar os termos). Exige
+  // negação + (mensagem curta ≤5 palavras OU começa com palavra de negação).
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const firstWord = words[0] || "";
+  const NEG_FIRST = new Set([
+    "nao", "n", "no", "nunca", "nem", "nada", "negativo", "recuso", "recusa", "jamais", "nope",
+  ]);
+  if (NEGATION_PATTERN.test(normalized) && (words.length <= 5 || NEG_FIRST.has(firstWord))) {
     return "reject";
   }
 

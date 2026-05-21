@@ -37,6 +37,22 @@ check("LGPD: 'não aceito' → reject", parseTermsResponse("não aceito") === "r
 check("unclear: 'talvez depois' → unclear", parseTermsResponse("talvez depois") === "unclear");
 check("unclear: vazio → unclear", parseTermsResponse("") === "unclear");
 
+// Fix bug 2026-05-20: comando longo com negação ENTERRADA não pode silenciar.
+check(
+  "comando longo c/ 'não' no meio → unclear (NÃO reject)",
+  parseTermsResponse("cadastra o novo lead joão telefone 786 e bota como quente não como frio") === "unclear",
+  parseTermsResponse("cadastra o novo lead joão telefone 786 e bota como quente não como frio"),
+);
+check(
+  "áudio-comando longo sem negação → unclear",
+  parseTermsResponse("cara cadastra o novo lead o nome dele é joão o telefone é 786 862 8522") === "unclear",
+);
+// Negação clara no começo (mesmo frase longa) ainda rejeita
+check(
+  "negação no começo (longa) → reject",
+  parseTermsResponse("não quero usar isso de jeito nenhum mesmo obrigado") === "reject",
+);
+
 // Payload do botão de termos
 const t = buildTermsInteractive();
 check("termos: kind=buttons", t.kind === "buttons");

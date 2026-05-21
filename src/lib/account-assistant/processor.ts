@@ -16,7 +16,6 @@ import {
   TERMS_OF_USE_TEXT,
   buildTermsInteractive,
   TERMS_REJECTED_TEXT,
-  TERMS_REMINDER_TEXT,
   parseTermsResponse,
 } from "./terms";
 import { buildOnboardingForWhatsApp } from "./onboarding";
@@ -150,18 +149,13 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       await rejectTerms(rep.id);
       return { text: TERMS_REJECTED_TEXT, should_send: true };
     }
-    // Primeira msg ou resposta unclear
-    // Se nunca respondeu (assume que é primeira msg absoluta), manda termos
-    // Se já viu os termos e respondeu unclear, manda reminder
-    // Proxy: se display_name e ghl_users já estão populados mas terms null,
-    // é primeira msg após identify. Mandamos os termos.
-    // Se a msg parece tentar responder (>= 3 chars) e é unclear, manda reminder.
-    if (userText.trim().length >= 3) {
-      return { text: TERMS_REMINDER_TEXT, should_send: true };
-    }
-    // Primeira msg → termos com botão Aceito/Não (Pedro 2026-05-20). No
-    // WhatsApp vira botão; em canal sem interativo o text-fallback traz os
-    // termos + opções numeradas. Aceite por tap OU "aceito" digitado.
+    // unclear (incl. comando substantivo) → SEMPRE manda os TERMOS com botão.
+    // Fix bug 2026-05-20 (rep silenciado): antes, msg >=3 chars caía num reminder
+    // terso (rep nunca via os termos) e — pior — uma negação enterrada num
+    // comando virava REJECT/silêncio. Agora o rep SEMPRE vê o botão Aceito/Não e
+    // nunca é silenciado por engano. No WhatsApp vira botão; em canal sem
+    // interativo o text-fallback traz termos + opções numeradas. Aceite por tap
+    // OU "aceito" digitado.
     const termsInteractive = buildTermsInteractive();
     return {
       text: interactiveFallbackText(termsInteractive),
