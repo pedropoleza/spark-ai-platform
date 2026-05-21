@@ -5,6 +5,7 @@
  */
 import {
   extractInteractiveFromToolCalls,
+  detectNumberedOptionsFallback,
   interactiveFallbackText,
 } from "@/lib/account-assistant/core/interactive";
 
@@ -160,6 +161,37 @@ const tc = (name: string, input: Record<string, unknown>) => ({ name, input, res
   ])!;
   const txt = interactiveFallbackText(p);
   check("fallback: inclui descrição", txt.includes("João Silva — joao@x.com"));
+}
+
+// 10. BACKSTOP — caso real 03:21:47 (Pedro pediu "lista" e veio texto numerado)
+{
+  const bk = detectNumberedOptionsFallback(
+    "Qual pipeline quer usar?\n\n1. *1- Prospects* — stage *In Contact*\n2. *Prospecting* — stage *In Contact*\n\nQual dos dois?",
+  );
+  check("backstop: caso 03:21 → lista", bk?.kind === "list", bk?.kind);
+  check("backstop: 2 opções", bk?.options.length === 2);
+  check("backstop: body tem 'pipeline'", !!bk && bk.body.toLowerCase().includes("pipeline"));
+  check("backstop: label sem *", !!bk && !bk.options[0].label.includes("*"));
+}
+
+// 11. BACKSTOP — lista INFORMATIVA (sem cue) NÃO converte
+{
+  const bk = detectNumberedOptionsFallback(
+    "Fiz 3 coisas hoje:\n1. movi a opp\n2. criei a nota\n3. mandei o follow-up",
+  );
+  check("backstop: informativa (sem cue) → null", bk === null);
+}
+
+// 12. BACKSTOP — <2 itens → null
+{
+  check("backstop: 1 item → null", detectNumberedOptionsFallback("1. só isso\nqual?") === null);
+}
+
+// 13. BACKSTOP — curtas + cue → botões
+{
+  const bk = detectNumberedOptionsFallback("Qual horário?\n1. 13:30\n2. 14:00\n3. 15:30");
+  check("backstop: curtas → botões", bk?.kind === "buttons");
+  check("backstop: 3 opções", bk?.options.length === 3);
 }
 
 console.log(`\n${pass}/${total} PASS`);

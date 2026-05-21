@@ -94,3 +94,43 @@ export function interactiveFallbackText(p: InteractivePayload): string {
   parts.push(lines.join("\n"));
   return parts.join("\n\n").trim();
 }
+
+/**
+ * BACKSTOP determinístico (Pedro 2026-05-20): se o LLM ESQUECEU de chamar
+ * present_options e escreveu uma lista NUMERADA com cue de escolha, converte
+ * pra payload interativo. Garante adoção mesmo sem adesão 100% do modelo.
+ *
+ * Retorna null (não converte) quando:
+ *  - não há ≥2 itens numerados, OU
+ *  - não há cue de escolha (qual/escolhe/prefere/opção OU termina com "?") —
+ *    pra não transformar lista INFORMATIVA ("fiz 3 coisas: 1…2…") em menu.
+ */
+export function detectNumberedOptionsFallback(text: string): InteractivePayload | null {
+  if (!text) return null;
+  const lines = text.split(/\r?\n/);
+  const opts: { idx: number; label: string }[] = [];
+  lines.forEach((line, idx) => {
+    const m = line.match(/^\s*(\d+)[.)]\s+(.+\S)\s*$/);
+    if (m) opts.push({ idx, label: m[2].replace(/\*/g, "").trim() });
+  });
+  if (opts.length < 2) return null;
+
+  const lower = text.toLowerCase();
+  const hasCue =
+    /(qual|quais|escolh|prefere|prefer[ie]|\bop[çc]|qual deles|qual dos|sim ou n[ãa]o)/.test(lower) ||
+    text.trim().endsWith("?");
+  if (!hasCue) return null;
+
+  const firstIdx = opts[0].idx;
+  const lastIdx = opts[opts.length - 1].idx;
+  let body = lines.slice(0, firstIdx).join("\n").replace(/\*/g, "").trim();
+  if (!body) body = lines.slice(lastIdx + 1).join(" ").replace(/\*/g, "").trim();
+  if (!body) body = "Escolhe uma opção:";
+
+  const options: InteractiveOption[] = opts.map((o, i) => ({
+    id: `opt_${i + 1}`,
+    label: o.label.slice(0, 72),
+  }));
+  const needsList = options.length > 3 || options.some((o) => o.label.length > 20);
+  return { kind: needsList ? "list" : "buttons", body, options };
+}

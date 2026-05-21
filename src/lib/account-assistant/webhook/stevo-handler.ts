@@ -464,6 +464,7 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       // not_sent=true quando o gate estava off OU o envio falhou (audit claro).
       sent_via: sendResult?.ok ? "stevo" : null,
       sent_kind: sentKind,
+      interactive_via: result.interactive_via ?? null,
       interactive_error: interactiveError,
       not_sent: !sendResult?.ok,
       send_error: sendResult?.error ?? null,

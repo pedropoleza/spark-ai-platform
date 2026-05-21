@@ -26,6 +26,7 @@ import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
 import { runSparkbotTurn, buildToolCtx } from "./core/run-sparkbot-turn";
 import {
   extractInteractiveFromToolCalls,
+  detectNumberedOptionsFallback,
   interactiveFallbackText,
   type InteractivePayload,
 } from "./core/interactive";
@@ -108,6 +109,9 @@ export interface ProcessOutput {
    *  O canal de envio decide renderizar (WhatsApp) ou cair pro `text` (web/GHL).
    *  `text` SEMPRE traz o fallback (corpo + opções numeradas). */
   interactive?: InteractivePayload;
+  /** Origem do interativo: "present_options" (LLM chamou) ou "backstop" (LLM
+   *  escreveu lista numerada e o sistema converteu). Métrica de adesão. */
+  interactive_via?: "present_options" | "backstop";
 }
 
 export async function processIncoming(input: ProcessInput): Promise<ProcessOutput> {
@@ -627,7 +631,23 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // Interativo (Etapa 3): se o LLM chamou present_options, monta o payload e usa
   // o texto numerado como fallback (web/GHL e quando o envio interativo falha).
   // O texto-fallback é o que persiste em content (histórico legível).
-  const interactive = extractInteractiveFromToolCalls(result.tool_calls);
+  let interactive = extractInteractiveFromToolCalls(result.tool_calls);
+  let interactiveVia: "present_options" | "backstop" | undefined = interactive
+    ? "present_options"
+    : undefined;
+  // BACKSTOP (Pedro 2026-05-20): LLM escreveu lista numerada com cue de escolha
+  // mas ESQUECEU present_options → converte deterministicamente em lista/botão.
+  // Garante adoção mesmo sem adesão 100%. Loga pra medir/calibrar.
+  if (!interactive && result.text) {
+    const bk = detectNumberedOptionsFallback(result.text);
+    if (bk) {
+      interactive = bk;
+      interactiveVia = "backstop";
+      console.warn(
+        `[Sparkbot] interactive BACKSTOP fired rep=${rep.id} — lista numerada sem present_options (${bk.options.length} opções, ${bk.kind}). Calibrar prompt.`,
+      );
+    }
+  }
   const finalText = interactive ? interactiveFallbackText(interactive) : result.text;
 
   return {
@@ -645,6 +665,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     primary_error: result.primary_error,
     secondary_error: result.secondary_error,
     interactive: interactive ?? undefined,
+    interactive_via: interactiveVia,
   };
 }
 
