@@ -53,6 +53,21 @@ check(
   parseTermsResponse("não quero usar isso de jeito nenhum mesmo obrigado") === "reject",
 );
 
+// Fix review 2026-05-20 — recusa FORTE longa (não começa com negação) → reject
+check("'de jeito nenhum eu vou usar esse robô' → reject", parseTermsResponse("de jeito nenhum eu vou usar esse robô") === "reject");
+check("'eu jamais aceitaria esses termos abusivos' → reject", parseTermsResponse("eu jamais aceitaria esses termos abusivos") === "reject");
+check("'prefiro não usar esse serviço obrigado' → reject", parseTermsResponse("prefiro não usar esse serviço obrigado") === "reject");
+check("'esses termos são abusivos e eu recuso totalmente' → reject", parseTermsResponse("esses termos são abusivos e eu recuso totalmente") === "reject");
+// Dead entries agora rejeitam
+check("'n' → reject", parseTermsResponse("n") === "reject");
+check("'nope' → reject", parseTermsResponse("nope") === "reject");
+// Yes-but-no NÃO registra consentimento → unclear
+check("'aceito que errei mas não concordo' → unclear (não accept)", parseTermsResponse("aceito que errei mas não concordo com isso") === "unclear");
+check("'tá bom mas não vou usar' → reject", parseTermsResponse("tá bom mas não vou usar") === "reject");
+// Regressão: aceite limpo continua accept
+check("regressão: 'aceito' → accept", parseTermsResponse("aceito") === "accept");
+check("regressão: 'beleza pode' → accept", parseTermsResponse("beleza pode") === "accept");
+
 // Payload do botão de termos
 const t = buildTermsInteractive();
 check("termos: kind=buttons", t.kind === "buttons");

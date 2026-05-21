@@ -194,5 +194,35 @@ const tc = (name: string, input: Record<string, unknown>) => ({ name, input, res
   check("backstop: 3 opções", bk?.options.length === 3);
 }
 
+// 14. BACKSTOP — RECAP com fechador NÃO vira menu (P0 fix do review)
+{
+  check(
+    "backstop: recap + 'posso ajudar em mais alguma coisa?' → null",
+    detectNumberedOptionsFallback(
+      "Prontinho! Fiz:\n1. Movi a opp\n2. Criei a tarefa\n3. Mandei a msg\nPosso ajudar em mais alguma coisa?",
+    ) === null,
+  );
+  check(
+    "backstop: recap + 'alguma dúvida?' → null",
+    detectNumberedOptionsFallback("Resumo:\n1. Liguei pro João\n2. Movi a opp\nAlguma dúvida?") === null,
+  );
+  check(
+    "backstop: 'qualquer/qualidade' não é cue → null",
+    detectNumberedOptionsFallback("Pode pedir qualquer coisa.\n1. opt um\n2. opt dois") === null,
+  );
+  check(
+    "backstop: fatos + 'tudo certo?' → null",
+    detectNumberedOptionsFallback("Te devo 2 coisas:\n1. ligar\n2. enviar\nTudo certo?") === null,
+  );
+}
+
+// 15. BACKSTOP — pergunta DEPOIS do bloco ainda converte
+{
+  const bk = detectNumberedOptionsFallback(
+    "Achei estes contatos:\n1. João Silva\n2. João Souza\nQual deles?",
+  );
+  check("backstop: pergunta após bloco → converte", bk !== null && bk.options.length === 2);
+}
+
 console.log(`\n${pass}/${total} PASS`);
 process.exit(pass === total ? 0 : 1);

@@ -57,7 +57,8 @@ export function extractInteractiveFromToolCalls(
         description: r.description ? String(r.description).trim() : undefined,
       };
     })
-    .filter((o) => o.id && o.label);
+    .filter((o) => o.id && o.label)
+    .slice(0, 10); // WhatsApp lista = máx 10; cap aqui pra fallback e lista baterem
 
   if (!body || options.length < 1) return null;
 
@@ -115,19 +116,37 @@ export function detectNumberedOptionsFallback(text: string): InteractivePayload 
   });
   if (opts.length < 2) return null;
 
-  const lower = text.toLowerCase();
-  const hasCue =
-    /(qual|quais|escolh|prefere|prefer[ie]|\bop[çc]|qual deles|qual dos|sim ou n[ãa]o)/.test(lower) ||
-    text.trim().endsWith("?");
-  if (!hasCue) return null;
-
   const firstIdx = opts[0].idx;
   const lastIdx = opts[opts.length - 1].idx;
-  let body = lines.slice(0, firstIdx).join("\n").replace(/\*/g, "").trim();
-  if (!body) body = lines.slice(lastIdx + 1).join(" ").replace(/\*/g, "").trim();
-  if (!body) body = "Escolhe uma opção:";
 
-  const options: InteractiveOption[] = opts.map((o, i) => ({
+  // "Linha-pergunta": a não-vazia logo ANTES do bloco numerado e logo DEPOIS.
+  const nonEmptyAt = (from: number, step: number): string => {
+    for (let i = from; i >= 0 && i < lines.length; i += step) {
+      const t = lines[i].replace(/\*/g, "").trim();
+      if (t) return t;
+    }
+    return "";
+  };
+  const before = nonEmptyAt(firstIdx - 1, -1).toLowerCase();
+  const after = nonEmptyAt(lastIdx + 1, +1).toLowerCase();
+
+  // FECHADORES de conversa NÃO são escolha — evita transformar um RECAP em menu
+  // ("Posso ajudar em mais alguma coisa?", "alguma dúvida?", "tudo certo?").
+  const CLOSER =
+    /(mais alguma|alguma d[úu]vida|posso (te )?ajudar|isso (tudo|mesmo)|fechou|tudo (certo|bem)|t[áa] (certo|bom|ok|tudo)|precisa de mais)\s*\??$/i;
+  if (CLOSER.test(before) || CLOSER.test(after)) return null;
+
+  // CUE de escolha: PALAVRA de escolha (word-boundary) na linha-pergunta
+  // adjacente. SEM `endsWith("?")` solto (recaps terminam em "?"). "qualquer"/
+  // "qualidade" NÃO casam (\bqual\b exige fim de palavra).
+  const CUE =
+    /\b(qual|quais|escolh\w*|prefer\w*|op[çc][ãa]o|op[çc][õo]es|qual deles|qual dos|um ou outro|sim ou n[ãa]o)\b/i;
+  if (!CUE.test(before) && !CUE.test(after)) return null;
+
+  let body = lines.slice(0, firstIdx).join("\n").replace(/\*/g, "").trim();
+  if (!body) body = nonEmptyAt(lastIdx + 1, +1) || "Escolhe uma opção:";
+
+  const options: InteractiveOption[] = opts.slice(0, 10).map((o, i) => ({
     id: `opt_${i + 1}`,
     label: o.label.slice(0, 72),
   }));

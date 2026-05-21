@@ -228,7 +228,10 @@ const BODY_MAX = 1024; // limite do corpo (description) no interativo WhatsApp
 
 function truncate(s: string, n: number): string {
   const t = (s || "").trim();
-  return t.length <= n ? t : `${t.slice(0, n - 1)}…`;
+  // Itera por CODE POINT (Array.from) pra não cortar um emoji/surrogate-pair no
+  // meio (gerava surrogate órfão → UTF-8 quebrado). Fix do review 2026-05-20.
+  const cp = Array.from(t);
+  return cp.length <= n ? t : `${cp.slice(0, n - 1).join("")}…`;
 }
 
 export type StevoButtonParams = {
@@ -332,6 +335,15 @@ export async function sendStevoList(p: StevoListParams): Promise<StevoSendResult
     .filter((s) => (s.rows as unknown[]).length > 0);
 
   const totalRows = sections.reduce((n, s) => n + (s.rows as unknown[]).length, 0);
+
+  // Aviso (não silencioso) quando o cap de 10 descarta rows/seções — antes uma
+  // seção inteira (ex: "Frios") sumia sem rastro. Fix do review 2026-05-20.
+  const originalTotal = (p.sections || []).reduce((n, s) => n + (s.rows?.length || 0), 0);
+  if (originalTotal > totalRows) {
+    console.warn(
+      `[stevo-send] lista: ${originalTotal} rows excede o limite ${MAX_LIST_ROWS} — ${originalTotal - totalRows} descartada(s). Caller deveria mandar ≤${MAX_LIST_ROWS}.`,
+    );
+  }
 
   if (!base || !apiKey || !number || !p.body?.trim() || !p.buttonText?.trim() || totalRows === 0) {
     return {

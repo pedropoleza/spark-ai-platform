@@ -90,12 +90,13 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
       ? "Leitura (safe) e escrita leve (medium: notes, tasks, tags, reminders, custom fields) executam DIRETO — chame a tool e devolva o resultado real. NUNCA finja que rodou. Ações HIGH risk (delete_*, send_message_to_contact, create_appointment, import_contacts) PEDEM CONFIRMAÇÃO verbal antes — pergunte 'Confirma?' e só rechame com confirmed_by_rep:true após 'sim/ok/pode'."
       : "Leitura (safe) executa direto. Escrita leve (medium: notes, tasks, tags, reminders, custom fields) E ações HIGH risk (delete_*, send_message_to_contact, create_appointment, import_contacts) PEDEM CONFIRMAÇÃO verbal antes. Fluxo: pergunte 'Confirma?' → espere 'sim/ok/pode' → CHAME a tool com confirmed_by_rep:true → use o resultado da tool pra responder. NUNCA finja que rodou sem chamar.";
 
-  // Stevo interativo (Pedro 2026-05-20): só ensina present_options quando o gate
-  // STEVO_INTERACTIVE_ENABLED tá ligado. Off = bot idêntico a hoje (a tool também
-  // é escondida do LLM no processor via disabledTools). On = botões/listas no zap.
-  const interactiveEnabled = /^(1|true|yes)$/i.test(
-    process.env.STEVO_INTERACTIVE_ENABLED?.trim() || "",
-  );
+  // Stevo interativo (Pedro 2026-05-20): ensina present_options quando o gate
+  // STEVO_INTERACTIVE_ENABLED tá ligado OU no painel web (que não depende do
+  // Stevo — vira lista numerada via fallback). Deve casar com a disponibilidade
+  // da tool no processor (disabledTools). Off + WhatsApp = bot idêntico a hoje.
+  const interactiveEnabled =
+    /^(1|true|yes)$/i.test(process.env.STEVO_INTERACTIVE_ENABLED?.trim() || "") ||
+    channel === "web_ui";
 
   return [
     "# IDENTIDADE",

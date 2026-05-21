@@ -101,6 +101,22 @@ function normalizeStevoPhone(sender: string): string {
 }
 
 /**
+ * Resolve o telefone do rep com segurança. Só trata como TELEFONE um JID de
+ * número (@s.whatsapp.net / @c.us) ou dígitos puros. Se o Info.Sender vier como
+ * @lid (LID-addressing — opaco, NÃO é telefone) ou @g.us (grupo), cai pro
+ * Info.Chat (em 1:1 traz o JID com o número real). Se nenhum for telefone,
+ * retorna "" — NUNCA fabrica "+<lid>" (que dropava/corrompia o rep). Fix do
+ * review 2026-05-20.
+ */
+function resolveSenderPhone(sender: string, chat: string): string {
+  const isPhoneJid = (jid: string) =>
+    /@(s\.whatsapp\.net|c\.us)$/i.test(jid) || /^\+?\d{6,}$/.test(jid.trim());
+  if (isPhoneJid(sender)) return normalizeStevoPhone(sender);
+  if (isPhoneJid(chat)) return normalizeStevoPhone(chat);
+  return "";
+}
+
+/**
  * Extrai o texto da PERGUNTA original de um quotedMessage (o que o rep tocou).
  * Cobre os formatos do Stevo: NativeFlow (interactiveMessage.body.text),
  * listMessage.description/title, buttonsMessage legado, e texto puro. Tira
@@ -160,7 +176,7 @@ export function parseStevoWebhook(body: unknown): ParsedStevoMessage | null {
   if (info.IsGroup === true) return null;
 
   const messageId = asString(info.ID);
-  const phone = normalizeStevoPhone(asString(info.Sender));
+  const phone = resolveSenderPhone(asString(info.Sender), asString(info.Chat));
   if (!messageId || !phone) return null;
 
   const pushName = asString(info.PushName);

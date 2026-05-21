@@ -191,12 +191,22 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       await setActiveLocation(rep.id, chosen.location_id);
       activeLocationId = chosen.location_id;
     } else {
-      // Pergunta
-      const list = rep.ghl_users
-        .map((u, i) => `${i + 1}. ${u.location_name || u.location_id}`)
-        .join("\n");
+      // Multi-location → present_options (lista/botão tocável). Fix review
+      // 2026-05-20: antes era lista numerada em texto, fora do interativo.
+      const locOptions = rep.ghl_users.map((u) => ({
+        id: `loc_${u.location_id}`,
+        label: u.location_name || u.location_id,
+      }));
+      const locNeedsList =
+        locOptions.length > 3 || locOptions.some((o) => o.label.length > 20);
+      const locPayload: InteractivePayload = {
+        kind: locNeedsList ? "list" : "buttons",
+        body: "Você tá em mais de uma location. Em qual quer operar agora?",
+        options: locOptions,
+      };
       return {
-        text: `Você tá cadastrado em mais de uma location. Em qual quer operar agora?\n${list}\n\nMe manda o número ou o nome.`,
+        text: interactiveFallbackText(locPayload),
+        interactive: locPayload,
         should_send: true,
       };
     }
@@ -438,9 +448,11 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // Stevo interativo (Pedro 2026-05-20): esconde present_options do LLM quando o
   // gate STEVO_INTERACTIVE_ENABLED tá off → bot idêntico a hoje. On = LLM pode usar
   // (e o prompt-builder ensina). Pareia com o gate de envio no stevo-handler.
-  const interactiveEnabled = /^(1|true|yes)$/i.test(
-    process.env.STEVO_INTERACTIVE_ENABLED?.trim() || "",
-  );
+  // web_ui sempre tem present_options (no painel vira lista numerada via
+  // fallback; não depende do Stevo). WhatsApp depende de STEVO_INTERACTIVE_ENABLED.
+  const interactiveEnabled =
+    /^(1|true|yes)$/i.test(process.env.STEVO_INTERACTIVE_ENABLED?.trim() || "") ||
+    input.channel === "web_ui";
   const disabledTools = interactiveEnabled
     ? input.config.disabled_tools
     : [...(input.config.disabled_tools || []), "present_options"];

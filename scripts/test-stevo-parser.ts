@@ -82,6 +82,31 @@ function check(name: string, cond: boolean, detail?: string) {
   check("serverUrl ausente → ''", r?.serverUrl === "");
 }
 
+// @lid sender (LID-addressing, NÃO é telefone) → cai pro Info.Chat (P0 fix)
+{
+  const r = parseStevoWebhook({
+    event: "Message",
+    instanceToken: INSTANCE_TOKEN,
+    data: {
+      Info: infoBase({ Type: "text", MediaType: "", Sender: "187278576095448@lid", Chat: SENDER }),
+      Message: { conversation: "oi" },
+    },
+  });
+  check("@lid sender → usa Chat (+17867717077)", r?.phone === "+17867717077", `got=${r?.phone}`);
+}
+// @lid sender E Chat não-telefone → null (NÃO fabrica +<lid>)
+{
+  const r = parseStevoWebhook({
+    event: "Message",
+    instanceToken: INSTANCE_TOKEN,
+    data: {
+      Info: infoBase({ Type: "text", MediaType: "", Sender: "187278576095448@lid", Chat: "12345@lid" }),
+      Message: { conversation: "oi" },
+    },
+  });
+  check("@lid sem Chat telefone → null", r === null);
+}
+
 // ---------------------------------------------------------------------------
 // 1b. TEXTO (extendedTextMessage.text — variante)
 // ---------------------------------------------------------------------------

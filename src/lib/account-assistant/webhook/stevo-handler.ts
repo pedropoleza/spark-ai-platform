@@ -286,17 +286,28 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
     await new Promise((r) => setTimeout(r, debounceMs));
     try {
       const sb = createAdminClient();
-      const { data: latest } = await sb
+      // Olha a ÚLTIMA mensagem do rep nesse hub (QUALQUER role). Reduz a race
+      // (review 2026-05-20): (a) se a última é do AGENTE, um vencedor concorrente
+      // já respondeu o lote → não responde de novo (anti-duplicação). (b) se há
+      // msg de USER mais nova que a minha → ela processa o lote. Inclui
+      // hub_location_id (paridade com getSparkbotHistory).
+      const { data: last } = await sb
         .from("sparkbot_messages")
-        .select("ghl_message_id")
+        .select("role, ghl_message_id")
         .eq("rep_id", rep.id)
-        .eq("role", "user")
+        .eq("hub_location_id", hubLocationId)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (latest?.ghl_message_id && latest.ghl_message_id !== parsed.messageId) {
+      if (last?.role === "agent") {
         console.log(
-          `[stevo-handler] debounce: ${parsed.messageId} superada por ${latest.ghl_message_id} — bail`,
+          `[stevo-handler] debounce: lote já respondido (última msg é do agente) — bail ${parsed.messageId}`,
+        );
+        return;
+      }
+      if (last?.ghl_message_id && last.ghl_message_id !== parsed.messageId) {
+        console.log(
+          `[stevo-handler] debounce: ${parsed.messageId} superada por ${last.ghl_message_id} — bail`,
         );
         return; // a invocação mais nova processa o lote
       }

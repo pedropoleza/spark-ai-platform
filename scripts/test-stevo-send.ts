@@ -197,6 +197,18 @@ async function run() {
     check("botão: footer default presente", typeof calls[0]?.body.footer === "string" && (calls[0]?.body.footer as string).length > 0, String(calls[0]?.body.footer));
   }
 
+  // truncagem emoji-safe: não deixar surrogate órfão (review 2026-05-20)
+  reset(() => new Response(JSON.stringify({ id: "X" }), { status: 200 }));
+  {
+    await sendStevoButton({
+      serverUrl: BASE, apiKey: KEY, number: "17867717077", body: "b",
+      buttons: [{ id: "a", label: "Confirmar agora 👍🏽✅👌🔥💯🎉🚀" }],
+    });
+    const label = ((calls[0]?.body.buttons as Array<Record<string, unknown>>) || [])[0]?.displayText as string;
+    const orphan = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(label);
+    check("botão: truncate emoji sem surrogate órfão", !orphan, JSON.stringify(label));
+  }
+
   // -------------------------------------------------------------------------
   // 9. LISTA — payload + cap 10 rows + buttonText
   // -------------------------------------------------------------------------

@@ -26,7 +26,7 @@ const ACCEPT_KEYWORDS = [
 
 /** Padrões de negação — qualquer match dispara REJECT (fail-safe). */
 const NEGATION_PATTERN =
-  /\b(nao|no|nunca|recuso|recus[ao]|jeito\s+nenhum|de\s+jeito|nem|nada|negativo|n[ãa]o\s+quero|n[ãa]o\s+aceito)\b/;
+  /\b(nao|n|no|nope|nunca|jamais|recuso|recus[ao]|jeito\s+nenhum|de\s+jeito|nem|nada|negativo|n[ãa]o\s+quero|n[ãa]o\s+aceito)\b/;
 
 /**
  * Normaliza texto pra parsing: lowercase + remove acentos + remove pontuação.
@@ -62,19 +62,26 @@ export function parseTermsResponse(text: string): "accept" | "reject" | "unclear
   const NEG_FIRST = new Set([
     "nao", "n", "no", "nunca", "nem", "nada", "negativo", "recuso", "recusa", "jamais", "nope",
   ]);
+
+  // Fix review 2026-05-20 — RECUSA FORTE em QUALQUER posição → reject (LGPD:
+  // honra um "não" explícito mesmo numa frase longa que não começa com negação).
+  const STRONG_REFUSAL =
+    /\b(recuso|recusa|jamais|de\s+jeito\s+nenhum|nao\s+quero|nao\s+aceito|nao\s+vou\s+usar|nao\s+usar|nope)\b/;
+  if (STRONG_REFUSAL.test(normalized)) return "reject";
+
+  // Recusa curta/clara: negação + (≤5 palavras OU começa com palavra de negação).
   if (NEGATION_PATTERN.test(normalized) && (words.length <= 5 || NEG_FIRST.has(firstWord))) {
     return "reject";
   }
 
-  // ACCEPT: whole-word match no início OU frase única.
-  // NUNCA `.includes` no meio (causou falso positivo histórico).
-  if (
-    ACCEPT_KEYWORDS.some(
-      (k) => normalized === k || normalized.startsWith(k + " "),
-    )
-  ) {
-    return "accept";
-  }
+  // ACCEPT: whole-word match no início OU frase única. NUNCA `.includes` no meio.
+  const accepts = ACCEPT_KEYWORDS.some(
+    (k) => normalized === k || normalized.startsWith(k + " "),
+  );
+  // "Yes-but-no" (aceite + negação no texto, ex: "aceito que errei mas não
+  // concordo") → NÃO registra consentimento → unclear (re-pergunta). LGPD.
+  if (accepts && NEGATION_PATTERN.test(normalized)) return "unclear";
+  if (accepts) return "accept";
   return "unclear";
 }
 
