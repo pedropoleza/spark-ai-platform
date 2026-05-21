@@ -3,6 +3,11 @@ import { waitUntil } from "@vercel/functions";
 
 export const maxDuration = 60;
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  isProactiveEventsEnabled,
+  isProactiveEventType,
+  routeProactiveEvent,
+} from "@/lib/account-assistant/proactive/event-router";
 
 // ===== In-memory rate limiter =====
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
@@ -134,6 +139,20 @@ export async function POST(request: NextRequest) {
     const hasAnyMedia = Object.values(rawMediaFields).some(v => v != null && v !== "" && v !== undefined);
     if (hasAnyMedia) {
       console.log(`[Webhook:RAW] Media fields:`, JSON.stringify(rawMediaFields).substring(0, 800));
+    }
+
+    // ===== PROATIVIDADE EVENT-DRIVEN (Pedro 2026-05-21) =====
+    // GHL manda webhooks de task/opp/appointment/contact que NÃO são mensagens.
+    // Em vez de só descartar, roteia pra proatividade (gated por env, non-fatal,
+    // fire-and-forget). O fluxo de mensagem segue IDÊNTICO — o isRealMessage abaixo
+    // continua descartando esses tipos. Default OFF até o smoke supervisionado.
+    if (isProactiveEventsEnabled() && isProactiveEventType(messageType)) {
+      void routeProactiveEvent(body as Record<string, unknown>, messageType).catch((err) =>
+        console.warn(
+          "[proactive-router] falhou (non-fatal):",
+          err instanceof Error ? err.message : err,
+        ),
+      );
     }
 
     // ===== FILTRO: Apenas mensagens reais =====

@@ -16,6 +16,11 @@
 import type { ToolEntry } from "./types";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 import { updateRepById } from "@/lib/repositories/rep-identities.repo";
+import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  PROACTIVITY_DEFAULTS,
+  type ProactivityRuleKey,
+} from "@/lib/account-assistant/proactive/preferences";
 
 /**
  * Valida IANA timezone usando Intl.DateTimeFormat. Inválido (typo, vazio,
@@ -392,6 +397,92 @@ const setDailyBriefing: ToolEntry = {
   },
 };
 
+// Liga/desliga QUALQUER proatividade pro rep (FORGE-3 2026-05-21). Persiste em
+// rep_identities.proactivity_prefs (JSONB); daily_briefing delega pra coluna
+// legada. É o "configurável via chat" — a UI do Spark mexe nas mesmas prefs.
+const setProactivity: ToolEntry = {
+  def: {
+    name: "set_proactivity",
+    description:
+      "Liga ou desliga uma PROATIVIDADE específica pro rep (lembretes/resumos/avisos automáticos), ou ajusta a antecedência do lembrete de tarefa.\n\nUse quando o rep falar coisas como:\n- 'Ativa o lembrete de tarefa' → rule=task_reminder, enabled=true\n- 'Me lembra das tasks 30min antes' → rule=task_reminder, enabled=true, lead_min=30\n- 'Quero saber quando fecho um deal' → rule=deal_won, enabled=true\n- 'Desliga o resumo de fim do dia' → rule=end_of_day_summary, enabled=false\n- 'Me avisa de reunião marcada' → rule=pre_meeting_briefing, enabled=true\n\nRegras válidas: task_reminder (lembrete de tarefa), task_overdue (tarefa atrasada), pre_meeting_briefing (briefing antes da call), post_meeting (pós-reunião), daily_briefing (resumo matinal), end_of_day_summary (resumo fim do dia), weekly_review (reflexão semanal), pipeline_review, deal_won (deal fechado), new_lead (novo lead), no_show, opportunity_stale (opp parada), lead_cooling (lead esfriando), inbound_unanswered. Confirma a mudança com o rep depois.",
+    risk: "medium",
+    parameters: {
+      type: "object",
+      properties: {
+        rule: {
+          type: "string",
+          enum: Object.keys(PROACTIVITY_DEFAULTS),
+          description: "A proatividade a configurar.",
+        },
+        enabled: {
+          type: "boolean",
+          description: "true = liga essa proatividade pro rep; false = desliga.",
+        },
+        lead_min: {
+          type: "number",
+          description:
+            "Só pra rule=task_reminder: quantos minutos ANTES do vencimento lembrar (default 15).",
+        },
+      },
+      required: ["rule", "enabled"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const rule = String(args.rule || "") as ProactivityRuleKey;
+    if (!Object.prototype.hasOwnProperty.call(PROACTIVITY_DEFAULTS, rule)) {
+      return { status: "error", message: `Proatividade desconhecida: '${rule}'.`, retryable: false };
+    }
+    const enabled = args.enabled === true;
+    const leadMin =
+      typeof args.lead_min === "number" && args.lead_min > 0 ? Math.round(args.lead_min) : undefined;
+    const label = PROACTIVITY_DEFAULTS[rule].label;
+
+    try {
+      if (rule === "daily_briefing") {
+        // Retrocompat: resumo matinal segue na coluna dedicada (o cron lê de lá).
+        await updateRepById(ctx.rep.id, {
+          daily_briefing_enabled: enabled,
+          updated_at: new Date().toISOString(),
+        });
+      } else {
+        // Merge no JSONB — lê fresco pra não sobrescrever outras prefs.
+        const supabase = createAdminClient();
+        const { data } = await supabase
+          .from("rep_identities")
+          .select("proactivity_prefs")
+          .eq("id", ctx.rep.id)
+          .maybeSingle();
+        const cur = (data?.proactivity_prefs ?? {}) as Record<
+          string,
+          { enabled?: boolean; params?: Record<string, number> }
+        >;
+        const prevParams = cur[rule]?.params ?? {};
+        const params =
+          rule === "task_reminder" && leadMin ? { ...prevParams, lead_min: leadMin } : prevParams;
+        cur[rule] = { enabled, ...(Object.keys(params).length ? { params } : {}) };
+        await updateRepById(ctx.rep.id, {
+          proactivity_prefs: cur,
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { status: "error", message: `Falha ao atualizar proatividade: ${msg}`, retryable: false };
+    }
+
+    const leadNote = rule === "task_reminder" && leadMin ? ` Vou lembrar ${leadMin}min antes do vencimento.` : "";
+    return {
+      status: "ok",
+      data: {
+        rule,
+        enabled,
+        lead_min: leadMin ?? null,
+        message: `${label} ${enabled ? "ativado" : "desativado"}.${leadNote}`,
+      },
+    };
+  },
+};
+
 // =====================================================================
 // REP ALIASES (Pedro/Gustavo 2026-05-14)
 // =====================================================================
@@ -665,6 +756,7 @@ export const IDENTITY_TOOLS: ToolEntry[] = [
   switchActiveLocation,
   reportMissedCapability,
   setDailyBriefing,
+  setProactivity,
   setRepAlias,
   forgetRepAlias,
   listRepAliases,

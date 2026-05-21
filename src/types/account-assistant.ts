@@ -123,6 +123,13 @@ export interface RepIdentity {
    * Default TRUE pra todos. Rep pode desativar via tool set_daily_briefing.
    */
   daily_briefing_enabled?: boolean;
+  /**
+   * Preferências de proatividade POR REP (FORGE-3 2026-05-21). JSONB:
+   * { "<rule_key>": { enabled?: bool, params?: { lead_min?: number } } }.
+   * Ausência de uma key = segue o default da matriz (proactive/preferences.ts).
+   * Ligável/desligável pelo rep via chat (tool set_proactivity) e pela UI do Spark.
+   */
+  proactivity_prefs?: Record<string, { enabled?: boolean; params?: Record<string, number> }>;
   created_at: string;
   updated_at: string;
 }

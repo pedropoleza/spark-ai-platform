@@ -58,6 +58,7 @@ export async function fireScheduledReminders(): Promise<ReminderRunResult> {
       "recurring_reminder",
       "outbound_to_contact",
       "outbound_to_contact_recurring",
+      "ghl_task_reminder",
     ])
     .select("*")
     .order("next_run_at", { ascending: true })
@@ -135,7 +136,12 @@ async function fireOne(task: ScheduledTaskRow): Promise<"fired" | "failed" | "sk
   // total (anti-ban), mas NÃO leva aviso de silêncio nem conta como "sem
   // resposta". O rep pediu pra ser lembrado; não faz sentido ameaçá-lo por
   // isso. Só aplica em entregas REAIS (não em test session).
-  const decision = await loadSilenceDecision(supabase, task.rep_id, "requested");
+  // Kind do silence-gate: lembrete pedido pelo rep ("me lembra de X") = "requested"
+  // (respeita pausa, não ameaça/conta). Lembrete de TAREFA do GHL = "nudge" — é
+  // bot-initiated (regra), então passa pelo gate completo (warn/pausa) pra proteger
+  // contra spam/ban se o rep some (Pedro 2026-05-21). Reseta em qualquer inbound.
+  const reminderKind = task.task_type === "ghl_task_reminder" ? "nudge" : "requested";
+  const decision = await loadSilenceDecision(supabase, task.rep_id, reminderKind);
   if (!decision.canSend) {
     console.log(
       `[reminder-runner] task ${task.id} skipped (silence gate, reason=${decision.reason}) — ` +
