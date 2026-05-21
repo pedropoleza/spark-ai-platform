@@ -660,7 +660,22 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       );
     }
   }
-  const finalText = interactive ? interactiveFallbackText(interactive) : result.text;
+  // Pedro 2026-05-21: o LLM abusa de travessão (—/–) e soa robótico; a regra de
+  // prompt sozinha NÃO segurou (msgs pós-deploy ainda vinham com "—"). Strip
+  // determinístico no que SAI pro rep — troca por hífen normal (sem o "tell" de AI).
+  const stripDashes = (s: string): string => s.replace(/[—–]/g, "-");
+  if (interactive) {
+    interactive.body = stripDashes(interactive.body);
+    interactive.options = interactive.options.map((o) => ({
+      ...o,
+      label: stripDashes(o.label),
+      description: o.description ? stripDashes(o.description) : o.description,
+    }));
+    if (interactive.title) interactive.title = stripDashes(interactive.title);
+    if (interactive.footer) interactive.footer = stripDashes(interactive.footer);
+    if (interactive.buttonText) interactive.buttonText = stripDashes(interactive.buttonText);
+  }
+  const finalText = stripDashes(interactive ? interactiveFallbackText(interactive) : result.text);
 
   return {
     text: finalText || "Não consegui gerar resposta. Tenta de novo?",

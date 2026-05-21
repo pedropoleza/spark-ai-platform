@@ -153,7 +153,8 @@ function parseGeneratorOutput(
       .slice(0, expectedLength)
       .map((m, idx) => ({
         position: typeof m.position === "number" ? m.position : idx + 1,
-        text: (m.text as string).trim(),
+        // Pedro 2026-05-21: strip de travessão (—/–) — soa robótico no follow-up.
+        text: (m.text as string).trim().replace(/[—–]/g, "-"),
         tone_hint: m.tone_hint,
         offset_hours_from_first:
           typeof m.offset_hours_from_first === "number"
