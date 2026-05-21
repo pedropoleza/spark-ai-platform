@@ -31,63 +31,79 @@ function setCached(key: string, data: unknown) {
 // Helpers de agregação
 // ─────────────────────────────────────────────────────────────
 
-async function getOverview() {
+// Pedro 2026-05-21: o Overview agora aceita um RANGE de datas (filtro de data
+// aplica no Overview inteiro). KPIs date-bound (mensagens, AI, reps ativos, bulk
+// criados, taxa de resposta) re-escopam pro [startISO, endISO). Os snapshots
+// (bulk running/paused, signals open, runner health) são "agora" e ignoram o range.
+async function getOverview(startISO: string, endISO: string) {
   const supa = createAdminClient();
-  const now = new Date();
-  const d24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-  const d7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const d30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const [
-    reps24h,
-    reps7d,
-    reps30d,
     repsTotalExt,
-    msgs24h,
-    aiCalls24h,
-    aiCalls7d,
+    aiCalls,
     bulkRunning,
     bulkPaused,
-    bulkLast7d,
+    bulkCreated,
     signalsHigh,
     signalsOpen,
     runnerHealth,
   ] = await Promise.all([
-    supa.from("rep_identities").select("id", { count: "exact", head: true }).gte("last_inbound_at", d24h),
-    supa.from("rep_identities").select("id", { count: "exact", head: true }).gte("last_inbound_at", d7d),
-    supa.from("rep_identities").select("id", { count: "exact", head: true }).gte("last_inbound_at", d30d),
     supa.from("rep_identities").select("id", { count: "exact", head: true }).eq("is_internal", false),
-    supa.from("sparkbot_messages").select("role", { count: "exact" }).gte("created_at", d24h),
-    supa.from("usage_records").select("cost_usd, total_charge_usd").gte("created_at", d24h),
-    supa.from("usage_records").select("cost_usd, total_charge_usd").gte("created_at", d7d),
+    supa.from("usage_records").select("cost_usd, total_charge_usd").gte("created_at", startISO).lt("created_at", endISO),
     supa.from("bulk_message_jobs").select("id", { count: "exact", head: true }).eq("status", "running"),
     supa.from("bulk_message_jobs").select("id", { count: "exact", head: true }).eq("status", "paused"),
-    supa.from("bulk_message_jobs").select("id", { count: "exact", head: true }).gte("created_at", d7d),
+    supa.from("bulk_message_jobs").select("id", { count: "exact", head: true }).gte("created_at", startISO).lt("created_at", endISO),
     supa.from("admin_signals").select("id", { count: "exact", head: true }).eq("status", "open").eq("severity", "high"),
     supa.from("admin_signals").select("id", { count: "exact", head: true }).eq("status", "open"),
     supa.from("bulk_runner_health").select("last_tick_at, consecutive_errors, last_error").eq("id", 1).maybeSingle(),
   ]);
 
-  // Conta msgs por role (in vs out) — query separada
-  let msgsIn24h = 0;
-  let msgsOut24h = 0;
+  // Mensagens no período: 1 fetch de (rep_id, role) → conta in/out E deriva o
+  // engajamento por rep (reps alcançados pelo bot vs reps que responderam).
+  // Cap defensivo 100k linhas (escala atual do SparkBot << isso). role só pode
+  // ser 'user' (inbound do rep) ou 'agent' (outbound do bot) — CHECK constraint.
+  let msgsIn = 0;
+  let msgsOut = 0;
+  const reachedReps = new Set<string>(); // reps com ≥1 msg do bot (role=agent)
+  const respondedReps = new Set<string>(); // reps com ≥1 msg do rep (role=user)
+  const activeReps = new Set<string>(); // reps com qualquer atividade no período
   try {
-    const { data: msgsByRole } = await supa
+    const { data: msgRows } = await supa
       .from("sparkbot_messages")
-      .select("role")
-      .gte("created_at", d24h);
-    for (const m of msgsByRole || []) {
-      if (m.role === "user") msgsIn24h++;
-      else if (m.role === "agent" || m.role === "assistant") msgsOut24h++;
+      .select("rep_id, role")
+      .gte("created_at", startISO)
+      .lt("created_at", endISO)
+      .limit(100000);
+    for (const m of msgRows || []) {
+      const rid = m.rep_id as string;
+      activeReps.add(rid);
+      if (m.role === "user") {
+        msgsIn++;
+        respondedReps.add(rid);
+      } else if (m.role === "agent") {
+        msgsOut++;
+        reachedReps.add(rid);
+      }
     }
   } catch {
-    // best-effort
+    // best-effort — taxa de resposta vira 0 se o fetch falhar, não derruba o tab
   }
 
-  const sumCost24h = (aiCalls24h.data || []).reduce((s, r) => s + Number(r.cost_usd ?? 0), 0);
-  const sumRevenue24h = (aiCalls24h.data || []).reduce((s, r) => s + Number(r.total_charge_usd ?? 0), 0);
-  const sumCost7d = (aiCalls7d.data || []).reduce((s, r) => s + Number(r.cost_usd ?? 0), 0);
-  const sumRevenue7d = (aiCalls7d.data || []).reduce((s, r) => s + Number(r.total_charge_usd ?? 0), 0);
+  // Taxa de resposta (Pedro 2026-05-21, opção "reps no geral"): dos reps que o
+  // bot ALCANÇOU no período (mandou ≥1 msg), quantos RESPONDERAM (mandaram ≥1).
+  // Cai quando proativos vão pro vácuo — é o sinal que o Pedro quer monitorar
+  // ("ter quantos proativos quiser desde que a taxa de resposta se mantenha").
+  let respondedAmongReached = 0;
+  for (const rid of reachedReps) {
+    if (respondedReps.has(rid)) respondedAmongReached++;
+  }
+  const responseRatePct =
+    reachedReps.size > 0
+      ? Math.round((respondedAmongReached / reachedReps.size) * 1000) / 10
+      : 0;
+
+  const sumCost = (aiCalls.data || []).reduce((s, r) => s + Number(r.cost_usd ?? 0), 0);
+  const sumRevenue = (aiCalls.data || []).reduce((s, r) => s + Number(r.total_charge_usd ?? 0), 0);
 
   // Runner stale?
   const lastTickAt = runnerHealth.data?.last_tick_at;
@@ -95,33 +111,34 @@ async function getOverview() {
   const runnerStale = tickAgeSec !== null && tickAgeSec > 5 * 60;
 
   return {
+    period: { from: startISO, to: endISO },
     reps: {
-      active_24h: reps24h.count ?? 0,
-      active_7d: reps7d.count ?? 0,
-      active_30d: reps30d.count ?? 0,
+      active: activeReps.size,
+      reached: reachedReps.size,
+      responded: respondedAmongReached,
       total_external: repsTotalExt.count ?? 0,
     },
-    messages_24h: {
-      total: msgs24h.count ?? 0,
-      inbound: msgsIn24h,
-      outbound: msgsOut24h,
+    response_rate: {
+      pct: responseRatePct,
+      responded: respondedAmongReached,
+      reached: reachedReps.size,
     },
-    ai_24h: {
-      calls: (aiCalls24h.data || []).length,
-      cost_usd: Math.round(sumCost24h * 10000) / 10000,
-      revenue_usd: Math.round(sumRevenue24h * 10000) / 10000,
-      margin_usd: Math.round((sumRevenue24h - sumCost24h) * 10000) / 10000,
-      margin_pct: sumRevenue24h > 0 ? Math.round(((sumRevenue24h - sumCost24h) / sumRevenue24h) * 1000) / 10 : 0,
+    messages: {
+      total: msgsIn + msgsOut,
+      inbound: msgsIn,
+      outbound: msgsOut,
     },
-    ai_7d: {
-      calls: (aiCalls7d.data || []).length,
-      cost_usd: Math.round(sumCost7d * 100) / 100,
-      revenue_usd: Math.round(sumRevenue7d * 100) / 100,
+    ai: {
+      calls: (aiCalls.data || []).length,
+      cost_usd: Math.round(sumCost * 10000) / 10000,
+      revenue_usd: Math.round(sumRevenue * 10000) / 10000,
+      margin_usd: Math.round((sumRevenue - sumCost) * 10000) / 10000,
+      margin_pct: sumRevenue > 0 ? Math.round(((sumRevenue - sumCost) / sumRevenue) * 1000) / 10 : 0,
     },
     bulk: {
       running: bulkRunning.count ?? 0,
       paused: bulkPaused.count ?? 0,
-      created_7d: bulkLast7d.count ?? 0,
+      created: bulkCreated.count ?? 0,
     },
     signals: {
       open: signalsOpen.count ?? 0,
@@ -423,7 +440,32 @@ export async function GET(req: Request) {
   const tab = url.searchParams.get("tab") || "all";
   const fresh = url.searchParams.get("fresh") === "1";
 
-  const cacheKey = `dash:${tab}`;
+  // Date range pro Overview (Pedro 2026-05-21). Default: últimos 7 dias.
+  // Clamp defensivo: from < to, range mín 1h, máx 92 dias (evita scan gigante
+  // + fetch de mensagens estourar o cap de 100k). Datas inválidas → default.
+  const now = Date.now();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const toParam = url.searchParams.get("to");
+  const fromParam = url.searchParams.get("from");
+  let endMs = toParam ? Date.parse(toParam) : now;
+  let startMs = fromParam ? Date.parse(fromParam) : now - 7 * DAY_MS;
+  if (!Number.isFinite(endMs)) endMs = now;
+  if (!Number.isFinite(startMs)) startMs = now - 7 * DAY_MS;
+  if (startMs >= endMs) startMs = endMs - DAY_MS; // garante range positivo
+  if (endMs - startMs < 60 * 60 * 1000) startMs = endMs - 60 * 60 * 1000; // mín 1h
+  if (endMs - startMs > 92 * DAY_MS) startMs = endMs - 92 * DAY_MS; // máx 92d
+  // Snap pro minuto: presets usam to=now(), que mudaria o cache key a cada ms e
+  // mataria o cache de 60s. Quantizar pro minuto faz loads dentro do mesmo
+  // minuto compartilharem cache (perda ≤59s de dados — irrelevante p/ agregado).
+  const MIN_MS = 60 * 1000;
+  startMs = Math.floor(startMs / MIN_MS) * MIN_MS;
+  endMs = Math.floor(endMs / MIN_MS) * MIN_MS;
+  const startISO = new Date(startMs).toISOString();
+  const endISO = new Date(endMs).toISOString();
+
+  // Range no cache key só importa pro overview (único date-bound por range);
+  // os outros tabs ignoram, mas incluir é inofensivo (só mais entradas de cache).
+  const cacheKey = `dash:${tab}:${startISO}:${endISO}`;
   if (!fresh) {
     const c = cached(cacheKey);
     if (c) {
@@ -434,7 +476,7 @@ export async function GET(req: Request) {
   try {
     const payload: Record<string, unknown> = {};
     if (tab === "overview" || tab === "all") {
-      payload.overview = await getOverview();
+      payload.overview = await getOverview(startISO, endISO);
     }
     if (tab === "billing" || tab === "all") {
       payload.billing = await getBillingTab();
