@@ -35,6 +35,8 @@ import { BULK_MANAGEMENT_TOOLS } from "./bulk-management";
 import { FOLLOWUP_TOOLS } from "./followup";
 // Stevo interativo (Pedro 2026-05-20): present_options (botões/listas)
 import { PRESENTATION_TOOLS } from "./presentation";
+import { GUIDED_OUTREACH_TOOLS } from "./guided-outreach-tools";
+import { isGuidedOutreachEnabled } from "../proactive/guided-outreach";
 
 const ALL_ENTRIES: ToolEntry[] = [
   ...CONTACTS_TOOLS,
@@ -56,6 +58,8 @@ const ALL_ENTRIES: ToolEntry[] = [
   ...BULK_MANAGEMENT_TOOLS,
   ...FOLLOWUP_TOOLS,
   ...PRESENTATION_TOOLS,
+  // Gated: só expõe as tools do acompanhamento guiado quando a feature tá ligada.
+  ...(isGuidedOutreachEnabled() ? GUIDED_OUTREACH_TOOLS : []),
 ];
 
 export const TOOL_REGISTRY: Record<string, ToolEntry> = Object.fromEntries(

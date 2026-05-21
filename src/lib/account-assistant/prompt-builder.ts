@@ -10,6 +10,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isGuidedOutreachEnabled } from "./proactive/guided-outreach";
 import type { RepIdentity, RepProfile } from "@/types/account-assistant";
 import type { KnowledgeBaseItem } from "@/lib/ai/sales-prompt-builder";
 import {
@@ -97,6 +98,9 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
   const interactiveEnabled =
     /^(1|true|yes)$/i.test(process.env.STEVO_INTERACTIVE_ENABLED?.trim() || "") ||
     channel === "web_ui";
+  // Acompanhamento guiado (FORGE-3 2026-05-21): só ensina o fluxo quando a
+  // feature tá ligada (as tools também só existem gated — ver tools/index.ts).
+  const guidedEnabled = isGuidedOutreachEnabled();
 
   return [
     "# IDENTIDADE",
@@ -497,6 +501,20 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
           "  • Calendário → present_options({ body:'Qual calendário?', options:[{id:'cal1',label:'Client Appointment'},{id:'cal2',label:'Onboarding'},{id:'cal3',label:'Demo'}] })  (lista, nomes longos)",
           "  • Horários → present_options({ body:'Sexta, qual horário?', options:[{id:'s1',label:'13:30'},{id:'s2',label:'14:00'},{id:'s3',label:'15:30'}] })  (botões)",
           "  • Sim/não → present_options({ body:'Quer que eu crie a nota também?', options:[{id:'y',label:'Pode criar ✅'},{id:'n',label:'Agora não'}] })  (botões)",
+        ]
+      : []),
+    "",
+    ...(guidedEnabled
+      ? [
+          "",
+          "# ACOMPANHAMENTO GUIADO (mandar pra uma LISTA, 1 por vez)",
+          "Quando o rep quer falar/mandar mensagem pra uma LISTA de contatos ('faz o acompanhamento da M0', 'manda pra cada um da turma M2', 'fala com os leads de prova agendada'): NUNCA tente resumir/mandar todos de uma vez (trava por timeout). Use o fluxo guiado:",
+          "1. `start_guided_outreach({ filter:<FEL da lista>, goal:<objetivo>, send_mode, schedule_at })`. Pergunte 1× no começo: 'mando agora ou agendo (ex: amanhã 9h)?'.",
+          "2. Pra CADA contato (first_contact / next_contact): rascunhe uma msg CURTA e no objetivo e mostre com `present_options` — body = a msg + '[i/N] Nome', opções 'Confirmar ✅' (id confirm), 'Editar ✏️' (id edit), 'Pular ⏭️' (id skip).",
+          "3. Confirmar → `outreach_decision({ action:'confirm', message:<a msg proposta> })`. Editar → peça o texto novo → `outreach_decision({ action:'confirm', message:<texto do rep> })`. Pular → `outreach_decision({ action:'skip' })`.",
+          "4. Cada outreach_decision devolve o PRÓXIMO contato — rascunhe e mostre de novo. Quando vier `done`, comemore o resumo (X enviados, Y pulados).",
+          "5. 'Manda tudo de uma vez' → confirme com botão, depois `send_all_remaining_outreach({ message_template })` (pode usar {first_name}).",
+          "6. Se vier `already_active` no start, ofereça RETOMAR de onde parou ou cancelar (`cancel_guided_outreach`).",
         ]
       : []),
     "",
