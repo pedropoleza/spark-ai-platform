@@ -64,6 +64,35 @@ function getDebounceMs(): number {
 }
 
 /**
+ * Decide se ESTA invocação ainda deve responder, ou se foi superada (rajada do
+ * rep) / já respondida (vencedor concorrente). Reusada no PRÉ-LLM (early-out
+ * barato durante o debounce) e no PRÉ-ENVIO (reprocessa stragglers que chegaram
+ * durante a geração — Pedro 2026-05-21). Critério, na ÚLTIMA msg do rep nesse hub:
+ *   - role 'agent'  → alguém já respondeu o lote → bail (anti-duplicação).
+ *   - ghl_message_id ≠ o meu → há msg de USER mais nova → ela (ou a invocação
+ *     dela) responde o lote completo (resolveBurstTurn junta a rajada).
+ * Inclui hub_location_id (paridade com getSparkbotHistory).
+ */
+async function shouldStillRespond(
+  sb: ReturnType<typeof createAdminClient>,
+  repId: string,
+  hubLocationId: string,
+  myMessageId: string,
+): Promise<"proceed" | "bail"> {
+  const { data: last } = await sb
+    .from("sparkbot_messages")
+    .select("role, ghl_message_id")
+    .eq("rep_id", repId)
+    .eq("hub_location_id", hubLocationId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (last?.role === "agent") return "bail";
+  if (last?.ghl_message_id && last.ghl_message_id !== myMessageId) return "bail";
+  return "proceed";
+}
+
+/**
  * Constrói o RepInput a partir do conteúdo parseado do Stevo. O binário já
  * vem decriptado em base64 (doc/imagem/áudio), então convertemos pra Buffer e
  * reusamos os mesmos parsers do painel web / webhook GHL.
@@ -282,34 +311,24 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
   // segue na hora (vem isolada e é cara de reprocessar). STEVO_DEBOUNCE_MS=0 desliga.
   const debounceMs = getDebounceMs();
   const isTextLike = repInput.kind === "text";
+  // PRÉ-LLM: durante a janela de debounce, se já chegou msg mais nova / alguém
+  // respondeu, baixa ANTES de gastar o LLM (early-out barato; coalesce rajada
+  // rápida). Com debounceMs=0 (desligado) não roda — a checagem PRÉ-ENVIO abaixo
+  // cobre o straggler que chega durante a geração.
   if (isTextLike && debounceMs > 0) {
     await new Promise((r) => setTimeout(r, debounceMs));
     try {
-      const sb = createAdminClient();
-      // Olha a ÚLTIMA mensagem do rep nesse hub (QUALQUER role). Reduz a race
-      // (review 2026-05-20): (a) se a última é do AGENTE, um vencedor concorrente
-      // já respondeu o lote → não responde de novo (anti-duplicação). (b) se há
-      // msg de USER mais nova que a minha → ela processa o lote. Inclui
-      // hub_location_id (paridade com getSparkbotHistory).
-      const { data: last } = await sb
-        .from("sparkbot_messages")
-        .select("role, ghl_message_id")
-        .eq("rep_id", rep.id)
-        .eq("hub_location_id", hubLocationId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (last?.role === "agent") {
+      const decision = await shouldStillRespond(
+        createAdminClient(),
+        rep.id,
+        hubLocationId,
+        parsed.messageId,
+      );
+      if (decision === "bail") {
         console.log(
-          `[stevo-handler] debounce: lote já respondido (última msg é do agente) — bail ${parsed.messageId}`,
+          `[stevo-handler] debounce pré-LLM: ${parsed.messageId} superada/já respondida — bail (lote vai pela msg mais nova)`,
         );
         return;
-      }
-      if (last?.ghl_message_id && last.ghl_message_id !== parsed.messageId) {
-        console.log(
-          `[stevo-handler] debounce: ${parsed.messageId} superada por ${last.ghl_message_id} — bail`,
-        );
-        return; // a invocação mais nova processa o lote
       }
     } catch (err) {
       console.warn(
@@ -363,6 +382,44 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       err instanceof Error ? err.message : err,
     );
     return;
+  }
+
+  // ===== REPROCESSA SE CHEGOU MSG NOVA ANTES DE ENVIAR (Pedro 2026-05-21) =====
+  // Filosofia "mais natural": processa na hora (debounce curto/zero) e, ANTES de
+  // enviar, checa se o rep mandou outra msg DURANTE a geração. Se sim, descarta
+  // esta resposta (já estaria "velha") — a invocação da msg mais nova responde o
+  // lote inteiro (resolveBurstTurn junta a rajada de mensagens não-respondidas).
+  //
+  // SEGURANÇA (crítico): só descarta turno SEM efeito colateral — texto puro,
+  // ZERO tools executadas E sem interativo. Confirmação pendente NÃO é descartada
+  // porque a tool bloqueada pelo gate H8 fica registrada em tools_executed
+  // (llm-client empurra TODA tool call, mesmo a barrada). Se executou qualquer
+  // tool, pediu confirmação ou montou botão/lista → ENVIA normal: a msg nova vira
+  // follow-up e enxerga o resultado/pergunta no histórico. Assim NUNCA duplica
+  // ação (ex: create_contact 2×) nem quebra o fluxo de "Confirma?".
+  const noSideEffects =
+    (result.tools_executed?.length ?? 0) === 0 && !result.interactive;
+  if (isTextLike && noSideEffects) {
+    try {
+      const decision = await shouldStillRespond(
+        createAdminClient(),
+        rep.id,
+        hubLocationId,
+        parsed.messageId,
+      );
+      if (decision === "bail") {
+        console.log(
+          `[stevo-handler] pré-envio: ${parsed.messageId} superada por msg mais nova — ` +
+            `descartando resposta conversacional; a invocação mais nova responde o lote.`,
+        );
+        return; // não envia + não persiste agent (turno descartado)
+      }
+    } catch (err) {
+      console.warn(
+        "[stevo-handler] checagem pré-envio falhou — envia mesmo assim (fail-open):",
+        err instanceof Error ? err.message : err,
+      );
+    }
   }
 
   // ===== 8. ENVIO (fase 2) — gated por STEVO_SEND_ENABLED =====
