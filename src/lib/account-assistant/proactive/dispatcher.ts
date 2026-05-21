@@ -507,7 +507,15 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     // finalizado abaixo independente do canal de entrega — billing roda
     // mesmo se entrega caiu pro web (ainda houve LLM call).
     const { deliverProactiveMessage } = await import("./whatsapp-delivery");
-    await deliverProactiveMessage(rep, llmResult.text, {
+    // Fix antispam 2026-05-21: prepend o aviso da silence-gate (warn 2→/3→) e,
+    // após entregar via WhatsApp, INCREMENTA o counter (recordProactiveSent).
+    // Antes o dispatcher só registrava no branch de skip → counter ficava 0
+    // eterno → nunca avisava nem pausava (bug: Wagner, 11 proativos sem reação).
+    let warnPrefix = "";
+    if (silenceDecision && silenceDecision.canSend) {
+      warnPrefix = silenceDecision.warningPrefix ?? "";
+    }
+    const dr = await deliverProactiveMessage(rep, warnPrefix + llmResult.text, {
       activeLocationId,
       source: "proactive_rule",
       kind: rule.name,
@@ -519,6 +527,11 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
         tools: llmResult.tool_calls.map((t) => t.name),
       },
     });
+    // Conta o silêncio só se o proativo chegou no WhatsApp (fallback web não
+    // "nag" o rep, não deve inflar o counter nem pausar quem só usa o painel).
+    if (silenceDecision && silenceDecision.canSend && dr?.via === "whatsapp") {
+      await recordProactiveSent(supabase, rep.id, silenceDecision);
+    }
   }
 
   // 9. Billing

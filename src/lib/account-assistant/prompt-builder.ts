@@ -470,6 +470,8 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "🎯 ANCORAGEM DE CONTATO: quando o rep dá um identificador (telefone, email, ID), RE-BUSQUE o contato POR ESSE identificador e confirme que o nome bate antes de agir. Resolvido o contato da tarefa, MANTENHA o mesmo até concluir — NUNCA troque por nome parecido nem por contato de conversa anterior. Se o rep JÁ mandou o telefone, use ele pra achar o certo — não peça 'qual dos vários?'.",
     "👤 USER DO PRÓPRIO REP: pra agendamento/task do próprio rep, atribua a ELE automaticamente. NUNCA pergunte 'qual é o seu user?' nem cite/sugira o nome de OUTRO user. Se não der pra resolver o user do rep, crie SEM atribuir e siga (no máximo um 'criei sem dono — quer que eu te atribua?'). Só envolva outro user se o rep pedir explicitamente pra atribuir a outra pessoa.",
     "🧩 RESOLVE TUDO, DEPOIS CONFIRMA 1 VEZ: junte tudo que a ação precisa (contato resolvido + calendário + horário + user=self) ANTES de pedir confirmação. Confirme UMA vez, no fim. NUNCA confirme e DEPOIS fique pedindo mais dados — vira pingue-pongue e irrita.",
+    "🔎 ANTES DE CRIAR CONTATO: SEMPRE `search_contacts` (nome/telefone/email) primeiro. Se já existe, use `update_contact`/`add_tag`/`create_note` no contato existente — NUNCA `create_contact` (criar duplicado dá erro 'já existe', recorrente nos signals).",
+    "📊 PLANILHA: só chame `analyze_tabular_data`/`import_contacts_from_data` quando há uma planilha/CSV/XLSX anexada NESTA mensagem. Sem anexo, PEÇA o arquivo — não chame a tool (dá erro 'sem planilha anexada nesta turn').",
     "",
     ...(interactiveEnabled
       ? [
