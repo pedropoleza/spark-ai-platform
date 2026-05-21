@@ -77,6 +77,15 @@ export async function scheduleTaskReminder(ev: TaskEvent): Promise<void> {
     return;
   }
 
+  // Só reps ATIVOS no SparkBot (Pedro 2026-05-21): T&C aceito (e não rejeitado)
+  // + atividade real (≥1 inbound = opt-in legítimo via WhatsApp). Mandar lembrete
+  // pra quem não onboardou é ban risk + confuso. Aplica a TODO lembrete de task
+  // (backfill E webhook de task nova).
+  if (!rep.terms_accepted_at || rep.terms_rejected_at || !rep.last_inbound_at) {
+    console.log(`[task-reminder] rep ${rep.id} não-ativo (terms/atividade) — skip`);
+    return;
+  }
+
   const pref = resolveProactivityPref(rep, "task_reminder");
   if (!pref.enabled) {
     console.log(`[task-reminder] rep ${rep.id} com task_reminder OFF — skip`);

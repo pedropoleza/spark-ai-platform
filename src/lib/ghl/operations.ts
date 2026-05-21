@@ -252,6 +252,34 @@ export async function listTasksOnContact(
   }>(`/contacts/${contactId}/tasks`);
 }
 
+export interface GhlSearchedTask {
+  // ATENÇÃO: a busca por location retorna o id como `_id` (o webhook usa `id`).
+  _id?: string;
+  id?: string;
+  title?: string;
+  body?: string;
+  completed?: boolean;
+  dueDate?: string;
+  assignedTo?: string;
+  contactId?: string;
+  locationId?: string;
+}
+
+/**
+ * Busca tasks por LOCATION (POST /locations/{id}/tasks/search). Usada pelo
+ * backfill de lembretes de tarefa (FORGE-3 2026-05-21) — o webhook só cobre
+ * tasks NOVAS/editadas, então pra cobrir as ANTIGAS a gente varre aqui.
+ * Filtra por `completed` (pendentes) + paginação; o filtro de due date é
+ * client-side (a API não tem). Pode 403 se o app GHL não tiver o escopo de task.
+ */
+export async function searchLocationTasks(
+  client: GHLClient,
+  locationId: string,
+  body: { completed?: boolean; assignedTo?: string[]; contactId?: string[]; limit?: number; skip?: number },
+): Promise<{ tasks?: GhlSearchedTask[] }> {
+  return client.post<{ tasks?: GhlSearchedTask[] }>(`/locations/${locationId}/tasks/search`, body);
+}
+
 // =====================================================
 // Contacts CRUD
 // =====================================================
