@@ -20,6 +20,7 @@
 import { GHLClient } from "@/lib/ghl/client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
 import type { LLMMessage } from "../llm-client";
 import { type ToolContext } from "../tools";
@@ -277,6 +278,35 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
       `— pulando rule ${rule.name}${silenceDecision.shouldSetPaused ? ' + pausando' : ''}`,
     );
     await recordProactiveSent(supabase, rep.id, silenceDecision);
+    // "Dar sinal" no momento EXATO da pausa (Pedro 2026-05-21: "se para de enviar,
+    // explicar o motivo e dar sinal"). O rep já recebeu 2 avisos (soft no 2º, hard
+    // no 3º — o hard diz "vou pausar até você falar comigo"), então a pausa em si
+    // segue silenciosa (4ª msg = spam/ban risk). O que faltava era VISIBILIDADE pro
+    // admin: emite o signal SÓ na transição (shouldSetPaused), nunca a cada tick de
+    // rep já-pausado (already_paused → shouldSetPaused=false). recordSignalAsync
+    // dedupa por (type,title), então re-pausa do mesmo rep atualiza, não duplica.
+    if (silenceDecision.shouldSetPaused) {
+      const repLabel = rep.display_name || rep.phone || rep.id;
+      recordSignalAsync({
+        type: "failure",
+        severity: "medium",
+        source: "bot_auto",
+        title: `Rep ${repLabel} pausado por silêncio (proativos sem resposta)`,
+        description:
+          `O rep ${repLabel} (${rep.phone}) recebeu vários proativos seguidos sem ` +
+          `responder. O bot avisou 2× (o último dizendo que pausaria) e agora PAUSOU ` +
+          `os automáticos pra evitar bloqueio do WhatsApp. Reativa sozinho no primeiro ` +
+          `inbound do rep — se quiser retomar antes, vale um toque manual. ` +
+          `Última regra que tentou disparar: ${rule.name}.`,
+        metadata: {
+          rep_id: rep.id,
+          phone: rep.phone,
+          rule: rule.name,
+          rule_id: rule.id,
+          paused_at: new Date().toISOString(),
+        },
+      });
+    }
     await finalizeDispatch(alertStateId, "skipped_silence");
     return { status: "skipped_silence", message: "Rep silenciado (sem resposta recente)" };
   }
