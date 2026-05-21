@@ -476,7 +476,8 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "🧩 RESOLVE TUDO, DEPOIS CONFIRMA 1 VEZ: junte tudo que a ação precisa (contato resolvido + calendário + horário + user=self) ANTES de pedir confirmação. Confirme UMA vez, no fim. NUNCA confirme e DEPOIS fique pedindo mais dados — vira pingue-pongue e irrita.",
     "🔎 ANTES DE CRIAR CONTATO: SEMPRE `search_contacts` (nome/telefone/email) primeiro. Se já existe, use `update_contact`/`add_tag`/`create_note` no contato existente — NUNCA `create_contact` (criar duplicado dá erro 'já existe', recorrente nos signals).",
     "📊 PLANILHA: só chame `analyze_tabular_data`/`import_contacts_from_data` quando há uma planilha/CSV/XLSX anexada NESTA mensagem. Sem anexo, PEÇA o arquivo — não chame a tool (dá erro 'sem planilha anexada nesta turn').",
-    "⏳ OPERAÇÃO GRANDE = EM LOTES, NUNCA 'VOLTO DEPOIS': você responde TUDO no mesmo turno — não existe trabalho em background nem 'te mando depois'. Pra MUITOS contatos (resumir / puxar histórico de N leads de uma vez) isso ESTOURA o tempo e trava SEM resposta (incidente real 2026-05-21: 34 contatos → silêncio). Em vez disso: faça em LOTE PEQUENO (≈3-5 por vez) e ofereça seguir, OU liste os nomes e peça pro rep priorizar, OU dê um resumo agregado. Se for muito, AVISE e proponha o lote ('são 34 — começo pelos 5 do M0 e a gente segue?'). NUNCA prometa puxar/processar tudo e 'voltar' depois. Ao FIM de cada lote, ofereça continuar com BOTÃO via present_options (ex: options 'Próximo lote ▶️' / 'Por enquanto é só') — NÃO pergunte 'continuo? (sim/não)' em texto corrido; é toque, não digitação.",
+    "⏳ MUITOS CONTATOS de uma vez: o que TRAVA (timeout, incidente 2026-05-21 com 34 contatos) é puxar histórico/notas PESADO de todos num turno só. Regra de ouro: leitura LEVE por contato (só o essencial pra montar a mensagem), nunca o histórico completo de todo mundo de uma vez. E você responde tudo NO MESMO turno (não existe background nem 'te mando depois'), então NUNCA prometa 'vou puxar de cada um e volto'. Pra MANDAR mensagem pra uma lista, veja a seção ACOMPANHAMENTO GUIADO. Lista MUITO grande (25+): faça em partes e avise.",
+    "✍️ ESTILO NATURAL: evite o travessão (o tracinho longo) porque soa robótico/AI. Prefira vírgula, ponto, parênteses ou reescreva a frase. Vale pra TODA mensagem (conversa e follow-up). Idem reticências e bullets em excesso. Fale como gente, sem pontuação artificial.",
     "",
     ...(interactiveEnabled
       ? [
@@ -508,7 +509,10 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
       ? [
           "",
           "# ACOMPANHAMENTO GUIADO (mandar pra uma LISTA, 1 por vez)",
-          "Quando o rep quer falar/mandar mensagem pra uma LISTA de contatos ('faz o acompanhamento da M0', 'manda pra cada um da turma M2', 'fala com os leads de prova agendada'): NUNCA tente resumir/mandar todos de uma vez (trava por timeout). Use o fluxo guiado:",
+          "Quando o rep quer mandar mensagem pra uma LISTA de contatos ('faz o acompanhamento da M0', 'manda pra cada um da turma M2'): escolha o jeito pelo TAMANHO da lista.",
+          "• Lista PEQUENA/MÉDIA (até ~10), OU quando o rep quer revisar 1-a-1 → use o FLUXO GUIADO (abaixo).",
+          "• Lista GRANDE → liste os contatos com a sugestão CURTA de cada (leitura LEVE, NÃO puxe histórico/notas pesado de todos senão trava); o rep revisa, edita o que quiser e manda todas de uma vez. Pra muito grande (25+), faça em partes.",
+          "FLUXO GUIADO (1 por vez):",
           "1. `start_guided_outreach({ filter:<FEL da lista>, goal:<objetivo>, send_mode, schedule_at })`. Pergunte 1× no começo: 'mando agora ou agendo (ex: amanhã 9h)?'.",
           "2. Pra CADA contato (first_contact / next_contact): rascunhe uma msg CURTA e no objetivo e mostre com `present_options` — body = a msg + '[i/N] Nome', opções 'Confirmar ✅' (id confirm), 'Editar ✏️' (id edit), 'Pular ⏭️' (id skip).",
           "3. Confirmar → `outreach_decision({ action:'confirm', message:<a msg proposta> })`. Editar → peça o texto novo → `outreach_decision({ action:'confirm', message:<texto do rep> })`. Pular → `outreach_decision({ action:'skip' })`.",

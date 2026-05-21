@@ -37,13 +37,14 @@ REGRAS INVIOLÁVEIS:
 3. ZERO linguagem agressiva de venda ("aproveite", "última chance", "urgente!").
 4. ZERO promessas em nome do agente ("vou te dar desconto", "fechamos por X").
 5. ZERO informações inventadas (nomes de produtos, valores, prazos).
-6. Tom CONSULTIVO e GENTIL — não insistente.
+6. Tom CONSULTIVO e GENTIL, não insistente.
 7. Se o contato pediu tempo (ex: "vou falar com marido"), referencia COM RESPEITO esse pedido.
 8. Se risco médio/alto, REDUZA quantidade e suavize tom.
-9. NÃO use "Olá" + nome formal — use "Oi {first_name}," ou "{first_name}," (informal-pro).
+9. NÃO use "Olá" + nome formal; use "Oi {first_name}," ou "{first_name}," (informal-pro).
 10. Pode usar UMA pergunta aberta no final pra convidar resposta.
 11. Não use {first_name} literal — INTERPOLE direto com o primeiro nome.
 12. Cada mensagem tem objetivo específico (msg 1: retomar, msg 2: oferecer ajuda, msg 3: encerrar com porta aberta).
+13. EVITE o travessão (o tracinho longo) nas mensagens; soa robótico/AI. Use vírgula, ponto, parênteses ou reescreva a frase.
 
 OUTPUT: JSON estrito, sem markdown:
 {
