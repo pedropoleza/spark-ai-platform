@@ -132,6 +132,12 @@ Sistema unificado de filtros em `src/lib/account-assistant/filter-engine/`. Toda
 ### Bulk Messages V2 (H28, Pedro 2026-05-15)
 Em `tools/bulk-messages-v2.ts`. Multi-segment (N filters × N templates num job único, dedup por contact_id), disclaimers tier obrigatórios (`computeDisclaimers`: SEMPRE pergunta quente/fria; risk em >50 quentes ou >10 frios), interpolação rica (`{first_name}`, `{tags[0]}`, `{custom.slug}`, `{opportunity.stage_name}`), snapshot do texto final em `bulk_message_recipients.personalized_message`. Bulk V1 segue funcional. Resolve caso Gustavo 2026-05-15 (mensagem diferente por stage).
 
+### Agendamento V2 (H34, Pedro 2026-05-22)
+Fluxo de agendamento "resolve tudo → 1 confirm (override-aware) → pronto". Em `tools/calendar.ts` + `prompt-builder.ts` (seção "# AGENDAR REUNIÃO"). Regras:
+- **Override self-aware (D1, afrouxa H26)**: `buildOverridePayload` libera `ignoreFreeSlotValidation`/`ignoreDateRange` quando o appointment é do PRÓPRIO rep (assignee self/`me`/`eu`/não-setado/round-robin OU `== getRepGhlUserId(ctx)`). Agenda de OUTRO user = admin-only. `toNotify=false` (client-facing) = admin-only SEMPRE. Teste: `scripts/test-override-gate.ts`.
+- **Preferência de calendário (D2)**: `profile.preferences.scheduling.{default_calendar_id, default_calendar_name, default_duration_min}`. Resolução nome-dito > pref salva > único calendário (`resolveCalendarChoice`, exportado+testado). `list_calendars` retorna `resolved_calendar_id`+`resolution` ('default_pref'/'only_calendar'/'ambiguous'). Bot aprende no 1º uso via tool `set_scheduling_pref`; surfaceado na memória do prompt (`buildMemorySection`). Setting na UI: engrenagem no painel web (`embed/sparkbot/page.tsx`) → `GET/POST /api/sparkbot/scheduling-prefs` (JWT per-rep).
+- **Prompt**: resolve contato+calendário+assignee(=self)+slot ANTES; 1 `present_options` no fim; conflito na própria agenda → "Confirmar mesmo assim ✅ / Editar ✏️" embutido (1 passo, não 2); sub-fluxo Editar (Horário/Dia/Pessoa/Calendário). Plano: `_planning/agendamento-v2/PLANO.md`.
+
 ### SparkBot Cron Guards (Pedro 2026-05-05)
 - pg_cron `sparkbot-proactive` agendado a cada 30s com:
   - `pg_try_advisory_xact_lock(8675309)` — anti double-execution sob backlog
