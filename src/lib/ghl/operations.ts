@@ -606,8 +606,8 @@ export async function deleteAppointment(
 export async function getCalendarDetails(
   client: GHLClient,
   calendarId: string,
-): Promise<{ calendar?: { teamMembers?: Array<{ userId?: string; isPrimary?: boolean }> } }> {
-  return client.get<{ calendar?: { teamMembers?: Array<{ userId?: string; isPrimary?: boolean }> } }>(
+): Promise<{ calendar?: { name?: string; teamMembers?: Array<{ userId?: string; isPrimary?: boolean }> } }> {
+  return client.get<{ calendar?: { name?: string; teamMembers?: Array<{ userId?: string; isPrimary?: boolean }> } }>(
     `/calendars/${encodeURIComponent(calendarId)}`,
   );
 }

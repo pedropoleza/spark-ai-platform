@@ -1056,6 +1056,17 @@ const createAppointment: ToolEntry = {
       assignedUserId = knownRepUserId;
     }
 
+    // Agendamento V2 (Pedro 2026-05-22): forçar slot bloqueado/min-notice EXIGE
+    // assignee explícito. Round-robin NÃO auto-atribui em horário bloqueado (não
+    // há ninguém "disponível" no slot forçado) → GHL erra e o bot caía no velho
+    // "Quem atende?". Como o override só foi liberado pela própria agenda (gate
+    // D1), atribui ao PRÓPRIO rep automaticamente — mata a pergunta de assignee.
+    const wantsSlotOverride =
+      args.ignore_free_slot_validation === true || args.ignore_date_range === true;
+    if (wantsSlotOverride && !assignedUserId && knownRepUserId) {
+      assignedUserId = knownRepUserId;
+    }
+
     // H26 (review 2026-05-14): auto-ativa overrideLocationConfig quando rep
     // especifica meeting location. Sem isso, GHL ignora silenciosamente
     // meetingLocationType/address e usa default do calendar — bug histórico.
@@ -1112,11 +1123,54 @@ const createAppointment: ToolEntry = {
         });
       }
 
+      // Agendamento V2 (Pedro 2026-05-22): APRENDE o calendário no 1º uso de
+      // forma DETERMINÍSTICA. Antes dependia do LLM perguntar/chamar
+      // set_scheduling_pref e ele não chamava → bot pedia "qual calendário?"
+      // toda vez (reclamação do Pedro). Agora: 1º appointment bem-sucedido sem
+      // pref salva → grava o calendário usado como padrão. Resolução continua
+      // "nome dito > pref > único", então o rep pode nomear outro depois (ganha)
+      // e trocar via chat/UI. Reversível.
+      let learnedDefaultCalendar: { id: string; name?: string } | undefined;
+      const hasPref = !!ctx.rep.profile?.preferences?.scheduling?.default_calendar_id;
+      if (!hasPref && apptId) {
+        let calName: string | undefined;
+        try {
+          const calDet = await getCalendarDetails(ctx.ghlClient, calendarId);
+          calName = calDet.calendar?.name;
+        } catch {
+          // nome é best-effort; salva o id mesmo sem nome
+        }
+        try {
+          const cp = (ctx.rep.profile || {}) as Record<string, unknown>;
+          const cpp = (cp.preferences || {}) as Record<string, unknown>;
+          const cps = (cpp.scheduling || {}) as Record<string, unknown>;
+          const newProfile = {
+            ...cp,
+            preferences: {
+              ...cpp,
+              scheduling: { ...cps, default_calendar_id: calendarId, default_calendar_name: calName },
+            },
+          };
+          await updateRepById(ctx.rep.id, {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            profile: newProfile as any,
+            updated_at: new Date().toISOString(),
+          });
+          ctx.rep.profile = newProfile as typeof ctx.rep.profile;
+          learnedDefaultCalendar = { id: calendarId, name: calName };
+        } catch (e) {
+          console.warn("[create_appointment] auto-learn calendário falhou:", e instanceof Error ? e.message : e);
+        }
+      }
+
       return {
         status: "ok",
         data: {
           appointment_id: apptId,
           assigned_to: res.assignedUserId || null,
+          // Quando setado, o bot deve avisar o rep que vai usar esse calendário
+          // por padrão daqui pra frente (e que dá pra trocar). 1ª vez só.
+          learned_default_calendar: learnedDefaultCalendar,
         },
       };
     } catch (err) {
