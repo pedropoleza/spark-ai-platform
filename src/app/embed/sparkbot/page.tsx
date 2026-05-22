@@ -70,6 +70,7 @@ function SparkbotPanel() {
   const [attachment, setAttachment] = useState<PainelAttachment | null>(null);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const mediaRec = useRef<MediaRecorder | null>(null);
   const recChunks = useRef<Blob[]>([]);
@@ -432,10 +433,25 @@ function SparkbotPanel() {
           <div className="header-title">SparkBot</div>
           <div className="header-sub">copiloto IA · Spark Leads</div>
         </div>
+        <button
+          className="header-gear"
+          onClick={() => setShowSettings(true)}
+          title="Preferências de agendamento"
+          aria-label="Preferências"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
         <span className="header-status" title="online">
           <span className="dot" />
         </span>
       </header>
+
+      {showSettings && (
+        <SchedulingSettingsModal token={token} onClose={() => setShowSettings(false)} />
+      )}
 
       {/* CHAT BODY */}
       <div className="scroll" ref={scrollRef}>
@@ -625,6 +641,14 @@ function SparkbotPanel() {
           text-transform: uppercase;
           margin-top: 2px;
         }
+        .header-gear {
+          width: 32px; height: 32px; flex-shrink: 0;
+          display: inline-flex; align-items: center; justify-content: center;
+          border: 0; border-radius: 10px; cursor: pointer;
+          background: transparent; color: var(--sb-muted);
+          transition: background 0.15s, color 0.15s;
+        }
+        .header-gear:hover { background: rgba(22,117,242,0.08); color: var(--sb-brand); }
         .header-status {
           width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
         }
@@ -1100,6 +1124,229 @@ function Bubble({ msg }: { msg: Message }) {
           0%, 70%, 100% { transform: translateY(0); opacity: 0.5; }
           35% { transform: translateY(-3px); opacity: 1; }
         }
+      `}</style>
+    </div>
+  );
+}
+
+/* ============================================================
+ *  SCHEDULING SETTINGS — calendário padrão (Agendamento V2, E4)
+ * ============================================================ */
+interface SchedCalendar { id: string; name: string }
+interface SchedCurrent {
+  default_calendar_id?: string;
+  default_calendar_name?: string;
+  default_duration_min?: number;
+}
+
+function SchedulingSettingsModal({ token, onClose }: { token: string | null; onClose: () => void }) {
+  const [loading, setLoading] = useState(true);
+  const [calendars, setCalendars] = useState<SchedCalendar[]>([]);
+  const [selectedCal, setSelectedCal] = useState<string>(""); // "" = perguntar toda vez
+  const [duration, setDuration] = useState<string>(""); // string pra input vazio
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedOk, setSavedOk] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/sparkbot/scheduling-prefs`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!data.ok) {
+          setError("Não consegui carregar as preferências.");
+          return;
+        }
+        setCalendars(Array.isArray(data.calendars) ? data.calendars : []);
+        if (data.calendars_error) setError(data.calendars_error);
+        const cur: SchedCurrent = data.current || {};
+        setSelectedCal(cur.default_calendar_id || "");
+        setDuration(cur.default_duration_min ? String(cur.default_duration_min) : "");
+      } catch {
+        if (!cancelled) setError("Falha de rede ao carregar.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const handleSave = async () => {
+    if (!token) return;
+    setSaving(true);
+    setError(null);
+    setSavedOk(false);
+    try {
+      const durNum = duration.trim() ? parseInt(duration, 10) : undefined;
+      const res = await fetch(`/api/sparkbot/scheduling-prefs`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          default_calendar_id: selectedCal, // "" limpa a pref
+          ...(durNum && !isNaN(durNum) ? { default_duration_min: durNum } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setError(
+          data.reason === "calendar_not_found"
+            ? "Esse calendário não existe mais. Escolha outro."
+            : "Não consegui salvar. Tente de novo.",
+        );
+        return;
+      }
+      setSavedOk(true);
+      setTimeout(onClose, 700);
+    } catch {
+      setError("Falha de rede ao salvar.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="sched-overlay" onClick={onClose}>
+      <div className="sched-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="sched-head">
+          <div>
+            <div className="sched-title">Agendamento</div>
+            <div className="sched-sub">Calendário que o bot usa por padrão pra marcar</div>
+          </div>
+          <button className="sched-x" onClick={onClose} aria-label="Fechar">×</button>
+        </div>
+
+        <div className="sched-body">
+          {loading ? (
+            <div className="sched-loading">Carregando…</div>
+          ) : (
+            <>
+              <label className="sched-label">Calendário padrão</label>
+              <select
+                className="sched-select"
+                value={selectedCal}
+                onChange={(e) => setSelectedCal(e.target.value)}
+                disabled={calendars.length === 0}
+              >
+                <option value="">— Perguntar toda vez —</option>
+                {calendars.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              {calendars.length === 0 && (
+                <p className="sched-hint">Nenhum calendário disponível nesta conta.</p>
+              )}
+
+              <label className="sched-label" style={{ marginTop: 14 }}>
+                Duração padrão (min) <span className="sched-opt">opcional</span>
+              </label>
+              <input
+                className="sched-input"
+                type="number"
+                min={5}
+                max={480}
+                step={5}
+                placeholder="usa a duração do calendário"
+                value={duration}
+                onChange={(e) => setDuration(e.target.value)}
+              />
+
+              <p className="sched-note">
+                Você também pode dizer isso no chat: o bot pergunta na primeira vez que você marca.
+              </p>
+
+              {error && <div className="sched-error">{error}</div>}
+              {savedOk && <div className="sched-okmsg">Salvo ✅</div>}
+            </>
+          )}
+        </div>
+
+        <div className="sched-foot">
+          <button className="sched-btn-ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+          <button className="sched-btn" onClick={handleSave} disabled={saving || loading}>
+            {saving ? "Salvando…" : "Salvar"}
+          </button>
+        </div>
+      </div>
+
+      <style jsx>{`
+        .sched-overlay {
+          position: fixed; inset: 0; z-index: 200;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(15,23,42,0.45); backdrop-filter: blur(4px);
+          animation: schedFade 0.15s ease-out;
+          padding: 16px;
+        }
+        @keyframes schedFade { from { opacity: 0; } to { opacity: 1; } }
+        .sched-modal {
+          width: 100%; max-width: 380px;
+          background: #fff; border-radius: 18px;
+          box-shadow: 0 20px 50px rgba(15,23,42,0.25);
+          overflow: hidden;
+          animation: schedPop 0.18s ease-out;
+          font-family: var(--sb-font);
+        }
+        @keyframes schedPop { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: none; } }
+        .sched-head {
+          display: flex; align-items: flex-start; justify-content: space-between;
+          padding: 16px 18px; border-bottom: 1px solid var(--sb-border);
+        }
+        .sched-title { font-weight: 700; font-size: 15px; color: var(--sb-text); }
+        .sched-sub { font-size: 11.5px; color: var(--sb-muted); margin-top: 2px; }
+        .sched-x {
+          width: 28px; height: 28px; border: 0; border-radius: 50%;
+          background: rgba(15,23,42,0.05); color: var(--sb-muted);
+          font-size: 19px; line-height: 1; cursor: pointer; flex-shrink: 0;
+          display: inline-flex; align-items: center; justify-content: center;
+        }
+        .sched-x:hover { background: #fee2e2; color: #dc2626; }
+        .sched-body { padding: 16px 18px; }
+        .sched-loading { color: var(--sb-muted); font-size: 13px; padding: 12px 0; text-align: center; }
+        .sched-label {
+          display: block; font-size: 12px; font-weight: 600; color: var(--sb-text); margin-bottom: 6px;
+        }
+        .sched-opt { font-weight: 400; color: var(--sb-muted); font-size: 11px; }
+        .sched-select, .sched-input {
+          width: 100%; padding: 10px 12px; font-size: 14px;
+          font-family: var(--sb-font); color: var(--sb-text);
+          background: var(--sb-bg); border: 1px solid var(--sb-border);
+          border-radius: 12px; outline: none;
+          transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .sched-select:focus, .sched-input:focus {
+          border-color: var(--sb-brand); box-shadow: 0 0 0 4px var(--sb-brand-glow); background: #fff;
+        }
+        .sched-hint { font-size: 11.5px; color: #b45309; margin: 6px 0 0; }
+        .sched-note { font-size: 11.5px; color: var(--sb-muted); margin: 14px 0 0; line-height: 1.5; }
+        .sched-error {
+          margin-top: 12px; padding: 8px 12px; border-radius: 10px;
+          background: #fef2f2; color: #b91c1c; font-size: 12.5px; border: 1px solid #fecaca;
+        }
+        .sched-okmsg {
+          margin-top: 12px; padding: 8px 12px; border-radius: 10px;
+          background: #ecfdf5; color: #047857; font-size: 12.5px; border: 1px solid #a7f3d0;
+        }
+        .sched-foot {
+          display: flex; justify-content: flex-end; gap: 8px;
+          padding: 14px 18px; border-top: 1px solid var(--sb-border);
+        }
+        .sched-btn, .sched-btn-ghost {
+          padding: 9px 16px; border-radius: 11px; font-size: 13px; font-weight: 600;
+          cursor: pointer; font-family: var(--sb-font); border: 0;
+          transition: background 0.15s, transform 0.12s, box-shadow 0.15s;
+        }
+        .sched-btn-ghost { background: var(--sb-bg); color: var(--sb-muted); border: 1px solid var(--sb-border); }
+        .sched-btn-ghost:hover:not(:disabled) { background: #f1f5f9; }
+        .sched-btn {
+          background: linear-gradient(135deg, var(--sb-brand) 0%, var(--sb-brand-2) 100%);
+          color: #fff; box-shadow: 0 4px 12px var(--sb-brand-glow);
+        }
+        .sched-btn:hover:not(:disabled) { transform: translateY(-1px); }
+        .sched-btn:disabled, .sched-btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
       `}</style>
     </div>
   );

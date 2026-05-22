@@ -22,6 +22,45 @@ import {
 } from "@/lib/ghl/operations";
 import type { ToolResult } from "@/types/account-assistant";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
+import { updateRepById } from "@/lib/repositories/rep-identities.repo";
+
+/**
+ * Lê a preferência de agendamento salva do rep (calendário/duração padrão).
+ * Agendamento V2 (D2). Vazio = rep nunca setou (bot vai aprender no 1º uso).
+ */
+function getSchedulingPref(ctx: ToolContext): {
+  default_calendar_id?: string;
+  default_calendar_name?: string;
+  default_duration_min?: number;
+} {
+  return ctx.rep.profile?.preferences?.scheduling || {};
+}
+
+/**
+ * Resolve qual calendário usar pra agendar SEM perguntar (parte code-side da
+ * regra "nome dito > pref salva > único"). O `named` (nome que o rep falou) é
+ * resolvido pelo LLM; aqui cobrimos pref salva e calendário único.
+ *
+ * Retorna:
+ *  - resolved_calendar_id + resolution="default_pref" se a pref salva existe e
+ *    ainda está na lista
+ *  - resolved + resolution="only_calendar" se só há 1 calendário
+ *  - resolution="ambiguous" (sem resolved) quando >1 e sem pref → LLM decide
+ *  - resolution="none" quando não há nenhum calendário
+ */
+export function resolveCalendarChoice(
+  calendarIds: string[],
+  savedDefaultId?: string,
+): { resolved_calendar_id?: string; resolution: "default_pref" | "only_calendar" | "ambiguous" | "none" } {
+  if (calendarIds.length === 0) return { resolution: "none" };
+  if (savedDefaultId && calendarIds.includes(savedDefaultId)) {
+    return { resolved_calendar_id: savedDefaultId, resolution: "default_pref" };
+  }
+  if (calendarIds.length === 1) {
+    return { resolved_calendar_id: calendarIds[0], resolution: "only_calendar" };
+  }
+  return { resolution: "ambiguous" };
+}
 
 /**
  * H26 (review 2026-05-14): valida override flags ADMIN-ONLY pra appointments.
@@ -43,30 +82,52 @@ import { recordSignalAsync } from "@/lib/admin-signals/recorder";
  *  - { ok: true, body, used } com campos GHL prontos pra mergear no body
  *  - { ok: true, body: {}, used: [] } se nenhuma flag foi passada
  */
-function buildOverridePayload(
+export function buildOverridePayload(
   ctx: ToolContext,
   args: Record<string, unknown>,
 ):
   | { ok: true; body: Record<string, unknown>; used: string[] }
   | { ok: false; error: ToolResult } {
-  const requestedOverride =
-    args.ignore_free_slot_validation === true ||
-    args.ignore_date_range === true ||
-    args.to_notify === false;
+  // Gate de override. Pedro 2026-05-22 (D1): rep PODE forçar bloqueio / min-notice
+  // na PRÓPRIA agenda (assignee self / não-setado / round-robin). Na agenda de
+  // OUTRO user, segue admin-only. `to_notify:false` (não notificar o CLIENTE) é
+  // mais drástico (client-facing) e segue admin-only SEMPRE.
+  const wantsSlotOverride =
+    args.ignore_free_slot_validation === true || args.ignore_date_range === true;
+  const wantsNoNotify = args.to_notify === false;
 
-  if (requestedOverride && !ctx.rep.is_internal) {
+  if (wantsNoNotify && !ctx.rep.is_internal) {
     return {
       ok: false,
       error: {
         status: "error",
         message:
-          "Override de calendar (forçar slot bloqueado / ignorar min notice / desativar notification) " +
-          "é restrito a admin/internal team. Rep comum não tem permissão. " +
-          "Avise o rep: 'Não consigo forçar esse bloqueio — só admin tem essa permissão. " +
-          "Quer que eu tente outro horário?' e use get_free_slots pra alternativa.",
+          "'Marcar sem notificar o cliente' é restrito a admin. O cliente vai " +
+          "receber o convite/lembrete normalmente.",
         retryable: false,
       },
     };
+  }
+  if (wantsSlotOverride && !ctx.rep.is_internal) {
+    const repUserId = getRepGhlUserId(ctx);
+    const raw = args.assigned_user_id ? String(args.assigned_user_id).trim() : "";
+    const isSelfWord = /^(self|me|eu)$/i.test(raw);
+    // Só bloqueia quando o appointment é EXPLICITAMENTE de OUTRO user.
+    const explicitOther = raw !== "" && !isSelfWord && raw !== repUserId;
+    if (explicitOther) {
+      return {
+        ok: false,
+        error: {
+          status: "error",
+          message:
+            "Forçar horário bloqueado na agenda de OUTRA pessoa é restrito a admin. " +
+            "Na sua própria agenda você pode forçar normalmente. Pra esse contato, " +
+            "quer que eu veja os horários livres? (use get_free_slots)",
+          retryable: false,
+        },
+      };
+    }
+    // self / default / round-robin → override permitido na própria agenda.
   }
 
   const body: Record<string, unknown> = {};
@@ -156,18 +217,42 @@ const listAppointments: ToolEntry = {
 const listCalendars: ToolEntry = {
   def: {
     name: "list_calendars",
-    description: "Lista calendários disponíveis na location ativa.",
+    description:
+      "Lista calendários disponíveis na location ativa. Marca o calendário " +
+      "padrão do rep (se ele já salvou um) e sugere qual usar pra agendar " +
+      "sem precisar perguntar.",
     risk: "safe",
     parameters: { type: "object", properties: {} },
   },
   handler: async (ctx) => {
     try {
       const res = await ghlListCalendars(ctx.ghlClient, ctx.locationId);
+      const pref = getSchedulingPref(ctx);
+      const calendars = (res.calendars || []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        description: c.description,
+        slug: c.widgetSlug,
+        // Agendamento V2: flag pro LLM saber qual já é o padrão salvo do rep.
+        is_default_for_rep: !!pref.default_calendar_id && c.id === pref.default_calendar_id,
+      }));
+
+      // Resolução pro LLM agendar sem perguntar (named > pref > único).
+      // `named` (nome dito pelo rep) é resolvido pelo próprio LLM; aqui cobrimos
+      // pref salva e o caso de calendário único.
+      const choice = resolveCalendarChoice(
+        calendars.map((c) => c.id).filter((id): id is string => !!id),
+        pref.default_calendar_id,
+      );
+
       return {
         status: "ok",
-        data: (res.calendars || []).map((c) => ({
-          id: c.id, name: c.name, description: c.description, slug: c.widgetSlug,
-        })),
+        data: {
+          calendars,
+          resolved_calendar_id: choice.resolved_calendar_id,
+          resolution: choice.resolution,
+          default_duration_min: pref.default_duration_min,
+        },
       };
     } catch (err) {
       return ghlErrorToResult(err, "listagem de calendários");
@@ -1304,6 +1389,116 @@ const deleteAppointment: ToolEntry = {
   },
 };
 
+// =====================================================================
+// PREFERÊNCIA DE AGENDAMENTO (Agendamento V2 — D2, Pedro 2026-05-22)
+// =====================================================================
+// Bot APRENDE no 1º uso: depois de marcar com sucesso num calendário que o
+// rep não tinha salvo, ele pergunta 1× "uso esse calendário sempre que você
+// marcar?" e, no sim, chama esta tool. Também é o que a UI do Spark (E4) grava.
+// Resolução no agendamento: nome dito > esta pref > único calendário.
+
+const setSchedulingPref: ToolEntry = {
+  def: {
+    name: "set_scheduling_pref",
+    description:
+      "Salva a preferência de agendamento do rep: calendário padrão (e, " +
+      "opcional, duração padrão da reunião). Use quando o rep confirmar que " +
+      "quer SEMPRE usar um calendário pra marcar (ex: ele respondeu 'sim, usa " +
+      "esse sempre' depois de você perguntar). Depois disso você não precisa " +
+      "mais perguntar qual calendário — já agenda nele direto.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        default_calendar_id: {
+          type: "string",
+          description: "ID do calendário padrão (pegue de list_calendars).",
+        },
+        default_duration_min: {
+          type: "number",
+          description:
+            "Opcional. Duração padrão da reunião em minutos (ex: 30, 60). " +
+            "Se omitido, usa a duração configurada no próprio calendário.",
+        },
+      },
+      required: ["default_calendar_id"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const calendarId = String(args.default_calendar_id || "").trim();
+    const idErr = validateGhlId(calendarId, "calendar");
+    if (idErr) return idErr;
+
+    // Valida que o calendário existe na location ativa e pega o nome (pra
+    // surfacing na memória do prompt sem tool call depois).
+    let calendarName: string | undefined;
+    try {
+      const res = await ghlListCalendars(ctx.ghlClient, ctx.locationId);
+      const match = (res.calendars || []).find((c) => c.id === calendarId);
+      if (!match) {
+        return {
+          status: "error",
+          message:
+            "Esse calendário não existe nesta conta do Spark Leads. Liste os " +
+            "calendários (list_calendars) e escolha um válido.",
+          retryable: false,
+        };
+      }
+      calendarName = match.name;
+    } catch (err) {
+      return ghlErrorToResult(err, "validação do calendário");
+    }
+
+    // Duração: aceita só valores sãos (5min–8h). Fora disso, ignora.
+    let durationMin: number | undefined;
+    if (typeof args.default_duration_min === "number" && isFinite(args.default_duration_min)) {
+      const d = Math.round(args.default_duration_min);
+      if (d >= 5 && d <= 480) durationMin = d;
+    }
+
+    // Merge manual das preferences pra NÃO clobberar verbosity/tone/aliases.
+    // Mesmo padrão de set_verbosity_preference (identity.ts).
+    const currentProfile = (ctx.rep.profile || {}) as Record<string, unknown>;
+    const currentPrefs = (currentProfile.preferences || {}) as Record<string, unknown>;
+    const currentScheduling = (currentPrefs.scheduling || {}) as Record<string, unknown>;
+    const newScheduling: Record<string, unknown> = {
+      ...currentScheduling,
+      default_calendar_id: calendarId,
+      default_calendar_name: calendarName,
+    };
+    if (durationMin !== undefined) newScheduling.default_duration_min = durationMin;
+    const newProfile = {
+      ...currentProfile,
+      preferences: { ...currentPrefs, scheduling: newScheduling },
+    };
+
+    try {
+      await updateRepById(ctx.rep.id, {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        profile: newProfile as any,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { status: "error", message: `Falha ao salvar preferência: ${msg}`, retryable: true };
+    }
+    ctx.rep.profile = newProfile as typeof ctx.rep.profile;
+
+    return {
+      status: "ok",
+      data: {
+        default_calendar_id: calendarId,
+        default_calendar_name: calendarName,
+        default_duration_min: durationMin,
+        message:
+          `Pronto, vou usar o calendário "${calendarName}" por padrão pra marcar` +
+          (durationMin ? ` (reuniões de ${durationMin}min)` : "") +
+          ". Se quiser trocar depois, é só falar.",
+      },
+    };
+  },
+};
+
 export const CALENDAR_TOOLS: ToolEntry[] = [
   listAppointments,
   listCalendars,
@@ -1314,4 +1509,5 @@ export const CALENDAR_TOOLS: ToolEntry[] = [
   updateAppointment,
   deleteAppointment,
   blockCalendarSlot,
+  setSchedulingPref,
 ];

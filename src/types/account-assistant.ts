@@ -28,6 +28,19 @@ export interface RepProfile {
     tone?: "casual" | "formal";
     response_style?: "brief" | "detailed";
     emoji_usage?: "none" | "occasional";
+    verbosity?: "brief" | "normal" | "detailed";
+    /**
+     * Agendamento V2 (Pedro 2026-05-22, D2): preferência de calendário/duração
+     * pra agendar sem perguntar a cada vez. Resolução no prompt: nome dito >
+     * esta pref > único calendário do rep. Setado via tool `set_scheduling_pref`
+     * (bot aprende no 1º uso) ou pela UI do Spark (E4). `default_calendar_name`
+     * é guardado junto só pra surfacing no prompt (memória) sem tool call.
+     */
+    scheduling?: {
+      default_calendar_id?: string;
+      default_calendar_name?: string;
+      default_duration_min?: number;
+    };
   };
   habits?: {
     active_hours?: string[];       // ex: ["08:00-12:00", "14:00-18:00"]
