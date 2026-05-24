@@ -19,6 +19,7 @@
  */
 
 import { buildSparkbotSystemPrompt, type BuildPromptArgs } from "@/lib/account-assistant/prompt-builder";
+import { buildSystemPrompt as buildLeadSystemPrompt, type PromptContext } from "@/lib/ai/sales-prompt-builder";
 import type { AgentAudience } from "@/types/agent-platform";
 
 /** Motor unificado ligado? Default OFF. Liga o CAMINHO via assembler (output idêntico na Fase 1). */
@@ -30,15 +31,21 @@ export function isUnifiedMotorEnabled(): boolean {
 export interface AssembleSystemPromptInput {
   templateKey: string; // 'sparkbot' | 'sales' | 'recruitment' | custom...
   audience: AgentAudience;
-  /** Args legados do SparkBot — usados na delegação de paridade (template 'sparkbot'). */
+  /** Args legados do SparkBot — usados na delegação de paridade (template 'sparkbot', rep-facing). */
   sparkbotArgs?: BuildPromptArgs;
+  /** Contexto legado de venda/recrut — usado na delegação (templates lead-facing). */
+  leadArgs?: PromptContext;
 }
 
 /**
- * Monta o system prompt de um agente a partir do template (+ módulos, Fase 2+).
+ * Monta o system prompt de um agente a partir do template (+ módulos).
  *
- * FASE 1: 'sparkbot' delega ao builder existente (paridade). Demais templates
- * ainda não suportados (Fase 2 — lead-facing).
+ * PARIDADE PRIMEIRO: cada template delega ao builder legado correspondente
+ * (output byte-a-byte idêntico), guardado por testes de paridade. A composição
+ * a partir dos módulos do registry entra incremental, sempre parity-guarded.
+ *  - 'sparkbot' (rep-facing) → buildSparkbotSystemPrompt (test-motor-parity.ts)
+ *  - 'sales' / 'recruitment' (lead-facing) → buildLeadSystemPrompt (test-sales-parity.ts)
+ *  - custom lead-facing → herda do template base (sales/recruitment) por ora.
  */
 export function assembleSystemPrompt(input: AssembleSystemPromptInput): string {
   switch (input.templateKey) {
@@ -46,14 +53,34 @@ export function assembleSystemPrompt(input: AssembleSystemPromptInput): string {
       if (!input.sparkbotArgs) {
         throw new Error("assembleSystemPrompt('sparkbot') exige sparkbotArgs");
       }
-      // Paridade total na Fase 1. A decomposição em módulos será introduzida
-      // aqui depois, sempre mantendo `scripts/test-motor-parity.ts` verde.
       return buildSparkbotSystemPrompt(input.sparkbotArgs);
+    }
+    case "sales":
+    case "recruitment": {
+      if (!input.leadArgs) {
+        throw new Error(`assembleSystemPrompt('${input.templateKey}') exige leadArgs`);
+      }
+      // Lead-facing já é modular por dentro (section functions). Delega pro
+      // builder legado (paridade); o registry mapeia as sections pros módulos.
+      return buildLeadSystemPrompt(input.leadArgs);
     }
     default:
       throw new Error(
-        `assembleSystemPrompt: template '${input.templateKey}' ainda não suportado ` +
-          `(lead-facing entra na Fase 2).`,
+        `assembleSystemPrompt: template '${input.templateKey}' ainda não suportado.`,
       );
+  }
+}
+
+/** Mapeia agent.type → templateKey do assembler. */
+export function templateKeyForAgentType(agentType: string): string {
+  switch (agentType) {
+    case "account_assistant":
+      return "sparkbot";
+    case "sales_agent":
+      return "sales";
+    case "recruitment_agent":
+      return "recruitment";
+    default:
+      return agentType;
   }
 }

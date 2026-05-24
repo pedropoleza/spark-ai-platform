@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
+import { assembleSystemPrompt, isUnifiedMotorEnabled, templateKeyForAgentType } from "@/lib/agent-platform/assembler";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ImageInput, ConversationTurn } from "@/lib/ai/openai-client";
 import { compressHistory } from "@/lib/ai/history-compressor";
@@ -571,7 +572,17 @@ async function processGroup(
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     priorTurnCount: conversationTurns.length,
   };
-  const systemPrompt = buildSystemPrompt(promptCtx);
+  // Plataforma Modular (Fase 2): roteia a montagem do prompt pelo motor unificado
+  // quando AGENT_MOTOR_UNIFIED tá ON. Como o assembler delega pro mesmo
+  // buildSystemPrompt, o output é idêntico (paridade — test-sales-parity.ts).
+  // Flag OFF (default) = caminho legado, byte-a-byte igual.
+  const systemPrompt = isUnifiedMotorEnabled()
+    ? assembleSystemPrompt({
+        templateKey: templateKeyForAgentType(agent.type),
+        audience: "lead",
+        leadArgs: promptCtx,
+      })
+    : buildSystemPrompt(promptCtx);
   const runtimeContext = buildRuntimeContext(promptCtx);
   const responseSchema = buildResponseJsonSchema(promptCtx);
 

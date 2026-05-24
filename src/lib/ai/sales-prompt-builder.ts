@@ -51,7 +51,7 @@ export interface KnowledgeBaseItem {
   usage_instructions?: string | null;
 }
 
-interface PromptContext {
+export interface PromptContext {
   config: AgentConfig;
   agentType?: "sales_agent" | "recruitment_agent";
   contactName: string;

@@ -19,7 +19,8 @@ export type ModuleCategory =
   | "compliance" // anti-spam / opt-out (lead-facing)
   | "channel" // WhatsApp / IG DM / ...
   | "crm_ops" // notes / tasks / tags / opps
-  | "knowledge"; // base de conhecimento (carrier/empresa)
+  | "knowledge" // base de conhecimento (carrier/empresa)
+  | "bulk"; // disparo em massa (lead-facing)
 
 /** Escopo de audiência de um módulo. */
 export type ModuleAudienceScope = "rep" | "lead" | "both";
