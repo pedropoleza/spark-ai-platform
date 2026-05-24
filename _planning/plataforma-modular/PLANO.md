@@ -85,9 +85,10 @@ Template (seed/curado)  →  Agente (instância numa sub-account)
 - ⚠️ **Limite da decomposição verbatim atingido**: as seções restantes do prompt do SparkBot ou são NÃO-contíguas (um módulo está espalhado em vários pontos → extrair exigiria REORDENAR o prompt, que muda a ordem = risco de comportamento → precisa eval supervisionado, NÃO fazer no automático) ou são COMPUTADAS (`buildTonesSection`/`buildMemorySection`/conversational/guided — já são funções encapsuladas). O tool-resolver ainda não foi construído (SparkBot usa o registry completo hoje; lead-facing precisará de subset — Fase 2).
 - **Saída:** 🤖 paridade 7/7 + tsc/build verdes ✅. 🤝 diff de paridade ao vivo em N conversas reais antes de ligar `AGENT_MOTOR_UNIFIED` (pendente — supervisionado).
 
-### Fase 2 — Lead-facing + multicanal 🤖
-- Venda/recrut como templates no motor unificado; camada de canal (WhatsApp ligado, IG DM scaffolded); módulo `compliance` lead-facing.
-- **Saída:** 👤 piloto Alves Cury validado; 🤖 retira pipeline antigo (fila) do lead-facing.
+### Fase 2 — Lead-facing + multicanal 🤖 — BASE PRONTA (2026-05-24)
+- ✅ Venda/recrut entram no motor (assembler delega → paridade 5/5 `test-sales-parity.ts`); `queue-processor` roteia atrás da flag `AGENT_MOTOR_UNIFIED`. Módulo `bulk` no catálogo (00076). O sales builder já é modular por dentro (section functions).
+- ⏳ Falta (com Pedro, parity-crítico): **compor o prompt A PARTIR dos módulos do registry** (não só delegar) — habilita custom agents com subset/ordem própria; camada multicanal (IG DM); módulo `compliance` lead-facing explícito; validar piloto Alves Cury; retirar pipeline antigo (fila).
+- **Saída:** 👤 piloto Alves Cury validado; 🤖 composição a partir do registry com paridade.
 
 ### Fase 3 — Custom agents + onboarding 🤖🤝
 - Wizard (tipo → conexão → módulos) · clonar template → instância · ciclo de vida do temporário · UI admin de entitlement.
