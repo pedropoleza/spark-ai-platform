@@ -138,6 +138,13 @@ Fluxo de agendamento "resolve tudo → 1 confirm (override-aware) → pronto". E
 - **Preferência de calendário (D2)**: `profile.preferences.scheduling.{default_calendar_id, default_calendar_name, default_duration_min}`. Resolução nome-dito > pref salva > único calendário (`resolveCalendarChoice`, exportado+testado). `list_calendars` retorna `resolved_calendar_id`+`resolution` ('default_pref'/'only_calendar'/'ambiguous'). Bot aprende no 1º uso via tool `set_scheduling_pref`; surfaceado na memória do prompt (`buildMemorySection`). Setting na UI: engrenagem no painel web (`embed/sparkbot/page.tsx`) → `GET/POST /api/sparkbot/scheduling-prefs` (JWT per-rep).
 - **Prompt**: resolve contato+calendário+assignee(=self)+slot ANTES; 1 `present_options` no fim; conflito na própria agenda → "Confirmar mesmo assim ✅ / Editar ✏️" embutido (1 passo, não 2); sub-fluxo Editar (Horário/Dia/Pessoa/Calendário). Plano: `_planning/agendamento-v2/PLANO.md`.
 
+### Plataforma Modular de Agentes (H35, Pedro 2026-05-24) — EM CONSTRUÇÃO
+Reestruturação grande: SparkBot incluso/grátis; venda/recrut/custom = upsell pago montado de **módulos** sobre **motor único** (o do SparkBot). Plano: `_planning/plataforma-modular/PLANO.md`.
+- **Eixo audiência**: `agents.audience` = `rep` (SparkBot, fala com o user) × `lead` (venda/recrut/custom, fala com leads; cada um na sua sub-account/canal). Provisioning da sub-account+canal é manual (agência); cliente só compõe módulos.
+- **Schema (00075, aditivo)**: `agent_templates`, `agent_modules` (catálogo; `prompt_fragment` NULL = registry TS provê), `agent_module_instances` (composição por agente + `prompt_override`), `agent_entitlements` (capacidade paga por location). Colunas novas em `agents`: `audience`, `template_key`, `expires_at` (agente temporário→pausa).
+- **Entitlement**: `checkAgentEntitlement`/`decideEntitlement` em `lib/agent-platform/entitlements.ts`. SparkBot (account_assistant) sempre liberado; lead-facing exige entitlement ativo OU admin. **Flag `AGENT_ENTITLEMENTS_ENFORCED` (default OFF = log-first)** — só bloqueia quando ligada. Liberação manual: `scripts/grant-entitlement.ts`. Wire em `POST /api/agents`.
+- **Status**: Fase 0 (fundações) PRONTA e deployada, sem mudar comportamento. Fases seguintes (motor unificado + decompor prompt SparkBot com paridade; lead-facing+multicanal; custom agents+wizard; self-serve+IA-builder) = tasks PM-F1..F4. **NÃO** ligar `AGENT_ENTITLEMENTS_ENFORCED` até a UI/fluxo de liberação estar pronta (Fase 3).
+
 ### SparkBot Cron Guards (Pedro 2026-05-05)
 - pg_cron `sparkbot-proactive` agendado a cada 30s com:
   - `pg_try_advisory_xact_lock(8675309)` — anti double-execution sob backlog
