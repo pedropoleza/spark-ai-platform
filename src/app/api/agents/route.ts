@@ -4,6 +4,7 @@ import { createServerClient } from "@/lib/supabase/server";
 import { DEFAULT_SALES_DATA_FIELDS, DEFAULT_RECRUITMENT_DATA_FIELDS } from "@/types/agent";
 import { createAgentSchema, validateBody } from "@/lib/utils/validation";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
+import { checkAgentEntitlement } from "@/lib/agent-platform/entitlements";
 
 // GET /api/agents - Listar agentes da location
 export async function GET() {
@@ -33,6 +34,23 @@ export async function POST(request: Request) {
     return errorResponse(validationError || "Dados inválidos", 400, "invalid_body");
   }
   const { type } = validated;
+
+  // Plataforma Modular (Fase 0): gate de entitlement. SparkBot é incluso;
+  // lead-facing (venda/recrut/custom) exige entitlement ativo OU admin.
+  // Flag-gated (AGENT_ENTITLEMENTS_ENFORCED) — com flag OFF só loga, não bloqueia.
+  const entitlement = await checkAgentEntitlement({
+    locationId: session.locationId,
+    agentType: type,
+    isAdmin: session.isAdmin,
+  });
+  if (!entitlement.allowed) {
+    return errorResponse(
+      "Esse agente é um módulo adicional e ainda não está liberado pra esta conta. " +
+        "Fale com o suporte pra ativar.",
+      403,
+      "entitlement_required",
+    );
+  }
 
   const supabase = createServerClient();
 
