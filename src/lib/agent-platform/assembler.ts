@@ -19,8 +19,34 @@
  */
 
 import { buildSparkbotSystemPrompt, type BuildPromptArgs } from "@/lib/account-assistant/prompt-builder";
-import { buildSystemPrompt as buildLeadSystemPrompt, type PromptContext } from "@/lib/ai/sales-prompt-builder";
+import {
+  buildSystemPrompt as buildLeadSystemPrompt,
+  LEAD_MODULE_FRAGMENTS,
+  buildLeadMetaInstruction,
+  type PromptContext,
+} from "@/lib/ai/sales-prompt-builder";
 import type { AgentAudience } from "@/types/agent-platform";
+
+/**
+ * Compõe o system prompt de um agente LEAD-FACING CUSTOM a partir dos módulos
+ * que ele ligou (na ordem dada). É a peça que habilita custom agents: subset e
+ * ordem próprios de módulos. NÃO precisa de paridade — comportamento é novo por
+ * definição (os seeds sales/recruitment continuam delegando, com paridade).
+ *
+ * Sempre prepende a instrução-meta base. Módulos sem fragmento lead-facing
+ * implementado (compliance/bulk/active_hours) são ignorados silenciosamente por
+ * ora (conteúdo a definir).
+ */
+export function assembleLeadFromModules(moduleKeys: string[], ctx: PromptContext): string {
+  const parts: string[] = [buildLeadMetaInstruction()];
+  for (const key of moduleKeys) {
+    const fragment = LEAD_MODULE_FRAGMENTS[key];
+    if (!fragment) continue; // módulo sem fragmento lead-facing ainda
+    const rendered = fragment(ctx);
+    if (rendered) parts.push(rendered);
+  }
+  return parts.filter(Boolean).join("\n\n");
+}
 
 /** Motor unificado ligado? Default OFF. Liga o CAMINHO via assembler (output idêntico na Fase 1). */
 export function isUnifiedMotorEnabled(): boolean {
@@ -35,6 +61,11 @@ export interface AssembleSystemPromptInput {
   sparkbotArgs?: BuildPromptArgs;
   /** Contexto legado de venda/recrut — usado na delegação (templates lead-facing). */
   leadArgs?: PromptContext;
+  /**
+   * Módulos ligados do agente (em ordem) — usado pra COMPOR o prompt de um
+   * agente CUSTOM lead-facing (templateKey desconhecido). Ignorado pros seeds.
+   */
+  moduleKeys?: string[];
 }
 
 /**
@@ -64,10 +95,15 @@ export function assembleSystemPrompt(input: AssembleSystemPromptInput): string {
       // builder legado (paridade); o registry mapeia as sections pros módulos.
       return buildLeadSystemPrompt(input.leadArgs);
     }
-    default:
+    default: {
+      // Template CUSTOM lead-facing → compõe a partir dos módulos ligados.
+      if (input.audience === "lead" && input.leadArgs && input.moduleKeys) {
+        return assembleLeadFromModules(input.moduleKeys, input.leadArgs);
+      }
       throw new Error(
-        `assembleSystemPrompt: template '${input.templateKey}' ainda não suportado.`,
+        `assembleSystemPrompt: template '${input.templateKey}' exige audience='lead' + leadArgs + moduleKeys (custom) ou ser um seed conhecido.`,
       );
+    }
   }
 }
 

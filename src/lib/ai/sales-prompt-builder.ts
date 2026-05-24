@@ -129,6 +129,49 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   return sections.filter(Boolean).join("\n\n");
 }
 
+// ===================================================================
+// PLATAFORMA MODULAR (Fase 2) — fragmentos de módulo lead-facing
+// ===================================================================
+// Mapa `moduleKey → fragmento(ctx)`. Reusa as section functions privadas deste
+// arquivo (que JÁ eram modulares) sem expô-las soltas. Consumido pelo assembler
+// (`assembleLeadFromModules`) pra COMPOR o prompt de um agente CUSTOM a partir
+// dos módulos que ele ligou — em qualquer subset/ordem. (Os templates seed
+// sales/recruitment continuam delegando pro buildSystemPrompt acima → paridade.)
+// compliance/bulk/active_hours ainda não têm fragmento dedicado lead-facing
+// (conteúdo a definir) — ficam de fora da composição por ora.
+export const LEAD_MODULE_FRAGMENTS: Record<string, (ctx: PromptContext) => string> = {
+  behavior: (ctx) =>
+    [
+      buildTypeFramingSection(ctx),
+      buildIdentitySection(ctx),
+      buildConversationRulesSection(ctx),
+      buildExamplesSection(ctx),
+      buildToneSection(ctx),
+      buildResponseFormatSection(ctx),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  qualification: (ctx) =>
+    [buildObjectiveSection(ctx), buildDataFieldsTemplateSection(ctx)].filter(Boolean).join("\n\n"),
+  scheduling: (ctx) =>
+    [buildBookingSection(ctx), buildPostBookingInstructions(ctx), buildRescheduleInstructions(ctx)]
+      .filter(Boolean)
+      .join("\n\n"),
+  channel: (ctx) => buildMediaInstructionsSection(ctx.config),
+  knowledge: (ctx) => buildKnowledgeBaseSection(ctx),
+  followup: (ctx) => buildFeedbackSection(ctx),
+};
+
+/** Instrução-meta base (sempre presente, independe de módulo). */
+export function buildLeadMetaInstruction(): string {
+  return buildMetaInstruction();
+}
+
+/** Keys de módulo que têm fragmento lead-facing implementado hoje. */
+export function leadModuleKeys(): string[] {
+  return Object.keys(LEAD_MODULE_FRAGMENTS);
+}
+
 /**
  * Contexto VOLÁTIL — muda a cada turno. Injetado na user message, NUNCA no
  * system prompt, para preservar cache hit. Contém: data/hora atual, estado dos
