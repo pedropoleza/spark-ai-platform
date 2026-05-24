@@ -3,6 +3,7 @@ import { waitUntil } from "@vercel/functions";
 
 export const maxDuration = 60;
 import { createAdminClient } from "@/lib/supabase/admin";
+import { captureInboundWebhookSample } from "@/lib/account-assistant/inbound-webhook-capture";
 import {
   isProactiveEventsEnabled,
   isProactiveEventType,
@@ -140,6 +141,23 @@ export async function POST(request: NextRequest) {
     if (hasAnyMedia) {
       console.log(`[Webhook:RAW] Media fields:`, JSON.stringify(rawMediaFields).substring(0, 800));
     }
+
+    // ===== CAPTURA RAW (diagnóstico — Pedro 2026-05-24) =====
+    // Grava o payload ANTES de qualquer skip, pra confirmar se o GHL encaminha
+    // as DMs (IG etc) pra gente e com qual payload. Fire-and-forget, non-fatal,
+    // gated por INBOUND_WEBHOOK_CAPTURE (default ON). Tabela inbound_webhook_samples.
+    void captureInboundWebhookSample({
+      locationId,
+      contactId,
+      messageType,
+      detectedChannel: detectChannel(
+        messageType,
+        (body.customData as Record<string, unknown>)?.channel as string | undefined,
+      ),
+      messageDirection: direction,
+      isRealMessage: isRealMessage(messageType, direction),
+      raw: body,
+    });
 
     // ===== PROATIVIDADE EVENT-DRIVEN (Pedro 2026-05-21) =====
     // GHL manda webhooks de task/opp/appointment/contact que NÃO são mensagens.
