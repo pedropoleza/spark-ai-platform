@@ -19,7 +19,7 @@ import {
   MULTI_ACTION_PROMPT_GUIDE,
 } from "./conversational";
 
-interface BuildPromptArgs {
+export interface BuildPromptArgs {
   rep: RepIdentity;
   locationName: string;
   locationTimezone: string;

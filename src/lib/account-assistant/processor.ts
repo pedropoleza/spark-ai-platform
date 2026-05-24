@@ -20,7 +20,8 @@ import {
 } from "./terms";
 import { buildOnboardingForWhatsApp } from "./onboarding";
 import { acceptTerms, rejectTerms, setActiveLocation, syncRepInternalFlag } from "./identity";
-import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "./prompt-builder";
+import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1, type BuildPromptArgs } from "./prompt-builder";
+import { assembleSystemPrompt, isUnifiedMotorEnabled } from "@/lib/agent-platform/assembler";
 import { runWithTools, type LLMMessage } from "./llm-client";
 import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
 import { runSparkbotTurn, buildToolCtx } from "./core/run-sparkbot-turn";
@@ -379,7 +380,8 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     console.warn("[processor] silence-recovery check falhou (não-fatal):", err);
   }
 
-  const systemPrompt = buildSparkbotSystemPrompt({
+  // Plataforma Modular (Fase 1): args do prompt do SparkBot, montados uma vez.
+  const sparkbotPromptArgs: BuildPromptArgs = {
     rep,
     locationName: activeLink.location_name || location.location_name || activeLocationId,
     locationTimezone: timezone,
@@ -405,7 +407,12 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       // 4.3 Pedro 2026-05-16: bloco silence recovery quando gap >30min
       silenceRecoveryBlock,
     },
-  });
+  };
+  // Motor unificado (flag default OFF). Na Fase 1 o assembler DELEGA pro builder
+  // existente → output idêntico; a flag separa só o caminho. Ver assembler.ts.
+  const systemPrompt = isUnifiedMotorEnabled()
+    ? assembleSystemPrompt({ templateKey: "sparkbot", audience: "rep", sparkbotArgs: sparkbotPromptArgs })
+    : buildSparkbotSystemPrompt(sparkbotPromptArgs);
 
   const runtimeContext = buildSparkbotRuntimeContext({
     locationTimezone: timezone,
