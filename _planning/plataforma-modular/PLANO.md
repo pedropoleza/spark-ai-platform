@@ -79,9 +79,11 @@ Template (seed/curado)  →  Agente (instância numa sub-account)
 - Testes do gate.
 - **Saída:** 🤖 migração aplicada + tsc/build verde + teste do gate passa; 🤖 SparkBot intocado (zero mudança de comportamento).
 
-### Fase 1 — Motor unificado (rep-facing primeiro) 🤖
-- Assembler + resolver. Decompor o prompt do SparkBot em módulos do registry. SparkBot roda pelo motor novo **atrás de flag**, provando **paridade** (mesmo output).
-- **Saída:** 🤝 diff de paridade do prompt ≈ 0 em N conversas reais; 🤖 testes de assembler/resolver.
+### Fase 1 — Motor unificado (rep-facing primeiro) 🤖 — BASE PRONTA (2026-05-24)
+- ✅ Assembler (`assembler.ts`) + flag `AGENT_MOTOR_UNIFIED` (default OFF) + harness de paridade (`test-motor-parity.ts`, 7/7). SparkBot roda pelo motor (delega) com output idêntico.
+- ✅ 4 módulos decompostos (seções CONTÍGUAS do prompt): `behavior`, `scheduling`, `channel`, `knowledge` em `modules/*.ts` + `registry.ts`. Builder faz spread (fonte única, parity-guarded).
+- ⚠️ **Limite da decomposição verbatim atingido**: as seções restantes do prompt do SparkBot ou são NÃO-contíguas (um módulo está espalhado em vários pontos → extrair exigiria REORDENAR o prompt, que muda a ordem = risco de comportamento → precisa eval supervisionado, NÃO fazer no automático) ou são COMPUTADAS (`buildTonesSection`/`buildMemorySection`/conversational/guided — já são funções encapsuladas). O tool-resolver ainda não foi construído (SparkBot usa o registry completo hoje; lead-facing precisará de subset — Fase 2).
+- **Saída:** 🤖 paridade 7/7 + tsc/build verdes ✅. 🤝 diff de paridade ao vivo em N conversas reais antes de ligar `AGENT_MOTOR_UNIFIED` (pendente — supervisionado).
 
 ### Fase 2 — Lead-facing + multicanal 🤖
 - Venda/recrut como templates no motor unificado; camada de canal (WhatsApp ligado, IG DM scaffolded); módulo `compliance` lead-facing.
