@@ -52,7 +52,7 @@ async function main() {
     if (ents.length === 0) console.log("  (nenhum)");
     for (const e of ents) {
       console.log(
-        `  - ${e.capability} [${e.status}] source=${e.source} by=${e.granted_by || "?"}` +
+        `  - ${e.capability} [${e.status}] $${e.monthly_price_usd}/mês source=${e.source} by=${e.granted_by || "?"}` +
           `${e.expires_at ? ` expira=${e.expires_at}` : ""}`,
       );
     }
@@ -73,15 +73,17 @@ async function main() {
     process.exit(0);
   }
 
+  const priceArg = arg("price");
   const ent = await grantEntitlement({
     locationId,
     capability,
     grantedBy: by,
     expiresAt: arg("expires") || null,
     notes: arg("notes") || null,
+    priceUsd: priceArg ? Number(priceArg) : undefined,
   });
   console.log(
-    `✅ Liberado ${capability} pra ${locationId} (por ${by})` +
+    `✅ Liberado ${capability} pra ${locationId} (por ${by}, $${ent.monthly_price_usd}/mês)` +
       `${ent.expires_at ? `, expira ${ent.expires_at}` : ""}.`,
   );
   process.exit(0);

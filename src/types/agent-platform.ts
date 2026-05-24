@@ -99,6 +99,11 @@ export interface AgentEntitlement {
   expires_at: string | null;
   revoked_at: string | null;
   notes: string | null;
+  /** Preço mensal do agente/módulo pago. Default DEFAULT_AGENT_MODULE_PRICE_USD ($50). Cobrança = Fase 4. */
+  monthly_price_usd: number;
   created_at: string;
   updated_at: string;
 }
+
+/** Preço mensal padrão por agente pago (Pedro 2026-05-24). Override por entitlement. */
+export const DEFAULT_AGENT_MODULE_PRICE_USD = 50;

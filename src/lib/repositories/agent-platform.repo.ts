@@ -8,12 +8,13 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import type {
-  AgentTemplate,
-  AgentModule,
-  AgentModuleInstance,
-  AgentEntitlement,
-  AgentCapability,
+import {
+  DEFAULT_AGENT_MODULE_PRICE_USD,
+  type AgentTemplate,
+  type AgentModule,
+  type AgentModuleInstance,
+  type AgentEntitlement,
+  type AgentCapability,
 } from "@/types/agent-platform";
 
 // =====================================================================
@@ -69,6 +70,8 @@ export async function grantEntitlement(params: {
   source?: "manual" | "purchase";
   expiresAt?: string | null;
   notes?: string | null;
+  /** Preço mensal; default $50 (DEFAULT_AGENT_MODULE_PRICE_USD). */
+  priceUsd?: number;
 }): Promise<AgentEntitlement> {
   const supabase = createAdminClient();
   const existing = await getActiveEntitlement(params.locationId, params.capability);
@@ -83,6 +86,7 @@ export async function grantEntitlement(params: {
         granted_at: nowIso,
         expires_at: params.expiresAt ?? null,
         notes: params.notes ?? existing.notes,
+        monthly_price_usd: params.priceUsd ?? existing.monthly_price_usd,
         updated_at: nowIso,
       })
       .eq("id", existing.id)
@@ -102,6 +106,7 @@ export async function grantEntitlement(params: {
       granted_by: params.grantedBy,
       expires_at: params.expiresAt ?? null,
       notes: params.notes ?? null,
+      monthly_price_usd: params.priceUsd ?? DEFAULT_AGENT_MODULE_PRICE_USD,
     })
     .select()
     .single();
