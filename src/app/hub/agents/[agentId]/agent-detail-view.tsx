@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { ChevronLeft, ChevronDown, ChevronUp, Play, Pause, Check, Plus, Trash2 } from "lucide-react";
 import { AMark, StatusBadge, ChannelChip, PriceBadge } from "@/components/hub/primitives";
 import { MODULE_LABEL, MODULE_SUBTITLE } from "@/components/hub/module-labels";
+import { TestChat } from "./test-chat";
 import type { HubAgentDetail } from "@/lib/hub/data";
 import type { AgentStatus } from "@/components/hub/types";
 import type { DataField, FollowUpConfig, WorkingHoursConfig } from "@/types/agent";
@@ -90,6 +91,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
   const [open, setOpen] = useState<Set<string>>(new Set(["behavior"]));
   const [saving, setSaving] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(false);
+  const [showTest, setShowTest] = useState(false);
 
   const [e, setE] = useState<Editable>(() => ({
     tone_creativity: num(c.tone_creativity, 60),
@@ -233,7 +235,12 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
             </div>
           </div>
           <div className="row" style={{ gap: 8 }}>
-            <button className="btn btn--ghost" disabled title="Disponível na próxima fase">
+            <button
+              className="btn btn--ghost"
+              onClick={() => setShowTest(true)}
+              disabled={isSparkbot}
+              title={isSparkbot ? "Teste o SparkBot direto no WhatsApp" : undefined}
+            >
               <Play /> Testar
             </button>
             <button className="btn btn--ghost" onClick={toggleStatus} disabled={togglingStatus || status === "blocked"}>
@@ -322,6 +329,10 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
         {tab === "docs" && <div className="empty">Os documentos de apoio aparecerão aqui.</div>}
         {tab === "history" && <div className="empty">O histórico de alterações aparecerá aqui.</div>}
       </div>
+
+      {showTest && (
+        <TestChat agentId={detail.id} agentName={detail.name} templateKey={detail.template_key} onClose={() => setShowTest(false)} />
+      )}
     </div>
   );
 }
