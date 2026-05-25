@@ -359,6 +359,42 @@
 .hub-root .tone-bar { height: 5px; background: var(--surface-3); border-radius: 999px; overflow: hidden; }
 .hub-root .tone-bar > i { display: block; height: 100%; background: var(--primary); border-radius: 999px; transition: width .3s ease; }
 
+/* ─── Config como PAINEL DE CONTROLE (grade + resumo + drawer) ───── */
+.hub-root .cfg-summary {
+  background: linear-gradient(135deg, var(--primary-soft), var(--surface));
+  border: 1px solid var(--line); color: var(--ink-2);
+  border-radius: var(--r-lg); padding: 16px 18px; font-size: 14px; line-height: 1.6; margin-bottom: 20px;
+}
+.hub-root .cfg-summary b { color: var(--ink); font-weight: 600; }
+.hub-root .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 720px) { .hub-root .cfg-grid { grid-template-columns: 1fr; } }
+.hub-root .cfg-tile {
+  text-align: left; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1); padding: 14px; cursor: pointer; display: grid;
+  grid-template-columns: 38px 1fr auto; gap: 12px; align-items: center;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .08s ease;
+}
+.hub-root .cfg-tile:hover { border-color: var(--line-2); box-shadow: var(--shadow-2); }
+.hub-root .cfg-tile:active { transform: translateY(1px); }
+.hub-root .cfg-tile[data-on="false"] { opacity: .62; }
+.hub-root .cfg-tile__icon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--surface-2); color: var(--ink-3); }
+.hub-root .cfg-tile__icon svg { width: 18px; height: 18px; }
+.hub-root .cfg-tile[data-on="true"] .cfg-tile__icon { background: var(--primary-soft); color: var(--primary); }
+.hub-root .cfg-tile__title { font-size: 13.5px; font-weight: 600; }
+.hub-root .cfg-tile__sum { font-size: 12px; color: var(--ink-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Drawer lateral (edição focada de 1 ajuste) */
+.hub-root .drawer-overlay { position: fixed; inset: 0; background: var(--overlay); z-index: 90; animation: hub-fade .15s ease-out; }
+.hub-root .drawer {
+  position: fixed; top: 0; right: 0; height: 100vh; width: min(480px, 94vw);
+  background: var(--surface); border-left: 1px solid var(--line); box-shadow: var(--shadow-3);
+  z-index: 91; display: flex; flex-direction: column; animation: drawer-in .24s cubic-bezier(.22,1,.36,1);
+}
+@keyframes drawer-in { from { transform: translateX(100%); } to { transform: none; } }
+.hub-root .drawer__hd { padding: 16px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hub-root .drawer__body { flex: 1; overflow-y: auto; padding: 6px 18px 18px; }
+.hub-root .drawer__foot { padding: 12px 18px; border-top: 1px solid var(--line); display: flex; justify-content: flex-end; gap: 8px; background: var(--surface); }
+
 /* Sidebar colapsa em largura estreita (iframe estreito do Spark Leads) */
 @media (max-width: 880px) {
   .hub-app { grid-template-columns: 60px 1fr; }

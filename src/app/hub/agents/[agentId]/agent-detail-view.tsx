@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
-  ChevronLeft, ChevronDown, ChevronUp, Play, Pause, Check, Plus, Trash2,
+  ChevronLeft, X, Play, Pause, Check, Plus, Trash2,
   Sparkles, Clock, Calendar, MessageCircle, Users, Send, Mail, Layers, FileText, Shield,
   type LucideIcon,
 } from "lucide-react";
@@ -127,7 +127,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
   const [tab, setTab] = useState<Tab>("config");
   const [status, setStatus] = useState<AgentStatus>(detail.status);
   const [enabled, setEnabled] = useState<Set<string>>(new Set(detail.modules.filter((m) => m.enabled).map((m) => m.key)));
-  const [open, setOpen] = useState<Set<string>>(new Set(["behavior"]));
+  const [drawer, setDrawer] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(false);
   const [showTest, setShowTest] = useState(false);
@@ -146,15 +146,6 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
     { id: "history", label: "Histórico" },
   ];
 
-  function toggleOpen(key: string) {
-    setOpen((prev) => {
-      const s = new Set(prev);
-      if (s.has(key)) s.delete(key);
-      else s.add(key);
-      return s;
-    });
-  }
-
   async function toggleModule(key: string, next: boolean) {
     setEnabled((prev) => {
       const s = new Set(prev);
@@ -162,7 +153,6 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
       else s.delete(key);
       return s;
     });
-    if (next) setOpen((prev) => new Set(prev).add(key));
     try {
       const res = await fetch(`/api/agent-platform/agents/${detail.id}/modules`, {
         method: "PATCH",
@@ -306,70 +296,51 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
       <div className="page" style={{ maxWidth: 860 }}>
         {tab === "config" && (
           <>
-            <p className="muted" style={{ fontSize: 13.5, margin: "0 0 4px" }}>
-              <span className="bold" style={{ color: "var(--ink)" }}>{enabled.size}</span> de {detail.modules.length} ajustes ligados.
-              Ligue um ajuste pra configurá-lo.
-            </p>
+            <div className="cfg-summary">{buildSummary(e, detail)}</div>
 
             {groupsToRender.map((g) => (
               <div key={g.title}>
                 <div className="cfg-group-title">{g.title}</div>
-                {g.mods.map((key) => {
-                  const Icon = MODULE_ICON[key] || Sparkles;
-                  const isOpen = open.has(key);
-                  const isOn = enabled.has(key);
-                  return (
-                    <div key={key} className="cfg-card" data-on={isOn} data-open={isOpen}>
+                <div className="cfg-grid">
+                  {g.mods.map((key) => {
+                    const Icon = MODULE_ICON[key] || Sparkles;
+                    const isOn = enabled.has(key);
+                    return (
                       <div
-                        className="cfg-head"
+                        key={key}
+                        className="cfg-tile"
+                        data-on={isOn}
                         role="button"
                         tabIndex={0}
-                        onClick={() => toggleOpen(key)}
-                        onKeyDown={(ev) => (ev.key === "Enter" || ev.key === " ") && toggleOpen(key)}
+                        onClick={() => setDrawer(key)}
+                        onKeyDown={(ev) => (ev.key === "Enter" || ev.key === " ") && setDrawer(key)}
                       >
-                        <div className="cfg-icon">
-                          <Icon />
-                        </div>
+                        <div className="cfg-tile__icon"><Icon /></div>
                         <div style={{ minWidth: 0 }}>
-                          <div className="cfg-title">{MODULE_LABEL[key] || key}</div>
-                          <div className="cfg-sub">{MODULE_SUBTITLE[key] || ""}</div>
+                          <div className="cfg-tile__title">{MODULE_LABEL[key] || key}</div>
+                          <div className="cfg-tile__sum">{isOn ? summarize(key, e, detail) : "Desligado"}</div>
                         </div>
-                        <div className="cfg-toggle">
-                          <span className="cfg-toggle__lbl">{isOn ? "Ligado" : "Desligado"}</span>
-                          <div
-                            className="switch"
-                            aria-checked={isOn}
-                            role="switch"
-                            tabIndex={0}
-                            onClick={(ev) => {
+                        <div
+                          className="switch"
+                          role="switch"
+                          aria-checked={isOn}
+                          tabIndex={0}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            toggleModule(key, !isOn);
+                          }}
+                          onKeyDown={(ev) => {
+                            if (ev.key === "Enter" || ev.key === " ") {
                               ev.stopPropagation();
+                              ev.preventDefault();
                               toggleModule(key, !isOn);
-                            }}
-                            onKeyDown={(ev) => {
-                              if (ev.key === "Enter" || ev.key === " ") {
-                                ev.stopPropagation();
-                                ev.preventDefault();
-                                toggleModule(key, !isOn);
-                              }
-                            }}
-                          />
-                          {isOpen ? <ChevronUp size={16} style={{ color: "var(--ink-4)" }} /> : <ChevronDown size={16} style={{ color: "var(--ink-4)" }} />}
-                        </div>
+                            }
+                          }}
+                        />
                       </div>
-                      {isOpen && (
-                        <div className="cfg-body">
-                          {isOn ? (
-                            renderBody(key, detail, e, patch, aiModel)
-                          ) : (
-                            <div className="muted" style={{ fontSize: 13, padding: "8px 0" }}>
-                              Ligue este ajuste pra configurá-lo.
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             ))}
 
@@ -395,10 +366,106 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
         {tab === "history" && <div className="empty">O histórico de alterações aparecerá aqui.</div>}
       </div>
 
+      {drawer && (
+        <>
+          <div className="drawer-overlay" onClick={() => setDrawer(null)} />
+          <aside className="drawer" role="dialog" aria-label={MODULE_LABEL[drawer] || drawer}>
+            <div className="drawer__hd">
+              <div className="row" style={{ gap: 10 }}>
+                {(() => {
+                  const I = MODULE_ICON[drawer] || Sparkles;
+                  return (
+                    <div className="cfg-tile__icon">
+                      <I />
+                    </div>
+                  );
+                })()}
+                <div>
+                  <div style={{ fontWeight: 600, fontSize: 15 }}>{MODULE_LABEL[drawer] || drawer}</div>
+                  <div className="muted" style={{ fontSize: 12 }}>{MODULE_SUBTITLE[drawer] || ""}</div>
+                </div>
+              </div>
+              <button className="btn btn--quiet btn--icon" onClick={() => setDrawer(null)} aria-label="Fechar">
+                <X />
+              </button>
+            </div>
+            <div className="drawer__body">
+              {enabled.has(drawer) ? (
+                renderBody(drawer, detail, e, patch, aiModel)
+              ) : (
+                <div className="col" style={{ gap: 12, padding: "12px 0" }}>
+                  <p className="muted" style={{ fontSize: 13.5 }}>Este ajuste está desligado.</p>
+                  <button className="btn btn--primary btn--sm" style={{ alignSelf: "flex-start" }} onClick={() => toggleModule(drawer, true)}>
+                    Ligar este ajuste
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="drawer__foot">
+              <button className="btn btn--primary" onClick={() => setDrawer(null)}>
+                Concluir
+              </button>
+            </div>
+          </aside>
+        </>
+      )}
+
       {showTest && (
         <TestChat agentId={detail.id} agentName={detail.name} templateKey={detail.template_key} onClose={() => setShowTest(false)} />
       )}
     </div>
+  );
+}
+
+/* ─── Resumos do painel de controle ─────────────────────────────── */
+function summarize(key: string, e: Editable, detail: HubAgentDetail): string {
+  switch (key) {
+    case "behavior":
+      return `${e.tone_formality >= 55 ? "Formal" : "Casual"}, ${e.tone_naturalness >= 60 ? "humano" : "objetivo"}`;
+    case "active_hours":
+      return e.working_hours.enabled ? "Horário limitado" : "Sempre disponível";
+    case "scheduling":
+      return "Marcar reuniões";
+    case "channel":
+      return detail.channels.length
+        ? detail.channels.map((c) => (c === "whatsapp" ? "WhatsApp" : "Instagram")).join(", ")
+        : "Sem canal";
+    case "qualification":
+      return e.data_fields.length ? `${e.data_fields.length} pergunta${e.data_fields.length > 1 ? "s" : ""}` : "Sem perguntas";
+    case "followup":
+      return e.follow_up_config.enabled ? `${e.follow_up_config.max_attempts} tentativas` : "Desligado";
+    case "bulk":
+      return "Campanhas";
+    case "crm_ops":
+      return "Ações no CRM";
+    case "knowledge":
+      return e.enabled_kbs.length ? `${e.enabled_kbs.length} base${e.enabled_kbs.length > 1 ? "s" : ""}` : "Sem documentos";
+    case "compliance":
+      return `máx ${e.max_messages_per_conversation}/conversa`;
+    default:
+      return "Configurar";
+  }
+}
+
+function buildSummary(e: Editable, detail: HubAgentDetail): React.ReactNode {
+  const form = e.tone_formality >= 55 ? "formal" : "informal";
+  const nat = e.tone_naturalness >= 60 ? "natural" : "objetivo";
+  const hours = e.working_hours.enabled ? "em horário definido" : "a qualquer hora";
+  const fup = e.follow_up_config.enabled ? `faz até ${e.follow_up_config.max_attempts} follow-ups` : "não faz follow-up";
+  const qn = e.data_fields.length;
+  const ch = detail.channels.length
+    ? detail.channels.map((c) => (c === "whatsapp" ? "WhatsApp" : "Instagram")).join(" e ")
+    : "—";
+  return (
+    <>
+      Esse agente fala de forma <b>{nat}</b> e <b>{form}</b> no <b>{ch}</b>, atende <b>{hours}</b> e <b>{fup}</b>
+      {qn > 0 ? (
+        <>
+          , coletando <b>{qn} informaç{qn > 1 ? "ões" : "ão"}</b>
+        </>
+      ) : null}
+      .
+    </>
   );
 }
 
