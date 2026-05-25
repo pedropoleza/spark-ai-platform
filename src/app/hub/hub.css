@@ -344,6 +344,21 @@
 .hub-root .seg button { padding: 6px 12px; border-radius: var(--r-sm); font-size: 13px; font-weight: 500; color: var(--ink-3); }
 .hub-root .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-1); }
 
+/* ─── Builder com IA (Fase F) ───────────────────────────────────── */
+.hub-root .builder-split { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; align-items: start; }
+.hub-root .builder-ficha { position: sticky; top: 16px; }
+@media (max-width: 900px) {
+  .hub-root .builder-split { grid-template-columns: 1fr; }
+  .hub-root .builder-ficha { position: static; }
+}
+.hub-root .bub { max-width: 86%; padding: 10px 13px; border-radius: 14px; font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; }
+.hub-root .bub--user { align-self: flex-end; background: var(--primary); color: #fff; border-bottom-right-radius: 4px; }
+.hub-root .bub--bot { align-self: flex-start; background: var(--surface-2); color: var(--ink); border-bottom-left-radius: 4px; }
+.hub-root .chip-suggest { text-align: left; padding: 8px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-pill); font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
+.hub-root .chip-suggest:hover { border-color: var(--primary); color: var(--primary); }
+.hub-root .tone-bar { height: 5px; background: var(--surface-3); border-radius: 999px; overflow: hidden; }
+.hub-root .tone-bar > i { display: block; height: 100%; background: var(--primary); border-radius: 999px; transition: width .3s ease; }
+
 /* Sidebar colapsa em largura estreita (iframe estreito do Spark Leads) */
 @media (max-width: 880px) {
   .hub-app { grid-template-columns: 60px 1fr; }
