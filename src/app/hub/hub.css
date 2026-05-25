@@ -302,6 +302,48 @@
 .hub-root .asm-bar > i { display: block; height: 100%; background: var(--primary); border-radius: 999px; animation: asm-fill 1.6s ease-out both; }
 @keyframes asm-fill { from { width: 0; } to { width: 100%; } }
 
+/* ─── Config do agente (profissional) ───────────────────────────── */
+.hub-root .cfg-group-title {
+  font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--ink-4); margin: 22px 2px 10px; display: flex; align-items: center; gap: 8px;
+}
+.hub-root .cfg-group-title::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.hub-root .cfg-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-1); transition: opacity .15s ease, border-color .15s ease; overflow: hidden; }
+.hub-root .cfg-card + .cfg-card { margin-top: 10px; }
+.hub-root .cfg-card[data-on="false"] { opacity: .66; }
+.hub-root .cfg-card[data-open="true"] { border-color: var(--line-2); box-shadow: var(--shadow-2); }
+.hub-root .cfg-head { width: 100%; display: grid; grid-template-columns: 40px 1fr auto; gap: 14px; align-items: center; padding: 15px 16px; cursor: pointer; text-align: left; background: none; }
+.hub-root .cfg-icon { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--surface-2); color: var(--ink-3); }
+.hub-root .cfg-icon svg { width: 18px; height: 18px; }
+.hub-root .cfg-card[data-on="true"] .cfg-icon { background: var(--primary-soft); color: var(--primary); }
+.hub-root .cfg-title { font-size: 14.5px; font-weight: 600; }
+.hub-root .cfg-sub { font-size: 12.5px; color: var(--ink-3); margin-top: 2px; }
+.hub-root .cfg-toggle { display: flex; align-items: center; gap: 10px; }
+.hub-root .cfg-toggle__lbl { font-size: 11.5px; font-weight: 600; color: var(--ink-4); width: 56px; text-align: right; }
+.hub-root .cfg-card[data-on="true"] .cfg-toggle__lbl { color: var(--primary); }
+.hub-root .cfg-body { padding: 6px 18px 18px; border-top: 1px solid var(--line-faint); }
+
+/* Campo stacked (label em cima) */
+.hub-root .fstack { display: flex; flex-direction: column; gap: 7px; padding: 14px 0; border-bottom: 1px solid var(--line-faint); }
+.hub-root .fstack:last-child { border-bottom: 0; padding-bottom: 2px; }
+.hub-root .fstack__lbl { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.hub-root .fstack__hint { font-size: 12px; color: var(--ink-3); margin-top: -3px; }
+
+/* Barra de salvar (aparece só quando há mudança) */
+.hub-root .cfg-savebar {
+  position: sticky; bottom: 16px; margin-top: 22px; z-index: 20;
+  background: var(--ink); color: #fff; border-radius: var(--r-lg);
+  padding: 12px 14px 12px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  box-shadow: var(--shadow-3); animation: hub-snap .22s cubic-bezier(.22,1,.36,1);
+}
+.hub-root .cfg-savebar__msg { font-size: 13.5px; font-weight: 500; display: flex; align-items: center; gap: 9px; }
+.hub-root .cfg-savebar__dot { width: 8px; height: 8px; border-radius: 999px; background: var(--warning); box-shadow: 0 0 0 4px rgba(201,122,15,.25); }
+.hub-root .btn--on-dark { background: rgba(255,255,255,.12); color: #fff; }
+.hub-root .btn--on-dark:hover { background: rgba(255,255,255,.2); }
+.hub-root .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); padding: 3px; gap: 2px; }
+.hub-root .seg button { padding: 6px 12px; border-radius: var(--r-sm); font-size: 13px; font-weight: 500; color: var(--ink-3); }
+.hub-root .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow-1); }
+
 /* Sidebar colapsa em largura estreita (iframe estreito do Spark Leads) */
 @media (max-width: 880px) {
   .hub-app { grid-template-columns: 60px 1fr; }
