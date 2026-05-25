@@ -294,6 +294,14 @@
 
 @keyframes hub-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
+/* Animação de "montagem" do agente (criação) */
+@keyframes hub-pop { 0% { opacity: 0; transform: scale(.6); } 60% { transform: scale(1.08); } 100% { opacity: 1; transform: scale(1); } }
+@keyframes hub-snap { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+.hub-root .asm-mark { animation: hub-pop .5s cubic-bezier(.22,1,.36,1) both; }
+.hub-root .asm-row { animation: hub-snap .4s cubic-bezier(.22,1,.36,1) both; }
+.hub-root .asm-bar > i { display: block; height: 100%; background: var(--primary); border-radius: 999px; animation: asm-fill 1.6s ease-out both; }
+@keyframes asm-fill { from { width: 0; } to { width: 100%; } }
+
 /* Sidebar colapsa em largura estreita (iframe estreito do Spark Leads) */
 @media (max-width: 880px) {
   .hub-app { grid-template-columns: 60px 1fr; }

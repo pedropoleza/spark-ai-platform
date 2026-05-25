@@ -1,21 +1,38 @@
-import Link from "next/link";
-import { Sparkles, ChevronLeft } from "lucide-react";
+import { redirect } from "next/navigation";
+import { getSession } from "@/lib/auth/sso";
+import { listTemplates, listEntitlements } from "@/lib/repositories/agent-platform.repo";
+import { templateCapability } from "@/lib/hub/data";
+import { NewAgentFlow, type NewTemplate } from "./new-agent-flow";
 
-export default function NewAgentPage() {
-  return (
-    <div className="page" style={{ maxWidth: 720 }}>
-      <Link href="/hub/agents" className="btn btn--quiet btn--sm" style={{ marginBottom: 12 }}>
-        <ChevronLeft /> Voltar para agentes
-      </Link>
-      <div className="card">
-        <div className="empty">
-          <Sparkles size={32} style={{ color: "var(--ink-4)" }} />
-          <p style={{ marginTop: 12, marginBottom: 4, fontWeight: 600, color: "var(--ink)" }}>Novo agente</p>
-          <p style={{ marginTop: 0 }}>
-            O fluxo de criação — incluindo o assistente com IA para agentes personalizados — chega nas próximas fases.
-          </p>
-        </div>
-      </div>
-    </div>
+export const dynamic = "force-dynamic";
+
+export default async function NewAgentPage() {
+  const session = await getSession();
+  if (!session) redirect("/");
+
+  const [templates, entitlements] = await Promise.all([
+    listTemplates({ audience: "lead" }),
+    listEntitlements(session.locationId),
+  ]);
+
+  const now = Date.now();
+  const activeCaps = new Set(
+    entitlements
+      .filter((e) => e.status === "active" && (!e.expires_at || new Date(e.expires_at).getTime() > now))
+      .map((e) => e.capability),
   );
+
+  const items: NewTemplate[] = templates.map((t) => {
+    const cap = templateCapability(t.key);
+    return {
+      key: t.key,
+      name: t.name,
+      description: t.description || "",
+      default_modules: t.default_modules || [],
+      // Admin libera tudo; senão precisa de entitlement ativo da capacidade.
+      entitled: session.isAdmin || (cap ? activeCaps.has(cap) : true),
+    };
+  });
+
+  return <NewAgentFlow templates={items} />;
 }

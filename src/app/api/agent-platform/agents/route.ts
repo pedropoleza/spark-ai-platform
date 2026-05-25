@@ -42,6 +42,8 @@ export async function POST(request: NextRequest) {
   const moduleKeys: string[] = Array.isArray(body.module_keys)
     ? body.module_keys.filter((m: unknown): m is string => typeof m === "string")
     : [];
+  // Criação manual nasce PAUSADA (rep revisa + testa + ativa). start_paused=false força ativo.
+  const startPaused = body.start_paused !== false;
   if (!templateKey) return errorResponse("template_key obrigatório", 400, "missing_template");
 
   const template = await getTemplate(templateKey);
@@ -72,7 +74,7 @@ export async function POST(request: NextRequest) {
     .insert({
       location_id: session.locationId,
       type,
-      status: "active",
+      status: startPaused ? "inactive" : "active",
       name,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       audience: audience as any,
