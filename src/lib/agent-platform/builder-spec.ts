@@ -56,6 +56,20 @@ export const AgentSpecSchema = z.object({
       mode: z.enum(["only_during", "only_outside"]).default("only_during"),
     })
     .optional(),
+  identity: z
+    .object({
+      name: z.string().max(80).default(""),
+      mode: z.enum(["assistant", "human"]).default("assistant"),
+    })
+    .optional(),
+  objective: z.enum(["qualification_only", "qualification_and_booking", "booking_only"]).optional(),
+  post_booking: z
+    .object({
+      behavior: z.enum(["stop_and_handoff", "continue_until_appointment"]).default("stop_and_handoff"),
+      handoff_message: z.string().max(2000).default(""),
+      allow_reschedule: z.boolean().default(true),
+    })
+    .optional(),
   expires_at: z.string().nullable().optional(),
 });
 
@@ -131,6 +145,28 @@ export function proposeAgentTool(moduleKeys: string[]): ToolDefinition {
             mode: { type: "string", enum: ["only_during", "only_outside"] },
           },
         },
+        identity: {
+          type: "object",
+          description: "Como o agente se apresenta ao lead.",
+          properties: {
+            name: { type: "string", description: "Nome do agente (ex: Bia, Léo)." },
+            mode: { type: "string", enum: ["assistant", "human"], description: "Se apresenta como assistente virtual ou como pessoa." },
+          },
+        },
+        objective: {
+          type: "string",
+          enum: ["qualification_only", "qualification_and_booking", "booking_only"],
+          description: "O que o agente tenta fazer: só qualificar, qualificar + agendar, ou só agendar.",
+        },
+        post_booking: {
+          type: "object",
+          description: "O que fazer depois de marcar a reunião.",
+          properties: {
+            behavior: { type: "string", enum: ["stop_and_handoff", "continue_until_appointment"] },
+            handoff_message: { type: "string", description: "Mensagem ao passar pra humano." },
+            allow_reschedule: { type: "boolean" },
+          },
+        },
         expires_at: { type: "string", description: "Data ISO (YYYY-MM-DD) se o agente é temporário (evento/feirão). Omita se não for." },
       },
       required: ["name", "purpose_summary", "modules", "behavior"],
@@ -151,6 +187,8 @@ COMO CONDUZIR:
 
 QUANDO TIVER O SUFICIENTE:
 - Chame a tool propose_agent com a configuração. Escolha módulos coerentes com o propósito.
+- Dê um NOME ao agente (identity.name) e diga se ele se apresenta como assistente ou como pessoa.
+- Defina o OBJETIVO (só qualificar / qualificar + agendar / só agendar) e, se agenda, o que faz depois (post_booking).
 - Escreva instruções (custom_instructions) ricas e específicas pro agente, baseadas no que a pessoa disse.
 - Defina o tom (0-100) que combina com o propósito.
 
@@ -188,39 +226,54 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
     type: f.type,
   }));
 
+  // whitelist + dedup das module keys (antes, pra derivar os flags de on/off).
+  const moduleKeys = Array.from(new Set(spec.modules.filter((k) => allowedModuleKeys.includes(k))));
+  const hasFollowup = moduleKeys.includes("followup") || !!spec.followup?.enabled;
+  const hasHours = moduleKeys.includes("active_hours") || !!spec.active_hours?.enabled;
+
   const config: Record<string, unknown> = {
+    personality: {
+      name: spec.identity?.name || "",
+      identity_mode: spec.identity?.mode || "assistant",
+      greeting_style: "",
+      farewell_style: "",
+      language: "pt-BR",
+      persona_description: spec.purpose_summary || "",
+    },
     tone_creativity: clamp(spec.behavior.tone.creativity),
     tone_formality: clamp(spec.behavior.tone.formality),
     tone_naturalness: clamp(spec.behavior.tone.naturalness),
     tone_aggressiveness: clamp(spec.behavior.tone.assertiveness),
     custom_instructions: spec.behavior.custom_instructions,
     confirmation_mode: spec.behavior.confirmation_mode,
+    objective: spec.objective || (moduleKeys.includes("scheduling") ? "qualification_and_booking" : "qualification_only"),
     enabled_channels: enabledChannels.length ? enabledChannels : ["WhatsApp"],
     data_fields: dataFields,
-  };
-
-  if (spec.followup) {
-    config.follow_up_config = {
-      enabled: spec.followup.enabled,
+    // Flags derivados do módulo → config e composição ficam coerentes.
+    follow_up_config: {
+      enabled: hasFollowup,
       mode: "ai_auto",
-      intensity: Math.max(1, Math.min(10, Math.round(spec.followup.intensity || 5))),
-      max_attempts: Math.max(1, Math.min(20, Math.round(spec.followup.max_attempts || 3))),
+      intensity: Math.max(1, Math.min(10, Math.round(spec.followup?.intensity || 5))),
+      max_attempts: Math.max(1, Math.min(20, Math.round(spec.followup?.max_attempts || 3))),
       min_delay_minutes: 10,
       max_delay_minutes: 10080,
       manual_steps: [],
-    };
-  }
-  if (spec.active_hours) {
-    config.working_hours = {
-      enabled: spec.active_hours.enabled,
-      timezone: spec.active_hours.timezone || "America/New_York",
-      mode: spec.active_hours.mode,
+    },
+    working_hours: {
+      enabled: hasHours,
+      timezone: spec.active_hours?.timezone || "America/New_York",
+      mode: spec.active_hours?.mode || "only_during",
       schedule: {},
+    },
+  };
+
+  if (spec.post_booking) {
+    config.post_booking = {
+      behavior: spec.post_booking.behavior,
+      handoff_message: spec.post_booking.handoff_message || "",
+      allow_reschedule: spec.post_booking.allow_reschedule,
     };
   }
-
-  // whitelist + dedup das module keys
-  const moduleKeys = Array.from(new Set(spec.modules.filter((k) => allowedModuleKeys.includes(k))));
 
   return { config, moduleKeys, expiresAt: spec.expires_at ?? null };
 }

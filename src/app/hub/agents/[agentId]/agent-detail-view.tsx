@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   ChevronLeft, Play, Pause, Check, Plus, Trash2,
-  Sparkles, Clock, Calendar, MessageCircle, Users, Send, Mail, Layers, FileText, Shield,
+  Sparkles, Clock, Calendar, MessageCircle, Users, Send, FileText, Shield,
   type LucideIcon,
 } from "lucide-react";
 import { AMark, StatusBadge, ChannelChip, PriceBadge } from "@/components/hub/primitives";
@@ -19,10 +19,7 @@ const TEMPLATE_LABEL: Record<string, string> = { sparkbot: "SparkBot", sales: "V
 
 type ConfMode = "always" | "medium_and_high" | "high_only";
 type Objective = "qualification_only" | "qualification_and_booking" | "booking_only";
-type Cat =
-  | "modules" | "personality" | "attendance" | "qualification"
-  | "followup" | "scheduling" | "knowledge" | "limits"
-  | "messages" | "docs" | "history";
+type Cat = "personality" | "channel" | "hours" | "qualification" | "followup" | "scheduling" | "knowledge" | "limits" | "messages" | "docs" | "history";
 
 const num = (v: unknown, d: number) => (typeof v === "number" && !isNaN(v) ? v : d);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -33,7 +30,6 @@ interface PostBooking { behavior: "stop_and_handoff" | "continue_until_appointme
 interface Notif { on_qualified: boolean; on_booked: boolean; on_handed_off: boolean; on_error: boolean; notification_email: string }
 
 interface Editable {
-  // personalidade
   identity_name: string;
   identity_mode: "assistant" | "human";
   persona_description: string;
@@ -44,21 +40,15 @@ interface Editable {
   custom_instructions: string;
   conversation_examples: string;
   confirmation_mode: ConfMode;
-  // atendimento
   objective: Objective;
   working_hours: WorkingHoursConfig;
   debounce_seconds: number;
   auto_pause_on_human_message: boolean;
-  // qualificação
   data_fields: DataField[];
-  // follow-up
   follow_up_config: FollowUpConfig;
-  // agendamento
   post_booking: PostBooking;
-  // conhecimento
   knowledge_base_instructions: string;
   enabled_kbs: string[];
-  // limites & avisos
   max_messages_per_conversation: number;
   daily_proactive_limit: number;
   no_response_threshold: number;
@@ -93,30 +83,17 @@ function makeSeed(c: Record<string, any>): Editable {
     conversation_examples: str(c.conversation_examples),
     confirmation_mode: (["always", "medium_and_high", "high_only"].includes(c.confirmation_mode) ? c.confirmation_mode : "medium_and_high") as ConfMode,
     objective: (["qualification_only", "qualification_and_booking", "booking_only"].includes(c.objective) ? c.objective : "qualification_and_booking") as Objective,
-    working_hours: {
-      enabled: bool(wh.enabled),
-      timezone: str(wh.timezone) || "America/New_York",
-      mode: wh.mode === "only_outside" ? "only_outside" : "only_during",
-      schedule: (wh.schedule as WorkingHoursConfig["schedule"]) || {},
-    },
+    working_hours: { enabled: bool(wh.enabled), timezone: str(wh.timezone) || "America/New_York", mode: wh.mode === "only_outside" ? "only_outside" : "only_during", schedule: (wh.schedule as WorkingHoursConfig["schedule"]) || {} },
     debounce_seconds: num(c.debounce_seconds, 10),
     auto_pause_on_human_message: bool(c.auto_pause_on_human_message, true),
     data_fields: Array.isArray(c.data_fields) ? (c.data_fields as DataField[]) : [],
     follow_up_config: {
-      enabled: bool(fu.enabled),
-      mode: fu.mode === "manual" ? "manual" : "ai_auto",
-      intensity: num(fu.intensity, 5),
-      max_attempts: num(fu.max_attempts, 3),
-      min_delay_minutes: num(fu.min_delay_minutes, 10),
-      max_delay_minutes: num(fu.max_delay_minutes, 10080),
-      custom_prompt: str(fu.custom_prompt),
-      manual_steps: Array.isArray(fu.manual_steps) ? fu.manual_steps : [],
+      enabled: bool(fu.enabled), mode: fu.mode === "manual" ? "manual" : "ai_auto",
+      intensity: num(fu.intensity, 5), max_attempts: num(fu.max_attempts, 3),
+      min_delay_minutes: num(fu.min_delay_minutes, 10), max_delay_minutes: num(fu.max_delay_minutes, 10080),
+      custom_prompt: str(fu.custom_prompt), manual_steps: Array.isArray(fu.manual_steps) ? fu.manual_steps : [],
     },
-    post_booking: {
-      behavior: pb.behavior === "continue_until_appointment" ? "continue_until_appointment" : "stop_and_handoff",
-      handoff_message: str(pb.handoff_message),
-      allow_reschedule: bool(pb.allow_reschedule, true),
-    },
+    post_booking: { behavior: pb.behavior === "continue_until_appointment" ? "continue_until_appointment" : "stop_and_handoff", handoff_message: str(pb.handoff_message), allow_reschedule: bool(pb.allow_reschedule, true) },
     knowledge_base_instructions: str(c.knowledge_base_instructions),
     enabled_kbs: Array.isArray(c.enabled_kbs) ? (c.enabled_kbs as string[]) : [],
     max_messages_per_conversation: num(c.max_messages_per_conversation, 100),
@@ -127,36 +104,41 @@ function makeSeed(c: Record<string, any>): Editable {
     enable_image_analysis: bool(c.enable_image_analysis, true),
     enable_pdf_reading: bool(c.enable_pdf_reading, true),
     enable_summary_notes: bool(c.enable_summary_notes, false),
-    notifications: {
-      on_qualified: bool(nt.on_qualified, true),
-      on_booked: bool(nt.on_booked, true),
-      on_handed_off: bool(nt.on_handed_off, false),
-      on_error: bool(nt.on_error, true),
-      notification_email: str(nt.notification_email),
-    },
+    notifications: { on_qualified: bool(nt.on_qualified, true), on_booked: bool(nt.on_booked, true), on_handed_off: bool(nt.on_handed_off, false), on_error: bool(nt.on_error, true), notification_email: str(nt.notification_email) },
   };
 }
 
+// Categoria → módulo do catálogo (visibilidade + toggle único).
+const CAT_MODULE: Partial<Record<Cat, string>> = {
+  personality: "behavior", channel: "channel", hours: "active_hours",
+  qualification: "qualification", followup: "followup", scheduling: "scheduling",
+  knowledge: "knowledge", limits: "compliance",
+};
+// Categorias com toggle mestre (ligar/desligar a capacidade). As demais são sempre-on.
+const TOGGLE_CATS = new Set<Cat>(["hours", "qualification", "followup", "scheduling", "knowledge"]);
+// Sempre visíveis (independente de módulo).
+const ALWAYS_CATS = new Set<Cat>(["personality", "limits"]);
+
 const CATS: { id: Cat; label: string; icon: LucideIcon; group: "config" | "agent" }[] = [
-  { id: "modules", label: "O que faz", icon: Layers, group: "config" },
   { id: "personality", label: "Personalidade", icon: Sparkles, group: "config" },
-  { id: "attendance", label: "Atendimento", icon: MessageCircle, group: "config" },
+  { id: "channel", label: "Canais", icon: MessageCircle, group: "config" },
+  { id: "hours", label: "Horário", icon: Clock, group: "config" },
   { id: "qualification", label: "Qualificação", icon: Users, group: "config" },
   { id: "followup", label: "Follow-up", icon: Send, group: "config" },
   { id: "scheduling", label: "Agendamento", icon: Calendar, group: "config" },
   { id: "knowledge", label: "Conhecimento", icon: FileText, group: "config" },
   { id: "limits", label: "Limites & Avisos", icon: Shield, group: "config" },
-  { id: "messages", label: "Mensagens", icon: Mail, group: "agent" },
+  { id: "messages", label: "Mensagens", icon: MessageCircle, group: "agent" },
   { id: "docs", label: "Documentos", icon: FileText, group: "agent" },
   { id: "history", label: "Histórico", icon: Clock, group: "agent" },
 ];
 const CAT_META: Record<Cat, { title: string; sub: string }> = {
-  modules: { title: "O que o agente faz", sub: "Ligue ou desligue as capacidades deste agente." },
-  personality: { title: "Personalidade", sub: "Quem é o agente, como fala e o que sabe sobre a agência." },
-  attendance: { title: "Atendimento", sub: "Canais, objetivo e quando o agente responde." },
+  personality: { title: "Personalidade", sub: "Quem é o agente, como fala, objetivo e o que sabe da agência." },
+  channel: { title: "Canais", sub: "Por onde o agente conversa (provisionado pela agência)." },
+  hours: { title: "Horário de atendimento", sub: "Quando o agente pode responder." },
   qualification: { title: "Qualificação de leads", sub: "O que perguntar para identificar um bom lead." },
   followup: { title: "Follow-up", sub: "Retomada automática de quem não respondeu." },
-  scheduling: { title: "Agendamento", sub: "Como o agente marca reuniões e o que faz depois." },
+  scheduling: { title: "Agendamento", sub: "O que o agente faz depois de marcar a reunião." },
   knowledge: { title: "Conhecimento", sub: "Documentos e bases que o agente consulta." },
   limits: { title: "Limites & Avisos", sub: "Volume, silêncio, mídia e notificações." },
   messages: { title: "Mensagens", sub: "Conversas recentes deste agente." },
@@ -170,6 +152,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const c = (detail.config ?? {}) as Record<string, any>;
   const aiModel = str(c.ai_model) || "padrão";
+  const availableMods = new Set(detail.modules.map((m) => m.key));
 
   const [cat, setCat] = useState<Cat>("personality");
   const [status, setStatus] = useState<AgentStatus>(detail.status);
@@ -179,35 +162,30 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
   const [showTest, setShowTest] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [e, setE] = useState<Editable>(() => makeSeed(c));
-  const patch = (p: Partial<Editable>) => {
-    setE((prev) => ({ ...prev, ...p }));
-    setDirty(true);
-  };
+  const patch = (p: Partial<Editable>) => { setE((prev) => ({ ...prev, ...p })); setDirty(true); };
 
   async function toggleModule(key: string, next: boolean) {
-    setEnabled((prev) => {
-      const s = new Set(prev);
-      if (next) s.add(key);
-      else s.delete(key);
-      return s;
-    });
+    setEnabled((prev) => { const s = new Set(prev); if (next) s.add(key); else s.delete(key); return s; });
     try {
       const res = await fetch(`/api/agent-platform/agents/${detail.id}/modules`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ module_key: key, enabled: next }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "falhou");
       toast.success(next ? "Capacidade ligada" : "Capacidade desligada");
     } catch (err) {
-      setEnabled((prev) => {
-        const s = new Set(prev);
-        if (next) s.delete(key);
-        else s.add(key);
-        return s;
-      });
+      setEnabled((prev) => { const s = new Set(prev); if (next) s.delete(key); else s.add(key); return s; });
       toast.error("Não consegui salvar. " + (err instanceof Error ? err.message : ""));
     }
+  }
+
+  // Toggle único por capacidade: liga/desliga o módulo E (quando existe) o flag
+  // de config correspondente, deixando composição + runtime coerentes.
+  function masterToggle(mod: string) {
+    const on = enabled.has(mod);
+    toggleModule(mod, !on);
+    if (mod === "active_hours") patch({ working_hours: { ...e.working_hours, enabled: !on } });
+    else if (mod === "followup") patch({ follow_up_config: { ...e.follow_up_config, enabled: !on } });
   }
 
   async function save() {
@@ -215,41 +193,20 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
     setSaving(true);
     try {
       const res = await fetch(`/api/agents/${detail.id}/config`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          personality: {
-            name: e.identity_name,
-            identity_mode: e.identity_mode,
-            greeting_style: e.pers_greeting,
-            farewell_style: e.pers_farewell,
-            language: e.pers_language || "pt-BR",
-            persona_description: e.persona_description,
-          },
-          tone_creativity: e.tone_creativity,
-          tone_formality: e.tone_formality,
-          tone_naturalness: e.tone_naturalness,
-          tone_aggressiveness: e.tone_aggressiveness,
-          custom_instructions: e.custom_instructions,
-          conversation_examples: e.conversation_examples,
-          confirmation_mode: e.confirmation_mode,
-          objective: e.objective,
-          working_hours: e.working_hours,
-          debounce_seconds: e.debounce_seconds,
-          auto_pause_on_human_message: e.auto_pause_on_human_message,
+          personality: { name: e.identity_name, identity_mode: e.identity_mode, greeting_style: e.pers_greeting, farewell_style: e.pers_farewell, language: e.pers_language || "pt-BR", persona_description: e.persona_description },
+          tone_creativity: e.tone_creativity, tone_formality: e.tone_formality, tone_naturalness: e.tone_naturalness, tone_aggressiveness: e.tone_aggressiveness,
+          custom_instructions: e.custom_instructions, conversation_examples: e.conversation_examples, confirmation_mode: e.confirmation_mode, objective: e.objective,
+          // flags de on/off derivados do estado do módulo (fonte única).
+          working_hours: { ...e.working_hours, enabled: enabled.has("active_hours") },
+          debounce_seconds: e.debounce_seconds, auto_pause_on_human_message: e.auto_pause_on_human_message,
           data_fields: e.data_fields,
-          follow_up_config: e.follow_up_config,
+          follow_up_config: { ...e.follow_up_config, enabled: enabled.has("followup") },
           post_booking: e.post_booking,
-          knowledge_base_instructions: e.knowledge_base_instructions,
-          enabled_kbs: e.enabled_kbs,
-          max_messages_per_conversation: e.max_messages_per_conversation,
-          daily_proactive_limit: e.daily_proactive_limit,
-          no_response_threshold: e.no_response_threshold,
-          quiet_hours: e.quiet_hours,
-          enable_audio_transcription: e.enable_audio_transcription,
-          enable_image_analysis: e.enable_image_analysis,
-          enable_pdf_reading: e.enable_pdf_reading,
-          enable_summary_notes: e.enable_summary_notes,
+          knowledge_base_instructions: e.knowledge_base_instructions, enabled_kbs: e.enabled_kbs,
+          max_messages_per_conversation: e.max_messages_per_conversation, daily_proactive_limit: e.daily_proactive_limit, no_response_threshold: e.no_response_threshold, quiet_hours: e.quiet_hours,
+          enable_audio_transcription: e.enable_audio_transcription, enable_image_analysis: e.enable_image_analysis, enable_pdf_reading: e.enable_pdf_reading, enable_summary_notes: e.enable_summary_notes,
           notifications: e.notifications,
         }),
       });
@@ -258,45 +215,47 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
       toast.success("Configurações salvas");
     } catch (err) {
       toast.error("Não consegui salvar. " + (err instanceof Error ? err.message : ""));
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   }
 
-  function discard() {
-    setE(makeSeed(c));
-    setDirty(false);
-  }
+  function discard() { setE(makeSeed(c)); setDirty(false); }
 
   async function toggleStatus() {
     const next = status === "active" ? "inactive" : "active";
     setTogglingStatus(true);
     try {
-      const res = await fetch(`/api/agents/${detail.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: next }),
-      });
+      const res = await fetch(`/api/agents/${detail.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: next }) });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "falhou");
       setStatus(next === "active" ? "active" : "paused");
       toast.success(next === "active" ? "Agente ativado" : "Agente pausado");
       router.refresh();
     } catch (err) {
       toast.error("Não consegui mudar o status. " + (err instanceof Error ? err.message : ""));
-    } finally {
-      setTogglingStatus(false);
-    }
+    } finally { setTogglingStatus(false); }
   }
 
-  const railItem = (id: Cat, label: string, Icon: LucideIcon, count?: number) => (
-    <button key={id} className="cfg-rail__item" aria-current={cat === id ? "true" : undefined} onClick={() => setCat(id)}>
-      <Icon />
-      <span>{label}</span>
-      {count != null && <span className="count">{count}</span>}
-    </button>
-  );
+  function catVisible(id: Cat, group: "config" | "agent"): boolean {
+    if (group === "agent" || ALWAYS_CATS.has(id)) return true;
+    const mod = CAT_MODULE[id];
+    return mod ? availableMods.has(mod) : true;
+  }
 
   const meta = CAT_META[cat];
+  const catMod = CAT_MODULE[cat];
+  const hasToggle = TOGGLE_CATS.has(cat) && !!catMod;
+  const moduleOn = catMod ? enabled.has(catMod) : true;
+
+  const railItem = (id: Cat, label: string, Icon: LucideIcon) => {
+    const mod = CAT_MODULE[id];
+    const off = TOGGLE_CATS.has(id) && mod ? !enabled.has(mod) : false;
+    return (
+      <button key={id} className="cfg-rail__item" aria-current={cat === id ? "true" : undefined} onClick={() => setCat(id)} style={off ? { opacity: 0.5 } : undefined}>
+        <Icon />
+        <span>{label}</span>
+        {off && <span className="count">off</span>}
+      </button>
+    );
+  };
 
   return (
     <div>
@@ -333,9 +292,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
           {/* Rail */}
           <nav className="cfg-rail">
             <div className="cfg-rail__group">Configurações</div>
-            {CATS.filter((x) => x.group === "config").map((x) =>
-              railItem(x.id, x.label, x.icon, x.id === "modules" ? enabled.size : x.id === "qualification" ? e.data_fields.length : undefined),
-            )}
+            {CATS.filter((x) => x.group === "config" && catVisible(x.id, x.group)).map((x) => railItem(x.id, x.label, x.icon))}
             <div className="cfg-rail__group">Agente</div>
             {CATS.filter((x) => x.group === "agent").map((x) => railItem(x.id, x.label, x.icon))}
           </nav>
@@ -347,19 +304,34 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
                 <div className="cfg-panel__title">{meta.title}</div>
                 <div className="cfg-panel__sub">{meta.sub}</div>
               </div>
+              {hasToggle && (
+                <div className="row" style={{ gap: 8, flexShrink: 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: moduleOn ? "var(--primary)" : "var(--ink-4)" }}>{moduleOn ? "Ligado" : "Desligado"}</span>
+                  <div className="switch" role="switch" aria-checked={moduleOn} onClick={() => masterToggle(catMod!)} />
+                </div>
+              )}
             </div>
 
-            {cat === "modules" && <CatModules detail={detail} enabled={enabled} toggleModule={toggleModule} />}
-            {cat === "personality" && <CatPersonality e={e} patch={patch} aiModel={aiModel} />}
-            {cat === "attendance" && <CatAttendance e={e} patch={patch} detail={detail} />}
-            {cat === "qualification" && <CatQualification e={e} patch={patch} />}
-            {cat === "followup" && <CatFollowup e={e} patch={patch} />}
-            {cat === "scheduling" && <CatScheduling e={e} patch={patch} />}
-            {cat === "knowledge" && <CatKnowledge e={e} patch={patch} />}
-            {cat === "limits" && <CatLimits e={e} patch={patch} />}
-            {cat === "messages" && <div className="empty">As conversas deste agente aparecerão aqui.</div>}
-            {cat === "docs" && <div className="empty">Os documentos de apoio aparecerão aqui.</div>}
-            {cat === "history" && <div className="empty">O histórico de alterações aparecerá aqui.</div>}
+            {hasToggle && !moduleOn ? (
+              <div className="empty">
+                <p style={{ marginBottom: 12 }}>Esta capacidade está desligada.</p>
+                <button className="btn btn--primary btn--sm" onClick={() => masterToggle(catMod!)}>Ligar</button>
+              </div>
+            ) : (
+              <>
+                {cat === "personality" && <CatPersonality e={e} patch={patch} aiModel={aiModel} />}
+                {cat === "channel" && <CatChannel detail={detail} />}
+                {cat === "hours" && <CatHours e={e} patch={patch} />}
+                {cat === "qualification" && <CatQualification e={e} patch={patch} />}
+                {cat === "followup" && <CatFollowup e={e} patch={patch} />}
+                {cat === "scheduling" && <CatScheduling e={e} patch={patch} />}
+                {cat === "knowledge" && <CatKnowledge e={e} patch={patch} />}
+                {cat === "limits" && <CatLimits e={e} patch={patch} />}
+                {cat === "messages" && <div className="empty">As conversas deste agente aparecerão aqui.</div>}
+                {cat === "docs" && <div className="empty">Os documentos de apoio aparecerão aqui.</div>}
+                {cat === "history" && <div className="empty">O histórico de alterações aparecerá aqui.</div>}
+              </>
+            )}
           </div>
         </div>
 
@@ -392,122 +364,73 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 function Sld({ label, left, right, value, onChange }: { label: string; left: string; right: string; value: number; onChange: (v: number) => void }) {
   return (
     <div style={{ marginBottom: 14 }}>
-      <div className="row between" style={{ marginBottom: 5 }}>
-        <span style={{ fontSize: 13, fontWeight: 500 }}>{label}</span>
-        <span className="tnum" style={{ fontSize: 12, color: "var(--primary)", fontWeight: 600 }}>{value}</span>
-      </div>
+      <div className="row between" style={{ marginBottom: 5 }}><span style={{ fontSize: 13, fontWeight: 500 }}>{label}</span><span className="tnum" style={{ fontSize: 12, color: "var(--primary)", fontWeight: 600 }}>{value}</span></div>
       <input className="slider" type="range" min={0} max={100} value={value} onChange={(ev) => onChange(Number(ev.target.value))} />
       <div className="row between" style={{ marginTop: 4, fontSize: 11, color: "var(--ink-4)" }}><span>{left}</span><span>{right}</span></div>
     </div>
   );
 }
 function Seg<T extends string>({ value, options, onChange }: { value: T; options: { v: T; l: string }[]; onChange: (v: T) => void }) {
-  return (
-    <div className="seg">
-      {options.map((o) => <button key={o.v} aria-pressed={value === o.v} onClick={() => onChange(o.v)}>{o.l}</button>)}
-    </div>
-  );
+  return <div className="seg">{options.map((o) => <button key={o.v} aria-pressed={value === o.v} onClick={() => onChange(o.v)}>{o.l}</button>)}</div>;
 }
 function Toggle({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: () => void }) {
   return (
     <div className="row between" style={{ padding: "11px 0", borderBottom: "1px solid var(--line-faint)" }}>
-      <div>
-        <div style={{ fontSize: 13.5, fontWeight: 500 }}>{label}</div>
-        {hint && <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>{hint}</div>}
-      </div>
+      <div><div style={{ fontSize: 13.5, fontWeight: 500 }}>{label}</div>{hint && <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>{hint}</div>}</div>
       <div className="switch" role="switch" aria-checked={checked} onClick={onChange} />
     </div>
   );
 }
 
 /* ─── Categorias ────────────────────────────────────────────────── */
-function CatModules({ detail, enabled, toggleModule }: { detail: HubAgentDetail; enabled: Set<string>; toggleModule: (k: string, n: boolean) => void }) {
-  const MODL: Record<string, string> = {
-    behavior: "Como o agente fala", active_hours: "Horário de atendimento", followup: "Follow-up automático",
-    qualification: "Qualificação de leads", scheduling: "Agendamento", compliance: "Limites e LGPD",
-    channel: "Canais", crm_ops: "Ações no CRM", knowledge: "Conhecimento", bulk: "Disparo em massa",
-  };
-  return (
-    <div className="col" style={{ gap: 8 }}>
-      {detail.modules.map((m) => {
-        const on = enabled.has(m.key);
-        return (
-          <div key={m.key} className="row between" style={{ padding: "12px 14px", border: "1px solid var(--line)", borderRadius: "var(--r-md)", background: on ? "var(--surface)" : "var(--surface-2)" }}>
-            <span style={{ fontSize: 13.5, fontWeight: 500 }}>{MODL[m.key] || m.name}</span>
-            <div className="switch" role="switch" aria-checked={on} onClick={() => toggleModule(m.key, !on)} />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function CatPersonality({ e, patch, aiModel }: { e: Editable; patch: (p: Partial<Editable>) => void; aiModel: string }) {
   return (
     <>
       <div className="fgrid">
-        <Field label="Nome do agente" hint="Como ele se apresenta ao lead.">
-          <input className="input" value={e.identity_name} onChange={(ev) => patch({ identity_name: ev.target.value })} placeholder="Ex: Bia" />
-        </Field>
-        <Field label="Se apresenta como">
-          <Seg value={e.identity_mode} options={[{ v: "assistant", l: "Assistente virtual" }, { v: "human", l: "Pessoa" }]} onChange={(v) => patch({ identity_mode: v })} />
-        </Field>
+        <Field label="Nome do agente" hint="Como ele se apresenta ao lead."><input className="input" value={e.identity_name} onChange={(ev) => patch({ identity_name: ev.target.value })} placeholder="Ex: Bia" /></Field>
+        <Field label="Se apresenta como"><Seg value={e.identity_mode} options={[{ v: "assistant", l: "Assistente virtual" }, { v: "human", l: "Pessoa" }]} onChange={(v) => patch({ identity_mode: v })} /></Field>
       </div>
+      <Field label="Objetivo do agente" hint="O que ele tenta fazer na conversa."><Seg value={e.objective} options={[{ v: "qualification_only", l: "Só qualificar" }, { v: "qualification_and_booking", l: "Qualificar + agendar" }, { v: "booking_only", l: "Só agendar" }]} onChange={(v) => patch({ objective: v })} /></Field>
       <Field label="Personalidade" hint="O jeito do agente conversar.">
         <Sld label="Criatividade" left="Conservador" right="Criativo" value={e.tone_creativity} onChange={(v) => patch({ tone_creativity: v })} />
         <Sld label="Formalidade" left="Casual" right="Formal" value={e.tone_formality} onChange={(v) => patch({ tone_formality: v })} />
         <Sld label="Naturalidade" left="Robótico" right="Humano" value={e.tone_naturalness} onChange={(v) => patch({ tone_naturalness: v })} />
         <Sld label="Assertividade" left="Tímido" right="Direto" value={e.tone_aggressiveness} onChange={(v) => patch({ tone_aggressiveness: v })} />
       </Field>
-      <Field label="Instruções customizadas" hint="O que ele precisa saber sobre a agência e como agir.">
-        <textarea className="textarea" rows={5} maxLength={10000} value={e.custom_instructions} onChange={(ev) => patch({ custom_instructions: ev.target.value })} placeholder="Ex: Você é a assistente da Pereira Seguros, foco em planos de saúde para famílias na Flórida." />
-      </Field>
-      <Field label="Exemplos de conversa" hint="Trechos do jeito ideal de responder (opcional).">
-        <textarea className="textarea" rows={4} maxLength={20000} value={e.conversation_examples} onChange={(ev) => patch({ conversation_examples: ev.target.value })} placeholder="Ex: quando perguntam preço, responda que depende do perfil e ofereça uma ligação rápida de 2 minutos." />
-      </Field>
+      <Field label="Instruções customizadas" hint="O que ele precisa saber sobre a agência e como agir."><textarea className="textarea" rows={5} maxLength={10000} value={e.custom_instructions} onChange={(ev) => patch({ custom_instructions: ev.target.value })} placeholder="Ex: Você é a assistente da Pereira Seguros, foco em planos de saúde para famílias na Flórida." /></Field>
+      <Field label="Exemplos de conversa" hint="Como responder em situações comuns (opcional)."><textarea className="textarea" rows={4} maxLength={20000} value={e.conversation_examples} onChange={(ev) => patch({ conversation_examples: ev.target.value })} placeholder="Ex: quando perguntam preço, responda que depende do perfil e ofereça uma ligação rápida." /></Field>
       <Field label="Quando pedir confirmação" hint="Antes de agir no Spark Leads.">
         <div className="col" style={{ gap: 8 }}>
           {([["always", "Sempre — antes de qualquer ação"], ["medium_and_high", "Em ações importantes (recomendado)"], ["high_only", "Só nas mais sensíveis"]] as [ConfMode, string][]).map(([v, l]) => (
-            <label key={v} className="row" style={{ gap: 10, fontSize: 13.5, cursor: "pointer" }}>
-              <input type="radio" name="conf" checked={e.confirmation_mode === v} onChange={() => patch({ confirmation_mode: v })} /> <span>{l}</span>
-            </label>
+            <label key={v} className="row" style={{ gap: 10, fontSize: 13.5, cursor: "pointer" }}><input type="radio" name="conf" checked={e.confirmation_mode === v} onChange={() => patch({ confirmation_mode: v })} /> <span>{l}</span></label>
           ))}
         </div>
       </Field>
+      <Field label="Espera antes de responder" hint="Segundos — agrupa mensagens enviadas em sequência."><input className="input" type="number" min={5} max={60} value={e.debounce_seconds} onChange={(ev) => patch({ debounce_seconds: Number(ev.target.value) })} style={{ width: 110 }} /></Field>
+      <Toggle label="Pausar quando um humano responder" hint="Se você entrar na conversa, o agente para." checked={e.auto_pause_on_human_message} onChange={() => patch({ auto_pause_on_human_message: !e.auto_pause_on_human_message })} />
       <Field label="Modelo de IA"><span className="pill pill--muted">{aiModel}</span><span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>gerenciado pelo Spark</span></Field>
     </>
   );
 }
 
-function CatAttendance({ e, patch, detail }: { e: Editable; patch: (p: Partial<Editable>) => void; detail: HubAgentDetail }) {
+function CatChannel({ detail }: { detail: HubAgentDetail }) {
+  return (
+    <Field label="Canais ativos" hint="Conectados e provisionados pela agência.">
+      <div className="row wrap" style={{ gap: 10 }}>
+        {detail.channels.length ? detail.channels.map((ch) => <ChannelChip key={ch} name={ch} />) : <span className="muted" style={{ fontSize: 13 }}>Nenhum canal conectado.</span>}
+      </div>
+    </Field>
+  );
+}
+
+function CatHours({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
   const w = e.working_hours;
   const setW = (p: Partial<WorkingHoursConfig>) => patch({ working_hours: { ...w, ...p } });
   return (
-    <>
-      <Field label="Canais ativos" hint="Conectados e provisionados pela agência.">
-        <div className="row wrap" style={{ gap: 10 }}>
-          {detail.channels.length ? detail.channels.map((ch) => <ChannelChip key={ch} name={ch} />) : <span className="muted" style={{ fontSize: 13 }}>Nenhum canal conectado.</span>}
-        </div>
-      </Field>
-      <Field label="Objetivo do agente" hint="O que ele tenta fazer na conversa.">
-        <Seg value={e.objective} options={[{ v: "qualification_only", l: "Só qualificar" }, { v: "qualification_and_booking", l: "Qualificar + agendar" }, { v: "booking_only", l: "Só agendar" }]} onChange={(v) => patch({ objective: v })} />
-      </Field>
-      <Field label="Limitar horário de atendimento">
-        <div className="switch" role="switch" aria-checked={w.enabled} onClick={() => setW({ enabled: !w.enabled })} />
-      </Field>
-      {w.enabled && (
-        <div className="fgrid">
-          <Field label="Fuso horário"><input className="input" value={w.timezone} onChange={(ev) => setW({ timezone: ev.target.value })} /></Field>
-          <Field label="Aplicar como"><Seg value={w.mode} options={[{ v: "only_during", l: "No horário" }, { v: "only_outside", l: "Fora dele" }]} onChange={(v) => setW({ mode: v })} /></Field>
-        </div>
-      )}
-      <div className="fgrid">
-        <Field label="Espera antes de responder" hint="Segundos (agrupa mensagens seguidas).">
-          <input className="input" type="number" min={5} max={60} value={e.debounce_seconds} onChange={(ev) => patch({ debounce_seconds: Number(ev.target.value) })} style={{ width: 110 }} />
-        </Field>
-      </div>
-      <Toggle label="Pausar quando um humano responder" hint="Se você entrar na conversa, o agente para." checked={e.auto_pause_on_human_message} onChange={() => patch({ auto_pause_on_human_message: !e.auto_pause_on_human_message })} />
-    </>
+    <div className="fgrid">
+      <Field label="Fuso horário"><input className="input" value={w.timezone} onChange={(ev) => setW({ timezone: ev.target.value })} placeholder="America/New_York" /></Field>
+      <Field label="Aplicar como"><Seg value={w.mode} options={[{ v: "only_during", l: "No horário" }, { v: "only_outside", l: "Fora dele" }]} onChange={(v) => setW({ mode: v })} /></Field>
+    </div>
   );
 }
 
@@ -522,9 +445,7 @@ function CatQualification({ e, patch }: { e: Editable; patch: (p: Partial<Editab
       {fields.map((f, i) => (
         <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 130px auto auto", gap: 10, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8 }}>
           <input className="input" value={f.label} onChange={(ev) => update(i, { label: ev.target.value })} />
-          <select className="select" value={f.type} onChange={(ev) => update(i, { type: ev.target.value as DataField["type"] })}>
-            <option value="text">Texto</option><option value="date">Data</option><option value="boolean">Sim/Não</option><option value="select">Opções</option>
-          </select>
+          <select className="select" value={f.type} onChange={(ev) => update(i, { type: ev.target.value as DataField["type"] })}><option value="text">Texto</option><option value="date">Data</option><option value="boolean">Sim/Não</option><option value="select">Opções</option></select>
           <label className="row" style={{ gap: 6, fontSize: 12, color: "var(--ink-3)" }}><div className="switch" role="switch" aria-checked={f.required} onClick={() => update(i, { required: !f.required })} /> obrig.</label>
           <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remove(i)} aria-label="Remover"><Trash2 size={13} /></button>
         </div>
@@ -539,16 +460,11 @@ function CatFollowup({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) 
   const set = (p: Partial<FollowUpConfig>) => patch({ follow_up_config: { ...f, ...p } });
   return (
     <>
-      <Toggle label="Ativar follow-up" hint="Retomar automaticamente quem não respondeu." checked={f.enabled} onChange={() => set({ enabled: !f.enabled })} />
-      {f.enabled && (
-        <>
-          <Field label="Como decidir as mensagens"><Seg value={f.mode} options={[{ v: "ai_auto", l: "IA decide" }, { v: "manual", l: "Passos fixos" }]} onChange={(v) => set({ mode: v })} /></Field>
-          <div className="fgrid">
-            {f.mode === "ai_auto" && <Field label="Intensidade" hint="1 leve · 10 insistente."><input className="input" type="number" min={1} max={10} value={f.intensity} onChange={(ev) => set({ intensity: Number(ev.target.value) })} style={{ width: 100 }} /></Field>}
-            <Field label="Máximo de tentativas"><input className="input" type="number" min={1} max={20} value={f.max_attempts} onChange={(ev) => set({ max_attempts: Number(ev.target.value) })} style={{ width: 100 }} /></Field>
-          </div>
-        </>
-      )}
+      <Field label="Como decidir as mensagens"><Seg value={f.mode} options={[{ v: "ai_auto", l: "IA decide" }, { v: "manual", l: "Passos fixos" }]} onChange={(v) => set({ mode: v })} /></Field>
+      <div className="fgrid">
+        {f.mode === "ai_auto" && <Field label="Intensidade" hint="1 leve · 10 insistente."><input className="input" type="number" min={1} max={10} value={f.intensity} onChange={(ev) => set({ intensity: Number(ev.target.value) })} style={{ width: 100 }} /></Field>}
+        <Field label="Máximo de tentativas"><input className="input" type="number" min={1} max={20} value={f.max_attempts} onChange={(ev) => set({ max_attempts: Number(ev.target.value) })} style={{ width: 100 }} /></Field>
+      </div>
     </>
   );
 }
@@ -572,9 +488,7 @@ function CatKnowledge({ e, patch }: { e: Editable; patch: (p: Partial<Editable>)
   return (
     <>
       <Field label="Bases de conhecimento" hint="O agente consulta antes de responder.">
-        <div className="col" style={{ gap: 10 }}>
-          {KBS.map((kb) => <label key={kb.v} className="row" style={{ gap: 10, fontSize: 13.5, cursor: "pointer" }}><div className="switch" role="switch" aria-checked={e.enabled_kbs.includes(kb.v)} onClick={() => toggleKb(kb.v)} /> {kb.l}</label>)}
-        </div>
+        <div className="col" style={{ gap: 10 }}>{KBS.map((kb) => <label key={kb.v} className="row" style={{ gap: 10, fontSize: 13.5, cursor: "pointer" }}><div className="switch" role="switch" aria-checked={e.enabled_kbs.includes(kb.v)} onClick={() => toggleKb(kb.v)} /> {kb.l}</label>)}</div>
       </Field>
       <Field label="Instruções de uso" hint="Como usar os documentos."><textarea className="textarea" rows={3} maxLength={10000} value={e.knowledge_base_instructions} onChange={(ev) => patch({ knowledge_base_instructions: ev.target.value })} placeholder="Ex: Use a tabela de preços só para planos família. Não cite valores sem confirmar o estado." /></Field>
     </>
