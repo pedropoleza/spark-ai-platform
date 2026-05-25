@@ -7,7 +7,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listEntitlements, getAgentModuleInstances, listModules } from "@/lib/repositories/agent-platform.repo";
-import type { AgentCapability } from "@/types/agent-platform";
+import { DEFAULT_AGENT_MODULE_PRICE_USD, type AgentCapability } from "@/types/agent-platform";
 import type { AgentConfig, CommunicationChannel } from "@/types/agent";
 import type { AgentStatus, ChannelKey, HubAgentView, HubActivityItem } from "@/components/hub/types";
 
@@ -326,5 +326,72 @@ export async function loadEntitlementsGrid(companyId: string): Promise<Entitleme
     }
   }
   return Array.from(rows.values());
+}
+
+/* ─── Faturamento (per-location) ─────────────────────────────────── */
+export interface HubBilling {
+  paidAgents: { id: string; name: string; template_key: string; price: number }[];
+  subscriptionTotal: number;
+  monthCharged: number;
+  monthTokens: number;
+  monthAudioSec: number;
+  monthImages: number;
+  monthInteractions: number;
+  recent: { date: string; action: string; model: string; tokens: number; charge: number }[];
+}
+
+export async function loadBilling(locationId: string): Promise<HubBilling> {
+  const supabase = createAdminClient();
+  const LEAD = new Set(["sales_agent", "recruitment_agent", "custom_agent"]);
+
+  const { data: agents } = await supabase
+    .from("agents")
+    .select("id, name, type, template_key, status")
+    .eq("location_id", locationId);
+
+  const paidAgents = (agents || [])
+    .filter((a) => LEAD.has(a.type) && a.status === "active")
+    .map((a) => ({
+      id: a.id,
+      name: a.name,
+      template_key: typeToTemplateKey(a.type, a.template_key),
+      price: DEFAULT_AGENT_MODULE_PRICE_USD,
+    }));
+  const subscriptionTotal = paidAgents.length * DEFAULT_AGENT_MODULE_PRICE_USD;
+
+  const since = new Date();
+  since.setDate(1);
+  since.setHours(0, 0, 0, 0);
+
+  const { data: usage } = await supabase
+    .from("usage_records")
+    .select("total_tokens, total_charge_usd, audio_seconds, image_count, action_type, ai_model, created_at")
+    .eq("location_id", locationId)
+    .gte("created_at", since.toISOString())
+    .order("created_at", { ascending: false })
+    .limit(2000);
+
+  const u = usage || [];
+  const fmtT = (iso: string) => {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? "" : new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(d);
+  };
+
+  return {
+    paidAgents,
+    subscriptionTotal,
+    monthCharged: Math.round(u.reduce((s, r) => s + Number(r.total_charge_usd || 0), 0) * 100) / 100,
+    monthTokens: u.reduce((s, r) => s + (r.total_tokens || 0), 0),
+    monthAudioSec: u.reduce((s, r) => s + (Number(r.audio_seconds) || 0), 0),
+    monthImages: u.reduce((s, r) => s + (Number(r.image_count) || 0), 0),
+    monthInteractions: u.length,
+    recent: u.slice(0, 15).map((r) => ({
+      date: fmtT(r.created_at as string),
+      action: String(r.action_type || "—"),
+      model: String(r.ai_model || "—"),
+      tokens: r.total_tokens || 0,
+      charge: Number(r.total_charge_usd || 0),
+    })),
+  };
 }
 
