@@ -1,4 +1,5 @@
 import { GHLClient } from "@/lib/ghl/client";
+import { channelToMessageType } from "@/lib/ghl/channel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   addTagsToContact,
@@ -36,15 +37,6 @@ interface ExecutionContext {
 }
 
 // Mapeia canal para o "type" da API de mensagens do GHL
-function channelToMessageType(channel?: string): string {
-  switch (channel) {
-    case "WhatsApp": return "WhatsApp";
-    case "Instagram": return "IG";
-    case "Email": return "Email";
-    default: return "SMS";
-  }
-}
-
 export async function executeActions(
   response: AIResponse,
   ctx: ExecutionContext

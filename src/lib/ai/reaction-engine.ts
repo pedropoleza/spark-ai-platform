@@ -14,6 +14,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
+import { channelToMessageType } from "@/lib/ghl/channel";
 import type { AutomationRule, AutomationAction } from "@/types/agent";
 
 const BUCKET = "agent-media";
@@ -25,15 +26,6 @@ interface ReactionContext {
   contactId: string;
   conversationId: string;
   channel?: string;
-}
-
-function channelToMessageType(channel?: string): string {
-  switch (channel) {
-    case "WhatsApp": return "WhatsApp";
-    case "Instagram": return "IG";
-    case "Email": return "Email";
-    default: return "SMS";
-  }
 }
 
 function fieldChanged(

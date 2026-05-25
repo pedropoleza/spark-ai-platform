@@ -4,6 +4,7 @@ import { waitUntil } from "@vercel/functions";
 export const maxDuration = 60;
 import { createAdminClient } from "@/lib/supabase/admin";
 import { captureInboundWebhookSample } from "@/lib/account-assistant/inbound-webhook-capture";
+import { detectChannel } from "@/lib/ghl/channel";
 import {
   isProactiveEventsEnabled,
   isProactiveEventType,
@@ -793,22 +794,6 @@ function isRealMessage(messageType: string, direction: string): boolean {
 
   console.log(`[Webhook] Rejecting unknown type: "${messageType}"`);
   return false;
-}
-
-function detectChannel(messageType: string, customChannel?: string): string {
-  if (customChannel) {
-    const ch = customChannel.toLowerCase();
-    if (ch.includes("whatsapp") || ch.includes("wa")) return "WhatsApp";
-    if (ch.includes("instagram") || ch.includes("ig")) return "Instagram";
-    if (ch.includes("email")) return "Email";
-    if (ch.includes("sms")) return "SMS";
-  }
-  const mt = messageType?.toUpperCase() || "";
-  if (mt.includes("WHATSAPP")) return "WhatsApp";
-  if (mt.includes("INSTAGRAM") || mt === "TYPE_IG" || mt === "IG") return "Instagram";
-  if (mt.includes("EMAIL")) return "Email";
-  if (mt.includes("FB") || mt.includes("FACEBOOK")) return "Instagram";
-  return "SMS";
 }
 
 interface WorkingHoursDay { enabled: boolean; start: string; end: string; }
