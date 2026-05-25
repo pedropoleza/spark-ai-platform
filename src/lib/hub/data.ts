@@ -268,3 +268,63 @@ export async function loadHubAgentDetail(agentId: string, locationId: string): P
     modules,
   };
 }
+
+/* ─── Grade de Acessos (admin) — escritórios × capacidade ───────── */
+export type EntStatus = "active" | "revoked" | null;
+export interface EntitlementGridRow {
+  location_id: string;
+  location_name: string;
+  sales: EntStatus;
+  recruitment: EntStatus;
+  custom: EntStatus;
+  price: number;
+  since: string | null;
+}
+
+export async function loadEntitlementsGrid(companyId: string): Promise<EntitlementGridRow[]> {
+  const supabase = createAdminClient();
+  const { data: locations } = await supabase
+    .from("locations")
+    .select("location_id, location_name")
+    .eq("company_id", companyId)
+    .not("location_name", "is", null)
+    .order("location_name");
+  const locs = locations || [];
+  const ids = locs.map((l) => l.location_id);
+
+  let ents: { location_id: string; capability: string; status: string; monthly_price_usd: number; granted_at: string }[] = [];
+  if (ids.length) {
+    const { data } = await supabase
+      .from("agent_entitlements")
+      .select("location_id, capability, status, monthly_price_usd, granted_at")
+      .in("location_id", ids);
+    ents = (data as typeof ents | null) || [];
+  }
+
+  const rows = new Map<string, EntitlementGridRow>();
+  for (const l of locs) {
+    rows.set(l.location_id, {
+      location_id: l.location_id,
+      location_name: (l.location_name as string) || l.location_id,
+      sales: null,
+      recruitment: null,
+      custom: null,
+      price: 50,
+      since: null,
+    });
+  }
+  for (const e of ents) {
+    const r = rows.get(e.location_id);
+    if (!r) continue;
+    const status = (e.status === "active" ? "active" : "revoked") as EntStatus;
+    if (e.capability === "sales_agent") r.sales = status;
+    else if (e.capability === "recruitment_agent") r.recruitment = status;
+    else if (e.capability === "custom_agent") r.custom = status;
+    if (e.status === "active") {
+      r.price = Number(e.monthly_price_usd) || 50;
+      r.since = e.granted_at;
+    }
+  }
+  return Array.from(rows.values());
+}
+
