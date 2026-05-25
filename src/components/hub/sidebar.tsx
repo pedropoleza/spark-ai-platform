@@ -25,8 +25,6 @@ function isActive(pathname: string, href: string): boolean {
 export function Sidebar() {
   const pathname = usePathname();
   const session = useHubSession();
-  const workspace = session.locationName || "Minha conta";
-  const initial = (workspace.trim()[0] || "S").toUpperCase();
 
   const renderLink = (it: NavItem) => {
     const Icon = it.icon;
@@ -49,15 +47,8 @@ export function Sidebar() {
         </div>
       </div>
 
-      <div className="sb__loc">
-        <div>
-          <div className="sb__loc-name" title={workspace}>
-            {workspace}
-          </div>
-          <div className="sb__loc-meta">Conta ativa</div>
-        </div>
-      </div>
-
+      {/* Sem switcher de conta / rodapé de usuário: a sidebar do GHL (à esquerda)
+          já mostra conta + usuário — repetir aqui duplicaria (Pedro 2026-05-25). */}
       <nav>{PRIMARY.map(renderLink)}</nav>
 
       {session.isAdmin && (
@@ -66,29 +57,6 @@ export function Sidebar() {
           <nav>{ADMIN.map(renderLink)}</nav>
         </>
       )}
-
-      <div className="sb__foot">
-        <div
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 999,
-            background: "var(--primary)",
-            color: "#fff",
-            display: "grid",
-            placeItems: "center",
-            fontSize: 13,
-            fontWeight: 600,
-            flex: "0 0 32px",
-          }}
-        >
-          {initial}
-        </div>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div className="sb__foot-name">Minha conta</div>
-          <div className="sb__foot-role">{session.isAdmin ? "Administrador" : "Operador"}</div>
-        </div>
-      </div>
     </aside>
   );
 }

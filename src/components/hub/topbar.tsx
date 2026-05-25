@@ -4,8 +4,6 @@ import Link from "next/link";
 import { Fragment } from "react";
 import { usePathname } from "next/navigation";
 import { Search, Bell, Plus } from "lucide-react";
-import { useHubSession } from "./hub-session";
-
 const SECTION_LABEL: Record<string, string> = {
   agents: "Agentes",
   messages: "Mensagens",
@@ -14,9 +12,10 @@ const SECTION_LABEL: Record<string, string> = {
   access: "Acessos",
 };
 
-function buildCrumbs(pathname: string, workspace: string): string[] {
+// Breadcrumb sem nome da conta — a sidebar do GHL já mostra (Pedro 2026-05-25).
+function buildCrumbs(pathname: string): string[] {
   const segs = pathname.split("/").filter(Boolean); // ["hub", "agents", ...]
-  const crumbs = ["Spark Hub", workspace];
+  const crumbs = ["Spark Hub"];
   if (segs.length <= 1) {
     crumbs.push("Início");
     return crumbs;
@@ -28,8 +27,7 @@ function buildCrumbs(pathname: string, workspace: string): string[] {
 
 export function TopBar() {
   const pathname = usePathname();
-  const session = useHubSession();
-  const crumbs = buildCrumbs(pathname, session.locationName || "Minha conta");
+  const crumbs = buildCrumbs(pathname);
 
   return (
     <header className="topbar">
