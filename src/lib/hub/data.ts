@@ -191,6 +191,7 @@ export interface HubAgentModuleRow {
   key: string;
   category: string;
   name: string;
+  enabled: boolean;
 }
 
 export interface HubAgentDetail extends HubAgentView {
@@ -238,15 +239,19 @@ export async function loadHubAgentDetail(agentId: string, locationId: string): P
     ? (["whatsapp"] as ChannelKey[])
     : mapChannels(cfg?.enabled_channels) || ["whatsapp"];
 
-  const catalogByKey = new Map(catalog.map((m) => [m.key, m]));
-  const modules: HubAgentModuleRow[] = instances.map((inst) => {
-    const cat = catalogByKey.get(inst.module_key);
-    return {
-      key: inst.module_key,
-      category: (cat?.category as string) || inst.module_key,
-      name: cat?.name || inst.module_key,
-    };
-  });
+  // instances vêm enabled=true (getAgentModuleInstances filtra). Montamos a
+  // lista a partir do CATÁLOGO filtrado por audiência, marcando o que está ligado
+  // — assim a config mostra todos os módulos possíveis com seus toggles (igual v3).
+  const enabledKeys = new Set(instances.map((i) => i.module_key));
+  const audienceCatalog = catalog.filter(
+    (m) => m.audience_scope === "both" || m.audience_scope === audience,
+  );
+  const modules: HubAgentModuleRow[] = audienceCatalog.map((m) => ({
+    key: m.key,
+    category: m.category as string,
+    name: m.name,
+    enabled: enabledKeys.has(m.key),
+  }));
 
   return {
     id: agent.id,
