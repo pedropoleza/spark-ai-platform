@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { getSession } from "@/lib/auth/sso";
 import { HubShell } from "./hub-shell";
 import "./hub.css";
@@ -25,7 +26,12 @@ function hubPreviewAllowed(locationId: string): boolean {
 export default async function HubLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession();
   if (!session) redirect("/");
-  if (!hubPreviewAllowed(session.locationId)) redirect("/dashboard");
+
+  // Cookie soft-gate: entrar pelo link de preview (/?...&next=/hub&preview=1)
+  // seta hub_preview=1 — assim você prevê sem mexer em env. Clientes usam o link
+  // normal (sem preview), nunca recebem o cookie e seguem no /dashboard.
+  const previewCookie = (await cookies()).get("hub_preview")?.value === "1";
+  if (!hubPreviewAllowed(session.locationId) && !previewCookie) redirect("/dashboard");
 
   return <HubShell session={session}>{children}</HubShell>;
 }

@@ -14,6 +14,18 @@ function SSOHandler() {
   const [devLoading, setDevLoading] = useState(false);
   const authenticatedRef = useRef(false);
 
+  // Preview do /hub (Pedro 2026-05-25): ?next=/hub redireciona pra lá após o SSO;
+  // ?preview=1 seta um cookie soft-gate lido pelo layout do /hub (preview sem
+  // mexer em env). Sem esses params, comportamento idêntico (cai no /dashboard).
+  const computeTarget = useCallback(() => {
+    const next = searchParams.get("next") || "/dashboard";
+    const safe = next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+    if (searchParams.get("preview") === "1") {
+      document.cookie = "hub_preview=1; path=/; max-age=86400; SameSite=None; Secure";
+    }
+    return safe;
+  }, [searchParams]);
+
   const devLogin = useCallback(async () => {
     if (authenticatedRef.current) return;
     setDevLoading(true);
@@ -26,12 +38,12 @@ function SSOHandler() {
         return;
       }
       authenticatedRef.current = true;
-      router.replace("/dashboard");
+      router.replace(computeTarget());
     } catch {
       setError("Erro de conexão no dev-login.");
       setDevLoading(false);
     }
-  }, [router]);
+  }, [router, computeTarget]);
 
   const authenticate = useCallback(
     async (userId: string, companyId: string, locationId: string) => {
@@ -60,13 +72,13 @@ function SSOHandler() {
         }
 
         setStatus("Redirecionando...");
-        router.replace("/dashboard");
+        router.replace(computeTarget());
       } catch {
         setError("Erro de conexão. Tente novamente.");
         authenticatedRef.current = false;
       }
     },
-    [router]
+    [router, computeTarget]
   );
 
   useEffect(() => {
