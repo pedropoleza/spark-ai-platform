@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Bricolage_Grotesque } from "next/font/google";
 import { Toaster } from "sonner";
 import "./globals.css";
 
@@ -7,6 +7,16 @@ const inter = Inter({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
   variable: "--font-sans",
+  display: "swap",
+});
+
+// Plataforma Modular (Pedro 2026-05-25): fonte de DISPLAY distinta pra a nova UI
+// "Composable/Blueprint". Bricolage Grotesque tem caráter "construído" que casa
+// com o conceito de montar agente de módulos. Corpo segue --font-sans.
+const bricolage = Bricolage_Grotesque({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-display",
   display: "swap",
 });
 
@@ -22,7 +32,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR">
-      <body className={`${inter.variable} font-sans antialiased bg-gray-50 text-gray-900`}>
+      <body className={`${inter.variable} ${bricolage.variable} font-sans antialiased bg-gray-50 text-gray-900`}>
         {children}
         <Toaster richColors position="top-center" />
       </body>
