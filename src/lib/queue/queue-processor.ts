@@ -558,6 +558,28 @@ async function processGroup(
 
   const knowledgeBase = (kbData || []) as import("@/lib/ai/sales-prompt-builder").KnowledgeBaseItem[];
 
+  // KB parte B: templates via carrier RAG. Se o agente tem enabled_kbs (NLG/
+  // Brazillionaires), recupera chunks relevantes da carrier_knowledge pela
+  // mensagem do lead e injeta como conhecimento. Gated + fail-safe (erro =
+  // segue sem). Mesma infra do SparkBot (search_carrier_knowledge).
+  const enabledKbs = Array.isArray((config as { enabled_kbs?: unknown }).enabled_kbs)
+    ? ((config as { enabled_kbs?: string[] }).enabled_kbs as string[])
+    : [];
+  if (enabledKbs.length > 0 && group.aggregatedBody && group.aggregatedBody.trim().length >= 3) {
+    try {
+      const { retrieveCarrierKnowledge, carrierLabel } = await import("@/lib/knowledge/carrier-retrieval");
+      const chunks = await retrieveCarrierKnowledge(enabledKbs, group.aggregatedBody, 3);
+      for (const c of chunks) {
+        knowledgeBase.push({ title: `[${carrierLabel(c.carrier)}] ${c.title}`, type: "text", content: c.content });
+      }
+      if (chunks.length > 0) {
+        console.log(`[Queue] carrier RAG: +${chunks.length} chunks (${enabledKbs.join(",")}) agent=${agent.id}`);
+      }
+    } catch (err) {
+      console.warn("[Queue] carrier RAG falhou (segue sem):", err instanceof Error ? err.message : err);
+    }
+  }
+
   const promptCtx = {
     config,
     // custom_agent (Plataforma Modular) roda no runtime de lead provado (caminho
