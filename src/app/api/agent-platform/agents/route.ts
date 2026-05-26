@@ -90,12 +90,18 @@ export async function POST(request: NextRequest) {
     return errorResponse(agentErr.message, 500, "db_error");
   }
 
-  // Config default (data_fields conforme o tipo lead).
+  // Config default. Pra agentes de lead, nasce JÁ funcional: canal live
+  // (SMS = WhatsApp Web via Stevo), objetivo sensato e os data_fields do tipo.
+  // Sem o canal, o agente nascia sem por onde responder (review 2026-05-26).
+  const isLead = audience === "lead";
   const defaultDataFields =
     type === "recruitment_agent" ? DEFAULT_RECRUITMENT_DATA_FIELDS : DEFAULT_SALES_DATA_FIELDS;
   await supabase.from("agent_configs").insert({
     agent_id: agent.id,
-    data_fields: audience === "lead" ? defaultDataFields : [],
+    data_fields: isLead ? defaultDataFields : [],
+    ...(isLead
+      ? { enabled_channels: ["SMS"], objective: "qualification_and_booking" }
+      : {}),
   });
 
   // Composição: módulos ligados (na ordem do wizard). Fallback: default_modules

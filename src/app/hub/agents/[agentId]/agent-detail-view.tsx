@@ -287,7 +287,14 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
   }
 
   function catVisible(id: Cat): boolean {
-    if (LEAD_ONLY.has(id) && !isLead) return false;
+    // Sempre: identidade, tom, limites.
+    if (id === "identity" || id === "tone" || id === "limits") return true;
+    // Lead: TODAS as capacidades aparecem. As com toggle mestre nascem em "off"
+    // se o módulo não está anexado — clicar em Ligar faz upsert da instance.
+    // (Sem isso: chicken-and-egg — a aba some por estar off, e você não chega no toggle.)
+    if (isLead) return true;
+    // Rep (SparkBot): só o que ele realmente tem. Esconde capacidades de lead.
+    if (LEAD_ONLY.has(id)) return false;
     const mod = CAT_MODULE[id];
     return mod ? availableMods.has(mod) : true;
   }

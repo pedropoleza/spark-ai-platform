@@ -233,6 +233,21 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
   const hasFollowup = moduleKeys.includes("followup") || !!spec.followup?.enabled;
   const hasHours = moduleKeys.includes("active_hours") || !!spec.active_hours?.enabled;
 
+  // Se nasce com horário ligado, semeia seg–sex 9h–18h. Sem isso, schedule={}
+  // + mode "only_during" = webhook responde outside_working_hours_no_window e o
+  // agente nasce MUDO (footgun corrigido no editor de horário 2026-05-26).
+  const defaultSchedule = hasHours
+    ? {
+        monday: { enabled: true, start: "09:00", end: "18:00" },
+        tuesday: { enabled: true, start: "09:00", end: "18:00" },
+        wednesday: { enabled: true, start: "09:00", end: "18:00" },
+        thursday: { enabled: true, start: "09:00", end: "18:00" },
+        friday: { enabled: true, start: "09:00", end: "18:00" },
+        saturday: { enabled: false, start: "09:00", end: "18:00" },
+        sunday: { enabled: false, start: "09:00", end: "18:00" },
+      }
+    : {};
+
   const config: Record<string, unknown> = {
     personality: {
       name: spec.identity?.name || "",
@@ -249,7 +264,9 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
     custom_instructions: spec.behavior.custom_instructions,
     confirmation_mode: spec.behavior.confirmation_mode,
     objective: spec.objective || (moduleKeys.includes("scheduling") ? "qualification_and_booking" : "qualification_only"),
-    enabled_channels: enabledChannels.length ? enabledChannels : ["WhatsApp"],
+    // Fallback "SMS" = WhatsApp Web via Stevo (canal LIVE). Nunca "WhatsApp"
+    // (Meta API) como default, que ainda não está liberado.
+    enabled_channels: enabledChannels.length ? enabledChannels : ["SMS"],
     data_fields: dataFields,
     // Flags derivados do módulo → config e composição ficam coerentes.
     follow_up_config: {
@@ -265,7 +282,7 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
       enabled: hasHours,
       timezone: spec.active_hours?.timezone || "America/New_York",
       mode: spec.active_hours?.mode || "only_during",
-      schedule: {},
+      schedule: defaultSchedule,
     },
   };
 
