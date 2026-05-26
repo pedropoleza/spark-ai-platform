@@ -1,19 +1,24 @@
 /**
- * Builder de agente custom com IA (Plataforma Modular — Fase F).
+ * Builder de agente custom (Plataforma Modular — Fase F, repensado 2026-05-26).
  *
- * A IA (Claude) conversa com o usuário em PT-BR e, quando entende o pedido,
- * chama a tool `propose_agent` emitindo um SPEC estruturado. Aqui ficam:
- *  - AgentSpecSchema (zod) — valida o que o modelo emitiu (nunca confiar cru).
- *  - proposeAgentTool() — a ToolDefinition (JSON schema) ofertada ao modelo.
- *  - buildBuilderSystemPrompt() — system prompt do builder.
- *  - specToConfig() — mapeia o spec → agent_configs + module_keys (1:1 com o
- *    runtime real; o agente nasce pausado pra revisão).
+ * O fluxo de criação é um WIZARD GUIADO (custom-builder.tsx) que coleta as
+ * decisões estruturais (intake, canal, identidade, objetivo, agendamento,
+ * follow-up, horário) e usa a IA só pra ENRIQUECER o conteúdo "mole"
+ * (instruções, campos de qualificação, tom) via /builder/compose. Aqui ficam:
+ *  - AgentSpecSchema (zod) — contrato COMPLETO do agente (valida o que vem).
+ *  - INTAKE: como os leads chegam (inbound / tag / etapa / palavra-chave /
+ *    prospecção) → mapeado pro runtime real (targeting_rules + outreach_config).
+ *  - specToConfig() — spec → agent_configs + module_keys (deriva os módulos das
+ *    escolhas). O agente nasce pausado pra revisão.
+ *  - proposeAgentTool()/buildBuilderSystemPrompt() — mantidos pro modo conversa
+ *    (retrocompat); o wizard usa /compose + /commit.
  */
 import { z } from "zod";
 import type { ToolDefinition } from "@/types/account-assistant";
-import type { CommunicationChannel, DataField } from "@/types/agent";
+import type { CommunicationChannel, DataField, TargetingRule } from "@/types/agent";
 
 const clamp = (v: number) => Math.max(0, Math.min(100, Math.round(Number.isFinite(v) ? v : 50)));
+const rid = () => Math.random().toString(36).slice(2, 10);
 
 const ToneSchema = z.object({
   creativity: z.number().default(60),
@@ -29,19 +34,45 @@ const QualFieldSchema = z.object({
   required: z.boolean().default(false),
 });
 
+// INTAKE — como os leads chegam até o agente. Mapeia pro runtime:
+//  inbound  → responde a qualquer mensagem nova no canal (sem targeting = fallback).
+//  tag      → responde só a contatos com a(s) tag(s) (targeting_rules).
+//  stage    → responde só a contatos numa etapa do funil (targeting_rules).
+//  keyword  → campanha: o lead manda uma palavra-chave; contexto vai pras instruções.
+//  outreach → o agente INICIA a conversa com uma lista (por tag) — outreach_config.
+const IntakeSchema = z
+  .object({
+    mode: z.enum(["inbound", "tag", "stage", "keyword", "outreach"]).default("inbound"),
+    tags: z.array(z.string().max(80)).max(20).default([]),
+    keyword: z.string().max(200).default(""),
+    pipeline_id: z.string().max(120).default(""),
+    pipeline_stage_id: z.string().max(120).default(""),
+    opening_message: z.string().max(2000).default(""),
+  })
+  .default({ mode: "inbound", tags: [], keyword: "", pipeline_id: "", pipeline_stage_id: "", opening_message: "" });
+
+const PostBookingSchema = z.object({
+  behavior: z.enum(["stop_and_handoff", "continue_until_appointment"]).default("stop_and_handoff"),
+  handoff_message: z.string().max(2000).default(""),
+  allow_reschedule: z.boolean().default(true),
+});
+
 export const AgentSpecSchema = z.object({
   name: z.string().min(1).max(120),
   purpose_summary: z.string().max(600).default(""),
-  channels: z.array(z.enum(["whatsapp", "instagram"])).default(["whatsapp"]),
+  // 3 canais + alias legado "whatsapp" (→ whatsapp_web). channelMap resolve.
+  channels: z.array(z.enum(["whatsapp_web", "whatsapp_api", "instagram", "whatsapp"])).default(["whatsapp_web"]),
+  intake: IntakeSchema,
   modules: z.array(z.string()).default([]),
   behavior: z
     .object({
       tone: ToneSchema.default(TONE_DEFAULT),
       custom_instructions: z.string().max(8000).default(""),
+      conversation_examples: z.string().max(8000).default(""),
       confirmation_mode: z.enum(["always", "medium_and_high", "high_only"]).default("medium_and_high"),
     })
-    .default({ tone: TONE_DEFAULT, custom_instructions: "", confirmation_mode: "medium_and_high" }),
-  qualification_fields: z.array(QualFieldSchema).max(12).optional(),
+    .default({ tone: TONE_DEFAULT, custom_instructions: "", conversation_examples: "", confirmation_mode: "medium_and_high" }),
+  qualification_fields: z.array(QualFieldSchema).max(15).optional(),
   followup: z
     .object({
       enabled: z.boolean().default(false),
@@ -63,11 +94,19 @@ export const AgentSpecSchema = z.object({
     })
     .optional(),
   objective: z.enum(["qualification_only", "qualification_and_booking", "booking_only"]).optional(),
-  post_booking: z
+  scheduling: z
     .object({
-      behavior: z.enum(["stop_and_handoff", "continue_until_appointment"]).default("stop_and_handoff"),
-      handoff_message: z.string().max(2000).default(""),
-      allow_reschedule: z.boolean().default(true),
+      specialist_name: z.string().max(120).default(""),
+      preferred_time_slot: z.string().max(40).default("any"),
+      post_booking: PostBookingSchema.optional(),
+    })
+    .optional(),
+  // Compat: post_booking solto (versão antiga). Se vier, vira scheduling.post_booking.
+  post_booking: PostBookingSchema.optional(),
+  knowledge: z
+    .object({
+      enabled_kbs: z.array(z.enum(["national_life_group", "agency_brazillionaires"])).default([]),
+      instructions: z.string().max(4000).default(""),
     })
     .optional(),
   expires_at: z.string().nullable().optional(),
@@ -75,14 +114,13 @@ export const AgentSpecSchema = z.object({
 
 export type AgentSpec = z.infer<typeof AgentSpecSchema>;
 
-/** ToolDefinition `propose_agent` ofertada ao modelo. `moduleKeys` = catálogo válido. */
+/** ToolDefinition `propose_agent` (modo conversa, retrocompat). */
 export function proposeAgentTool(moduleKeys: string[]): ToolDefinition {
   return {
     name: "propose_agent",
     description:
       "Chame quando tiver entendido o suficiente pra montar o agente personalizado. " +
-      "Emite a configuração final. Só chame quando já souber o propósito, os canais e o que coletar.",
-    // Sem side-effect (só emite o spec) → safe, não precisa de confirmação.
+      "Emite a configuração final. Só chame quando souber propósito, intake (como os leads chegam), canais e o que coletar.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -91,14 +129,20 @@ export function proposeAgentTool(moduleKeys: string[]): ToolDefinition {
         purpose_summary: { type: "string", description: "1-2 frases em PT-BR resumindo o que o agente faz." },
         channels: {
           type: "array",
-          items: { type: "string", enum: ["whatsapp", "instagram"] },
-          description: "Canais onde fala com os leads.",
+          items: { type: "string", enum: ["whatsapp_web", "whatsapp_api", "instagram"] },
+          description: "Canais onde fala com os leads. whatsapp_web = WhatsApp via Stevo (o comum).",
         },
-        modules: {
-          type: "array",
-          items: { type: "string", enum: moduleKeys },
-          description: "Ajustes/módulos que o agente carrega (escolha os que fazem sentido pro propósito).",
+        intake: {
+          type: "object",
+          description: "Como os leads chegam até o agente.",
+          properties: {
+            mode: { type: "string", enum: ["inbound", "tag", "stage", "keyword", "outreach"] },
+            tags: { type: "array", items: { type: "string" }, description: "Tags (modo tag/outreach)." },
+            keyword: { type: "string", description: "Palavra-chave da campanha (modo keyword)." },
+            opening_message: { type: "string", description: "1ª mensagem (modo outreach)." },
+          },
         },
+        modules: { type: "array", items: { type: "string", enum: moduleKeys }, description: "Ajustes/módulos extras." },
         behavior: {
           type: "object",
           properties: {
@@ -111,14 +155,13 @@ export function proposeAgentTool(moduleKeys: string[]): ToolDefinition {
                 assertiveness: { type: "number", description: "0-100" },
               },
             },
-            custom_instructions: { type: "string", description: "Instruções em PT-BR sobre a agência e como agir. NUNCA escreva 'GHL'; use 'Spark Leads'." },
+            custom_instructions: { type: "string", description: "Instruções em PT-BR. NUNCA escreva 'GHL'; use 'Spark Leads'." },
             confirmation_mode: { type: "string", enum: ["always", "medium_and_high", "high_only"] },
           },
           required: ["custom_instructions"],
         },
         qualification_fields: {
           type: "array",
-          description: "Perguntas que o agente faz pra qualificar o lead.",
           items: {
             type: "object",
             properties: {
@@ -129,77 +172,50 @@ export function proposeAgentTool(moduleKeys: string[]): ToolDefinition {
             required: ["label"],
           },
         },
-        followup: {
+        followup: { type: "object", properties: { enabled: { type: "boolean" }, intensity: { type: "number" }, max_attempts: { type: "number" } } },
+        active_hours: { type: "object", properties: { enabled: { type: "boolean" }, timezone: { type: "string" }, mode: { type: "string", enum: ["only_during", "only_outside"] } } },
+        identity: { type: "object", properties: { name: { type: "string" }, mode: { type: "string", enum: ["assistant", "human"] } } },
+        objective: { type: "string", enum: ["qualification_only", "qualification_and_booking", "booking_only"] },
+        scheduling: {
           type: "object",
           properties: {
-            enabled: { type: "boolean" },
-            intensity: { type: "number", description: "1-10" },
-            max_attempts: { type: "number" },
+            specialist_name: { type: "string" },
+            preferred_time_slot: { type: "string" },
+            post_booking: {
+              type: "object",
+              properties: {
+                behavior: { type: "string", enum: ["stop_and_handoff", "continue_until_appointment"] },
+                handoff_message: { type: "string" },
+                allow_reschedule: { type: "boolean" },
+              },
+            },
           },
         },
-        active_hours: {
-          type: "object",
-          properties: {
-            enabled: { type: "boolean" },
-            timezone: { type: "string" },
-            mode: { type: "string", enum: ["only_during", "only_outside"] },
-          },
-        },
-        identity: {
-          type: "object",
-          description: "Como o agente se apresenta ao lead.",
-          properties: {
-            name: { type: "string", description: "Nome do agente (ex: Bia, Léo)." },
-            mode: { type: "string", enum: ["assistant", "human"], description: "Se apresenta como assistente virtual ou como pessoa." },
-          },
-        },
-        objective: {
-          type: "string",
-          enum: ["qualification_only", "qualification_and_booking", "booking_only"],
-          description: "O que o agente tenta fazer: só qualificar, qualificar + agendar, ou só agendar.",
-        },
-        post_booking: {
-          type: "object",
-          description: "O que fazer depois de marcar a reunião.",
-          properties: {
-            behavior: { type: "string", enum: ["stop_and_handoff", "continue_until_appointment"] },
-            handoff_message: { type: "string", description: "Mensagem ao passar pra humano." },
-            allow_reschedule: { type: "boolean" },
-          },
-        },
-        expires_at: { type: "string", description: "Data ISO (YYYY-MM-DD) se o agente é temporário (evento/feirão). Omita se não for." },
+        expires_at: { type: "string", description: "ISO (YYYY-MM-DD) se temporário. Omita se não for." },
       },
-      required: ["name", "purpose_summary", "modules", "behavior"],
+      required: ["name", "purpose_summary", "behavior"],
     },
   };
 }
 
-/** System prompt do builder. `moduleCatalog` = [{key,label}] pra guiar a escolha. */
+/** System prompt do builder conversa (retrocompat). */
 export function buildBuilderSystemPrompt(moduleCatalog: { key: string; label: string }[]): string {
   const catalogList = moduleCatalog.map((m) => `- ${m.key}: ${m.label}`).join("\n");
-  return `Você é o assistente de criação de agentes do Spark Hub. Sua missão: conversar com o dono de uma agência de seguros (PT-BR, não-técnico, 30-50 anos) e montar um AGENTE PERSONALIZADO que fale com os LEADS dele.
+  return `Você é o assistente de criação de agentes do Spark Hub. Monta um AGENTE PERSONALIZADO que fala com os LEADS de uma agência de seguros (PT-BR, dono não-técnico).
 
-COMO CONDUZIR:
-- Fale como gente, em português claro e acolhedor. Uma pergunta de cada vez.
-- Comece entendendo O QUE o agente deve fazer. Depois descubra: com quem fala, por quais canais (WhatsApp/Instagram), se precisa marcar reunião, o que coletar do lead, se tem horário, se é temporário (evento/feirão com data pra expirar).
-- Explique as opções quando a pessoa não souber. Seja breve.
-- NÃO peça dados técnicos. Você cuida da parte técnica.
+DESCUBRA, uma pergunta de cada vez:
+- O QUE o agente faz (a campanha/oferta).
+- INTAKE: como os leads chegam (mandam mensagem / por tag / por etapa do funil / palavra-chave de campanha / o agente vai atrás).
+- Canais (WhatsApp/Instagram), identidade (assistente ou pessoa), objetivo (qualificar / agendar), o que coletar do lead, agendamento, follow-up, horário, se é temporário.
 
-QUANDO TIVER O SUFICIENTE:
-- Chame a tool propose_agent com a configuração. Escolha módulos coerentes com o propósito.
-- Dê um NOME ao agente (identity.name) e diga se ele se apresenta como assistente ou como pessoa.
-- Defina o OBJETIVO (só qualificar / qualificar + agendar / só agendar) e, se agenda, o que faz depois (post_booking).
-- Escreva instruções (custom_instructions) ricas e específicas pro agente, baseadas no que a pessoa disse.
-- Defina o tom (0-100) que combina com o propósito.
+QUANDO TIVER O SUFICIENTE: chame propose_agent. Escreva custom_instructions ricas e específicas.
 
-MÓDULOS DISPONÍVEIS (use as keys):
+MÓDULOS:
 ${catalogList}
 
 REGRAS:
-- O agente é sempre lead-facing (fala com clientes/leads, não com o operador).
-- NUNCA escreva "GHL" nem "GoHighLevel" — o CRM se chama "Spark Leads".
-- Só fale sobre montar este agente. Se pedirem outra coisa, redirecione gentilmente.
-- Não invente que já criou — quem cria é o sistema depois que a pessoa confirma.`;
+- Sempre lead-facing. NUNCA escreva "GHL"/"GoHighLevel" — o CRM é "Spark Leads".
+- Não invente que já criou; quem cria é o sistema após a confirmação.`;
 }
 
 const slug = (s: string) =>
@@ -210,16 +226,20 @@ const slug = (s: string) =>
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "") || "campo";
 
+const CHANNEL_MAP: Record<string, CommunicationChannel> = {
+  whatsapp_web: "SMS",
+  whatsapp: "SMS", // alias legado
+  whatsapp_api: "WhatsApp",
+  instagram: "Instagram",
+};
+
 /** Mapeia o spec validado → payload de agent_configs + module_keys + expires_at. */
 export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
   config: Record<string, unknown>;
   moduleKeys: string[];
   expiresAt: string | null;
 } {
-  // whatsapp → "SMS" (WhatsApp Web via Stevo, o canal live). WhatsApp API (Meta)
-  // o usuário liga depois na config se tiver. instagram → "Instagram".
-  const channelMap: Record<string, CommunicationChannel> = { whatsapp: "SMS", instagram: "Instagram" };
-  const enabledChannels = Array.from(new Set(spec.channels.map((c) => channelMap[c]).filter(Boolean)));
+  const enabledChannels = Array.from(new Set(spec.channels.map((c) => CHANNEL_MAP[c]).filter(Boolean)));
 
   const dataFields: DataField[] = (spec.qualification_fields || []).map((f, i) => ({
     key: slug(f.label) + "_" + (i + 1),
@@ -228,14 +248,51 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
     type: f.type,
   }));
 
-  // whitelist + dedup das module keys (antes, pra derivar os flags de on/off).
-  const moduleKeys = Array.from(new Set(spec.modules.filter((k) => allowedModuleKeys.includes(k))));
-  const hasFollowup = moduleKeys.includes("followup") || !!spec.followup?.enabled;
-  const hasHours = moduleKeys.includes("active_hours") || !!spec.active_hours?.enabled;
+  const intake = spec.intake || { mode: "inbound" as const, tags: [], keyword: "", pipeline_id: "", pipeline_stage_id: "", opening_message: "" };
+  const objective =
+    spec.objective || (spec.scheduling || spec.post_booking ? "qualification_and_booking" : "qualification_only");
 
-  // Se nasce com horário ligado, semeia seg–sex 9h–18h. Sem isso, schedule={}
-  // + mode "only_during" = webhook responde outside_working_hours_no_window e o
-  // agente nasce MUDO (footgun corrigido no editor de horário 2026-05-26).
+  // ── INTAKE → runtime ────────────────────────────────────────────
+  const targetingRules: TargetingRule[] = [];
+  let outreachConfig: Record<string, unknown> | null = null;
+  if (intake.mode === "tag") {
+    for (const t of intake.tags || []) if (t.trim()) targetingRules.push({ id: rid(), type: "tag", tag: t.trim() });
+  } else if (intake.mode === "stage" && intake.pipeline_stage_id) {
+    targetingRules.push({ id: rid(), type: "pipeline_stage", pipeline_id: intake.pipeline_id || undefined, pipeline_stage_id: intake.pipeline_stage_id });
+  } else if (intake.mode === "outreach") {
+    outreachConfig = {
+      enabled: true,
+      tag_filter: { tags: (intake.tags || []).filter((t) => t.trim()), match: "any" },
+      rate_per_hour: 20,
+      daily_cap: 100,
+      respect_working_hours: true,
+      opening_message: intake.opening_message || "",
+    };
+  }
+
+  // Contexto de intake nas instruções (palavra-chave de campanha / prospecção).
+  let customInstructions = spec.behavior.custom_instructions || "";
+  if (intake.mode === "keyword" && intake.keyword.trim()) {
+    customInstructions +=
+      `\n\n[Entrada] Os leads chegam por uma campanha e costumam iniciar com a palavra-chave "${intake.keyword.trim()}". ` +
+      `Reconheça o contexto da campanha e conduza a conversa a partir daí.`;
+  }
+
+  // ── Módulos derivados das escolhas (∪ módulos vindos do spec) ────
+  const derived = new Set<string>(["channel"]);
+  if (dataFields.length > 0 || objective !== "booking_only") derived.add("qualification");
+  if (objective === "qualification_and_booking" || objective === "booking_only" || spec.scheduling || spec.post_booking) derived.add("scheduling");
+  if (spec.followup?.enabled) derived.add("followup");
+  if (spec.active_hours?.enabled) derived.add("active_hours");
+  if (intake.mode === "outreach") derived.add("outreach");
+  if (spec.knowledge?.enabled_kbs?.length || spec.knowledge?.instructions) derived.add("knowledge");
+  for (const k of spec.modules || []) derived.add(k);
+  const moduleKeys = Array.from(derived).filter((k) => allowedModuleKeys.includes(k));
+
+  const hasFollowup = !!spec.followup?.enabled;
+  const hasHours = !!spec.active_hours?.enabled;
+
+  // Footgun: horário ligado + schedule vazio = agente mudo. Semeia seg–sex 9–18.
   const defaultSchedule = hasHours
     ? {
         monday: { enabled: true, start: "09:00", end: "18:00" },
@@ -247,6 +304,8 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
         sunday: { enabled: false, start: "09:00", end: "18:00" },
       }
     : {};
+
+  const postBooking = spec.scheduling?.post_booking || spec.post_booking;
 
   const config: Record<string, unknown> = {
     personality: {
@@ -261,14 +320,14 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
     tone_formality: clamp(spec.behavior.tone.formality),
     tone_naturalness: clamp(spec.behavior.tone.naturalness),
     tone_aggressiveness: clamp(spec.behavior.tone.assertiveness),
-    custom_instructions: spec.behavior.custom_instructions,
+    custom_instructions: customInstructions,
+    conversation_examples: spec.behavior.conversation_examples || "",
     confirmation_mode: spec.behavior.confirmation_mode,
-    objective: spec.objective || (moduleKeys.includes("scheduling") ? "qualification_and_booking" : "qualification_only"),
-    // Fallback "SMS" = WhatsApp Web via Stevo (canal LIVE). Nunca "WhatsApp"
-    // (Meta API) como default, que ainda não está liberado.
+    objective,
+    // Fallback "SMS" = WhatsApp Web (live); nunca "WhatsApp" (Meta, não-live).
     enabled_channels: enabledChannels.length ? enabledChannels : ["SMS"],
     data_fields: dataFields,
-    // Flags derivados do módulo → config e composição ficam coerentes.
+    targeting_rules: targetingRules,
     follow_up_config: {
       enabled: hasFollowup,
       mode: "ai_auto",
@@ -286,13 +345,18 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
     },
   };
 
-  if (spec.post_booking) {
+  if (spec.scheduling?.specialist_name) config.specialist_name = spec.scheduling.specialist_name;
+  if (spec.scheduling?.preferred_time_slot) config.preferred_time_slot = spec.scheduling.preferred_time_slot;
+  if (postBooking) {
     config.post_booking = {
-      behavior: spec.post_booking.behavior,
-      handoff_message: spec.post_booking.handoff_message || "",
-      allow_reschedule: spec.post_booking.allow_reschedule,
+      behavior: postBooking.behavior,
+      handoff_message: postBooking.handoff_message || "",
+      allow_reschedule: postBooking.allow_reschedule,
     };
   }
+  if (spec.knowledge?.enabled_kbs?.length) config.enabled_kbs = spec.knowledge.enabled_kbs;
+  if (spec.knowledge?.instructions) config.knowledge_base_instructions = spec.knowledge.instructions;
+  if (outreachConfig) config.outreach_config = outreachConfig;
 
   return { config, moduleKeys, expiresAt: spec.expires_at ?? null };
 }

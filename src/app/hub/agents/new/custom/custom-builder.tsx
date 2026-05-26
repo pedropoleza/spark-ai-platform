@@ -4,42 +4,187 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ChevronLeft, Send, Sparkles, Check, Wand2, Mic, Square, Pencil } from "lucide-react";
+import { ChevronLeft, Send, Sparkles, Check, Mic, Square, Pencil, SkipForward } from "lucide-react";
 import { AMark, ChannelChip } from "@/components/hub/primitives";
 import { MODULE_LABEL } from "@/components/hub/module-labels";
 import type { ChannelKey } from "@/components/hub/types";
+import { CHANNEL_LABEL } from "@/components/hub/types";
 
 type Msg = { role: "user" | "assistant"; content: string };
+type IntakeMode = "inbound" | "keyword" | "tag" | "outreach";
+type Objective = "qualification_only" | "qualification_and_booking" | "booking_only";
 
-interface Spec {
-  name: string;
-  purpose_summary: string;
+interface Answers {
+  purpose?: string;
+  intakeMode?: IntakeMode;
+  intakeDetail?: string; // palavra-chave OU tags (vírgula)
+  outreachOpening?: string;
   channels: ChannelKey[];
-  modules: string[];
-  behavior: { tone: { creativity: number; formality: number; naturalness: number; assertiveness: number }; custom_instructions: string; confirmation_mode: string };
-  qualification_fields?: { label: string; type: string; required: boolean }[];
-  expires_at?: string | null;
+  identityMode?: "assistant" | "human";
+  identityName?: string;
+  objective?: Objective;
+  qualification?: string;
+  specialist?: string;
+  postBooking?: "stop_and_handoff" | "continue_until_appointment";
+  followup?: boolean;
+  hours?: boolean;
 }
 
-// Wizard: 3 perguntas estruturadas (Pedro 2026-05-26). Cada uma com opções
-// clicáveis (chips), mas o usuário pode escrever ou (na campanha) gravar áudio.
-const STEPS: { key: "channel" | "identity" | "campaign"; q: string; chips: string[]; audio: boolean }[] = [
-  { key: "channel", q: "Como os leads vão chegar até esse agente?", chips: ["WhatsApp Web/SMS", "WhatsApp API", "Instagram"], audio: false },
-  { key: "identity", q: "Como você quer que ele se apresente pro lead?", chips: ["Como uma assistente virtual", "Como uma pessoa do time"], audio: false },
-  { key: "campaign", q: "Agora me conta os detalhes da campanha — quanto mais contexto, melhor (público, oferta, objetivo…). Pode escrever ou gravar um áudio.", chips: [], audio: true },
-];
+interface Composed {
+  name: string;
+  purpose_summary: string;
+  custom_instructions: string;
+  qualification_fields: { label: string; type: string; required: boolean }[];
+  tone: { creativity: number; formality: number; naturalness: number; assertiveness: number };
+}
 
-type Phase = "wizard" | "ai" | "creating";
+type NodeKey =
+  | "purpose" | "intake" | "intake_detail" | "outreach_opening" | "channel"
+  | "identity" | "identity_name" | "objective" | "qualification"
+  | "specialist" | "postbooking" | "followup" | "hours";
+
+type Chip = { label: string; value: string };
+interface NodeDef {
+  type: "free" | "choice" | "multi";
+  q: string | ((a: Answers) => string);
+  chips?: Chip[];
+  audio?: boolean;
+  skippable?: boolean;
+  placeholder?: string;
+}
+
+const NODES: Record<NodeKey, NodeDef> = {
+  purpose: {
+    type: "free",
+    audio: true,
+    q: "Pra começar: o que esse agente vai fazer? Fala da campanha, da oferta, pra quem é — quanto mais contexto, melhor. Pode escrever ou gravar um áudio. 🎙️",
+    placeholder: "Ex: agente do feirão de seguro de vida, fala com quem viu o anúncio no Instagram…",
+  },
+  intake: {
+    type: "choice",
+    q: "Como os leads vão chegar até esse agente?",
+    chips: [
+      { label: "Eles me mandam mensagem", value: "inbound" },
+      { label: "Campanha com palavra-chave", value: "keyword" },
+      { label: "Só quem eu marco com uma tag", value: "tag" },
+      { label: "O agente vai atrás (prospecção)", value: "outreach" },
+    ],
+  },
+  intake_detail: {
+    type: "free",
+    q: (a) =>
+      a.intakeMode === "keyword"
+        ? "Qual é a palavra-chave que o lead manda pra ativar? (ex: SEGURO, COTAÇÃO)"
+        : a.intakeMode === "outreach"
+        ? "Qual lista o agente vai abordar? Use a tag dos contatos (uma ou mais, separadas por vírgula)."
+        : "Qual tag marca esses leads? (uma ou mais, separadas por vírgula)",
+    placeholder: "ex: feirao_2026, lead_quente",
+  },
+  outreach_opening: {
+    type: "free",
+    skippable: true,
+    q: "Como deve ser a 1ª mensagem que ele manda? (deixa em branco que a IA cria com base no propósito)",
+    placeholder: "Ex: Oi {first_name}! Vi que você se interessou pelo nosso plano…",
+  },
+  channel: {
+    type: "multi",
+    q: "Por quais canais ele conversa? (pode escolher mais de um)",
+    chips: [
+      { label: CHANNEL_LABEL.whatsapp_web, value: "whatsapp_web" },
+      { label: CHANNEL_LABEL.whatsapp_api, value: "whatsapp_api" },
+      { label: CHANNEL_LABEL.instagram, value: "instagram" },
+    ],
+  },
+  identity: {
+    type: "choice",
+    q: "Como ele se apresenta pro lead?",
+    chips: [
+      { label: "Como uma pessoa do time", value: "human" },
+      { label: "Como uma assistente virtual", value: "assistant" },
+    ],
+  },
+  identity_name: {
+    type: "free",
+    skippable: true,
+    q: "Que nome ele usa? (ex: Bia, Léo) — ou pula que a gente define depois.",
+    placeholder: "Nome do agente",
+  },
+  objective: {
+    type: "choice",
+    q: "Qual o objetivo dele na conversa?",
+    chips: [
+      { label: "Só qualificar", value: "qualification_only" },
+      { label: "Qualificar e agendar", value: "qualification_and_booking" },
+      { label: "Só agendar", value: "booking_only" },
+    ],
+  },
+  qualification: {
+    type: "free",
+    audio: true,
+    skippable: true,
+    q: "O que ele precisa descobrir do lead? (ex: cidade, idade, orçamento, se já tem seguro). Pode gravar um áudio — ou pular.",
+    placeholder: "Ex: preciso saber a cidade, a idade e se já tem algum seguro hoje.",
+  },
+  specialist: {
+    type: "free",
+    skippable: true,
+    q: "Quem conduz a reunião/atendimento depois? (nome do especialista — ou pula)",
+    placeholder: "Ex: Dr. Pereira",
+  },
+  postbooking: {
+    type: "choice",
+    q: "Depois de agendar, o que ele faz?",
+    chips: [
+      { label: "Passa pra um humano", value: "stop_and_handoff" },
+      { label: "Continua até a reunião", value: "continue_until_appointment" },
+    ],
+  },
+  followup: {
+    type: "choice",
+    q: "Se o lead sumir, o agente insiste (follow-up)?",
+    chips: [
+      { label: "Sim, faz follow-up", value: "yes" },
+      { label: "Não", value: "no" },
+    ],
+  },
+  hours: {
+    type: "choice",
+    q: "Tem horário de atendimento?",
+    chips: [
+      { label: "24/7 — responde sempre", value: "always" },
+      { label: "Horário comercial (seg–sex)", value: "business" },
+    ],
+  },
+};
+
+const ORDER: NodeKey[] = [
+  "purpose", "intake", "intake_detail", "outreach_opening", "channel",
+  "identity", "identity_name", "objective", "qualification",
+  "specialist", "postbooking", "followup", "hours",
+];
+const isBooking = (a: Answers) => a.objective === "qualification_and_booking" || a.objective === "booking_only";
+function nodeVisible(key: NodeKey, a: Answers): boolean {
+  if (key === "intake_detail") return a.intakeMode === "keyword" || a.intakeMode === "tag" || a.intakeMode === "outreach";
+  if (key === "outreach_opening") return a.intakeMode === "outreach";
+  if (key === "specialist" || key === "postbooking") return isBooking(a);
+  return true;
+}
+function nextNode(cur: NodeKey, a: Answers): NodeKey | null {
+  const i = ORDER.indexOf(cur);
+  for (let j = i + 1; j < ORDER.length; j++) if (nodeVisible(ORDER[j], a)) return ORDER[j];
+  return null;
+}
+
+type Phase = "wizard" | "composing" | "review" | "creating";
 
 export function CustomBuilder() {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("wizard");
-  const [step, setStep] = useState(0);
-  const [msgs, setMsgs] = useState<Msg[]>([{ role: "assistant", content: STEPS[0].q }]);
-  const [answers, setAnswers] = useState<{ channel?: string; identity?: string; campaign?: string }>({});
+  const [node, setNode] = useState<NodeKey>("purpose");
+  const [msgs, setMsgs] = useState<Msg[]>([{ role: "assistant", content: txt(NODES.purpose.q, {} as Answers) }]);
+  const [a, setA] = useState<Answers>({ channels: [] });
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [spec, setSpec] = useState<Spec | null>(null);
+  const [composed, setComposed] = useState<Composed | null>(null);
   const [creating, setCreating] = useState(false);
 
   // áudio
@@ -48,74 +193,137 @@ export function CustomBuilder() {
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
 
-  const convoRef = useRef<Msg[]>([]); // conversa enviada à IA (fase "ai")
   const scrollRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [msgs, loading, pendingAudio]);
+  }, [msgs, pendingAudio, phase]);
 
+  const def = NODES[node];
   const pushBot = (content: string) => setMsgs((m) => [...m, { role: "assistant", content }]);
   const pushUser = (content: string) => setMsgs((m) => [...m, { role: "user", content }]);
+  const busy = recording || transcribing || phase !== "wizard";
 
-  const audioAllowed = (phase === "wizard" && STEPS[step]?.audio) || phase === "ai";
-  const canType = !loading && !creating && (phase === "wizard" || phase === "ai");
-
-  async function callBuilder(convo: Msg[]) {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/agent-platform/builder/message", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: convo }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "falhou");
-      if (data.spec) {
-        setSpec(data.spec as Spec);
-        pushBot("Pronto! Montei uma proposta — confira na ficha ao lado e clique em Criar quando quiser.");
-      } else {
-        pushBot(data.assistant || "Me conta um pouco mais?");
-      }
-    } catch (err) {
-      pushBot("Tive um problema aqui: " + (err instanceof Error ? err.message : "erro") + ". Pode tentar de novo?");
-    } finally {
-      setLoading(false);
+  // Avança o fluxo com a resposta do nó atual.
+  function answer(patch: Partial<Answers>, display: string) {
+    pushUser(display);
+    const merged = { ...a, ...patch, channels: patch.channels ?? a.channels };
+    setA(merged);
+    const nxt = nextNode(node, merged);
+    if (nxt) {
+      setNode(nxt);
+      setTimeout(() => pushBot(txt(NODES[nxt].q, merged)), 220);
+    } else {
+      void compose(merged);
     }
   }
 
-  function enterAi(campaign: string) {
-    setPhase("ai");
-    const synth =
-      `Quero montar um agente personalizado (lead-facing).\n` +
-      `- Canal de chegada dos leads: ${answers.channel || "—"}\n` +
-      `- Como deve se apresentar: ${answers.identity || "—"}\n` +
-      `- Detalhes da campanha: ${campaign}`;
-    convoRef.current = [{ role: "user", content: synth }];
-    void callBuilder(convoRef.current);
+  // free node submit (texto/áudio/skip)
+  function submitFree(value: string) {
+    const text = value.trim();
+    const skip = text.length === 0;
+    if (skip && !def.skippable) return;
+    const display = skip ? "— pulei —" : text;
+    if (node === "purpose") return answer({ purpose: text }, display);
+    if (node === "intake_detail") return answer({ intakeDetail: text }, display);
+    if (node === "outreach_opening") return answer({ outreachOpening: text }, skip ? "A IA cria a abertura" : display);
+    if (node === "identity_name") return answer({ identityName: text }, skip ? "Definir depois" : display);
+    if (node === "qualification") return answer({ qualification: text }, skip ? "A IA sugere" : display);
+    if (node === "specialist") return answer({ specialist: text }, skip ? "Sem especialista fixo" : display);
+  }
+  function submitChoice(c: Chip) {
+    if (node === "intake") return answer({ intakeMode: c.value as IntakeMode }, c.label);
+    if (node === "identity") return answer({ identityMode: c.value as "assistant" | "human" }, c.label);
+    if (node === "objective") return answer({ objective: c.value as Objective }, c.label);
+    if (node === "postbooking") return answer({ postBooking: c.value as Answers["postBooking"] }, c.label);
+    if (node === "followup") return answer({ followup: c.value === "yes" }, c.label);
+    if (node === "hours") return answer({ hours: c.value === "business" }, c.label);
+  }
+  function submitMulti() {
+    if (a.channels.length === 0) { toast.info("Escolha ao menos um canal."); return; }
+    answer({ channels: a.channels }, a.channels.map((c) => CHANNEL_LABEL[c]).join(" · "));
+  }
+  const toggleChannel = (k: ChannelKey) =>
+    setA((prev) => ({ ...prev, channels: prev.channels.includes(k) ? prev.channels.filter((x) => x !== k) : [...prev.channels, k] }));
+
+  // ─── Compose (IA escreve o conteúdo mole) ─────────────────────
+  async function compose(ans: Answers) {
+    setPhase("composing");
+    try {
+      const res = await fetch("/api/agent-platform/builder/compose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          brief: {
+            purpose: ans.purpose || "",
+            qualification_hint: ans.qualification || "",
+            intake: { mode: ans.intakeMode || "inbound", keyword: ans.intakeMode === "keyword" ? ans.intakeDetail : "", tags: ans.intakeMode === "tag" || ans.intakeMode === "outreach" ? splitTags(ans.intakeDetail) : [] },
+            identity: { mode: ans.identityMode || "assistant", name: ans.identityName || "" },
+            objective: ans.objective || "qualification_and_booking",
+            channels: ans.channels.map((c) => CHANNEL_LABEL[c]),
+          },
+        }),
+      });
+      const data = (await res.json()) as Composed & { degraded?: boolean };
+      if (!res.ok) throw new Error("compose falhou");
+      setComposed(data);
+      setPhase("review");
+      pushBot("Pronto! Montei a proposta — confere na ficha ao lado e clica em Criar quando quiser. ✨");
+    } catch {
+      // fallback total: usa o purpose como instruções
+      setComposed({
+        name: ans.identityName ? `Agente ${ans.identityName}` : "Agente personalizado",
+        purpose_summary: (ans.purpose || "").slice(0, 200),
+        custom_instructions: ans.purpose || "",
+        qualification_fields: [],
+        tone: { creativity: 60, formality: 50, naturalness: 80, assertiveness: 50 },
+      });
+      setPhase("review");
+      pushBot("Montei uma proposta inicial — confere na ficha ao lado e ajusta depois na configuração.");
+    }
   }
 
-  // Recebe uma resposta (chip / texto / áudio confirmado) e avança o fluxo.
-  function submitAnswer(value: string) {
-    const text = value.trim();
-    if (!text) return;
-    pushUser(text);
-    if (phase === "wizard") {
-      const cur = STEPS[step];
-      setAnswers((a) => ({ ...a, [cur.key]: text }));
-      if (step < STEPS.length - 1) {
-        const next = step + 1;
-        setStep(next);
-        setTimeout(() => pushBot(STEPS[next].q), 250);
-      } else {
-        enterAi(text); // campanha respondida → IA compõe
-      }
-    } else {
-      // fase ai — segue conversando com a IA
-      convoRef.current = [...convoRef.current, { role: "user", content: text }];
-      void callBuilder(convoRef.current);
+  function buildSpec(): Record<string, unknown> | null {
+    if (!composed) return null;
+    const booking = isBooking(a);
+    return {
+      name: composed.name,
+      purpose_summary: composed.purpose_summary,
+      channels: a.channels.length ? a.channels : ["whatsapp_web"],
+      intake: {
+        mode: a.intakeMode || "inbound",
+        tags: a.intakeMode === "tag" || a.intakeMode === "outreach" ? splitTags(a.intakeDetail) : [],
+        keyword: a.intakeMode === "keyword" ? (a.intakeDetail || "") : "",
+        opening_message: a.outreachOpening || "",
+      },
+      behavior: { tone: composed.tone, custom_instructions: composed.custom_instructions, confirmation_mode: "medium_and_high" },
+      qualification_fields: composed.qualification_fields,
+      followup: { enabled: !!a.followup, intensity: 5, max_attempts: 3 },
+      active_hours: { enabled: !!a.hours, timezone: "America/New_York", mode: "only_during" },
+      identity: { name: a.identityName || "", mode: a.identityMode || "assistant" },
+      objective: a.objective || "qualification_and_booking",
+      scheduling: booking
+        ? { specialist_name: a.specialist || "", preferred_time_slot: "any", post_booking: { behavior: a.postBooking || "stop_and_handoff", handoff_message: "", allow_reschedule: true } }
+        : undefined,
+    };
+  }
+
+  async function createAgent() {
+    const spec = buildSpec();
+    if (!spec || creating) return;
+    setCreating(true);
+    try {
+      const res = await fetch("/api/agent-platform/builder/commit", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "falhou");
+      setPhase("creating");
+      setTimeout(() => router.push(`/hub/agents/${data.agent.id}`), 2200);
+    } catch (err) {
+      setCreating(false);
+      toast.error("Não consegui criar o agente: " + (err instanceof Error ? err.message : ""));
     }
   }
 
@@ -123,26 +331,18 @@ export function CustomBuilder() {
   async function startRec() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
       chunksRef.current = [];
       const mr = new MediaRecorder(stream);
-      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-      mr.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        void uploadAudio(blob);
-      };
+      mr.ondataavailable = (ev) => { if (ev.data.size > 0) chunksRef.current.push(ev.data); };
+      mr.onstop = () => { stream.getTracks().forEach((t) => t.stop()); void uploadAudio(new Blob(chunksRef.current, { type: "audio/webm" })); };
       mr.start();
       mediaRef.current = mr;
       setRecording(true);
     } catch {
-      toast.error("Não consegui acessar o microfone. Verifique a permissão.");
+      toast.error("Não consegui acessar o microfone. Você pode escrever a resposta.");
     }
   }
-  function stopRec() {
-    setRecording(false);
-    mediaRef.current?.stop();
-  }
+  function stopRec() { setRecording(false); mediaRef.current?.stop(); }
   async function uploadAudio(blob: Blob) {
     if (blob.size < 200) return;
     setTranscribing(true);
@@ -157,32 +357,12 @@ export function CustomBuilder() {
       setPendingAudio(summary);
     } catch (err) {
       toast.error("Erro na transcrição: " + (err instanceof Error ? err.message : ""));
-    } finally {
-      setTranscribing(false);
-    }
-  }
-
-  async function createAgent() {
-    if (!spec || creating) return;
-    setCreating(true);
-    try {
-      const res = await fetch("/api/agent-platform/builder/commit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spec }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "falhou");
-      setPhase("creating");
-      setTimeout(() => router.push(`/hub/agents/${data.agent.id}`), 2400);
-    } catch (err) {
-      setCreating(false);
-      toast.error("Não consegui criar o agente: " + (err instanceof Error ? err.message : ""));
-    }
+    } finally { setTranscribing(false); }
   }
 
   // ─── Montando (animação) ──────────────────────────────────────
-  if (phase === "creating" && spec) {
+  if (phase === "creating" && composed) {
+    const mods = buildModulesPreview(a);
     return (
       <div className="page" style={{ maxWidth: 560 }}>
         <div className="card" style={{ padding: 32, textAlign: "center" }}>
@@ -190,10 +370,10 @@ export function CustomBuilder() {
             <div className="asm-mark"><AMark templateKey="custom" size="xl" /></div>
           </div>
           <h2 style={{ fontSize: 20, fontWeight: 600 }}>Montando seu agente…</h2>
-          <p className="muted" style={{ fontSize: 13.5, margin: "6px 0 18px" }}>{spec.name}</p>
+          <p className="muted" style={{ fontSize: 13.5, margin: "6px 0 18px" }}>{composed.name}</p>
           <div className="col" style={{ gap: 8, textAlign: "left", maxWidth: 360, margin: "0 auto" }}>
-            {spec.modules.map((k, i) => (
-              <div key={k} className="asm-row card card--flat" style={{ animationDelay: `${i * 120}ms`, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, background: "var(--surface-2)" }}>
+            {mods.map((k, i) => (
+              <div key={k} className="asm-row card card--flat" style={{ animationDelay: `${i * 110}ms`, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10, background: "var(--surface-2)" }}>
                 <Check size={14} style={{ color: "var(--success)" }} />
                 <span style={{ fontSize: 13.5 }}>{MODULE_LABEL[k] || k}</span>
               </div>
@@ -205,7 +385,10 @@ export function CustomBuilder() {
     );
   }
 
-  const showChips = phase === "wizard" && !loading && STEPS[step]?.chips.length > 0 && !pendingAudio;
+  const showChips = phase === "wizard" && (def.type === "choice") && !pendingAudio;
+  const showMulti = phase === "wizard" && def.type === "multi" && !pendingAudio;
+  const showComposer = phase === "wizard" && def.type === "free";
+  const audioAllowed = showComposer && !!def.audio;
 
   return (
     <div className="page" style={{ maxWidth: 1100 }}>
@@ -214,23 +397,21 @@ export function CustomBuilder() {
       </Link>
       <h1 className="page-hd__title" style={{ marginBottom: 4 }}>Montar agente personalizado</h1>
       <p className="page-hd__sub" style={{ marginBottom: 20 }}>
-        Responda 3 perguntas — clicando, escrevendo ou gravando um áudio. A IA monta o agente e você ajusta depois.
+        Respondendo, clicando ou gravando áudio. A IA monta o agente — você revisa e ativa depois.
       </p>
 
       <div className="builder-split">
         {/* Conversa */}
-        <div className="card" style={{ display: "flex", flexDirection: "column", height: "min(620px, 70vh)" }}>
+        <div className="card" style={{ display: "flex", flexDirection: "column", height: "min(640px, 72vh)" }}>
           <div ref={scrollRef} className="scroll" style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
             {msgs.map((m, i) => (
               <div key={i} className={"bub " + (m.role === "user" ? "bub--user" : "bub--bot")}>{m.content}</div>
             ))}
-            {(loading || transcribing) && (
+            {(phase === "composing" || transcribing) && (
               <div style={{ alignSelf: "flex-start", fontSize: 12.5, color: "var(--ink-3)", padding: "2px 6px" }}>
-                {transcribing ? "transcrevendo…" : "pensando…"}
+                {transcribing ? "transcrevendo…" : "montando a proposta…"}
               </div>
             )}
-
-            {/* Confirmar resumo do áudio */}
             {pendingAudio && (
               <div className="card" style={{ alignSelf: "stretch", padding: 12, border: "1px solid var(--primary)", background: "var(--primary-soft)" }}>
                 <div className="row" style={{ gap: 8, marginBottom: 8 }}>
@@ -239,7 +420,7 @@ export function CustomBuilder() {
                 </div>
                 <div style={{ fontSize: 13.5, color: "var(--ink)", marginBottom: 12, lineHeight: 1.5 }}>{pendingAudio}</div>
                 <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                  <button className="btn btn--primary btn--sm" onClick={() => { const s = pendingAudio; setPendingAudio(null); submitAnswer(s!); }}>
+                  <button className="btn btn--primary btn--sm" onClick={() => { const s = pendingAudio; setPendingAudio(null); submitFree(s!); }}>
                     <Check size={13} /> Confirmar e enviar
                   </button>
                   <button className="btn btn--ghost btn--sm" onClick={() => { setInput(pendingAudio!); setPendingAudio(null); }}>
@@ -251,45 +432,89 @@ export function CustomBuilder() {
             )}
           </div>
 
-          {/* Chips de opção */}
+          {/* Chips de escolha (single) */}
           {showChips && (
-            <div className="row wrap" style={{ gap: 8, padding: "0 12px 10px" }}>
-              {STEPS[step].chips.map((c) => (
-                <button key={c} className="chip-suggest" onClick={() => submitAnswer(c)}>{c}</button>
+            <div className="row wrap" style={{ gap: 8, padding: "0 12px 12px" }}>
+              {def.chips!.map((c) => (
+                <button key={c.value} className="chip-suggest" onClick={() => submitChoice(c)}>{c.label}</button>
               ))}
             </div>
           )}
 
-          {/* Composer */}
-          <div style={{ padding: 12, borderTop: "1px solid var(--line)", display: "flex", gap: 8, alignItems: "center" }}>
-            {audioAllowed && (
-              recording ? (
-                <button className="btn btn--danger btn--icon" onClick={stopRec} title="Parar gravação" aria-label="Parar"><Square size={14} /></button>
-              ) : (
-                <button className="btn btn--ghost btn--icon" onClick={startRec} disabled={loading || transcribing || !!pendingAudio} title="Gravar áudio" aria-label="Gravar áudio"><Mic size={15} /></button>
-              )
-            )}
-            <input
-              className="input"
-              placeholder={recording ? "Gravando… toque em parar" : "Escreva aqui…"}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && canType && input.trim()) { const v = input; setInput(""); submitAnswer(v); } }}
-              disabled={!canType || recording}
-            />
-            <button className="btn btn--primary" onClick={() => { if (input.trim()) { const v = input; setInput(""); submitAnswer(v); } }} disabled={!canType || !input.trim()} aria-label="Enviar">
-              <Send size={14} />
-            </button>
-          </div>
+          {/* Multi-select (canais) */}
+          {showMulti && (
+            <div style={{ padding: "0 12px 12px" }}>
+              <div className="row wrap" style={{ gap: 8, marginBottom: 10 }}>
+                {def.chips!.map((c) => {
+                  const on = a.channels.includes(c.value as ChannelKey);
+                  return (
+                    <button key={c.value} className="chip-suggest" aria-pressed={on} onClick={() => toggleChannel(c.value as ChannelKey)} style={on ? { borderColor: "var(--primary)", background: "var(--primary-soft)", color: "var(--primary-ink)" } : undefined}>
+                      {on && <Check size={12} style={{ marginRight: 4 }} />}{c.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <button className="btn btn--primary btn--sm" onClick={submitMulti}>Continuar</button>
+            </div>
+          )}
+
+          {/* Composer (free + áudio + pular) */}
+          {showComposer && (
+            <div style={{ padding: 12, borderTop: "1px solid var(--line)" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {audioAllowed && (
+                  recording ? (
+                    <button className="btn btn--danger btn--icon" onClick={stopRec} title="Parar" aria-label="Parar"><Square size={14} /></button>
+                  ) : (
+                    <button className="btn btn--ghost btn--icon" onClick={startRec} disabled={busy || !!pendingAudio} title="Gravar áudio" aria-label="Gravar áudio"><Mic size={15} /></button>
+                  )
+                )}
+                <input
+                  className="input"
+                  placeholder={recording ? "Gravando… toque em parar" : (def.placeholder || "Escreva aqui…")}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !busy && input.trim()) { const v = input; setInput(""); submitFree(v); } }}
+                  disabled={busy || recording}
+                />
+                <button className="btn btn--primary" onClick={() => { if (input.trim()) { const v = input; setInput(""); submitFree(v); } }} disabled={busy || !input.trim()} aria-label="Enviar"><Send size={14} /></button>
+              </div>
+              {def.skippable && !recording && !pendingAudio && (
+                <button className="btn btn--quiet btn--sm" style={{ marginTop: 8 }} onClick={() => submitFree("")}><SkipForward size={13} /> Pular</button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Ficha ao vivo */}
         <div className="builder-ficha">
-          <Ficha spec={spec} answers={answers} onCreate={createAgent} creating={creating} />
+          <Ficha a={a} composed={composed} canCreate={phase === "review"} onCreate={createAgent} creating={creating} />
         </div>
       </div>
     </div>
   );
+}
+
+/* ─── helpers ─────────────────────────────────────────────────── */
+function txt(q: string | ((a: Answers) => string), a: Answers): string {
+  return typeof q === "function" ? q(a) : q;
+}
+function splitTags(s?: string): string[] {
+  return (s || "").split(",").map((t) => t.trim()).filter(Boolean);
+}
+const INTAKE_TXT: Record<IntakeMode, string> = {
+  inbound: "Leads mandam mensagem", keyword: "Campanha (palavra-chave)", tag: "Por tag", outreach: "Prospecção (agente inicia)",
+};
+const OBJ_TXT: Record<Objective, string> = {
+  qualification_only: "Qualificar", qualification_and_booking: "Qualificar + agendar", booking_only: "Agendar",
+};
+function buildModulesPreview(a: Answers): string[] {
+  const m = ["channel", "qualification"];
+  if (isBooking(a)) m.push("scheduling");
+  if (a.followup) m.push("followup");
+  if (a.hours) m.push("active_hours");
+  if (a.intakeMode === "outreach") m.push("outreach");
+  return m;
 }
 
 function ToneRow({ label, value }: { label: string; value: number }) {
@@ -303,69 +528,75 @@ function ToneRow({ label, value }: { label: string; value: number }) {
     </div>
   );
 }
-
-function Ficha({ spec, answers, onCreate, creating }: { spec: Spec | null; answers: { channel?: string; identity?: string; campaign?: string }; onCreate: () => void; creating: boolean }) {
-  if (!spec) {
-    return (
-      <div className="card" style={{ padding: 22 }}>
-        <div className="row" style={{ gap: 10, marginBottom: 12 }}>
-          <Wand2 size={20} style={{ color: "var(--ink-4)" }} />
-          <div style={{ fontSize: 14, fontWeight: 600 }}>Montando com você</div>
-        </div>
-        <div className="col" style={{ gap: 10 }}>
-          <FichaStep n={1} label="Canal" value={answers.channel} />
-          <FichaStep n={2} label="Apresentação" value={answers.identity} />
-          <FichaStep n={3} label="Campanha" value={answers.campaign} />
-        </div>
-        <p className="muted" style={{ fontSize: 12, marginTop: 14 }}>Conforme você responde, o agente vai tomando forma aqui.</p>
+function Row({ n, label, value }: { n: number; label: string; value?: string }) {
+  const done = !!value;
+  return (
+    <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
+      <div style={{ width: 20, height: 20, borderRadius: 999, flexShrink: 0, display: "grid", placeItems: "center", fontSize: 10.5, fontWeight: 600, background: done ? "var(--primary)" : "var(--surface-3)", color: done ? "#fff" : "var(--ink-4)" }}>
+        {done ? <Check size={11} /> : n}
       </div>
-    );
-  }
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>{label}</div>
+        <div style={{ fontSize: 13, color: done ? "var(--ink)" : "var(--ink-4)", lineHeight: 1.35 }}>{value || "—"}</div>
+      </div>
+    </div>
+  );
+}
+
+function Ficha({ a, composed, canCreate, onCreate, creating }: { a: Answers; composed: Composed | null; canCreate: boolean; onCreate: () => void; creating: boolean }) {
+  const intake = a.intakeMode
+    ? INTAKE_TXT[a.intakeMode] + (a.intakeDetail ? ` · ${a.intakeDetail}` : "")
+    : undefined;
   return (
     <div className="card" style={{ padding: 18 }}>
       <div className="row" style={{ gap: 12, marginBottom: 12 }}>
         <AMark templateKey="custom" size="lg" />
         <div className="grow">
-          <div style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.2 }}>{spec.name || "—"}</div>
+          <div style={{ fontSize: 15.5, fontWeight: 600, lineHeight: 1.2 }}>{composed?.name || a.identityName || "Novo agente"}</div>
           <span className="pill pill--muted" style={{ marginTop: 4 }}>fala com leads</span>
         </div>
       </div>
-      {spec.purpose_summary && <p style={{ fontSize: 13, color: "var(--ink-2)", margin: "0 0 12px", lineHeight: 1.5 }}>{spec.purpose_summary}</p>}
-      <div className="row wrap" style={{ gap: 8, marginBottom: 14 }}>
-        {spec.channels?.map((c) => <ChannelChip key={c} name={c} />)}
-        {spec.expires_at && <span className="pill pill--warn">expira {spec.expires_at}</span>}
+      {composed?.purpose_summary && <p style={{ fontSize: 12.5, color: "var(--ink-2)", margin: "0 0 12px", lineHeight: 1.5 }}>{composed.purpose_summary}</p>}
+
+      {a.channels.length > 0 && (
+        <div className="row wrap" style={{ gap: 8, marginBottom: 12 }}>
+          {a.channels.map((c) => <ChannelChip key={c} name={c} />)}
+        </div>
+      )}
+
+      <div className="col" style={{ gap: 9 }}>
+        <Row n={1} label="Propósito" value={a.purpose ? trunc(a.purpose, 60) : undefined} />
+        <Row n={2} label="Como os leads chegam" value={intake} />
+        <Row n={3} label="Identidade" value={a.identityMode ? (a.identityMode === "human" ? "Pessoa do time" : "Assistente virtual") + (a.identityName ? ` · ${a.identityName}` : "") : undefined} />
+        <Row n={4} label="Objetivo" value={a.objective ? OBJ_TXT[a.objective] : undefined} />
+        {isBooking(a) && <Row n={5} label="Agendamento" value={a.specialist ? `com ${a.specialist}` : (a.postBooking ? "configurado" : undefined)} />}
+        <Row n={6} label="Persistência & horário" value={a.followup !== undefined ? `${a.followup ? "follow-up on" : "sem follow-up"} · ${a.hours ? "horário comercial" : a.hours === false ? "24/7" : ""}`.trim() : undefined} />
       </div>
-      <div className="eyebrow" style={{ marginBottom: 8 }}>Tom</div>
-      <ToneRow label="Criatividade" value={spec.behavior?.tone?.creativity ?? 50} />
-      <ToneRow label="Formalidade" value={spec.behavior?.tone?.formality ?? 50} />
-      <ToneRow label="Naturalidade" value={spec.behavior?.tone?.naturalness ?? 50} />
-      <ToneRow label="Assertividade" value={spec.behavior?.tone?.assertiveness ?? 50} />
-      <hr className="hr" style={{ margin: "14px 0" }} />
-      <div className="eyebrow" style={{ marginBottom: 8 }}>Ajustes · {spec.modules?.length || 0}</div>
-      <div className="col" style={{ gap: 5 }}>
-        {spec.modules?.map((k) => (
-          <div key={k} className="row" style={{ gap: 8, fontSize: 13 }}><Check size={13} style={{ color: "var(--success)" }} /> {MODULE_LABEL[k] || k}</div>
-        ))}
-      </div>
-      <button className="btn btn--primary" style={{ width: "100%", justifyContent: "center", marginTop: 18 }} onClick={onCreate} disabled={creating}>
-        <Sparkles size={15} /> Criar agente
+
+      {composed && (
+        <>
+          <hr className="hr" style={{ margin: "14px 0" }} />
+          <div className="eyebrow" style={{ marginBottom: 8 }}>Tom</div>
+          <ToneRow label="Criatividade" value={composed.tone.creativity} />
+          <ToneRow label="Formalidade" value={composed.tone.formality} />
+          <ToneRow label="Naturalidade" value={composed.tone.naturalness} />
+          <ToneRow label="Assertividade" value={composed.tone.assertiveness} />
+          {composed.qualification_fields.length > 0 && (
+            <>
+              <div className="eyebrow" style={{ marginTop: 14, marginBottom: 6 }}>Vai descobrir · {composed.qualification_fields.length}</div>
+              <div className="row wrap" style={{ gap: 6 }}>
+                {composed.qualification_fields.map((f, i) => <span key={i} className="pill pill--muted" style={{ fontSize: 11.5 }}>{f.label}</span>)}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      <button className="btn btn--primary" style={{ width: "100%", justifyContent: "center", marginTop: 18 }} onClick={onCreate} disabled={!canCreate || creating}>
+        <Sparkles size={15} /> {creating ? "Criando…" : "Criar agente"}
       </button>
       <p className="muted" style={{ fontSize: 11.5, textAlign: "center", marginTop: 8 }}>Nasce pausado. Você revisa, testa e ativa.</p>
     </div>
   );
 }
-
-function FichaStep({ n, label, value }: { n: number; label: string; value?: string }) {
-  const done = !!value;
-  return (
-    <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
-      <div style={{ width: 22, height: 22, borderRadius: 999, flexShrink: 0, display: "grid", placeItems: "center", fontSize: 11, fontWeight: 600, background: done ? "var(--primary)" : "var(--surface-3)", color: done ? "#fff" : "var(--ink-4)" }}>
-        {done ? <Check size={12} /> : n}
-      </div>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{label}</div>
-        <div style={{ fontSize: 13, color: done ? "var(--ink)" : "var(--ink-4)", lineHeight: 1.4 }}>{value || "—"}</div>
-      </div>
-    </div>
-  );
-}
+function trunc(s: string, n: number) { return s.length > n ? s.slice(0, n) + "…" : s; }
