@@ -298,6 +298,9 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
       setComposed(data);
       setPhase("review");
       pushBot("Pronto! Montei a proposta — confere na ficha ao lado e clica em Criar quando quiser. ✨");
+      if (ans.intakeMode === "outreach") {
+        setTimeout(() => pushBot("Obs.: a prospecção ativa (o agente iniciar conversas) é liberada pela agência num passo supervisionado. Por ora ele já responde quem chega; o disparo da lista entra depois."), 400);
+      }
     } catch {
       setComposed({
         name: ans.identityName ? `${meta.defaultName} ${ans.identityName}` : meta.defaultName,

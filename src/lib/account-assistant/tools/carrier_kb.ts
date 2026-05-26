@@ -19,7 +19,6 @@
  * ToolEntry pro registry agregar com as outras tools normalmente.
  */
 
-import OpenAI from "openai";
 import type { ToolEntry } from "./types";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -47,15 +46,12 @@ async function embedQuery(text: string): Promise<number[]> {
     const data = await res.json() as { data: { embedding: number[] }[] };
     return data.data[0].embedding;
   }
-  // Fallback OpenAI
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("Nem VOYAGE_API_KEY nem OPENAI_API_KEY configurados");
-  const openai = new OpenAI({ apiKey });
-  const res = await openai.embeddings.create({
-    model: "text-embedding-3-small",
-    input: text,
-  });
-  return res.data[0].embedding;
+  // Sem Voyage: NÃO cai em OpenAI text-embedding-3-small (1536d) — o corpus é
+  // 1024d (migration 00039), então o operador <=> da RPC estoura "different
+  // vector dimensions". Falha alto + claro (o handler trata gracioso). Fix
+  // ultra-review 2026-05-26 (antes tentava o fallback e dava erro obscuro de dim).
+  console.error("[carrier_kb] VOYAGE_API_KEY ausente — RAG desativado (corpus 1024d, sem fallback compatível).");
+  throw new Error("voyage_key_missing");
 }
 
 interface SearchRow {

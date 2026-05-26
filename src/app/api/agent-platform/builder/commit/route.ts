@@ -88,6 +88,12 @@ export async function POST(req: NextRequest) {
 
   const supabase = createAdminClient();
 
+  // Fuso do horário = o da location (não fixa America/New_York). Fix ultra-review.
+  if (config.working_hours && typeof config.working_hours === "object") {
+    const { data: loc } = await supabase.from("locations").select("timezone").eq("location_id", session.locationId).maybeSingle();
+    if (loc?.timezone) (config.working_hours as { timezone?: string }).timezone = loc.timezone;
+  }
+
   // Nasce PAUSADO (status inactive) — revisa, testa e ativa.
   const agentRow: Record<string, unknown> = {
     location_id: session.locationId,
@@ -114,7 +120,12 @@ export async function POST(req: NextRequest) {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error: cfgErr } = await supabase.from("agent_configs").insert({ agent_id: agent.id, ...config } as any);
-  if (cfgErr) console.warn("[builder/commit] config:", cfgErr.message);
+  if (cfgErr) {
+    // Rollback: agente sem config = agente quebrado. Apaga e falha (fix ultra-review).
+    console.error("[builder/commit] config falhou — rollback do agente:", cfgErr.message);
+    await supabase.from("agents").delete().eq("id", agent.id);
+    return errorResponse("Falha ao salvar a configuração do agente. Tenta de novo.", 500, "config_error");
+  }
 
   if (finalModules.length > 0) {
     const rows = finalModules.map((module_key, i) => ({

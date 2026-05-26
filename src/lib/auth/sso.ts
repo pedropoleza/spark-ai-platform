@@ -74,14 +74,18 @@ function isUserAdmin(user: GHLUser): boolean {
   const role = (user.role || "").toLowerCase();
   const type = (user.type || "").toLowerCase();
 
+  // Fix segurança (ultra-review 2026-05-26): ANTES role "user" e type "account"
+  // — o DEFAULT de qualquer usuário GHL de uma location — caíam aqui, então
+  // TODO usuário logado virava "admin". isAdmin gateia o painel Acessos (liberar
+  // entitlements) e o bypass de cobrança; tem que ser só dono/admin da location
+  // ou usuário de agência. Usuário comum ("user"/"account") = não-admin.
+  // (Não afeta o uso do /hub: criar/configurar agente não exige admin; com a flag
+  // de billing OFF, entitlement é liberado pra todos de qualquer forma.)
   return (
     role === "admin" ||
-    role === "user" ||
     role === "owner" ||
     role === "agency_owner" ||
     role === "agency_user" ||
-    type === "account" ||
-    type === "admin" ||
     type === "agency"
   );
 }

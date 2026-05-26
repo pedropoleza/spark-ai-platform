@@ -386,6 +386,18 @@ export async function POST(request: NextRequest) {
 
             const normalize = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
             const bodyNorm = normalize(messageBody || "");
+            // Match tolerante (fix ultra-review 2026-05-26): só exato gerava
+            // FALSO POSITIVO de "humano" quando o canal alterava o texto da IA em
+            // trânsito (truncamento, emoji, sufixo) → pausa indevida. Agora aceita
+            // prefixo/contém (≥20 chars) pra reconhecer o eco da própria IA.
+            const echoOf = (c: string): boolean => {
+              const cn = normalize(c);
+              if (!cn || !bodyNorm) return false;
+              if (cn === bodyNorm) return true;
+              const a = Math.min(cn.length, bodyNorm.length);
+              if (a < 20) return false;
+              return cn.startsWith(bodyNorm) || bodyNorm.startsWith(cn) || cn.includes(bodyNorm) || bodyNorm.includes(cn);
+            };
             let matchedAi = false;
 
             if (aiResponses) {
@@ -395,7 +407,7 @@ export async function POST(request: NextRequest) {
                 const candidates: string[] = Array.isArray(msg)
                   ? msg.filter((m): m is string => typeof m === "string")
                   : typeof msg === "string" ? [msg] : [];
-                if (candidates.some((c) => normalize(c) === bodyNorm)) {
+                if (candidates.some(echoOf)) {
                   matchedAi = true;
                   break;
                 }
@@ -531,22 +543,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ received: true, skipped: "location_not_found" });
     }
 
-    // 2) Rotear por targeting quando nao houver conversa anterior
+    // 2) Rotear por targeting quando nao houver conversa anterior.
+    // Agente COM regra que bate sempre ganha do fallback (sem regra = catch-all).
     if (!selectedAgent) {
+      let fallback: typeof allAgents[number] | null = null;
+      let ruleless = 0;
       for (const candidate of allAgents) {
         const cfg = Array.isArray(candidate.agent_configs)
           ? candidate.agent_configs[0]
           : candidate.agent_configs;
         const rules: TargetingRule[] = cfg?.targeting_rules || [];
         if (rules.length === 0) {
-          // Agente sem targeting aceita qualquer contato — vira fallback
-          if (!selectedAgent) selectedAgent = candidate;
+          ruleless++;
+          if (!fallback) fallback = candidate; // 1º sem-regra = catch-all
           continue;
         }
         const matches = await checkTargetingRules(rules, contactId, location.company_id, locationId);
         if (matches) {
           selectedAgent = candidate;
           break;
+        }
+      }
+      if (!selectedAgent && fallback) {
+        selectedAgent = fallback;
+        // Diagnóstico: 2+ agentes sem regra disputam o mesmo inbound — o 1º
+        // "engole" tudo e o outro nunca recebe. Resolva dando targeting (tag/
+        // etapa) a cada agente. (ultra-review 2026-05-26)
+        if (ruleless > 1) {
+          console.warn(`[Webhook] ${ruleless} agentes lead SEM targeting na location ${locationId} — '${fallback.type}' (${fallback.id}) pegou o lead; os outros ficam sem inbound. Configure targeting por agente.`);
         }
       }
     }
@@ -816,7 +840,14 @@ function isWithinWorkingHours(wh: WorkingHours): boolean {
 
   const [startH, startM] = dayConfig.start.split(":").map(Number);
   const [endH, endM] = dayConfig.end.split(":").map(Number);
-  const isDuringHours = currentMinutes >= startH * 60 + startM && currentMinutes <= endH * 60 + endM;
+  const startMin = startH * 60 + startM;
+  const endMin = endH * 60 + endM;
+  // Janela noturna (start>end, ex: 22h–6h) "dá a volta" na meia-noite.
+  // Fix ultra-review 2026-05-26: antes start>end nunca era "dentro" → agente mudo.
+  const isDuringHours =
+    startMin <= endMin
+      ? currentMinutes >= startMin && currentMinutes <= endMin
+      : currentMinutes >= startMin || currentMinutes <= endMin;
 
   return wh.mode === "only_during" ? isDuringHours : !isDuringHours;
 }
