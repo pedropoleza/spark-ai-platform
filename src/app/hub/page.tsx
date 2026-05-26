@@ -41,7 +41,7 @@ export default async function HubHome() {
         <KPI lbl="Conversas ativas" val={metrics.activeConversations} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 16, marginBottom: 24 }}>
+      <div className="hub-row-2col" style={{ marginBottom: 24 }}>
         {/* Seus agentes */}
         <div className="card">
           <div className="card-hd">

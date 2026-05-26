@@ -22,7 +22,7 @@ export default async function BillingPage() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div className="hub-row-2col" style={{ marginBottom: 16 }}>
         {/* Assinatura */}
         <div className="card">
           <div className="card-hd">

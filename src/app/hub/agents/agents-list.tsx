@@ -56,8 +56,8 @@ export function AgentsList({ agents }: { agents: HubAgentView[] }) {
             <Link
               key={a.id}
               href={`/hub/agents/${a.id}`}
-              className="lrow"
-              style={{ gridTemplateColumns: "48px 1fr 180px 130px 110px", padding: 16 }}
+              className="lrow lrow--agent"
+              style={{ padding: 16 }}
             >
               <AMark templateKey={a.template_key} size="lg" />
               <div>
@@ -74,7 +74,7 @@ export function AgentsList({ agents }: { agents: HubAgentView[] }) {
                   )}
                 </div>
               </div>
-              <div className="row wrap" style={{ gap: 12 }}>
+              <div className="row wrap lrow-ch" style={{ gap: 12 }}>
                 {a.channels.map((c) => (
                   <ChannelChip key={c} name={c} />
                 ))}

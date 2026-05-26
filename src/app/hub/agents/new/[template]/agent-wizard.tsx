@@ -483,6 +483,13 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
                   );
                 })}
               </div>
+              {/* Footgun: só WhatsApp Web/SMS recebe mensagem hoje. API/Instagram
+                  ainda dependem de liberação — avisa pra não criar agente "mudo". */}
+              {node === "channel" && (
+                <div className="muted" style={{ fontSize: 12, marginBottom: 10, lineHeight: 1.45 }}>
+                  No ar agora: <b>WhatsApp Web/SMS</b>. WhatsApp API e Instagram entram em breve — se escolher só esses, o agente fica esperando o canal ser liberado.
+                </div>
+              )}
               <button className="btn btn--primary btn--sm" onClick={submitMulti}>Continuar</button>
             </div>
           )}

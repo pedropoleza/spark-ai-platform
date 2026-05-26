@@ -425,6 +425,18 @@
 .hub-root .fgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; }
 @media (max-width: 560px) { .hub-root .fgrid { grid-template-columns: 1fr; } }
 
+/* ─── Grids responsivos (inline style não aceita @media; viram classe) ── */
+/* Split 2 colunas (Início: agentes+SparkBot; Faturamento: assinatura+uso). */
+.hub-root .hub-row-2col { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; }
+@media (max-width: 768px) { .hub-root .hub-row-2col { grid-template-columns: 1fr; } }
+/* Linha de agente (lista): em telas estreitas esconde os chips de canal
+   (info secundária) e simplifica pra ícone · nome · status · preço. */
+.hub-root .lrow--agent { grid-template-columns: 48px 1fr 170px 124px 104px; }
+@media (max-width: 860px) {
+  .hub-root .lrow--agent { grid-template-columns: 44px 1fr 120px 96px; }
+  .hub-root .lrow--agent .lrow-ch { display: none; }
+}
+
 /* Sidebar colapsa em largura estreita (iframe estreito do Spark Leads) */
 @media (max-width: 880px) {
   .hub-app { grid-template-columns: 60px 1fr; }
