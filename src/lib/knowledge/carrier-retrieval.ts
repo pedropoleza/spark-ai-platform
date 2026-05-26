@@ -8,28 +8,28 @@
  * fallback OpenAI text-embedding-3-small) — tem que bater pra similarity valer.
  * Tudo fail-safe: qualquer erro → retorna [] e o agente segue sem o template.
  */
-import OpenAI from "openai";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const VOYAGE_KEY = process.env.VOYAGE_API_KEY;
 const VALID_CARRIERS = new Set(["national_life_group", "agency_brazillionaires"]);
 
+// O corpus é vector(1024) (Voyage voyage-3-large, migration 00039). NÃO há
+// fallback compatível: text-embedding-3-small é 1536d → o operador <=> da RPC
+// estoura "different vector dimensions". Antes isso falhava SILENCIOSO (catch →
+// []) sem alerta. Agora loga ERROR alto pra ficar visível se a key sumir.
 async function embedQuery(text: string): Promise<number[]> {
-  if (VOYAGE_KEY) {
-    const res = await fetch("https://api.voyageai.com/v1/embeddings", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${VOYAGE_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ input: text, model: "voyage-3-large", input_type: "query" }),
-    });
-    if (!res.ok) throw new Error(`Voyage ${res.status}`);
-    const data = (await res.json()) as { data: { embedding: number[] }[] };
-    return data.data[0].embedding;
+  if (!VOYAGE_KEY) {
+    console.error("[carrier-retrieval] VOYAGE_API_KEY ausente — RAG de carrier desativado (corpus 1024d, sem fallback compatível).");
+    throw new Error("voyage_key_missing");
   }
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("sem VOYAGE_API_KEY/OPENAI_API_KEY");
-  const openai = new OpenAI({ apiKey });
-  const res = await openai.embeddings.create({ model: "text-embedding-3-small", input: text });
-  return res.data[0].embedding;
+  const res = await fetch("https://api.voyageai.com/v1/embeddings", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${VOYAGE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ input: text, model: "voyage-3-large", input_type: "query" }),
+  });
+  if (!res.ok) throw new Error(`Voyage ${res.status}`);
+  const data = (await res.json()) as { data: { embedding: number[] }[] };
+  return data.data[0].embedding;
 }
 
 export interface CarrierChunk {

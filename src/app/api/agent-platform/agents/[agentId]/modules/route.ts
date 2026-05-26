@@ -14,6 +14,7 @@ import { getSession } from "@/lib/auth/sso";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
 import { listModules } from "@/lib/repositories/agent-platform.repo";
+import { assertLocationInCompany } from "@/lib/agent-platform/entitlement-admin";
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ agentId: string }> }) {
   const { agentId } = await params;
@@ -34,7 +35,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     .eq("id", agentId)
     .maybeSingle();
   if (!agent) return errorResponse("Agente não encontrado", 404, "not_found");
-  if (agent.type !== "account_assistant" && agent.location_id !== session.locationId) {
+  // SparkBot é global pro admin, mas SÓ dentro da MESMA company (anti cross-tenant;
+  // fix ultra-review 2026-05-26). Outros agents: a própria location.
+  if (agent.type === "account_assistant") {
+    if (!(await assertLocationInCompany(agent.location_id, session.companyId))) {
+      return errorResponse("Agente não encontrado", 404, "not_found");
+    }
+  } else if (agent.location_id !== session.locationId) {
     return errorResponse("Agente não encontrado", 404, "not_found");
   }
 

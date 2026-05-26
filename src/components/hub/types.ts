@@ -19,7 +19,15 @@ export const CHANNEL_DB_TO_UI: Record<string, ChannelKey> = {
   SMS: "whatsapp_web",
   WhatsApp: "whatsapp_api",
   Instagram: "instagram",
+  // Legados/variações de casing (evita perder canal no round-trip do editor).
+  sms: "whatsapp_web",
+  whatsapp: "whatsapp_web", // legacy lowercase = WhatsApp Web (Stevo)
+  instagram: "instagram",
 };
+/** Canais do DB que o /hub NÃO representa nos 3 tipos (ex: "Email") — preservados no save. */
+export function nonUiChannels(enabled?: (string | null)[] | null): string[] {
+  return (enabled || []).filter((c): c is string => !!c && !CHANNEL_DB_TO_UI[c]);
+}
 export const CHANNEL_UI_TO_DB: Record<ChannelKey, string> = {
   whatsapp_web: "SMS",
   whatsapp_api: "WhatsApp",

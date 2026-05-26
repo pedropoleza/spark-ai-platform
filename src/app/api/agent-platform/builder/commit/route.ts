@@ -79,6 +79,12 @@ export async function POST(req: NextRequest) {
   const tpl = await getTemplate(template);
   const baseline = Array.isArray(tpl?.default_modules) ? (tpl!.default_modules as string[]) : [];
   const finalModules = Array.from(new Set([...moduleKeys, ...baseline])).filter((k) => allowed.includes(k));
+  // Se nasceu com data_fields (inclusive os de fallback), garante o módulo que
+  // os coleta — senão o agente tem campos a preencher mas sem a capacidade.
+  const hasFields = Array.isArray(config.data_fields) && (config.data_fields as unknown[]).length > 0;
+  if (hasFields && allowed.includes("qualification") && !finalModules.includes("qualification")) {
+    finalModules.push("qualification");
+  }
 
   const supabase = createAdminClient();
 

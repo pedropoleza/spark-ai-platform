@@ -15,7 +15,7 @@ import { TestChat } from "./test-chat";
 import { KbManager } from "./kb-manager";
 import type { HubAgentDetail } from "@/lib/hub/data";
 import type { AgentStatus, ChannelKey } from "@/components/hub/types";
-import { channelsFromDb, channelsToDb } from "@/components/hub/types";
+import { channelsFromDb, channelsToDb, nonUiChannels } from "@/components/hub/types";
 import type {
   DataField, FollowUpConfig, WorkingHoursConfig, WorkingHoursDay,
   TargetingRule, AutomationRule, AutomationAction, DeactivationRule, HandoffMessage,
@@ -31,6 +31,8 @@ type Cat =
   | "hours" | "automations" | "pause" | "limits";
 
 const num = (v: unknown, d: number) => (typeof v === "number" && !isNaN(v) ? v : d);
+// Clamp pra faixa do schema — legado fora da faixa derrubava o PUT inteiro (400).
+const clampNum = (v: unknown, lo: number, hi: number, d: number) => Math.max(lo, Math.min(hi, num(v, d)));
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const bool = (v: unknown, d = false) => (typeof v === "boolean" ? v : d);
 const rid = () => Math.random().toString(36).slice(2, 10);
@@ -58,6 +60,7 @@ interface Editable {
   data_fields: DataField[];
   targeting_rules: TargetingRule[];
   channels: ChannelKey[];
+  extra_channels: string[]; // canais do DB que o /hub não edita (ex: Email) — preservados
   follow_up_config: FollowUpConfig;
   post_booking: PostBooking;
   specialist_name: string;
@@ -106,14 +109,15 @@ function makeSeed(c: Record<string, any>): Editable {
     confirmation_mode: (["always", "medium_and_high", "high_only"].includes(c.confirmation_mode) ? c.confirmation_mode : "medium_and_high") as ConfMode,
     objective: (["qualification_only", "qualification_and_booking", "booking_only"].includes(c.objective) ? c.objective : "qualification_and_booking") as Objective,
     working_hours: { enabled: bool(wh.enabled), timezone: str(wh.timezone) || "America/New_York", mode: wh.mode === "only_outside" ? "only_outside" : "only_during", schedule: (wh.schedule as WorkingHoursConfig["schedule"]) || {} },
-    debounce_seconds: num(c.debounce_seconds, 10),
+    debounce_seconds: clampNum(c.debounce_seconds, 5, 60, 10),
     auto_pause_on_human_message: bool(c.auto_pause_on_human_message, true),
     data_fields: Array.isArray(c.data_fields) ? (c.data_fields as DataField[]) : [],
     targeting_rules: Array.isArray(c.targeting_rules) ? (c.targeting_rules as TargetingRule[]) : [],
     channels: channelsFromDb(c.enabled_channels),
+    extra_channels: nonUiChannels(c.enabled_channels),
     follow_up_config: {
       enabled: bool(fu.enabled), mode: fu.mode === "manual" ? "manual" : "ai_auto",
-      intensity: num(fu.intensity, 5), max_attempts: num(fu.max_attempts, 3),
+      intensity: clampNum(fu.intensity, 1, 10, 5), max_attempts: clampNum(fu.max_attempts, 1, 20, 3),
       min_delay_minutes: num(fu.min_delay_minutes, 10), max_delay_minutes: num(fu.max_delay_minutes, 10080),
       custom_prompt: str(fu.custom_prompt), manual_steps: Array.isArray(fu.manual_steps) ? fu.manual_steps : [],
     },
@@ -126,9 +130,9 @@ function makeSeed(c: Record<string, any>): Editable {
     deactivation_rules: Array.isArray(c.deactivation_rules) ? (c.deactivation_rules as DeactivationRule[]) : [],
     knowledge_base_instructions: str(c.knowledge_base_instructions),
     enabled_kbs: Array.isArray(c.enabled_kbs) ? (c.enabled_kbs as string[]) : [],
-    max_messages_per_conversation: num(c.max_messages_per_conversation, 100),
-    daily_proactive_limit: num(c.daily_proactive_limit, 10),
-    no_response_threshold: num(c.no_response_threshold, 3),
+    max_messages_per_conversation: clampNum(c.max_messages_per_conversation, 10, 200, 100),
+    daily_proactive_limit: clampNum(c.daily_proactive_limit, 0, 100, 10),
+    no_response_threshold: clampNum(c.no_response_threshold, 1, 20, 3),
     quiet_hours: { enabled: bool(qh.enabled), start: str(qh.start) || "21:00", end: str(qh.end) || "08:00", timezone: qh.timezone, days: qh.days },
     enable_audio_transcription: bool(c.enable_audio_transcription, true),
     enable_image_analysis: bool(c.enable_image_analysis, true),
@@ -253,7 +257,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
           working_hours: { ...e.working_hours, enabled: enabled.has("active_hours") },
           debounce_seconds: e.debounce_seconds, auto_pause_on_human_message: e.auto_pause_on_human_message,
           data_fields: e.data_fields, targeting_rules: cleanTargeting,
-          enabled_channels: channelsToDb(e.channels),
+          enabled_channels: [...channelsToDb(e.channels), ...e.extra_channels],
           follow_up_config: { ...e.follow_up_config, enabled: enabled.has("followup") },
           post_booking: e.post_booking,
           specialist_name: e.specialist_name, preferred_time_slot: e.preferred_time_slot, check_legal_docs: e.check_legal_docs,

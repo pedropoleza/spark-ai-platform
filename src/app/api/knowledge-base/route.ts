@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { assertLocationInCompany } from "@/lib/agent-platform/entitlement-admin";
 
 // Visão (OCR de imagem) e parse de PDF podem demorar.
 export const maxDuration = 60;
@@ -78,17 +79,45 @@ async function extractFileContent(file: File, buffer: Buffer): Promise<string> {
  * Fix audit 2026-05-03: antes filtrava sempre por session.locationId. Pra
  * Sparkbot, admin de OUTRA location veria KB vazia mesmo o agent existindo.
  */
-async function resolveKbLocation(agentId: string, sessionLocationId: string): Promise<string> {
+async function resolveKbLocation(agentId: string, sessionLocationId: string, sessionCompanyId: string): Promise<string> {
   const admin = createAdminClient();
   const { data: agent } = await admin
     .from("agents")
     .select("type, location_id")
     .eq("id", agentId)
     .maybeSingle();
+  // SparkBot (account_assistant) é global pro admin — mas SÓ devolve a location
+  // dele se for da MESMA company do caller (anti cross-tenant; fix ultra-review
+  // 2026-05-26). Senão cai no escopo da própria location (não vaza outra conta).
   if (agent?.type === "account_assistant" && agent.location_id) {
-    return agent.location_id;
+    if (await assertLocationInCompany(agent.location_id, sessionCompanyId)) {
+      return agent.location_id;
+    }
   }
   return sessionLocationId;
+}
+
+// Limite de upload: evita OOM/abuso (e custo de visão em imagens enormes).
+const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15 MB
+
+/** Bloqueia SSRF: só http(s) público; rejeita localhost/IPs privados/link-local (metadata). */
+function isSafeHttpUrl(raw: string): boolean {
+  let u: URL;
+  try { u = new URL(raw); } catch { return false; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h.endsWith(".localhost") || h === "0.0.0.0" || h === "::1") return false;
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const a = Number(m[1]), b = Number(m[2]);
+    if (a === 0 || a === 10 || a === 127) return false;       // this-host / privado / loopback
+    if (a === 169 && b === 254) return false;                  // link-local (cloud metadata 169.254.169.254)
+    if (a === 172 && b >= 16 && b <= 31) return false;         // privado
+    if (a === 192 && b === 168) return false;                  // privado
+    if (a === 100 && b >= 64 && b <= 127) return false;        // CGNAT
+  }
+  if (h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80")) return false; // IPv6 ULA/link-local
+  return true;
 }
 
 // GET /api/knowledge-base?agent_id=xxx
@@ -103,7 +132,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "agent_id obrigatorio" }, { status: 400 });
   }
 
-  const locationId = await resolveKbLocation(agentId, session.locationId);
+  const locationId = await resolveKbLocation(agentId, session.locationId, session.companyId);
   const supabase = createServerClient();
   const { data } = await supabase
     .from("knowledge_base")
@@ -136,9 +165,15 @@ export async function POST(request: NextRequest) {
     if (!file || !agentId) {
       return NextResponse.json({ error: "file e agent_id obrigatorios" }, { status: 400 });
     }
+    if (file.size > MAX_FILE_BYTES) {
+      return NextResponse.json({ error: "Arquivo muito grande (máx 15 MB). Divida ou cole o texto." }, { status: 413 });
+    }
 
     // Extrair texto do arquivo (PDF, Excel, Word, CSV/txt, imagem via visão).
     const buffer = Buffer.from(await file.arrayBuffer());
+    if (buffer.length > MAX_FILE_BYTES) {
+      return NextResponse.json({ error: "Arquivo muito grande (máx 15 MB)." }, { status: 413 });
+    }
     let content = await extractFileContent(file, buffer);
 
     // Truncar conteudo muito grande
@@ -149,7 +184,7 @@ export async function POST(request: NextRequest) {
 
     const tokenEstimate = Math.ceil(content.length / 4);
 
-    const locationIdForFile = await resolveKbLocation(agentId, session.locationId);
+    const locationIdForFile = await resolveKbLocation(agentId, session.locationId, session.companyId);
     const supabase = createServerClient();
     const { data, error } = await supabase
       .from("knowledge_base")
@@ -174,7 +209,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ item: data }, { status: 201 });
   } else {
     // Texto ou URL
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const { agent_id, type, title, content, description, usage_instructions } = body;
 
     if (!agent_id || !type || !title) {
@@ -183,10 +218,10 @@ export async function POST(request: NextRequest) {
 
     let finalContent = content || "";
 
-    // Se for URL, tentar buscar conteudo
-    if (type === "url" && content) {
+    // Se for URL, tentar buscar conteudo. Guarda SSRF: só busca URL pública.
+    if (type === "url" && content && isSafeHttpUrl(String(content))) {
       try {
-        const res = await fetch(content, { signal: AbortSignal.timeout(10000) });
+        const res = await fetch(content, { signal: AbortSignal.timeout(10000), redirect: "error" });
         if (res.ok) {
           const html = await res.text();
           // Extrair texto basico do HTML
@@ -205,7 +240,7 @@ export async function POST(request: NextRequest) {
 
     const tokenEstimate = Math.ceil(finalContent.length / 4);
 
-    const locationIdForBody = await resolveKbLocation(agent_id, session.locationId);
+    const locationIdForBody = await resolveKbLocation(agent_id, session.locationId, session.companyId);
     const supabase = createServerClient();
     const { data, error } = await supabase
       .from("knowledge_base")
@@ -253,7 +288,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "Nada para atualizar" }, { status: 400 });
   }
 
-  const locationIdForPatch = await resolveKbLocation(agent_id, session.locationId);
+  const locationIdForPatch = await resolveKbLocation(agent_id, session.locationId, session.companyId);
   const supabase = createServerClient();
   const { data, error } = await supabase
     .from("knowledge_base")
@@ -284,7 +319,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "id e agent_id obrigatorios" }, { status: 400 });
   }
 
-  const locationIdForDel = await resolveKbLocation(agentId, session.locationId);
+  const locationIdForDel = await resolveKbLocation(agentId, session.locationId, session.companyId);
   const supabase = createServerClient();
   await supabase
     .from("knowledge_base")

@@ -87,9 +87,11 @@ export function KbManager({ agentId }: { agentId: string }) {
   async function remove(id: string) {
     setItems((p) => p.filter((x) => x.id !== id));
     try {
-      await fetch(`/api/knowledge-base?id=${encodeURIComponent(id)}&agent_id=${encodeURIComponent(agentId)}`, { method: "DELETE" });
+      const res = await fetch(`/api/knowledge-base?id=${encodeURIComponent(id)}&agent_id=${encodeURIComponent(agentId)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("delete falhou");
     } catch {
-      void load();
+      toast.error("Não consegui remover. Recarregando…");
+      void load(); // restaura o item se o servidor rejeitou
     }
   }
 
