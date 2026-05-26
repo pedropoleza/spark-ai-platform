@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ChevronLeft, Send, Sparkles, Check, Wand2, Mic, Square, X, Pencil } from "lucide-react";
+import { ChevronLeft, Send, Sparkles, Check, Wand2, Mic, Square, Pencil } from "lucide-react";
 import { AMark, ChannelChip } from "@/components/hub/primitives";
 import { MODULE_LABEL } from "@/components/hub/module-labels";
 import type { ChannelKey } from "@/components/hub/types";
