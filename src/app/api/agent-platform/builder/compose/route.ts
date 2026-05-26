@@ -1,6 +1,6 @@
 /**
  * POST /api/agent-platform/builder/compose — fecha o agente custom a partir do
- * BRIEF do wizard. O wizard (custom-builder.tsx) coleta as decisões estruturais
+ * BRIEF do wizard. O wizard (agent-wizard.tsx) coleta as decisões estruturais
  * (intake, canal, objetivo, etc.); aqui a IA escreve o conteúdo "mole":
  *   - name, purpose_summary
  *   - custom_instructions (ricas, PT-BR, incorporando o intake)
@@ -37,6 +37,9 @@ export async function POST(request: NextRequest) {
   const purpose = String(b.purpose || "").trim();
   if (!purpose) return errorResponse("Brief vazio.", 400, "no_brief");
 
+  const template = ["sales", "recruitment", "custom"].includes(String(b.template)) ? String(b.template) : "custom";
+  const isRec = template === "recruitment";
+  const audienceNoun = isRec ? "CANDIDATOS a corretor/agente" : "LEADS";
   const intake = (b.intake || {}) as Record<string, unknown>;
   const intakeMode = String(intake.mode || "inbound");
   const identity = (b.identity || {}) as Record<string, unknown>;
@@ -59,7 +62,8 @@ export async function POST(request: NextRequest) {
     .join("\n");
 
   const system =
-    "Você monta a 'mente' de um agente de IA que conversa com LEADS de uma agência de seguros no WhatsApp/Instagram, em português do Brasil. " +
+    `Você monta a 'mente' de um agente de IA que conversa com ${audienceNoun} de uma agência de seguros no WhatsApp/Instagram, em português do Brasil. ` +
+    (isRec ? "É um agente de RECRUTAMENTO: tria e atrai candidatos pra virarem corretores, agenda entrevistas. " : "") +
     "A partir do brief, escreva a configuração final. Regras: " +
     "(1) custom_instructions: 1-3 parágrafos ricos e específicos, na 2ª pessoa ('Você é...'), dizendo quem o agente é, o que oferece, como conduzir a conversa e incorporando o contexto de como o lead chegou. " +
     "(2) qualification_fields: extraia do brief o que faz sentido o agente descobrir (3-6 campos). type: text/date/boolean/select. " +

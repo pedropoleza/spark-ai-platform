@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -9,6 +9,8 @@ import { AMark, ChannelChip } from "@/components/hub/primitives";
 import { MODULE_LABEL } from "@/components/hub/module-labels";
 import type { ChannelKey } from "@/components/hub/types";
 import { CHANNEL_LABEL } from "@/components/hub/types";
+
+export type WizardTemplate = "sales" | "recruitment" | "custom";
 
 type Msg = { role: "user" | "assistant"; content: string };
 type IntakeMode = "inbound" | "keyword" | "tag" | "outreach";
@@ -39,6 +41,34 @@ interface Composed {
   tone: { creativity: number; formality: number; naturalness: number; assertiveness: number };
 }
 
+// Copy por template — só o que muda de venda/recrutamento/custom.
+const META: Record<WizardTemplate, {
+  title: string; intro: string; purposeQ: string; purposePlaceholder: string;
+  leadNoun: string; face: string; defaultName: string;
+}> = {
+  sales: {
+    title: "Montar agente de venda",
+    intro: "Responda clicando, escrevendo ou gravando áudio. A IA monta o agente de venda — você revisa e ativa.",
+    purposeQ: "Pra começar: o que você vende e pra quem? Fala do produto, do público e do diferencial — quanto mais contexto, melhor. Pode escrever ou gravar um áudio. 🎙️",
+    purposePlaceholder: "Ex: seguro de vida pra famílias brasileiras na Flórida, foco em proteção + acúmulo…",
+    leadNoun: "leads", face: "fala com leads", defaultName: "Agente de Venda",
+  },
+  recruitment: {
+    title: "Montar agente de recrutamento",
+    intro: "Responda clicando, escrevendo ou gravando áudio. A IA monta o agente de recrutamento — você revisa e ativa.",
+    purposeQ: "Pra começar: que perfil você recruta e qual a oportunidade? Fala da vaga, dos requisitos e do que você oferece. Pode escrever ou gravar um áudio. 🎙️",
+    purposePlaceholder: "Ex: recruto futuros agentes de seguro, comissão alta + treinamento, busco perfil comunicativo…",
+    leadNoun: "candidatos", face: "fala com candidatos", defaultName: "Agente de Recrutamento",
+  },
+  custom: {
+    title: "Montar agente personalizado",
+    intro: "Respondendo, clicando ou gravando áudio. A IA monta o agente — você revisa e ativa depois.",
+    purposeQ: "Pra começar: o que esse agente vai fazer? Fala da campanha, da oferta, pra quem é — quanto mais contexto, melhor. Pode escrever ou gravar um áudio. 🎙️",
+    purposePlaceholder: "Ex: agente do feirão de seguro de vida, fala com quem viu o anúncio no Instagram…",
+    leadNoun: "leads", face: "fala com leads", defaultName: "Agente personalizado",
+  },
+};
+
 type NodeKey =
   | "purpose" | "intake" | "intake_detail" | "outreach_opening" | "channel"
   | "identity" | "identity_name" | "objective" | "qualification"
@@ -54,109 +84,106 @@ interface NodeDef {
   placeholder?: string;
 }
 
-const NODES: Record<NodeKey, NodeDef> = {
-  purpose: {
-    type: "free",
-    audio: true,
-    q: "Pra começar: o que esse agente vai fazer? Fala da campanha, da oferta, pra quem é — quanto mais contexto, melhor. Pode escrever ou gravar um áudio. 🎙️",
-    placeholder: "Ex: agente do feirão de seguro de vida, fala com quem viu o anúncio no Instagram…",
-  },
-  intake: {
-    type: "choice",
-    q: "Como os leads vão chegar até esse agente?",
-    chips: [
-      { label: "Eles me mandam mensagem", value: "inbound" },
-      { label: "Campanha com palavra-chave", value: "keyword" },
-      { label: "Só quem eu marco com uma tag", value: "tag" },
-      { label: "O agente vai atrás (prospecção)", value: "outreach" },
-    ],
-  },
-  intake_detail: {
-    type: "free",
-    q: (a) =>
-      a.intakeMode === "keyword"
-        ? "Qual é a palavra-chave que o lead manda pra ativar? (ex: SEGURO, COTAÇÃO)"
-        : a.intakeMode === "outreach"
-        ? "Qual lista o agente vai abordar? Use a tag dos contatos (uma ou mais, separadas por vírgula)."
-        : "Qual tag marca esses leads? (uma ou mais, separadas por vírgula)",
-    placeholder: "ex: feirao_2026, lead_quente",
-  },
-  outreach_opening: {
-    type: "free",
-    skippable: true,
-    q: "Como deve ser a 1ª mensagem que ele manda? (deixa em branco que a IA cria com base no propósito)",
-    placeholder: "Ex: Oi {first_name}! Vi que você se interessou pelo nosso plano…",
-  },
-  channel: {
-    type: "multi",
-    q: "Por quais canais ele conversa? (pode escolher mais de um)",
-    chips: [
-      { label: CHANNEL_LABEL.whatsapp_web, value: "whatsapp_web" },
-      { label: CHANNEL_LABEL.whatsapp_api, value: "whatsapp_api" },
-      { label: CHANNEL_LABEL.instagram, value: "instagram" },
-    ],
-  },
-  identity: {
-    type: "choice",
-    q: "Como ele se apresenta pro lead?",
-    chips: [
-      { label: "Como uma pessoa do time", value: "human" },
-      { label: "Como uma assistente virtual", value: "assistant" },
-    ],
-  },
-  identity_name: {
-    type: "free",
-    skippable: true,
-    q: "Que nome ele usa? (ex: Bia, Léo) — ou pula que a gente define depois.",
-    placeholder: "Nome do agente",
-  },
-  objective: {
-    type: "choice",
-    q: "Qual o objetivo dele na conversa?",
-    chips: [
-      { label: "Só qualificar", value: "qualification_only" },
-      { label: "Qualificar e agendar", value: "qualification_and_booking" },
-      { label: "Só agendar", value: "booking_only" },
-    ],
-  },
-  qualification: {
-    type: "free",
-    audio: true,
-    skippable: true,
-    q: "O que ele precisa descobrir do lead? (ex: cidade, idade, orçamento, se já tem seguro). Pode gravar um áudio — ou pular.",
-    placeholder: "Ex: preciso saber a cidade, a idade e se já tem algum seguro hoje.",
-  },
-  specialist: {
-    type: "free",
-    skippable: true,
-    q: "Quem conduz a reunião/atendimento depois? (nome do especialista — ou pula)",
-    placeholder: "Ex: Dr. Pereira",
-  },
-  postbooking: {
-    type: "choice",
-    q: "Depois de agendar, o que ele faz?",
-    chips: [
-      { label: "Passa pra um humano", value: "stop_and_handoff" },
-      { label: "Continua até a reunião", value: "continue_until_appointment" },
-    ],
-  },
-  followup: {
-    type: "choice",
-    q: "Se o lead sumir, o agente insiste (follow-up)?",
-    chips: [
-      { label: "Sim, faz follow-up", value: "yes" },
-      { label: "Não", value: "no" },
-    ],
-  },
-  hours: {
-    type: "choice",
-    q: "Tem horário de atendimento?",
-    chips: [
-      { label: "24/7 — responde sempre", value: "always" },
-      { label: "Horário comercial (seg–sex)", value: "business" },
-    ],
-  },
-};
+function buildNodes(template: WizardTemplate): Record<NodeKey, NodeDef> {
+  const m = META[template];
+  const isRec = template === "recruitment";
+  const noun = m.leadNoun;
+  return {
+    purpose: { type: "free", audio: true, q: m.purposeQ, placeholder: m.purposePlaceholder },
+    intake: {
+      type: "choice",
+      q: `Como os ${noun} vão chegar até esse agente?`,
+      chips: [
+        { label: "Eles me mandam mensagem", value: "inbound" },
+        { label: "Campanha com palavra-chave", value: "keyword" },
+        { label: "Só quem eu marco com uma tag", value: "tag" },
+        { label: "O agente vai atrás (prospecção)", value: "outreach" },
+      ],
+    },
+    intake_detail: {
+      type: "free",
+      q: (a) =>
+        a.intakeMode === "keyword"
+          ? "Qual é a palavra-chave que a pessoa manda pra ativar? (ex: SEGURO, VAGA)"
+          : a.intakeMode === "outreach"
+          ? "Qual lista o agente vai abordar? Use a tag dos contatos (uma ou mais, separadas por vírgula)."
+          : `Qual tag marca esses ${noun}? (uma ou mais, separadas por vírgula)`,
+      placeholder: "ex: feirao_2026, lead_quente",
+    },
+    outreach_opening: {
+      type: "free",
+      skippable: true,
+      q: "Como deve ser a 1ª mensagem que ele manda? (deixa em branco que a IA cria com base no propósito)",
+      placeholder: "Ex: Oi {first_name}! Vi que você se interessou…",
+    },
+    channel: {
+      type: "multi",
+      q: "Por quais canais ele conversa? (pode escolher mais de um)",
+      chips: [
+        { label: CHANNEL_LABEL.whatsapp_web, value: "whatsapp_web" },
+        { label: CHANNEL_LABEL.whatsapp_api, value: "whatsapp_api" },
+        { label: CHANNEL_LABEL.instagram, value: "instagram" },
+      ],
+    },
+    identity: {
+      type: "choice",
+      q: `Como ele se apresenta pro ${isRec ? "candidato" : "lead"}?`,
+      chips: [
+        { label: "Como uma pessoa do time", value: "human" },
+        { label: "Como uma assistente virtual", value: "assistant" },
+      ],
+    },
+    identity_name: { type: "free", skippable: true, q: "Que nome ele usa? (ex: Bia, Léo) — ou pula que a gente define depois.", placeholder: "Nome do agente" },
+    objective: {
+      type: "choice",
+      q: "Qual o objetivo dele na conversa?",
+      chips: isRec
+        ? [
+            { label: "Só triar", value: "qualification_only" },
+            { label: "Triar + agendar entrevista", value: "qualification_and_booking" },
+            { label: "Só agendar entrevista", value: "booking_only" },
+          ]
+        : [
+            { label: "Só qualificar", value: "qualification_only" },
+            { label: "Qualificar e agendar", value: "qualification_and_booking" },
+            { label: "Só agendar", value: "booking_only" },
+          ],
+    },
+    qualification: {
+      type: "free",
+      audio: true,
+      skippable: true,
+      q: isRec
+        ? "O que ele precisa descobrir do candidato? (ex: experiência, disponibilidade, documentação). Pode gravar um áudio — ou pular."
+        : "O que ele precisa descobrir do lead? (ex: cidade, idade, orçamento, se já tem seguro). Pode gravar um áudio — ou pular.",
+      placeholder: isRec ? "Ex: se já tem licença, disponibilidade, por que quer entrar na área." : "Ex: a cidade, a idade e se já tem algum seguro hoje.",
+    },
+    specialist: {
+      type: "free",
+      skippable: true,
+      q: isRec ? "Quem conduz a entrevista? (nome — ou pula)" : "Quem conduz a reunião/atendimento depois? (nome do especialista — ou pula)",
+      placeholder: isRec ? "Ex: Ana (recrutadora)" : "Ex: Dr. Pereira",
+    },
+    postbooking: {
+      type: "choice",
+      q: isRec ? "Depois de agendar a entrevista, o que ele faz?" : "Depois de agendar, o que ele faz?",
+      chips: [
+        { label: "Passa pra um humano", value: "stop_and_handoff" },
+        { label: isRec ? "Continua até a entrevista" : "Continua até a reunião", value: "continue_until_appointment" },
+      ],
+    },
+    followup: {
+      type: "choice",
+      q: `Se o ${isRec ? "candidato" : "lead"} sumir, o agente insiste (follow-up)?`,
+      chips: [{ label: "Sim, faz follow-up", value: "yes" }, { label: "Não", value: "no" }],
+    },
+    hours: {
+      type: "choice",
+      q: "Tem horário de atendimento?",
+      chips: [{ label: "24/7 — responde sempre", value: "always" }, { label: "Horário comercial (seg–sex)", value: "business" }],
+    },
+  };
+}
 
 const ORDER: NodeKey[] = [
   "purpose", "intake", "intake_detail", "outreach_opening", "channel",
@@ -178,11 +205,14 @@ function nextNode(cur: NodeKey, a: Answers): NodeKey | null {
 
 type Phase = "wizard" | "composing" | "review" | "creating";
 
-export function CustomBuilder() {
+export function AgentWizard({ template }: { template: WizardTemplate }) {
   const router = useRouter();
+  const meta = META[template];
+  const NODES = useMemo(() => buildNodes(template), [template]);
+
   const [phase, setPhase] = useState<Phase>("wizard");
   const [node, setNode] = useState<NodeKey>("purpose");
-  const [msgs, setMsgs] = useState<Msg[]>([{ role: "assistant", content: txt(NODES.purpose.q, {} as Answers) }]);
+  const [msgs, setMsgs] = useState<Msg[]>(() => [{ role: "assistant", content: txt(NODES.purpose.q, {} as Answers) }]);
   const [a, setA] = useState<Answers>({ channels: [] });
   const [input, setInput] = useState("");
   const [composed, setComposed] = useState<Composed | null>(null);
@@ -201,11 +231,10 @@ export function CustomBuilder() {
   }, [msgs, pendingAudio, phase]);
 
   const def = NODES[node];
-  const pushBot = (content: string) => setMsgs((m) => [...m, { role: "assistant", content }]);
-  const pushUser = (content: string) => setMsgs((m) => [...m, { role: "user", content }]);
+  const pushBot = (content: string) => setMsgs((mm) => [...mm, { role: "assistant", content }]);
+  const pushUser = (content: string) => setMsgs((mm) => [...mm, { role: "user", content }]);
   const busy = recording || transcribing || phase !== "wizard";
 
-  // Avança o fluxo com a resposta do nó atual.
   function answer(patch: Partial<Answers>, display: string) {
     pushUser(display);
     const merged = { ...a, ...patch, channels: patch.channels ?? a.channels };
@@ -219,7 +248,6 @@ export function CustomBuilder() {
     }
   }
 
-  // free node submit (texto/áudio/skip)
   function submitFree(value: string) {
     const text = value.trim();
     const skip = text.length === 0;
@@ -230,7 +258,7 @@ export function CustomBuilder() {
     if (node === "outreach_opening") return answer({ outreachOpening: text }, skip ? "A IA cria a abertura" : display);
     if (node === "identity_name") return answer({ identityName: text }, skip ? "Definir depois" : display);
     if (node === "qualification") return answer({ qualification: text }, skip ? "A IA sugere" : display);
-    if (node === "specialist") return answer({ specialist: text }, skip ? "Sem especialista fixo" : display);
+    if (node === "specialist") return answer({ specialist: text }, skip ? "Sem responsável fixo" : display);
   }
   function submitChoice(c: Chip) {
     if (node === "intake") return answer({ intakeMode: c.value as IntakeMode }, c.label);
@@ -247,7 +275,6 @@ export function CustomBuilder() {
   const toggleChannel = (k: ChannelKey) =>
     setA((prev) => ({ ...prev, channels: prev.channels.includes(k) ? prev.channels.filter((x) => x !== k) : [...prev.channels, k] }));
 
-  // ─── Compose (IA escreve o conteúdo mole) ─────────────────────
   async function compose(ans: Answers) {
     setPhase("composing");
     try {
@@ -256,6 +283,7 @@ export function CustomBuilder() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           brief: {
+            template,
             purpose: ans.purpose || "",
             qualification_hint: ans.qualification || "",
             intake: { mode: ans.intakeMode || "inbound", keyword: ans.intakeMode === "keyword" ? ans.intakeDetail : "", tags: ans.intakeMode === "tag" || ans.intakeMode === "outreach" ? splitTags(ans.intakeDetail) : [] },
@@ -271,9 +299,8 @@ export function CustomBuilder() {
       setPhase("review");
       pushBot("Pronto! Montei a proposta — confere na ficha ao lado e clica em Criar quando quiser. ✨");
     } catch {
-      // fallback total: usa o purpose como instruções
       setComposed({
-        name: ans.identityName ? `Agente ${ans.identityName}` : "Agente personalizado",
+        name: ans.identityName ? `${meta.defaultName} ${ans.identityName}` : meta.defaultName,
         identity_name: ans.identityName || "",
         purpose_summary: (ans.purpose || "").slice(0, 200),
         custom_instructions: ans.purpose || "",
@@ -317,7 +344,7 @@ export function CustomBuilder() {
     try {
       const res = await fetch("/api/agent-platform/builder/commit", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spec }),
+        body: JSON.stringify({ spec, template }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "falhou");
@@ -369,7 +396,7 @@ export function CustomBuilder() {
       <div className="page" style={{ maxWidth: 560 }}>
         <div className="card" style={{ padding: 32, textAlign: "center" }}>
           <div style={{ display: "grid", placeItems: "center", marginBottom: 18 }}>
-            <div className="asm-mark"><AMark templateKey="custom" size="xl" /></div>
+            <div className="asm-mark"><AMark templateKey={template} size="xl" /></div>
           </div>
           <h2 style={{ fontSize: 20, fontWeight: 600 }}>Montando seu agente…</h2>
           <p className="muted" style={{ fontSize: 13.5, margin: "6px 0 18px" }}>{composed.name}</p>
@@ -388,7 +415,7 @@ export function CustomBuilder() {
   }
 
   const isTagNode = node === "intake_detail" && (a.intakeMode === "tag" || a.intakeMode === "outreach");
-  const showChips = phase === "wizard" && (def.type === "choice") && !pendingAudio;
+  const showChips = phase === "wizard" && def.type === "choice" && !pendingAudio;
   const showMulti = phase === "wizard" && def.type === "multi" && !pendingAudio;
   const showTags = phase === "wizard" && def.type === "free" && isTagNode && !pendingAudio;
   const showComposer = phase === "wizard" && def.type === "free" && !isTagNode;
@@ -399,17 +426,14 @@ export function CustomBuilder() {
       <Link href="/hub/agents/new" className="btn btn--quiet btn--sm" style={{ marginBottom: 12 }}>
         <ChevronLeft /> Voltar
       </Link>
-      <h1 className="page-hd__title" style={{ marginBottom: 4 }}>Montar agente personalizado</h1>
-      <p className="page-hd__sub" style={{ marginBottom: 20 }}>
-        Respondendo, clicando ou gravando áudio. A IA monta o agente — você revisa e ativa depois.
-      </p>
+      <h1 className="page-hd__title" style={{ marginBottom: 4 }}>{meta.title}</h1>
+      <p className="page-hd__sub" style={{ marginBottom: 20 }}>{meta.intro}</p>
 
       <div className="builder-split">
-        {/* Conversa */}
         <div className="card" style={{ display: "flex", flexDirection: "column", height: "min(640px, 72vh)" }}>
           <div ref={scrollRef} className="scroll" style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-            {msgs.map((m, i) => (
-              <div key={i} className={"bub " + (m.role === "user" ? "bub--user" : "bub--bot")}>{m.content}</div>
+            {msgs.map((mm, i) => (
+              <div key={i} className={"bub " + (mm.role === "user" ? "bub--user" : "bub--bot")}>{mm.content}</div>
             ))}
             {(phase === "composing" || transcribing) && (
               <div style={{ alignSelf: "flex-start", fontSize: 12.5, color: "var(--ink-3)", padding: "2px 6px" }}>
@@ -436,7 +460,6 @@ export function CustomBuilder() {
             )}
           </div>
 
-          {/* Chips de escolha (single) */}
           {showChips && (
             <div className="row wrap" style={{ gap: 8, padding: "0 12px 12px" }}>
               {def.chips!.map((c) => (
@@ -445,7 +468,6 @@ export function CustomBuilder() {
             </div>
           )}
 
-          {/* Multi-select (canais) */}
           {showMulti && (
             <div style={{ padding: "0 12px 12px" }}>
               <div className="row wrap" style={{ gap: 8, marginBottom: 10 }}>
@@ -462,10 +484,8 @@ export function CustomBuilder() {
             </div>
           )}
 
-          {/* Tag input (chips) — intake por tag/prospecção */}
           {showTags && <TagInput onSubmit={(tags) => submitFree(tags.join(", "))} />}
 
-          {/* Composer (free + áudio + pular) */}
           {showComposer && (
             <div style={{ padding: 12, borderTop: "1px solid var(--line)" }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -493,9 +513,8 @@ export function CustomBuilder() {
           )}
         </div>
 
-        {/* Ficha ao vivo */}
         <div className="builder-ficha">
-          <Ficha a={a} composed={composed} canCreate={phase === "review"} onCreate={createAgent} creating={creating} />
+          <Ficha a={a} composed={composed} template={template} canCreate={phase === "review"} onCreate={createAgent} creating={creating} />
         </div>
       </div>
     </div>
@@ -509,7 +528,6 @@ function txt(q: string | ((a: Answers) => string), a: Answers): string {
 function splitTags(s?: string): string[] {
   return (s || "").split(",").map((t) => t.trim()).filter(Boolean);
 }
-// "pessoas com a tag 'teste'" → ["teste"]; "feirao, quente" → ["feirao","quente"].
 function cleanTagPhrase(raw: string): string[] {
   let s = raw.trim().replace(/["']/g, "");
   const m = s.match(/\btags?\s+(.+)$/i);
@@ -546,7 +564,7 @@ function TagInput({ onSubmit }: { onSubmit: (tags: string[]) => void }) {
   );
 }
 const INTAKE_TXT: Record<IntakeMode, string> = {
-  inbound: "Leads mandam mensagem", keyword: "Campanha (palavra-chave)", tag: "Por tag", outreach: "Prospecção (agente inicia)",
+  inbound: "Mandam mensagem", keyword: "Campanha (palavra-chave)", tag: "Por tag", outreach: "Prospecção (agente inicia)",
 };
 const OBJ_TXT: Record<Objective, string> = {
   qualification_only: "Qualificar", qualification_and_booking: "Qualificar + agendar", booking_only: "Agendar",
@@ -586,17 +604,16 @@ function Row({ n, label, value }: { n: number; label: string; value?: string }) 
   );
 }
 
-function Ficha({ a, composed, canCreate, onCreate, creating }: { a: Answers; composed: Composed | null; canCreate: boolean; onCreate: () => void; creating: boolean }) {
-  const intake = a.intakeMode
-    ? INTAKE_TXT[a.intakeMode] + (a.intakeDetail ? ` · ${a.intakeDetail}` : "")
-    : undefined;
+function Ficha({ a, composed, template, canCreate, onCreate, creating }: { a: Answers; composed: Composed | null; template: WizardTemplate; canCreate: boolean; onCreate: () => void; creating: boolean }) {
+  const meta = META[template];
+  const intake = a.intakeMode ? INTAKE_TXT[a.intakeMode] + (a.intakeDetail ? ` · ${a.intakeDetail}` : "") : undefined;
   return (
     <div className="card" style={{ padding: 18 }}>
       <div className="row" style={{ gap: 12, marginBottom: 12 }}>
-        <AMark templateKey="custom" size="lg" />
+        <AMark templateKey={template} size="lg" />
         <div className="grow">
           <div style={{ fontSize: 15.5, fontWeight: 600, lineHeight: 1.2 }}>{composed?.name || a.identityName || "Novo agente"}</div>
-          <span className="pill pill--muted" style={{ marginTop: 4 }}>fala com leads</span>
+          <span className="pill pill--muted" style={{ marginTop: 4 }}>{meta.face}</span>
         </div>
       </div>
       {composed?.purpose_summary && <p style={{ fontSize: 12.5, color: "var(--ink-2)", margin: "0 0 12px", lineHeight: 1.5 }}>{composed.purpose_summary}</p>}
@@ -609,7 +626,7 @@ function Ficha({ a, composed, canCreate, onCreate, creating }: { a: Answers; com
 
       <div className="col" style={{ gap: 9 }}>
         <Row n={1} label="Propósito" value={a.purpose ? trunc(a.purpose, 60) : undefined} />
-        <Row n={2} label="Como os leads chegam" value={intake} />
+        <Row n={2} label={`Como os ${meta.leadNoun} chegam`} value={intake} />
         <Row n={3} label="Identidade" value={a.identityMode ? (a.identityMode === "human" ? "Pessoa do time" : "Assistente virtual") + (a.identityName ? ` · ${a.identityName}` : "") : undefined} />
         <Row n={4} label="Objetivo" value={a.objective ? OBJ_TXT[a.objective] : undefined} />
         {isBooking(a) && <Row n={5} label="Agendamento" value={a.specialist ? `com ${a.specialist}` : (a.postBooking ? "configurado" : undefined)} />}

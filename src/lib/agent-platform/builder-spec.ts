@@ -1,7 +1,7 @@
 /**
  * Builder de agente custom (Plataforma Modular — Fase F, repensado 2026-05-26).
  *
- * O fluxo de criação é um WIZARD GUIADO (custom-builder.tsx) que coleta as
+ * O fluxo de criação é um WIZARD GUIADO (agent-wizard.tsx) que coleta as
  * decisões estruturais (intake, canal, identidade, objetivo, agendamento,
  * follow-up, horário) e usa a IA só pra ENRIQUECER o conteúdo "mole"
  * (instruções, campos de qualificação, tom) via /builder/compose. Aqui ficam:
