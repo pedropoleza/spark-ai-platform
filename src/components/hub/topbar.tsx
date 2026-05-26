@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Fragment } from "react";
 import { usePathname } from "next/navigation";
-import { Search, Bell, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 const SECTION_LABEL: Record<string, string> = {
   agents: "Agentes",
   messages: "Mensagens",
@@ -39,15 +39,9 @@ export function TopBar() {
           </Fragment>
         ))}
       </div>
+      {/* Busca global + sino removidos (eram placeholders sem handler). Voltam
+          quando houver implementação real. (ultra-review 2026-05-26) */}
       <div className="row" style={{ gap: 10 }}>
-        <div className="searchbox">
-          <Search size={14} />
-          <input placeholder="Buscar…" aria-label="Buscar" />
-          <kbd>⌘K</kbd>
-        </div>
-        <button className="btn btn--quiet btn--icon" title="Notificações" aria-label="Notificações">
-          <Bell />
-        </button>
         <Link href="/hub/agents/new" className="btn btn--primary">
           <Plus /> Novo agente
         </Link>

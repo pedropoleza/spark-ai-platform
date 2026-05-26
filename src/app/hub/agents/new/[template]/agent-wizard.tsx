@@ -439,7 +439,7 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
               <div key={i} className={"bub " + (mm.role === "user" ? "bub--user" : "bub--bot")}>{mm.content}</div>
             ))}
             {(phase === "composing" || transcribing) && (
-              <div style={{ alignSelf: "flex-start", fontSize: 12.5, color: "var(--ink-3)", padding: "2px 6px" }}>
+              <div role="status" aria-live="polite" style={{ alignSelf: "flex-start", fontSize: 12.5, color: "var(--ink-3)", padding: "2px 6px" }}>
                 {transcribing ? "transcrevendo…" : "montando a proposta…"}
               </div>
             )}
@@ -501,6 +501,7 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
                 )}
                 <input
                   className="input"
+                  aria-label="Sua resposta"
                   placeholder={recording ? "Gravando… toque em parar" : (def.placeholder || "Escreva aqui…")}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
@@ -558,7 +559,7 @@ function TagInput({ onSubmit }: { onSubmit: (tags: string[]) => void }) {
         </div>
       )}
       <div style={{ display: "flex", gap: 8 }}>
-        <input className="input" value={val} placeholder="Digite a tag e tecle Enter (ex: feirao_2026)" onChange={(e) => setVal(e.target.value)}
+        <input className="input" aria-label="Adicionar tag" value={val} placeholder="Digite a tag e tecle Enter (ex: feirao_2026)" onChange={(e) => setVal(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); if (val.trim()) commit(val); } }} />
         <button className="btn btn--ghost" onClick={() => { if (val.trim()) commit(val); }}>Adicionar</button>
       </div>

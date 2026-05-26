@@ -29,10 +29,29 @@ export function TestChat({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [msgs, loading]);
+
+  // A11y do modal (WCAG 2.1.2/2.4.3): Esc fecha, foco preso no painel, foco
+  // volta pro gatilho ao fechar.
+  useEffect(() => {
+    const prevActive = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); onClose(); return; }
+      if (e.key === "Tab" && panelRef.current) {
+        const f = panelRef.current.querySelectorAll<HTMLElement>('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])');
+        if (f.length === 0) return;
+        const first = f[0], last = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("keydown", onKey); try { prevActive?.focus?.(); } catch { /* trigger sumiu */ } };
+  }, [onClose]);
 
   async function send() {
     const text = val.trim();
@@ -65,6 +84,10 @@ export function TestChat({
       style={{ position: "fixed", inset: 0, background: "var(--overlay)", zIndex: 95, display: "grid", placeItems: "center" }}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="testchat-title"
         onClick={(e) => e.stopPropagation()}
         className="card"
         style={{ width: "min(560px, 94vw)", maxHeight: "84vh", display: "flex", flexDirection: "column", boxShadow: "var(--shadow-3)" }}
@@ -73,7 +96,7 @@ export function TestChat({
           <div className="row" style={{ gap: 10 }}>
             <AMark templateKey={templateKey} size="sm" />
             <div>
-              <h3 style={{ fontSize: 14, margin: 0 }}>{agentName}</h3>
+              <h3 id="testchat-title" style={{ fontSize: 14, margin: 0 }}>{agentName}</h3>
               <div style={{ fontSize: 11.5, color: "var(--ink-3)" }}>Modo teste · não escreve no Spark Leads</div>
             </div>
           </div>

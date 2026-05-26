@@ -117,8 +117,8 @@ export function KbManager({ agentId }: { agentId: string }) {
 
       {showAdd && (
         <div className="card card--flat" style={{ padding: 12, background: "var(--surface-2)", marginBottom: 10 }}>
-          <input className="input" placeholder="Título (ex: Tabela de preços família)" value={title} onChange={(e) => setTitle(e.target.value)} style={{ marginBottom: 8 }} />
-          <textarea className="textarea" rows={4} maxLength={50000} placeholder="Cole aqui o conhecimento (produtos, preços, regras, FAQ…)" value={content} onChange={(e) => setContent(e.target.value)} />
+          <input className="input" aria-label="Título do conhecimento" placeholder="Título (ex: Tabela de preços família)" value={title} onChange={(e) => setTitle(e.target.value)} style={{ marginBottom: 8 }} />
+          <textarea className="textarea" aria-label="Conteúdo do conhecimento" rows={4} maxLength={50000} placeholder="Cole aqui o conhecimento (produtos, preços, regras, FAQ…)" value={content} onChange={(e) => setContent(e.target.value)} />
           <div className="row" style={{ gap: 8, marginTop: 8 }}>
             <button className="btn btn--primary btn--sm" onClick={addText} disabled={!title.trim() || !content.trim()}>Adicionar</button>
             <button className="btn btn--quiet btn--sm" onClick={() => { setShowAdd(false); setTitle(""); setContent(""); }}>Cancelar</button>

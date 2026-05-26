@@ -70,20 +70,23 @@ export default async function BillingPage() {
         {b.recent.length === 0 ? (
           <div className="empty">Sem atividade de cobrança este mês.</div>
         ) : (
-          <table className="table">
-            <thead><tr><th>Quando</th><th>Ação</th><th>Modelo</th><th className="tnum">Tokens</th><th className="tnum">Custo</th></tr></thead>
-            <tbody>
-              {b.recent.map((r, i) => (
-                <tr key={i}>
-                  <td style={{ fontSize: 12.5, color: "var(--ink-3)" }}>{r.date}</td>
-                  <td>{r.action}</td>
-                  <td className="mono" style={{ fontSize: 12 }}>{r.model}</td>
-                  <td className="tnum">{r.tokens.toLocaleString("pt-BR")}</td>
-                  <td className="tnum">${r.charge.toFixed(4)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          // overflowX evita que a tabela estoure o card em telas estreitas (a11y/responsivo).
+          <div style={{ overflowX: "auto" }}>
+            <table className="table">
+              <thead><tr><th>Quando</th><th>Ação</th><th>Modelo</th><th className="tnum">Tokens</th><th className="tnum">Custo</th></tr></thead>
+              <tbody>
+                {b.recent.map((r, i) => (
+                  <tr key={i}>
+                    <td style={{ fontSize: 12.5, color: "var(--ink-3)" }}>{r.date}</td>
+                    <td>{r.action}</td>
+                    <td className="mono" style={{ fontSize: 12 }}>{r.model}</td>
+                    <td className="tnum">{r.tokens.toLocaleString("pt-BR")}</td>
+                    <td className="tnum">${r.charge.toFixed(4)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

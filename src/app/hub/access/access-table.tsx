@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Plus, Search, X, Check } from "lucide-react";
@@ -15,6 +15,26 @@ export function AccessTable({ rows }: { rows: EntitlementGridRow[] }) {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [modal, setModal] = useState<{ locationId: string; capability: Cap; price: string; expires: string } | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // A11y do modal (WCAG 2.1.2/2.4.3): Esc fecha, foco preso no painel, foco
+  // volta pro gatilho ao fechar. Mesmo padrão do test-chat.tsx.
+  useEffect(() => {
+    if (!modal) return;
+    const prevActive = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); setModal(null); return; }
+      if (e.key === "Tab" && dialogRef.current) {
+        const f = dialogRef.current.querySelectorAll<HTMLElement>('button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])');
+        if (f.length === 0) return;
+        const first = f[0], last = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("keydown", onKey); try { prevActive?.focus?.(); } catch { /* gatilho sumiu */ } };
+  }, [modal]);
 
   const filtered = rows.filter(
     (r) => r.location_name.toLowerCase().includes(query.toLowerCase()) || r.location_id.toLowerCase().includes(query.toLowerCase()),
@@ -129,9 +149,17 @@ export function AccessTable({ rows }: { rows: EntitlementGridRow[] }) {
 
       {modal && (
         <div onClick={() => setModal(null)} style={{ position: "fixed", inset: 0, background: "var(--overlay)", zIndex: 90, display: "grid", placeItems: "center" }}>
-          <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "min(460px, 94vw)", boxShadow: "var(--shadow-3)" }}>
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="grant-modal-title"
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(460px, 94vw)", boxShadow: "var(--shadow-3)" }}
+          >
             <div className="card-hd">
-              <h3>Liberar acesso</h3>
+              <h3 id="grant-modal-title">Liberar acesso</h3>
               <button className="btn btn--quiet btn--icon" onClick={() => setModal(null)} aria-label="Fechar"><X /></button>
             </div>
             <div className="card-body col" style={{ gap: 14 }}>

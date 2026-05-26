@@ -4,12 +4,15 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Check } from "lucide-react";
 
+// Mesmo padrão da tela de config (head reserva label+hint → alinhamento consistente).
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="fstack">
-      <div className="fstack__lbl">{label}</div>
-      {hint && <div className="fstack__hint">{hint}</div>}
-      <div>{children}</div>
+      <div className="fstack__head">
+        <div className="fstack__lbl">{label}</div>
+        <div className="fstack__hint">{hint || " "}</div>
+      </div>
+      <div className="fstack__ctrl">{children}</div>
     </div>
   );
 }
