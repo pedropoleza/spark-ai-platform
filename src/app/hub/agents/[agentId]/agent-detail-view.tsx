@@ -323,14 +323,14 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
               </div>
             ) : (
               <>
-                {cat === "personality" && <CatPersonality e={e} patch={patch} aiModel={aiModel} />}
+                {cat === "personality" && <CatPersonality e={e} patch={patch} aiModel={aiModel} audience={detail.audience} />}
                 {cat === "channel" && <CatChannel e={e} patch={patch} />}
                 {cat === "hours" && <CatHours e={e} patch={patch} />}
                 {cat === "qualification" && <CatQualification e={e} patch={patch} />}
                 {cat === "followup" && <CatFollowup e={e} patch={patch} />}
                 {cat === "scheduling" && <CatScheduling e={e} patch={patch} />}
                 {cat === "knowledge" && <CatKnowledge e={e} patch={patch} />}
-                {cat === "limits" && <CatLimits e={e} patch={patch} />}
+                {cat === "limits" && <CatLimits e={e} patch={patch} audience={detail.audience} />}
                 {cat === "messages" && <div className="empty">As conversas deste agente aparecerão aqui.</div>}
                 {cat === "docs" && <div className="empty">Os documentos de apoio aparecerão aqui.</div>}
                 {cat === "history" && <div className="empty">O histórico de alterações aparecerá aqui.</div>}
@@ -387,14 +387,17 @@ function Toggle({ label, hint, checked, onChange }: { label: string; hint?: stri
 }
 
 /* ─── Categorias ────────────────────────────────────────────────── */
-function CatPersonality({ e, patch, aiModel }: { e: Editable; patch: (p: Partial<Editable>) => void; aiModel: string }) {
+function CatPersonality({ e, patch, aiModel, audience }: { e: Editable; patch: (p: Partial<Editable>) => void; aiModel: string; audience: "rep" | "lead" }) {
+  const isLead = audience === "lead";
   return (
     <>
       <div className="fgrid">
         <Field label="Nome do agente" hint="Como ele se apresenta ao lead."><input className="input" value={e.identity_name} onChange={(ev) => patch({ identity_name: ev.target.value })} placeholder="Ex: Bia" /></Field>
         <Field label="Se apresenta como"><Seg value={e.identity_mode} options={[{ v: "assistant", l: "Assistente virtual" }, { v: "human", l: "Pessoa" }]} onChange={(v) => patch({ identity_mode: v })} /></Field>
       </div>
-      <Field label="Objetivo do agente" hint="O que ele tenta fazer na conversa."><Seg value={e.objective} options={[{ v: "qualification_only", l: "Só qualificar" }, { v: "qualification_and_booking", l: "Qualificar + agendar" }, { v: "booking_only", l: "Só agendar" }]} onChange={(v) => patch({ objective: v })} /></Field>
+      {isLead && (
+        <Field label="Objetivo do agente" hint="O que ele tenta fazer na conversa."><Seg value={e.objective} options={[{ v: "qualification_only", l: "Só qualificar" }, { v: "qualification_and_booking", l: "Qualificar + agendar" }, { v: "booking_only", l: "Só agendar" }]} onChange={(v) => patch({ objective: v })} /></Field>
+      )}
       <Field label="Personalidade" hint="O jeito do agente conversar.">
         <Sld label="Criatividade" left="Conservador" right="Criativo" value={e.tone_creativity} onChange={(v) => patch({ tone_creativity: v })} />
         <Sld label="Formalidade" left="Casual" right="Formal" value={e.tone_formality} onChange={(v) => patch({ tone_formality: v })} />
@@ -403,13 +406,15 @@ function CatPersonality({ e, patch, aiModel }: { e: Editable; patch: (p: Partial
       </Field>
       <Field label="Instruções customizadas" hint="O que ele precisa saber sobre a agência e como agir."><textarea className="textarea" rows={5} maxLength={10000} value={e.custom_instructions} onChange={(ev) => patch({ custom_instructions: ev.target.value })} placeholder="Ex: Você é a assistente da Pereira Seguros, foco em planos de saúde para famílias na Flórida." /></Field>
       <Field label="Exemplos de conversa" hint="Como responder em situações comuns (opcional)."><textarea className="textarea" rows={4} maxLength={20000} value={e.conversation_examples} onChange={(ev) => patch({ conversation_examples: ev.target.value })} placeholder="Ex: quando perguntam preço, responda que depende do perfil e ofereça uma ligação rápida." /></Field>
-      <Field label="Quando pedir confirmação" hint="Antes de agir no Spark Leads.">
-        <div className="col" style={{ gap: 8 }}>
-          {([["always", "Sempre — antes de qualquer ação"], ["medium_and_high", "Em ações importantes (recomendado)"], ["high_only", "Só nas mais sensíveis"]] as [ConfMode, string][]).map(([v, l]) => (
-            <label key={v} className="row" style={{ gap: 10, fontSize: 13.5, cursor: "pointer" }}><input type="radio" name="conf" checked={e.confirmation_mode === v} onChange={() => patch({ confirmation_mode: v })} /> <span>{l}</span></label>
-          ))}
-        </div>
-      </Field>
+      {!isLead && (
+        <Field label="Quando pedir confirmação" hint="Antes de agir no Spark Leads.">
+          <div className="col" style={{ gap: 8 }}>
+            {([["always", "Sempre — antes de qualquer ação"], ["medium_and_high", "Em ações importantes (recomendado)"], ["high_only", "Só nas mais sensíveis"]] as [ConfMode, string][]).map(([v, l]) => (
+              <label key={v} className="row" style={{ gap: 10, fontSize: 13.5, cursor: "pointer" }}><input type="radio" name="conf" checked={e.confirmation_mode === v} onChange={() => patch({ confirmation_mode: v })} /> <span>{l}</span></label>
+            ))}
+          </div>
+        </Field>
+      )}
       <Field label="Espera antes de responder" hint="Segundos — agrupa mensagens enviadas em sequência."><input className="input" type="number" min={5} max={60} value={e.debounce_seconds} onChange={(ev) => patch({ debounce_seconds: Number(ev.target.value) })} style={{ width: 110 }} /></Field>
       <Toggle label="Pausar quando um humano responder" hint="Se você entrar na conversa, o agente para." checked={e.auto_pause_on_human_message} onChange={() => patch({ auto_pause_on_human_message: !e.auto_pause_on_human_message })} />
       <Field label="Modelo de IA"><span className="pill pill--muted">{aiModel}</span><span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>gerenciado pelo Spark</span></Field>
@@ -518,7 +523,8 @@ function CatKnowledge({ e, patch }: { e: Editable; patch: (p: Partial<Editable>)
   );
 }
 
-function CatLimits({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
+function CatLimits({ e, patch, audience }: { e: Editable; patch: (p: Partial<Editable>) => void; audience: "rep" | "lead" }) {
+  const isRep = audience === "rep";
   const q = e.quiet_hours;
   const setQ = (p: Partial<Quiet>) => patch({ quiet_hours: { ...q, ...p } });
   const nt = e.notifications;
@@ -527,14 +533,16 @@ function CatLimits({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) =>
     <>
       <div className="fgrid">
         <Field label="Máx. mensagens por conversa"><input className="input" type="number" min={10} max={200} value={e.max_messages_per_conversation} onChange={(ev) => patch({ max_messages_per_conversation: Number(ev.target.value) })} style={{ width: 110 }} /></Field>
-        <Field label="Proativos por dia" hint="Quantas vezes inicia conversa."><input className="input" type="number" min={0} max={100} value={e.daily_proactive_limit} onChange={(ev) => patch({ daily_proactive_limit: Number(ev.target.value) })} style={{ width: 110 }} /></Field>
+        {isRep && <Field label="Proativos por dia" hint="Quantas vezes inicia conversa."><input className="input" type="number" min={0} max={100} value={e.daily_proactive_limit} onChange={(ev) => patch({ daily_proactive_limit: Number(ev.target.value) })} style={{ width: 110 }} /></Field>}
       </div>
-      <Field label="Horário de silêncio" hint="Não envia nesse intervalo.">
-        <div className="row" style={{ gap: 8 }}>
-          <div className="switch" role="switch" aria-checked={q.enabled} onClick={() => setQ({ enabled: !q.enabled })} />
-          {q.enabled && <><input className="input" value={q.start} onChange={(ev) => setQ({ start: ev.target.value })} style={{ width: 90 }} /><span className="muted">até</span><input className="input" value={q.end} onChange={(ev) => setQ({ end: ev.target.value })} style={{ width: 90 }} /></>}
-        </div>
-      </Field>
+      {isRep && (
+        <Field label="Horário de silêncio" hint="Não envia nesse intervalo.">
+          <div className="row" style={{ gap: 8 }}>
+            <div className="switch" role="switch" aria-checked={q.enabled} onClick={() => setQ({ enabled: !q.enabled })} />
+            {q.enabled && <><input className="input" value={q.start} onChange={(ev) => setQ({ start: ev.target.value })} style={{ width: 90 }} /><span className="muted">até</span><input className="input" value={q.end} onChange={(ev) => setQ({ end: ev.target.value })} style={{ width: 90 }} /></>}
+          </div>
+        </Field>
+      )}
       <div style={{ marginTop: 6 }}>
         <div className="eyebrow" style={{ marginBottom: 4 }}>Mídia</div>
         <Toggle label="Transcrever áudios" checked={e.enable_audio_transcription} onChange={() => patch({ enable_audio_transcription: !e.enable_audio_transcription })} />
