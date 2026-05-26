@@ -2,6 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
+import { assertLocationInCompany } from "@/lib/agent-platform/entitlement-admin";
+
+/**
+ * Anti-IDOR (fix P1 ultra-review 2026-05-26): confirma que a regra pertence a um
+ * SparkBot (account_assistant) da MESMA company do caller. Antes PUT/DELETE
+ * buscavam só por id → qualquer sessão mexia em regra de qualquer conta.
+ */
+async function ruleOwnedByCaller(
+  supabase: ReturnType<typeof createAdminClient>,
+  agentId: string | null | undefined,
+  companyId: string,
+): Promise<boolean> {
+  if (!agentId) return false;
+  const { data: agent } = await supabase.from("agents").select("type, location_id").eq("id", agentId).maybeSingle();
+  if (!agent || agent.type !== "account_assistant" || !agent.location_id) return false;
+  return assertLocationInCompany(agent.location_id, companyId);
+}
 
 /**
  * PUT /api/agents/sparkbot/rules/[ruleId]
@@ -27,6 +44,9 @@ export async function PUT(
     .eq("id", ruleId)
     .maybeSingle();
   if (!existing) return errorResponse("Regra não encontrada", 404, "not_found");
+  if (!(await ruleOwnedByCaller(supabase, existing.agent_id as string, session.companyId))) {
+    return errorResponse("Regra não encontrada", 404, "not_found");
+  }
 
   // Validação explícita (igual ao POST — sem .slice silencioso que perde
   // conteúdo). Se admin manda algo fora do range, falha rápido com
@@ -99,10 +119,13 @@ export async function DELETE(
 
   const { data: existing } = await supabase
     .from("assistant_proactive_rules")
-    .select("source")
+    .select("source, agent_id")
     .eq("id", ruleId)
     .maybeSingle();
   if (!existing) return errorResponse("Regra não encontrada", 404, "not_found");
+  if (!(await ruleOwnedByCaller(supabase, existing.agent_id as string, session.companyId))) {
+    return errorResponse("Regra não encontrada", 404, "not_found");
+  }
   if (existing.source === "system") {
     return errorResponse(
       "Regras pré-configuradas não podem ser apagadas. Desabilite via toggle ou edite o conteúdo.",

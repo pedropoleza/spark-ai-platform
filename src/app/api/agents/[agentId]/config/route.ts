@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
 import { updateAgentConfigSchema, validateBody } from "@/lib/utils/validation";
+import { assertLocationInCompany } from "@/lib/agent-platform/entitlement-admin";
 
 // GET /api/agents/[agentId]/config
 export async function GET(
@@ -27,7 +28,15 @@ export async function GET(
   if (!agent) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
   }
-  if (agent.type !== "account_assistant" && agent.location_id !== session.locationId) {
+  // SparkBot (account_assistant) é "global" pro admin — mas SÓ dentro da MESMA
+  // company (fix P0 ultra-review 2026-05-26: antes pulava QUALQUER checagem pra
+  // account_assistant → qualquer sessão de qualquer conta editava o prompt do bot
+  // de outra company). Espelha o hardening que a KB já tem (resolveKbLocation).
+  if (agent.type === "account_assistant") {
+    if (!agent.location_id || !(await assertLocationInCompany(agent.location_id, session.companyId))) {
+      return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
+    }
+  } else if (agent.location_id !== session.locationId) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
   }
 
@@ -73,7 +82,15 @@ export async function PUT(
   if (!agent) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
   }
-  if (agent.type !== "account_assistant" && agent.location_id !== session.locationId) {
+  // SparkBot (account_assistant) é "global" pro admin — mas SÓ dentro da MESMA
+  // company (fix P0 ultra-review 2026-05-26: antes pulava QUALQUER checagem pra
+  // account_assistant → qualquer sessão de qualquer conta editava o prompt do bot
+  // de outra company). Espelha o hardening que a KB já tem (resolveKbLocation).
+  if (agent.type === "account_assistant") {
+    if (!agent.location_id || !(await assertLocationInCompany(agent.location_id, session.companyId))) {
+      return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
+    }
+  } else if (agent.location_id !== session.locationId) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
   }
 
