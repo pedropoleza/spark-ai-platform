@@ -255,18 +255,21 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
           custom_instructions: e.custom_instructions, conversation_examples: e.conversation_examples, confirmation_mode: e.confirmation_mode, objective: e.objective,
           // flags de on/off derivados do estado do módulo (fonte única).
           working_hours: { ...e.working_hours, enabled: enabled.has("active_hours") },
-          debounce_seconds: e.debounce_seconds, auto_pause_on_human_message: e.auto_pause_on_human_message,
+          // clampNum no SAVE: os inputs number deixam digitar livre (0/25/vazio),
+          // mas o zod do PUT rejeita fora de range e derruba o save inteiro (400).
+          // Clampar aqui garante payload válido sem travar a digitação.
+          debounce_seconds: clampNum(e.debounce_seconds, 5, 60, 10), auto_pause_on_human_message: e.auto_pause_on_human_message,
           data_fields: e.data_fields, targeting_rules: cleanTargeting,
           enabled_channels: [...channelsToDb(e.channels), ...e.extra_channels],
-          follow_up_config: { ...e.follow_up_config, enabled: enabled.has("followup") },
+          follow_up_config: { ...e.follow_up_config, enabled: enabled.has("followup"), intensity: clampNum(e.follow_up_config.intensity, 1, 10, 5), max_attempts: clampNum(e.follow_up_config.max_attempts, 1, 20, 3) },
           post_booking: e.post_booking,
           specialist_name: e.specialist_name, preferred_time_slot: e.preferred_time_slot, check_legal_docs: e.check_legal_docs,
           handoff_messages: cleanHandoff, automations: cleanAutos, deactivation_rules: cleanDeact,
           knowledge_base_instructions: e.knowledge_base_instructions, enabled_kbs: e.enabled_kbs,
-          max_messages_per_conversation: e.max_messages_per_conversation, daily_proactive_limit: e.daily_proactive_limit, no_response_threshold: e.no_response_threshold, quiet_hours: e.quiet_hours,
+          max_messages_per_conversation: clampNum(e.max_messages_per_conversation, 10, 200, 100), daily_proactive_limit: clampNum(e.daily_proactive_limit, 0, 100, 10), no_response_threshold: clampNum(e.no_response_threshold, 1, 20, 3), quiet_hours: e.quiet_hours,
           enable_audio_transcription: e.enable_audio_transcription, enable_image_analysis: e.enable_image_analysis, enable_pdf_reading: e.enable_pdf_reading, enable_summary_notes: e.enable_summary_notes,
           notifications: e.notifications,
-          outreach_config: { ...e.outreach, enabled: enabled.has("outreach") },
+          outreach_config: { ...e.outreach, enabled: enabled.has("outreach"), rate_per_hour: clampNum(e.outreach.rate_per_hour, 1, 500, 20), daily_cap: clampNum(e.outreach.daily_cap, 1, 5000, 100) },
         }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "falhou");
