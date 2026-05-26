@@ -129,6 +129,15 @@ Ordem de execução (commit por item, tsc+build verde em cada, teste no fim):
 
 Flags de segurança: tudo atrás do preview gate; custom runtime testado com 1 conversa real antes de soltar; prospecção nasce desligada (opt-in).
 
+### Status (2026-05-26)
+- ✅ **P0 canais** (350485b) — 3 tipos + config editável.
+- ✅ **P1 custom_agent runtime** (350485b) — roteia/responde/testa no caminho de lead provado.
+- ✅ **P2 config por audiência** (66b0bbd) — campos rep/lead separados.
+- ✅ **P3 Prospecção (config + modelo)** (8aaa20d) — coluna outreach_config, módulo `outreach` (lead), `bulk`→rep, categoria "Prospecção" com a estrutura do Pedro (tag → ritmo → horário → abertura), opt-in.
+- ⏳ **P3 Prospecção (dispatcher)** — cron que seleciona contatos por tag, dispara a 1ª mensagem com pacing e cria conversation_state "iniciada pelo agente". É um SENDER → go-live supervisionado (padrão do repo: gated por `OUTREACH_ENABLED` + teste supervisionado antes de soltar). **Próximo passo dedicado.** Reusa: FEL `executeContactsFilter` (tags), `/conversations/messages` (envio canal-aware), conversation_state (dedup/roteamento da resposta), pacing do bulk-runner.
+- ⏳ **P4 nomenclatura** — sem colisão real na UI do /hub (lead "Follow-up" é o único exposto; `followup_sequences` do SparkBot não aparece lá). Vira nota de doc, não mudança de UI.
+- ⏳ **P5 guia + health do agente** — polimento (comece-por-aqui + indicadores). Não-bloqueante.
+
 ---
 
 ## 7. O que JÁ está coerente (não mexer)
