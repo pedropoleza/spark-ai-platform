@@ -5,7 +5,43 @@
 import type { AgentAudience } from "@/types/agent-platform";
 
 export type AgentStatus = "active" | "paused" | "blocked";
-export type ChannelKey = "whatsapp" | "instagram";
+
+/**
+ * Canais (Pedro 2026-05-26): 3 tipos. O "SMS" do GHL é o WhatsApp Web via Stevo
+ * (SMS custom provider) — não é SMS de verdade. WhatsApp (GHL) = WhatsApp API/Meta.
+ *  - whatsapp_web → DB "SMS"  (Stevo / WhatsApp Web)
+ *  - whatsapp_api → DB "WhatsApp" (Meta API)
+ *  - instagram    → DB "Instagram"
+ */
+export type ChannelKey = "whatsapp_web" | "whatsapp_api" | "instagram";
+
+export const CHANNEL_DB_TO_UI: Record<string, ChannelKey> = {
+  SMS: "whatsapp_web",
+  WhatsApp: "whatsapp_api",
+  Instagram: "instagram",
+};
+export const CHANNEL_UI_TO_DB: Record<ChannelKey, string> = {
+  whatsapp_web: "SMS",
+  whatsapp_api: "WhatsApp",
+  instagram: "Instagram",
+};
+export const CHANNEL_LABEL: Record<ChannelKey, string> = {
+  whatsapp_web: "WhatsApp Web/SMS",
+  whatsapp_api: "WhatsApp API",
+  instagram: "Instagram",
+};
+
+export function channelsFromDb(enabled?: (string | null)[] | null): ChannelKey[] {
+  const set = new Set<ChannelKey>();
+  for (const c of enabled || []) {
+    const k = c ? CHANNEL_DB_TO_UI[c] : undefined;
+    if (k) set.add(k);
+  }
+  return [...set];
+}
+export function channelsToDb(keys: ChannelKey[]): string[] {
+  return keys.map((k) => CHANNEL_UI_TO_DB[k]).filter(Boolean);
+}
 
 /** Agente como a UI do hub consome. */
 export interface HubAgentView {

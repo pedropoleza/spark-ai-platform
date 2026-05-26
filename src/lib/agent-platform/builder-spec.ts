@@ -216,7 +216,9 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
   moduleKeys: string[];
   expiresAt: string | null;
 } {
-  const channelMap: Record<string, CommunicationChannel> = { whatsapp: "WhatsApp", instagram: "Instagram" };
+  // whatsapp → "SMS" (WhatsApp Web via Stevo, o canal live). WhatsApp API (Meta)
+  // o usuário liga depois na config se tiver. instagram → "Instagram".
+  const channelMap: Record<string, CommunicationChannel> = { whatsapp: "SMS", instagram: "Instagram" };
   const enabledChannels = Array.from(new Set(spec.channels.map((c) => channelMap[c]).filter(Boolean)));
 
   const dataFields: DataField[] = (spec.qualification_fields || []).map((f, i) => ({

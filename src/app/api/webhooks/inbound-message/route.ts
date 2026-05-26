@@ -274,7 +274,7 @@ export async function POST(request: NextRequest) {
           .select("id")
           .eq("location_id", locationId)
           .eq("status", "active")
-          .in("type", ["sales_agent", "recruitment_agent"]);
+          .in("type", ["sales_agent", "recruitment_agent", "custom_agent"]);
 
         for (const agent of activeAgents || []) {
           await supabaseStop
@@ -349,7 +349,7 @@ export async function POST(request: NextRequest) {
             .select("id, agent_configs(handoff_messages, auto_pause_on_human_message)")
             .eq("location_id", locationId)
             .eq("status", "active")
-            .in("type", ["sales_agent", "recruitment_agent"]);
+            .in("type", ["sales_agent", "recruitment_agent", "custom_agent"]);
           if (active && active.length === 1) {
             outboundAgent = active[0] as { id: string; agent_configs: unknown };
           }
@@ -495,7 +495,7 @@ export async function POST(request: NextRequest) {
       .select("id, type, location_id, agent_configs(debounce_seconds, targeting_rules, enabled_channels, deactivation_rules, working_hours)")
       .eq("location_id", locationId)
       .eq("status", "active")
-      .in("type", ["sales_agent", "recruitment_agent"]);
+      .in("type", ["sales_agent", "recruitment_agent", "custom_agent"]);
 
     if (!allAgents || allAgents.length === 0) {
       console.log(`[Webhook] Skipped: no_active_agent for location ${locationId}`);

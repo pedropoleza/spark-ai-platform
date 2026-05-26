@@ -1,6 +1,7 @@
 import { Zap, DollarSign, Users, Wand2, Lock, ArrowUp, ArrowDown, ChevronRight, type LucideIcon } from "lucide-react";
 import { channelIcon } from "./icons";
 import type { AgentStatus, ChannelKey, HubActivityItem } from "./types";
+import { CHANNEL_LABEL } from "./types";
 
 /* ─── Template → visual (mark + ícone) ──────────────────────────── */
 type TemplateVisual = { markClass: string; Icon: LucideIcon };
@@ -47,11 +48,11 @@ export function StatusBadge({ status }: { status: AgentStatus }) {
 }
 
 /* ─── ChannelChip ───────────────────────────────────────────────── */
-const CHANNEL_LABEL: Record<ChannelKey, string> = { whatsapp: "WhatsApp", instagram: "Instagram" };
+const LEGACY_CHANNEL_LABEL: Record<string, string> = { whatsapp: "WhatsApp Web/SMS", sms: "WhatsApp Web/SMS" };
 
 export function ChannelChip({ name }: { name: ChannelKey | string }) {
   const Icon = channelIcon(name);
-  const label = CHANNEL_LABEL[name as ChannelKey] || name;
+  const label = CHANNEL_LABEL[name as ChannelKey] || LEGACY_CHANNEL_LABEL[name] || name;
   if (!Icon) return null;
   return (
     <span className="chchip">

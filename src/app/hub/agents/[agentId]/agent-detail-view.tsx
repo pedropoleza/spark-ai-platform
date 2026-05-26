@@ -12,7 +12,8 @@ import {
 import { AMark, StatusBadge, ChannelChip, PriceBadge } from "@/components/hub/primitives";
 import { TestChat } from "./test-chat";
 import type { HubAgentDetail } from "@/lib/hub/data";
-import type { AgentStatus } from "@/components/hub/types";
+import type { AgentStatus, ChannelKey } from "@/components/hub/types";
+import { channelsFromDb, channelsToDb, CHANNEL_LABEL } from "@/components/hub/types";
 import type { DataField, FollowUpConfig, WorkingHoursConfig } from "@/types/agent";
 
 const TEMPLATE_LABEL: Record<string, string> = { sparkbot: "SparkBot", sales: "Vendas", recruitment: "Recrutamento", custom: "Personalizado" };
@@ -45,6 +46,7 @@ interface Editable {
   debounce_seconds: number;
   auto_pause_on_human_message: boolean;
   data_fields: DataField[];
+  channels: ChannelKey[];
   follow_up_config: FollowUpConfig;
   post_booking: PostBooking;
   knowledge_base_instructions: string;
@@ -87,6 +89,7 @@ function makeSeed(c: Record<string, any>): Editable {
     debounce_seconds: num(c.debounce_seconds, 10),
     auto_pause_on_human_message: bool(c.auto_pause_on_human_message, true),
     data_fields: Array.isArray(c.data_fields) ? (c.data_fields as DataField[]) : [],
+    channels: channelsFromDb(c.enabled_channels),
     follow_up_config: {
       enabled: bool(fu.enabled), mode: fu.mode === "manual" ? "manual" : "ai_auto",
       intensity: num(fu.intensity, 5), max_attempts: num(fu.max_attempts, 3),
@@ -202,6 +205,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
           working_hours: { ...e.working_hours, enabled: enabled.has("active_hours") },
           debounce_seconds: e.debounce_seconds, auto_pause_on_human_message: e.auto_pause_on_human_message,
           data_fields: e.data_fields,
+          enabled_channels: channelsToDb(e.channels),
           follow_up_config: { ...e.follow_up_config, enabled: enabled.has("followup") },
           post_booking: e.post_booking,
           knowledge_base_instructions: e.knowledge_base_instructions, enabled_kbs: e.enabled_kbs,
@@ -320,7 +324,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
             ) : (
               <>
                 {cat === "personality" && <CatPersonality e={e} patch={patch} aiModel={aiModel} />}
-                {cat === "channel" && <CatChannel detail={detail} />}
+                {cat === "channel" && <CatChannel e={e} patch={patch} />}
                 {cat === "hours" && <CatHours e={e} patch={patch} />}
                 {cat === "qualification" && <CatQualification e={e} patch={patch} />}
                 {cat === "followup" && <CatFollowup e={e} patch={patch} />}
@@ -413,11 +417,30 @@ function CatPersonality({ e, patch, aiModel }: { e: Editable; patch: (p: Partial
   );
 }
 
-function CatChannel({ detail }: { detail: HubAgentDetail }) {
+function CatChannel({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
+  const OPTS: { k: ChannelKey; hint: string }[] = [
+    { k: "whatsapp_web", hint: "Número de WhatsApp conectado via Stevo (o mais comum)." },
+    { k: "whatsapp_api", hint: "WhatsApp oficial pela API da Meta." },
+    { k: "instagram", hint: "Mensagens diretas do Instagram." },
+  ];
+  const toggle = (k: ChannelKey) =>
+    patch({ channels: e.channels.includes(k) ? e.channels.filter((x) => x !== k) : [...e.channels, k] });
   return (
-    <Field label="Canais ativos" hint="Conectados e provisionados pela agência.">
-      <div className="row wrap" style={{ gap: 10 }}>
-        {detail.channels.length ? detail.channels.map((ch) => <ChannelChip key={ch} name={ch} />) : <span className="muted" style={{ fontSize: 13 }}>Nenhum canal conectado.</span>}
+    <Field label="Canais que o agente usa" hint="Por onde ele conversa. O canal precisa estar conectado pela agência pra funcionar.">
+      <div className="col" style={{ gap: 8 }}>
+        {OPTS.map((o) => (
+          <label
+            key={o.k}
+            className="row between"
+            style={{ gap: 10, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: "var(--r-md)", cursor: "pointer" }}
+          >
+            <div className="row" style={{ gap: 10 }}>
+              <ChannelChip name={o.k} />
+              <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{o.hint}</span>
+            </div>
+            <div className="switch" role="switch" aria-checked={e.channels.includes(o.k)} onClick={() => toggle(o.k)} />
+          </label>
+        ))}
       </div>
     </Field>
   );

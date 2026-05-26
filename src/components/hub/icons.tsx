@@ -32,9 +32,9 @@ export function InstagramIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** Resolve o ícone do canal. */
+/** Resolve o ícone do canal (whatsapp_web/whatsapp_api/whatsapp/sms → WA; instagram → IG). */
 export function channelIcon(key: string) {
-  if (key === "whatsapp") return WhatsAppIcon;
   if (key === "instagram") return InstagramIcon;
+  if (key.startsWith("whatsapp") || key === "sms") return WhatsAppIcon;
   return null;
 }

@@ -10,6 +10,7 @@ import { listEntitlements, getAgentModuleInstances, listModules } from "@/lib/re
 import { DEFAULT_AGENT_MODULE_PRICE_USD, type AgentCapability } from "@/types/agent-platform";
 import type { AgentConfig, CommunicationChannel } from "@/types/agent";
 import type { AgentStatus, ChannelKey, HubAgentView, HubActivityItem } from "@/components/hub/types";
+import { channelsFromDb } from "@/components/hub/types";
 
 /* ─── mapeamentos type↔template↔capability ──────────────────────── */
 export function typeToTemplateKey(type: string, templateKey?: string | null): string {
@@ -34,12 +35,8 @@ export function templateCapability(templateKey: string): AgentCapability | null 
 }
 
 function mapChannels(enabled?: CommunicationChannel[] | null): ChannelKey[] {
-  const set = new Set<ChannelKey>();
-  for (const c of enabled || []) {
-    if (c === "WhatsApp" || c === "SMS") set.add("whatsapp"); // SMS roteia p/ WhatsApp (Stevo)
-    else if (c === "Instagram") set.add("instagram");
-  }
-  return [...set];
+  // SMS = WhatsApp Web (Stevo), WhatsApp = WhatsApp API (Meta), Instagram = IG.
+  return channelsFromDb(enabled as (string | null)[] | null);
 }
 
 function fmtSince(iso?: string | null): string | undefined {
@@ -89,7 +86,7 @@ export async function loadHubAgents(locationId: string): Promise<HubAgentView[]>
     if (!included && !entitled) status = "blocked";
     else status = a.status === "active" ? "active" : "paused";
 
-    const channels = included ? (["whatsapp"] as ChannelKey[]) : channelsByAgent.get(a.id) || ["whatsapp"];
+    const channels = included ? (["whatsapp_web"] as ChannelKey[]) : channelsByAgent.get(a.id) || ["whatsapp_web"];
 
     return {
       id: a.id,
@@ -236,8 +233,8 @@ export async function loadHubAgentDetail(agentId: string, locationId: string): P
 
   const cfg = (config as AgentConfig | null) || null;
   const channels = included
-    ? (["whatsapp"] as ChannelKey[])
-    : mapChannels(cfg?.enabled_channels) || ["whatsapp"];
+    ? (["whatsapp_web"] as ChannelKey[])
+    : mapChannels(cfg?.enabled_channels) || ["whatsapp_web"];
 
   // instances vêm enabled=true (getAgentModuleInstances filtra). Montamos a
   // lista a partir do CATÁLOGO filtrado por audiência, marcando o que está ligado

@@ -235,7 +235,7 @@ async function processGroup(
       .select("*, agent_configs(*)")
       .eq("location_id", group.locationId)
       .eq("status", "active")
-      .in("type", ["sales_agent", "recruitment_agent"])
+      .in("type", ["sales_agent", "recruitment_agent", "custom_agent"])
       .limit(1)
       .maybeSingle();
   }
@@ -560,7 +560,10 @@ async function processGroup(
 
   const promptCtx = {
     config,
-    agentType: agent.type as "sales_agent" | "recruitment_agent",
+    // custom_agent (Plataforma Modular) roda no runtime de lead provado (caminho
+    // sales); o comportamento vem do custom_instructions. Motor modular dedicado
+    // pro custom entra depois, validado. Recrutamento mantém o seu; o resto = sales.
+    agentType: (agent.type === "recruitment_agent" ? "recruitment_agent" : "sales_agent") as "sales_agent" | "recruitment_agent",
     contactName,
     collectedData,
     locationName: location.location_name || "Nossa empresa",

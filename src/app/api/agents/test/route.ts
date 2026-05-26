@@ -351,7 +351,9 @@ export async function POST(request: NextRequest) {
 
   const promptCtx = {
     config,
-    agentType: agent.type as "sales_agent" | "recruitment_agent",
+    // custom_agent testa no caminho de lead provado (sales); comportamento vem
+    // do custom_instructions. Igual ao queue-processor de prod.
+    agentType: (agent.type === "recruitment_agent" ? "recruitment_agent" : "sales_agent") as "sales_agent" | "recruitment_agent",
     contactName: resolvedContactName,
     collectedData: mergedCollectedData,
     locationName: location?.location_name || "Minha Empresa",
