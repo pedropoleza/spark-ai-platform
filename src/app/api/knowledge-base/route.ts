@@ -8,20 +8,35 @@ import { assertLocationInCompany } from "@/lib/agent-platform/entitlement-admin"
 export const maxDuration = 60;
 
 /**
+ * Erro de extração: a mensagem é mostrada pro usuário (toast no kb-manager).
+ * Falhar visível é melhor que "processado" com lixo dentro — antes a função
+ * engolia o erro e gravava um marcador como se fosse o conteúdo do doc, e o
+ * agente passava a "responder" com esse marcador (bug ultra-review 2026-05-26).
+ */
+class ExtractError extends Error {}
+
+/**
  * Extrai texto de um arquivo subido pra base de conhecimento. Suporta:
- *  - PDF (pdf-parse), Excel .xlsx/.xls (xlsx → CSV por aba), Word .docx (mammoth),
+ *  - PDF (unpdf), Excel .xlsx/.xls (xlsx → CSV por aba), Word .docx (mammoth),
  *  - txt/csv/md (utf-8), imagens .png/.jpg/.webp (OpenAI vision → texto/descrição).
- * Falha graciosa: devolve um marcador em vez de quebrar o upload.
+ * LANÇA ExtractError em falha (o POST devolve 422 com a mensagem) — nunca grava
+ * marcador silencioso como conteúdo.
  */
 async function extractFileContent(file: File, buffer: Buffer): Promise<string> {
   const name = (file.name || "").toLowerCase();
   const type = file.type || "";
   try {
     if (name.endsWith(".pdf")) {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const pdfParse = require("pdf-parse");
-      const d = await pdfParse(buffer);
-      return d.text || "";
+      // unpdf (NÃO pdf-parse: a v2 exporta uma classe, não função — quebrava
+      // silenciosamente). Mesma lib provada em file-processor.ts/media-processor.ts.
+      const { extractText, getDocumentProxy } = await import("unpdf");
+      const pdf = await getDocumentProxy(new Uint8Array(buffer));
+      const { text } = await extractText(pdf, { mergePages: true });
+      const out = (Array.isArray(text) ? text.join("\n") : text || "").trim();
+      if (!out) {
+        throw new ExtractError(`O PDF "${file.name}" parece ser escaneado (imagem, sem texto). Suba como imagem (.jpg/.png) que eu leio, ou cole o texto.`);
+      }
+      return out;
     }
     if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -38,6 +53,9 @@ async function extractFileContent(file: File, buffer: Buffer): Promise<string> {
       return r.value || "";
     }
     if (/\.(png|jpe?g|webp|gif)$/.test(name) || type.startsWith("image/")) {
+      if (!process.env.OPENAI_API_KEY) {
+        throw new ExtractError("Leitura de imagem indisponível agora. Cole o texto do documento.");
+      }
       const OpenAI = (await import("openai")).default;
       const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 45000 });
       const dataUrl = `data:${type || "image/png"};base64,${buffer.toString("base64")}`;
@@ -60,41 +78,41 @@ async function extractFileContent(file: File, buffer: Buffer): Promise<string> {
       return buffer.toString("utf-8");
     }
     if (name.endsWith(".doc")) {
-      // .doc legado (binário) — extração crua (melhor pedir .docx/.pdf).
-      return buffer.toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ").replace(/\s+/g, " ").trim();
+      // .doc legado (binário OLE) — extrair "cru" produz mojibake. Rejeita claro.
+      throw new ExtractError(`Formato .doc legado não é suportado. Salve como .docx ou PDF e suba de novo.`);
     }
     return buffer.toString("utf-8");
   } catch (err) {
+    if (err instanceof ExtractError) throw err;
     console.error("[knowledge-base] extração falhou:", file.name, err instanceof Error ? err.message : err);
-    return `[Não consegui extrair o texto de ${file.name}. Tenta converter pra PDF ou colar o texto.]`;
+    throw new ExtractError(`Não consegui ler "${file.name}". Tente como PDF/.docx/.xlsx ou cole o texto.`);
   }
 }
 
 /**
- * Resolve location_id efetivo pra um agent. Sparkbot (account_assistant) é
- * global — sua KB pertence à location do agent_id, não à location do admin
- * logado. Outros agents têm KB scoped à location do admin (segurança
- * multi-tenant).
+ * Resolve o location_id efetivo de uma operação de KB e VALIDA que o caller
+ * pode mexer naquele agent. Devolve `null` quando não autorizado (caller rejeita
+ * com 403). Sparkbot (account_assistant) é global dentro da MESMA company; os
+ * demais (lead) têm KB amarrada à própria location do agente.
  *
- * Fix audit 2026-05-03: antes filtrava sempre por session.locationId. Pra
- * Sparkbot, admin de OUTRA location veria KB vazia mesmo o agent existindo.
+ * Fix IDOR (ultra-review 2026-05-26): antes caía em `return sessionLocationId`
+ * pra QUALQUER agent_id — então um admin podia gravar/ler/apagar KB amarrada a
+ * um agent_id de outra conta (service-role bypassa RLS). Agora confere a posse.
  */
-async function resolveKbLocation(agentId: string, sessionLocationId: string, sessionCompanyId: string): Promise<string> {
+async function resolveKbLocation(agentId: string, sessionLocationId: string, sessionCompanyId: string): Promise<string | null> {
   const admin = createAdminClient();
   const { data: agent } = await admin
     .from("agents")
     .select("type, location_id")
     .eq("id", agentId)
     .maybeSingle();
-  // SparkBot (account_assistant) é global pro admin — mas SÓ devolve a location
-  // dele se for da MESMA company do caller (anti cross-tenant; fix ultra-review
-  // 2026-05-26). Senão cai no escopo da própria location (não vaza outra conta).
-  if (agent?.type === "account_assistant" && agent.location_id) {
-    if (await assertLocationInCompany(agent.location_id, sessionCompanyId)) {
-      return agent.location_id;
-    }
+  if (!agent || !agent.location_id) return null; // agent inexistente → sem acesso
+  // SparkBot (account_assistant): global pro admin da MESMA company.
+  if (agent.type === "account_assistant") {
+    return (await assertLocationInCompany(agent.location_id, sessionCompanyId)) ? agent.location_id : null;
   }
-  return sessionLocationId;
+  // Agentes de lead: só a própria location dona do agente pode operar a KB.
+  return agent.location_id === sessionLocationId ? agent.location_id : null;
 }
 
 // Limite de upload: evita OOM/abuso (e custo de visão em imagens enormes).
@@ -133,6 +151,9 @@ export async function GET(request: NextRequest) {
   }
 
   const locationId = await resolveKbLocation(agentId, session.locationId, session.companyId);
+  if (!locationId) {
+    return NextResponse.json({ error: "Agente não encontrado ou sem acesso" }, { status: 403 });
+  }
   const supabase = createServerClient();
   const { data } = await supabase
     .from("knowledge_base")
@@ -169,12 +190,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Arquivo muito grande (máx 15 MB). Divida ou cole o texto." }, { status: 413 });
     }
 
+    // Valida posse do agente ANTES de extrair (não gasta visão/parse à toa).
+    const locationIdForFile = await resolveKbLocation(agentId, session.locationId, session.companyId);
+    if (!locationIdForFile) {
+      return NextResponse.json({ error: "Agente não encontrado ou sem acesso" }, { status: 403 });
+    }
+
     // Extrair texto do arquivo (PDF, Excel, Word, CSV/txt, imagem via visão).
     const buffer = Buffer.from(await file.arrayBuffer());
     if (buffer.length > MAX_FILE_BYTES) {
       return NextResponse.json({ error: "Arquivo muito grande (máx 15 MB)." }, { status: 413 });
     }
-    let content = await extractFileContent(file, buffer);
+    let content: string;
+    try {
+      content = await extractFileContent(file, buffer);
+    } catch (err) {
+      // Falha de extração → 422 com mensagem amigável (nunca grava marcador como conteúdo).
+      return NextResponse.json({ error: err instanceof Error ? err.message : "Não consegui ler o arquivo." }, { status: 422 });
+    }
+    if (!content.trim()) {
+      return NextResponse.json({ error: "Arquivo sem texto aproveitável. Cole o conteúdo manualmente." }, { status: 422 });
+    }
 
     // Truncar conteudo muito grande
     const maxChars = 50000;
@@ -184,7 +220,6 @@ export async function POST(request: NextRequest) {
 
     const tokenEstimate = Math.ceil(content.length / 4);
 
-    const locationIdForFile = await resolveKbLocation(agentId, session.locationId, session.companyId);
     const supabase = createServerClient();
     const { data, error } = await supabase
       .from("knowledge_base")
@@ -241,6 +276,9 @@ export async function POST(request: NextRequest) {
     const tokenEstimate = Math.ceil(finalContent.length / 4);
 
     const locationIdForBody = await resolveKbLocation(agent_id, session.locationId, session.companyId);
+    if (!locationIdForBody) {
+      return NextResponse.json({ error: "Agente não encontrado ou sem acesso" }, { status: 403 });
+    }
     const supabase = createServerClient();
     const { data, error } = await supabase
       .from("knowledge_base")
@@ -289,6 +327,9 @@ export async function PATCH(request: NextRequest) {
   }
 
   const locationIdForPatch = await resolveKbLocation(agent_id, session.locationId, session.companyId);
+  if (!locationIdForPatch) {
+    return NextResponse.json({ error: "Agente não encontrado ou sem acesso" }, { status: 403 });
+  }
   const supabase = createServerClient();
   const { data, error } = await supabase
     .from("knowledge_base")
@@ -320,6 +361,9 @@ export async function DELETE(request: NextRequest) {
   }
 
   const locationIdForDel = await resolveKbLocation(agentId, session.locationId, session.companyId);
+  if (!locationIdForDel) {
+    return NextResponse.json({ error: "Agente não encontrado ou sem acesso" }, { status: 403 });
+  }
   const supabase = createServerClient();
   await supabase
     .from("knowledge_base")
