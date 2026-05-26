@@ -15,7 +15,7 @@ import { TestChat } from "./test-chat";
 import { KbManager } from "./kb-manager";
 import type { HubAgentDetail } from "@/lib/hub/data";
 import type { AgentStatus, ChannelKey } from "@/components/hub/types";
-import { channelsFromDb, channelsToDb, nonUiChannels } from "@/components/hub/types";
+import { channelsFromDb, channelsToDb, nonUiChannels, CHANNEL_LABEL } from "@/components/hub/types";
 import type {
   DataField, FollowUpConfig, WorkingHoursConfig, WorkingHoursDay,
   TargetingRule, AutomationRule, AutomationAction, DeactivationRule, HandoffMessage,
@@ -379,7 +379,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
               {hasToggle && (
                 <div className="row" style={{ gap: 8, flexShrink: 0 }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: moduleOn ? "var(--primary)" : "var(--ink-4)" }}>{moduleOn ? "Ligado" : "Desligado"}</span>
-                  <div className="switch" role="switch" aria-checked={moduleOn} onClick={() => masterToggle(catMod!)} />
+                  <button type="button" className="switch" role="switch" aria-checked={moduleOn} aria-label={moduleOn ? "Desligar capacidade" : "Ligar capacidade"} onClick={() => masterToggle(catMod!)} />
                 </div>
               )}
             </div>
@@ -453,7 +453,7 @@ function Toggle({ label, hint, checked, onChange }: { label: string; hint?: stri
   return (
     <div className="row between" style={{ padding: "11px 0", borderBottom: "1px solid var(--line-faint)" }}>
       <div><div style={{ fontSize: 13.5, fontWeight: 500 }}>{label}</div>{hint && <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>{hint}</div>}</div>
-      <div className="switch" role="switch" aria-checked={checked} onClick={onChange} />
+      <button type="button" className="switch" role="switch" aria-checked={checked} aria-label={label} onClick={onChange} />
     </div>
   );
 }
@@ -514,7 +514,7 @@ function CatChannel({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) =
               <ChannelChip name={o.k} />
               <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{o.hint}</span>
             </div>
-            <div className="switch" role="switch" aria-checked={e.channels.includes(o.k)} onClick={() => toggle(o.k)} />
+            <button type="button" className="switch" role="switch" aria-checked={e.channels.includes(o.k)} aria-label={CHANNEL_LABEL[o.k]} onClick={() => toggle(o.k)} />
           </label>
         ))}
       </div>
@@ -555,7 +555,7 @@ function CatHours({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => 
             const day: WorkingHoursDay = w.schedule[d.key] || { enabled: false, start: "09:00", end: "17:00" };
             return (
               <div key={d.key} className="row" style={{ gap: 10, alignItems: "center", opacity: day.enabled ? 1 : 0.6 }}>
-                <div className="switch" role="switch" aria-checked={day.enabled} onClick={() => setDay(d.key, { enabled: !day.enabled })} />
+                <button type="button" className="switch" role="switch" aria-checked={day.enabled} aria-label={`Atender ${d.label}`} onClick={() => setDay(d.key, { enabled: !day.enabled })} />
                 <span style={{ width: 78, fontSize: 13, fontWeight: 500 }}>{d.label}</span>
                 <input className="input" type="time" value={day.start} disabled={!day.enabled} onChange={(ev) => setDay(d.key, { start: ev.target.value })} style={{ width: 120 }} />
                 <span className="muted" style={{ fontSize: 12 }}>às</span>
@@ -597,7 +597,7 @@ function CatQualification({ e, patch }: { e: Editable; patch: (p: Partial<Editab
             <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 130px auto auto", gap: 10, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8 }}>
               <input className="input" value={f.label} onChange={(ev) => update(i, { label: ev.target.value })} />
               <select className="select" value={f.type} onChange={(ev) => update(i, { type: ev.target.value as DataField["type"] })}><option value="text">Texto</option><option value="date">Data</option><option value="boolean">Sim/Não</option><option value="select">Opções</option></select>
-              <label className="row" style={{ gap: 6, fontSize: 12, color: "var(--ink-3)" }}><div className="switch" role="switch" aria-checked={f.required} onClick={() => update(i, { required: !f.required })} /> obrig.</label>
+              <label className="row" style={{ gap: 6, fontSize: 12, color: "var(--ink-3)" }}><button type="button" className="switch" role="switch" aria-checked={f.required} aria-label="Campo obrigatório" onClick={() => update(i, { required: !f.required })} /> obrig.</label>
               <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remove(i)} aria-label="Remover"><Trash2 size={13} /></button>
             </div>
           ))}
@@ -785,7 +785,7 @@ function CatKnowledge({ e, patch, agentId }: { e: Editable; patch: (p: Partial<E
                   <div style={{ fontSize: 13.5, fontWeight: 500 }}>{kb.l}</div>
                   <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{kb.d}</div>
                 </div>
-                <div className="switch" role="switch" aria-checked={on} onClick={() => toggleKb(kb.v)} />
+                <button type="button" className="switch" role="switch" aria-checked={on} aria-label={kb.l} onClick={() => toggleKb(kb.v)} />
               </label>
             );
           })}
@@ -940,7 +940,7 @@ function CatPause({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => 
                 </div>
                 <textarea className="textarea" rows={2} value={m.text} onChange={(ev) => updH(i, { text: ev.target.value })} placeholder="Texto exato da mensagem que pausa o bot" />
                 <label className="row" style={{ gap: 8, fontSize: 12.5, color: "var(--ink-3)", marginTop: 6, cursor: "pointer" }}>
-                  <div className="switch" role="switch" aria-checked={m.auto_deactivate} onClick={() => updH(i, { auto_deactivate: !m.auto_deactivate })} /> Pausar a IA ao enviar
+                  <button type="button" className="switch" role="switch" aria-checked={m.auto_deactivate} aria-label="Pausar a IA ao enviar" onClick={() => updH(i, { auto_deactivate: !m.auto_deactivate })} /> Pausar a IA ao enviar
                 </label>
               </div>
             ))}
@@ -986,7 +986,7 @@ function CatLimits({ e, patch, isRep }: { e: Editable; patch: (p: Partial<Editab
           </div>
           <Field label="Horário de silêncio" hint="Não envia nesse intervalo.">
             <div className="row" style={{ gap: 8 }}>
-              <div className="switch" role="switch" aria-checked={q.enabled} onClick={() => setQ({ enabled: !q.enabled })} />
+              <button type="button" className="switch" role="switch" aria-checked={q.enabled} aria-label="Horário de silêncio" onClick={() => setQ({ enabled: !q.enabled })} />
               {q.enabled && <><input className="input" type="time" value={q.start} onChange={(ev) => setQ({ start: ev.target.value })} style={{ width: 120 }} /><span className="muted">até</span><input className="input" type="time" value={q.end} onChange={(ev) => setQ({ end: ev.target.value })} style={{ width: 120 }} /></>}
             </div>
           </Field>
