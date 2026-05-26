@@ -65,8 +65,10 @@ export async function POST(request: NextRequest) {
     "(2) qualification_fields: extraia do brief o que faz sentido o agente descobrir (3-6 campos). type: text/date/boolean/select. " +
     "(3) tone: 4 eixos 0-100 (creativity, formality, naturalness, assertiveness) coerentes com o propósito. " +
     "(4) name: nome curto do agente (aparece no Spark Leads). purpose_summary: 1 frase. " +
+    "(5) identity_name: APENAS o primeiro nome que o agente usa pra se apresentar, extraído do brief. " +
+    "Se a pessoa escreveu algo como 'eu mesmo, Pedro' ou 'me chama de Bia', extraia só 'Pedro'/'Bia'. Se não houver nome, deixe vazio. " +
     "NUNCA escreva 'GHL' nem 'GoHighLevel' — o CRM se chama 'Spark Leads'. Não invente fatos que não estão no brief. " +
-    'Responda SÓ um JSON: {"name":string,"purpose_summary":string,"custom_instructions":string,"qualification_fields":[{"label":string,"type":string,"required":boolean}],"tone":{"creativity":number,"formality":number,"naturalness":number,"assertiveness":number}}';
+    'Responda SÓ um JSON: {"name":string,"identity_name":string,"purpose_summary":string,"custom_instructions":string,"qualification_fields":[{"label":string,"type":string,"required":boolean}],"tone":{"creativity":number,"formality":number,"naturalness":number,"assertiveness":number}}';
 
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 40000 });
@@ -101,6 +103,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       name: String(parsed.name || "").slice(0, 120) || "Agente personalizado",
+      identity_name: String(parsed.identity_name || "").slice(0, 80),
       purpose_summary: String(parsed.purpose_summary || "").slice(0, 600),
       custom_instructions: String(parsed.custom_instructions || purpose).slice(0, 8000),
       qualification_fields,
@@ -116,6 +119,7 @@ export async function POST(request: NextRequest) {
     // Falha graciosa: usa o purpose cru como instruções; sem campos sugeridos.
     return NextResponse.json({
       name: "Agente personalizado",
+      identity_name: "",
       purpose_summary: purpose.slice(0, 200),
       custom_instructions: purpose,
       qualification_fields: [],

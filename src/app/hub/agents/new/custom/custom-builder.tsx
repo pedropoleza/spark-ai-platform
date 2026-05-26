@@ -32,6 +32,7 @@ interface Answers {
 
 interface Composed {
   name: string;
+  identity_name: string;
   purpose_summary: string;
   custom_instructions: string;
   qualification_fields: { label: string; type: string; required: boolean }[];
@@ -273,6 +274,7 @@ export function CustomBuilder() {
       // fallback total: usa o purpose como instruções
       setComposed({
         name: ans.identityName ? `Agente ${ans.identityName}` : "Agente personalizado",
+        identity_name: ans.identityName || "",
         purpose_summary: (ans.purpose || "").slice(0, 200),
         custom_instructions: ans.purpose || "",
         qualification_fields: [],
@@ -300,7 +302,7 @@ export function CustomBuilder() {
       qualification_fields: composed.qualification_fields,
       followup: { enabled: !!a.followup, intensity: 5, max_attempts: 3 },
       active_hours: { enabled: !!a.hours, timezone: "America/New_York", mode: "only_during" },
-      identity: { name: a.identityName || "", mode: a.identityMode || "assistant" },
+      identity: { name: composed.identity_name || a.identityName || "", mode: a.identityMode || "assistant" },
       objective: a.objective || "qualification_and_booking",
       scheduling: booking
         ? { specialist_name: a.specialist || "", preferred_time_slot: "any", post_booking: { behavior: a.postBooking || "stop_and_handoff", handoff_message: "", allow_reschedule: true } }
@@ -385,9 +387,11 @@ export function CustomBuilder() {
     );
   }
 
+  const isTagNode = node === "intake_detail" && (a.intakeMode === "tag" || a.intakeMode === "outreach");
   const showChips = phase === "wizard" && (def.type === "choice") && !pendingAudio;
   const showMulti = phase === "wizard" && def.type === "multi" && !pendingAudio;
-  const showComposer = phase === "wizard" && def.type === "free";
+  const showTags = phase === "wizard" && def.type === "free" && isTagNode && !pendingAudio;
+  const showComposer = phase === "wizard" && def.type === "free" && !isTagNode;
   const audioAllowed = showComposer && !!def.audio;
 
   return (
@@ -458,6 +462,9 @@ export function CustomBuilder() {
             </div>
           )}
 
+          {/* Tag input (chips) — intake por tag/prospecção */}
+          {showTags && <TagInput onSubmit={(tags) => submitFree(tags.join(", "))} />}
+
           {/* Composer (free + áudio + pular) */}
           {showComposer && (
             <div style={{ padding: 12, borderTop: "1px solid var(--line)" }}>
@@ -501,6 +508,42 @@ function txt(q: string | ((a: Answers) => string), a: Answers): string {
 }
 function splitTags(s?: string): string[] {
   return (s || "").split(",").map((t) => t.trim()).filter(Boolean);
+}
+// "pessoas com a tag 'teste'" → ["teste"]; "feirao, quente" → ["feirao","quente"].
+function cleanTagPhrase(raw: string): string[] {
+  let s = raw.trim().replace(/["']/g, "");
+  const m = s.match(/\btags?\s+(.+)$/i);
+  if (m) s = m[1].trim();
+  return s.split(/[,;]+/).map((t) => t.trim()).filter(Boolean);
+}
+function TagInput({ onSubmit }: { onSubmit: (tags: string[]) => void }) {
+  const [tags, setTags] = useState<string[]>([]);
+  const [val, setVal] = useState("");
+  const commit = (raw: string) => {
+    const parts = cleanTagPhrase(raw);
+    if (parts.length) setTags((p) => Array.from(new Set([...p, ...parts])));
+    setVal("");
+  };
+  return (
+    <div style={{ padding: 12, borderTop: "1px solid var(--line)" }}>
+      {tags.length > 0 && (
+        <div className="row wrap" style={{ gap: 6, marginBottom: 8 }}>
+          {tags.map((t) => (
+            <span key={t} className="pill pill--muted" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              {t}
+              <button onClick={() => setTags((p) => p.filter((x) => x !== t))} aria-label="remover" style={{ border: 0, background: "none", cursor: "pointer", color: "var(--ink-4)", lineHeight: 1, fontSize: 14 }}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <input className="input" value={val} placeholder="Digite a tag e tecle Enter (ex: feirao_2026)" onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); if (val.trim()) commit(val); } }} />
+        <button className="btn btn--ghost" onClick={() => { if (val.trim()) commit(val); }}>Adicionar</button>
+      </div>
+      <button className="btn btn--primary btn--sm" style={{ marginTop: 10 }} disabled={tags.length === 0} onClick={() => onSubmit(tags)}>Continuar</button>
+    </div>
+  );
 }
 const INTAKE_TXT: Record<IntakeMode, string> = {
   inbound: "Leads mandam mensagem", keyword: "Campanha (palavra-chave)", tag: "Por tag", outreach: "Prospecção (agente inicia)",

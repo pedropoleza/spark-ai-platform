@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import {
   ChevronLeft, Play, Pause, Check, Plus, Trash2,
   Sparkles, Clock, Calendar, MessageCircle, Users, Send, FileText, Shield, Zap,
-  Wand2, Workflow,
+  Wand2, Workflow, PauseCircle,
   type LucideIcon,
 } from "lucide-react";
 import { AMark, StatusBadge, ChannelChip, PriceBadge } from "@/components/hub/primitives";
@@ -27,7 +27,7 @@ type Objective = "qualification_only" | "qualification_and_booking" | "booking_o
 type Cat =
   | "identity" | "tone"
   | "channel" | "qualification" | "scheduling" | "followup" | "outreach" | "knowledge"
-  | "hours" | "automations" | "limits";
+  | "hours" | "automations" | "pause" | "limits";
 
 const num = (v: unknown, d: number) => (typeof v === "number" && !isNaN(v) ? v : d);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -170,6 +170,7 @@ const CATS: { id: Cat; label: string; icon: LucideIcon; group: string }[] = [
   { id: "knowledge", label: "Conhecimento", icon: FileText, group: "capacidades" },
   { id: "hours", label: "Atendimento", icon: Clock, group: "operacao" },
   { id: "automations", label: "Automações", icon: Workflow, group: "operacao" },
+  { id: "pause", label: "Pausa do bot", icon: PauseCircle, group: "operacao" },
   { id: "limits", label: "Limites & avisos", icon: Shield, group: "operacao" },
 ];
 const CAT_META: Record<Cat, { title: string; sub: string }> = {
@@ -183,6 +184,7 @@ const CAT_META: Record<Cat, { title: string; sub: string }> = {
   knowledge: { title: "Conhecimento", sub: "Documentos e bases que o agente consulta." },
   hours: { title: "Horário de atendimento", sub: "Quando o agente pode responder." },
   automations: { title: "Automações", sub: "Ações automáticas quando algo acontece na conversa." },
+  pause: { title: "Pausa do bot", sub: "Quando o agente para e devolve a conversa pra uma pessoa." },
   limits: { title: "Limites & avisos", sub: "Volume, confirmações, silêncio, mídia e notificações." },
 };
 
@@ -287,8 +289,8 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
   }
 
   function catVisible(id: Cat): boolean {
-    // Sempre: identidade, tom, limites.
-    if (id === "identity" || id === "tone" || id === "limits") return true;
+    // Sempre: identidade, tom, pausa, limites.
+    if (id === "identity" || id === "tone" || id === "pause" || id === "limits") return true;
     // Lead: TODAS as capacidades aparecem. As com toggle mestre nascem em "off"
     // se o módulo não está anexado — clicar em Ligar faz upsert da instance.
     // (Sem isso: chicken-and-egg — a aba some por estar off, e você não chega no toggle.)
@@ -394,6 +396,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
                 {cat === "knowledge" && <CatKnowledge e={e} patch={patch} />}
                 {cat === "hours" && <CatHours e={e} patch={patch} />}
                 {cat === "automations" && <CatAutomations e={e} patch={patch} />}
+                {cat === "pause" && <CatPause e={e} patch={patch} />}
                 {cat === "limits" && <CatLimits e={e} patch={patch} isRep={!isLead} />}
               </>
             )}
@@ -627,16 +630,67 @@ function CatQualification({ e, patch }: { e: Editable; patch: (p: Partial<Editab
 }
 
 /* ─── Follow-up ─────────────────────────────────────────────────── */
+function DelayInput({ minutes, onChange }: { minutes: number; onChange: (m: number) => void }) {
+  const unit = minutes >= 1440 && minutes % 1440 === 0 ? "d" : minutes >= 60 && minutes % 60 === 0 ? "h" : "m";
+  const val = unit === "d" ? minutes / 1440 : unit === "h" ? minutes / 60 : minutes;
+  const mult = (u: string) => (u === "d" ? 1440 : u === "h" ? 60 : 1);
+  return (
+    <div className="row" style={{ gap: 6 }}>
+      <input className="input" type="number" min={1} value={val} onChange={(ev) => onChange(Math.max(1, Math.round(Number(ev.target.value) * mult(unit))))} style={{ width: 84 }} />
+      <select className="select" value={unit} onChange={(ev) => onChange(Math.max(1, Math.round(val * mult(ev.target.value))))} style={{ width: 104 }}>
+        <option value="m">minutos</option><option value="h">horas</option><option value="d">dias</option>
+      </select>
+    </div>
+  );
+}
 function CatFollowup({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
   const f = e.follow_up_config;
   const set = (p: Partial<FollowUpConfig>) => patch({ follow_up_config: { ...f, ...p } });
+  const steps = f.manual_steps;
+  const addStep = () => set({ manual_steps: [...steps, { delay_minutes: steps.length === 0 ? 60 : 1440, custom_message: "" }] });
+  const updStep = (i: number, p: Partial<{ delay_minutes: number; custom_message: string }>) => set({ manual_steps: steps.map((s, idx) => (idx === i ? { ...s, ...p } : s)) });
+  const remStep = (i: number) => set({ manual_steps: steps.filter((_, idx) => idx !== i) });
   return (
     <>
-      <Field label="Como decidir as mensagens"><Seg value={f.mode} options={[{ v: "ai_auto", l: "IA decide" }, { v: "manual", l: "Passos fixos" }]} onChange={(v) => set({ mode: v })} /></Field>
-      <div className="fgrid">
-        {f.mode === "ai_auto" && <Field label="Intensidade" hint="1 leve · 10 insistente."><input className="input" type="number" min={1} max={10} value={f.intensity} onChange={(ev) => set({ intensity: Number(ev.target.value) })} /></Field>}
-        <Field label="Máximo de tentativas"><input className="input" type="number" min={1} max={20} value={f.max_attempts} onChange={(ev) => set({ max_attempts: Number(ev.target.value) })} /></Field>
-      </div>
+      <Field label="Como decidir as mensagens" hint="A IA escreve sozinha ou você define cada passo.">
+        <Seg value={f.mode} options={[{ v: "ai_auto", l: "IA decide" }, { v: "manual", l: "Passos fixos" }]} onChange={(v) => set({ mode: v })} />
+      </Field>
+
+      {f.mode === "ai_auto" ? (
+        <>
+          <div className="fgrid">
+            <Field label="Intensidade" hint="1 leve · 10 insistente."><input className="input" type="number" min={1} max={10} value={f.intensity} onChange={(ev) => set({ intensity: Number(ev.target.value) })} /></Field>
+            <Field label="Máximo de tentativas"><input className="input" type="number" min={1} max={20} value={f.max_attempts} onChange={(ev) => set({ max_attempts: Number(ev.target.value) })} /></Field>
+          </div>
+          <div className="fgrid">
+            <Field label="Primeiro follow-up depois de" hint="Tempo após o lead parar de responder."><DelayInput minutes={f.min_delay_minutes} onChange={(m) => set({ min_delay_minutes: m })} /></Field>
+            <Field label="Último, no máximo até" hint="A IA espalha as tentativas até aqui."><DelayInput minutes={f.max_delay_minutes} onChange={(m) => set({ max_delay_minutes: m })} /></Field>
+          </div>
+          <Field label="Estilo e o que falar" hint="Oriente a IA: tom, o que reforçar, o que oferecer em cada retomada.">
+            <textarea className="textarea" rows={4} maxLength={4000} value={f.custom_prompt || ""} onChange={(ev) => set({ custom_prompt: ev.target.value })} placeholder="Ex: Seja leve e sem pressão. No 1º lembrete, pergunte se ficou alguma dúvida. No 2º, ofereça uma ligação rápida. Nunca mande mais de 2 perguntas por mensagem." />
+          </Field>
+        </>
+      ) : (
+        <Field label="Passos do follow-up" hint="Cada tentativa: quando enviar (depois que o lead some) e o que falar. Texto vazio = a IA escreve na hora.">
+          <div className="col" style={{ gap: 8 }}>
+            {steps.length === 0 && <div className="muted" style={{ fontSize: 13 }}>Nenhum passo — adicione ao menos uma tentativa.</div>}
+            {steps.map((s, i) => (
+              <div key={i} className="card card--flat" style={{ padding: 10, background: "var(--surface-2)" }}>
+                <div className="row between" style={{ marginBottom: 8 }}>
+                  <span className="eyebrow">Tentativa {i + 1}</span>
+                  <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remStep(i)} aria-label="Remover"><Trash2 size={13} /></button>
+                </div>
+                <div className="row" style={{ gap: 8, alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontSize: 12.5, color: "var(--ink-3)" }}>Enviar depois de</span>
+                  <DelayInput minutes={s.delay_minutes} onChange={(m) => updStep(i, { delay_minutes: m })} />
+                </div>
+                <textarea className="textarea" rows={2} value={s.custom_message || ""} onChange={(ev) => updStep(i, { custom_message: ev.target.value })} placeholder="O que falar nessa tentativa (deixe vazio = a IA decide)" />
+              </div>
+            ))}
+            <button className="btn btn--ghost btn--sm" style={{ alignSelf: "flex-start" }} onClick={addStep}><Plus /> Adicionar tentativa</button>
+          </div>
+        </Field>
+      )}
     </>
   );
 }
@@ -645,10 +699,6 @@ function CatFollowup({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) 
 function CatScheduling({ e, patch, isRecruitment }: { e: Editable; patch: (p: Partial<Editable>) => void; isRecruitment: boolean }) {
   const pb = e.post_booking;
   const set = (p: Partial<PostBooking>) => patch({ post_booking: { ...pb, ...p } });
-  const hm = e.handoff_messages;
-  const addH = () => patch({ handoff_messages: [...hm, { id: rid(), label: "", text: "", auto_deactivate: true }] });
-  const updH = (i: number, p: Partial<HandoffMessage>) => patch({ handoff_messages: hm.map((m, idx) => (idx === i ? { ...m, ...p } : m)) });
-  const remH = (i: number) => patch({ handoff_messages: hm.filter((_, idx) => idx !== i) });
   return (
     <>
       <Field label="Calendário"><span className="muted" style={{ fontSize: 13 }}>Conectado pela agência (Spark Leads). A escolha de calendário entra em breve aqui.</span></Field>
@@ -660,25 +710,7 @@ function CatScheduling({ e, patch, isRecruitment }: { e: Editable; patch: (p: Pa
       <Field label="Mensagem ao passar pra humano"><textarea className="textarea" rows={2} value={pb.handoff_message} onChange={(ev) => set({ handoff_message: ev.target.value })} placeholder="Ex: Perfeito! Já agendei. Um especialista vai te acompanhar a partir daqui." /></Field>
       <Toggle label="Permitir reagendamento" checked={pb.allow_reschedule} onChange={() => set({ allow_reschedule: !pb.allow_reschedule })} />
       {isRecruitment && <Toggle label="Perguntar documentação (EUA)" hint="Confirma Social Security e permissão de trabalho." checked={e.check_legal_docs} onChange={() => patch({ check_legal_docs: !e.check_legal_docs })} />}
-
-      <SubHd>Encerramento manual</SubHd>
-      <Field label="Mensagens que pausam a IA" hint="Quando você (humano) enviar uma destas ao lead pelo Spark Leads, a IA para naquele contato.">
-        <div className="col" style={{ gap: 8 }}>
-          {hm.map((m, i) => (
-            <div key={m.id} className="card card--flat" style={{ padding: 10, background: "var(--surface-2)" }}>
-              <div className="row" style={{ gap: 8, marginBottom: 6 }}>
-                <input className="input grow" value={m.label} onChange={(ev) => updH(i, { label: ev.target.value })} placeholder="Apelido (ex: Encerrei eu mesmo)" />
-                <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remH(i)} aria-label="Remover"><Trash2 size={13} /></button>
-              </div>
-              <textarea className="textarea" rows={2} value={m.text} onChange={(ev) => updH(i, { text: ev.target.value })} placeholder="Texto exato da mensagem" />
-              <label className="row" style={{ gap: 8, fontSize: 12.5, color: "var(--ink-3)", marginTop: 6, cursor: "pointer" }}>
-                <div className="switch" role="switch" aria-checked={m.auto_deactivate} onClick={() => updH(i, { auto_deactivate: !m.auto_deactivate })} /> Pausar a IA ao enviar
-              </label>
-            </div>
-          ))}
-          <button className="btn btn--ghost btn--sm" style={{ alignSelf: "flex-start" }} onClick={addH}><Plus /> Nova mensagem</button>
-        </div>
-      </Field>
+      <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>Como o bot para e devolve a conversa pra uma pessoa fica na aba <strong>Pausa do bot</strong>.</p>
     </>
   );
 }
@@ -695,15 +727,23 @@ function CatOutreach({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) 
           <Seg value={o.tag_filter.match} options={[{ v: "any" as const, l: "Qualquer uma das tags" }, { v: "all" as const, l: "Todas as tags" }]} onChange={(v) => set({ tag_filter: { ...o.tag_filter, match: v } })} />
         </div>
       </Field>
+      <SubHd>Ritmo de envio</SubHd>
       <div className="fgrid">
-        <Field label="Mensagens por hora" hint="Ritmo — espalha no tempo, sem rajada."><input className="input" type="number" min={1} max={500} value={o.rate_per_hour} onChange={(ev) => set({ rate_per_hour: Number(ev.target.value) })} /></Field>
-        <Field label="Limite por dia"><input className="input" type="number" min={1} max={5000} value={o.daily_cap} onChange={(ev) => set({ daily_cap: Number(ev.target.value) })} /></Field>
+        <Field label="Quantas pessoas por dia" hint="O agente não aborda mais que isso num dia."><input className="input" type="number" min={1} max={5000} value={o.daily_cap} onChange={(ev) => set({ daily_cap: Number(ev.target.value) })} /></Field>
+        <Field label="Velocidade (por hora)" hint="Espalha no tempo, sem rajada."><input className="input" type="number" min={1} max={500} value={o.rate_per_hour} onChange={(ev) => set({ rate_per_hour: Number(ev.target.value) })} /></Field>
       </div>
-      <Toggle label="Respeitar horário de atendimento" hint="Só aborda dentro do horário configurado." checked={o.respect_working_hours} onChange={() => set({ respect_working_hours: !o.respect_working_hours })} />
-      <Field label="Mensagem de abertura" hint="A 1ª mensagem. Vazio = a IA cria com base no propósito.">
+      <Field label="Horário de envio" hint="Quando ligado, só dispara dentro do horário definido na aba Atendimento. Desligado = envia a qualquer hora.">
+        <Toggle label="Só dentro do horário de atendimento" checked={o.respect_working_hours} onChange={() => set({ respect_working_hours: !o.respect_working_hours })} />
+      </Field>
+      <div className="card card--flat" style={{ padding: 12, background: "var(--primary-soft)", margin: "4px 0 4px" }}>
+        <span style={{ fontSize: 12.5, color: "var(--primary-ink)" }}>
+          📋 Aborda até <strong>{o.daily_cap} pessoas/dia</strong>, no ritmo de ~{o.rate_per_hour}/hora, {o.respect_working_hours ? "dentro do horário de atendimento" : "a qualquer hora do dia"}.
+        </span>
+      </div>
+      <Field label="Mensagem de abertura" hint="A 1ª mensagem que o agente manda. Vazio = a IA cria com base no propósito.">
         <textarea className="textarea" rows={3} value={o.opening_message} onChange={(ev) => set({ opening_message: ev.target.value })} placeholder="Ex: Oi {first_name}! Vi que você passou no nosso feirão — posso te ajudar com a cotação?" />
       </Field>
-      <div className="card card--flat" style={{ padding: 12, background: "var(--surface-2)", marginTop: 8 }}>
+      <div className="card card--flat" style={{ padding: 12, background: "var(--surface-2)", marginTop: 4 }}>
         <span style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
           Depois de iniciar, o agente <strong>conduz</strong> a conversa normalmente (qualifica, agenda…). O disparo real é liberado pela agência (supervisionado) antes de ligar em produção.
         </span>
@@ -713,15 +753,42 @@ function CatOutreach({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) 
 }
 
 /* ─── Conhecimento ──────────────────────────────────────────────── */
+const KB_TEMPLATES: { v: string; l: string; d: string }[] = [
+  { v: "national_life_group", l: "National Life Group", d: "Produtos, IUL, regras de carrier" },
+  { v: "agency_brazillionaires", l: "Brazillionaires", d: "Material e processos da agência" },
+];
 function CatKnowledge({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
-  const KBS: { v: string; l: string }[] = [{ v: "national_life_group", l: "National Life Group" }, { v: "agency_brazillionaires", l: "Brazillionaires" }];
   const toggleKb = (v: string) => patch({ enabled_kbs: e.enabled_kbs.includes(v) ? e.enabled_kbs.filter((k) => k !== v) : [...e.enabled_kbs, v] });
   return (
     <>
-      <Field label="Bases de conhecimento" hint="O agente consulta antes de responder.">
-        <div className="col" style={{ gap: 10 }}>{KBS.map((kb) => <label key={kb.v} className="row" style={{ gap: 10, fontSize: 13.5, cursor: "pointer" }}><div className="switch" role="switch" aria-checked={e.enabled_kbs.includes(kb.v)} onClick={() => toggleKb(kb.v)} /> {kb.l}</label>)}</div>
+      <Field label="O que o agente sabe da agência" hint="Cole aqui o conhecimento principal: produtos, preços, regras, perguntas frequentes. É o que o agente consulta ao responder.">
+        <textarea className="textarea" rows={6} maxLength={10000} value={e.knowledge_base_instructions} onChange={(ev) => patch({ knowledge_base_instructions: ev.target.value })} placeholder={"Ex: Planos família a partir de $X. Atendemos FL, GA, TX. Não cite valores sem confirmar o estado. FAQ: ..."} />
       </Field>
-      <Field label="Instruções de uso" hint="Como usar os documentos."><textarea className="textarea" rows={3} maxLength={10000} value={e.knowledge_base_instructions} onChange={(ev) => patch({ knowledge_base_instructions: ev.target.value })} placeholder="Ex: Use a tabela de preços só para planos família. Não cite valores sem confirmar o estado." /></Field>
+
+      <SubHd>Templates de conhecimento</SubHd>
+      <Field label="Bibliotecas prontas" hint="Ative pacotes de conhecimento mantidos pela Spark.">
+        <div className="col" style={{ gap: 8 }}>
+          {KB_TEMPLATES.map((kb) => {
+            const on = e.enabled_kbs.includes(kb.v);
+            return (
+              <label key={kb.v} className="row between" style={{ gap: 10, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: "var(--r-md)", cursor: "pointer" }}>
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 500 }}>{kb.l}</div>
+                  <div style={{ fontSize: 12, color: "var(--ink-3)" }}>{kb.d}</div>
+                </div>
+                <div className="switch" role="switch" aria-checked={on} onClick={() => toggleKb(kb.v)} />
+              </label>
+            );
+          })}
+        </div>
+      </Field>
+
+      <SubHd>Treinar com arquivos</SubHd>
+      <div className="card card--flat" style={{ padding: 14, background: "var(--surface-2)", border: "1px dashed var(--line)", textAlign: "center" }}>
+        <FileText size={18} style={{ color: "var(--ink-4)", marginBottom: 6 }} />
+        <div style={{ fontSize: 13, fontWeight: 500 }}>Subir PDF, Excel, fotos e textos</div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>O sistema lê e indexa o arquivo pro agente usar. <strong>Em breve.</strong></div>
+      </div>
     </>
   );
 }
@@ -825,6 +892,64 @@ function ActionList({ actions, onChange }: { actions: AutomationAction[]; onChan
   );
 }
 
+/* ─── Pausa do bot ──────────────────────────────────────────────── */
+function CatPause({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
+  const auto = e.auto_pause_on_human_message;
+  const hm = e.handoff_messages;
+  const addH = () => patch({ handoff_messages: [...hm, { id: rid(), label: "", text: "", auto_deactivate: true }] });
+  const updH = (i: number, p: Partial<HandoffMessage>) => patch({ handoff_messages: hm.map((m, idx) => (idx === i ? { ...m, ...p } : m)) });
+  const remH = (i: number) => patch({ handoff_messages: hm.filter((_, idx) => idx !== i) });
+  return (
+    <>
+      <Field label="Quando o bot deve pausar?" hint="O sistema reconhece quando alguém da equipe responde manualmente pelo Spark Leads (não foi a IA) e devolve a conversa pra essa pessoa.">
+        <div className="col" style={{ gap: 10 }}>
+          <label className="row" style={{ gap: 10, alignItems: "flex-start", cursor: "pointer" }}>
+            <input type="radio" name="pausemode" checked={auto} onChange={() => patch({ auto_pause_on_human_message: true })} style={{ marginTop: 3 }} />
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 500 }}>Sempre que um humano responder <span style={{ color: "var(--ink-4)", fontWeight: 400 }}>· recomendado</span></div>
+              <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>Qualquer mensagem enviada manualmente (por você ou pela equipe) pausa o bot naquele contato.</div>
+            </div>
+          </label>
+          <label className="row" style={{ gap: 10, alignItems: "flex-start", cursor: "pointer" }}>
+            <input type="radio" name="pausemode" checked={!auto} onChange={() => patch({ auto_pause_on_human_message: false })} style={{ marginTop: 3 }} />
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 500 }}>Só com mensagens específicas</div>
+              <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>O bot continua mesmo se você responder — só pausa quando enviar uma das mensagens cadastradas abaixo (filtro).</div>
+            </div>
+          </label>
+        </div>
+      </Field>
+
+      {auto ? (
+        <div className="card card--flat" style={{ padding: 12, background: "var(--surface-2)", marginTop: 4 }}>
+          <span style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
+            ✓ O bot pausa assim que detectar uma resposta manual no Spark Leads. Mensagens enviadas pela própria IA (ou por automações) <strong>não</strong> pausam.
+          </span>
+        </div>
+      ) : (
+        <Field label="Mensagens que pausam o bot" hint="Quando você enviar exatamente uma destas ao lead pelo Spark Leads, o bot para naquele contato.">
+          <div className="col" style={{ gap: 8 }}>
+            {hm.length === 0 && <div className="muted" style={{ fontSize: 13 }}>Nenhuma mensagem cadastrada — adicione ao menos uma, senão o bot nunca pausa.</div>}
+            {hm.map((m, i) => (
+              <div key={m.id} className="card card--flat" style={{ padding: 10, background: "var(--surface-2)" }}>
+                <div className="row" style={{ gap: 8, marginBottom: 6 }}>
+                  <input className="input grow" value={m.label} onChange={(ev) => updH(i, { label: ev.target.value })} placeholder="Apelido (ex: Encerrei eu mesmo)" />
+                  <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remH(i)} aria-label="Remover"><Trash2 size={13} /></button>
+                </div>
+                <textarea className="textarea" rows={2} value={m.text} onChange={(ev) => updH(i, { text: ev.target.value })} placeholder="Texto exato da mensagem que pausa o bot" />
+                <label className="row" style={{ gap: 8, fontSize: 12.5, color: "var(--ink-3)", marginTop: 6, cursor: "pointer" }}>
+                  <div className="switch" role="switch" aria-checked={m.auto_deactivate} onClick={() => updH(i, { auto_deactivate: !m.auto_deactivate })} /> Pausar a IA ao enviar
+                </label>
+              </div>
+            ))}
+            <button className="btn btn--ghost btn--sm" style={{ alignSelf: "flex-start" }} onClick={addH}><Plus /> Nova mensagem</button>
+          </div>
+        </Field>
+      )}
+    </>
+  );
+}
+
 /* ─── Limites & avisos ──────────────────────────────────────────── */
 function CatLimits({ e, patch, isRep }: { e: Editable; patch: (p: Partial<Editable>) => void; isRep: boolean }) {
   const q = e.quiet_hours;
@@ -851,7 +976,7 @@ function CatLimits({ e, patch, isRep }: { e: Editable; patch: (p: Partial<Editab
         <Field label="Espera antes de responder" hint="Segundos — agrupa mensagens em sequência."><input className="input" type="number" min={5} max={60} value={e.debounce_seconds} onChange={(ev) => patch({ debounce_seconds: Number(ev.target.value) })} /></Field>
         <Field label="Máx. mensagens por conversa"><input className="input" type="number" min={10} max={200} value={e.max_messages_per_conversation} onChange={(ev) => patch({ max_messages_per_conversation: Number(ev.target.value) })} /></Field>
       </div>
-      <Toggle label="Pausar quando um humano responder" hint="Se você entrar na conversa, o agente para." checked={e.auto_pause_on_human_message} onChange={() => patch({ auto_pause_on_human_message: !e.auto_pause_on_human_message })} />
+      <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>Quando o bot para e devolve a conversa pra uma pessoa fica na aba <strong>Pausa do bot</strong>.</p>
       {isRep && (
         <>
           <div className="fgrid" style={{ marginTop: 6 }}>
