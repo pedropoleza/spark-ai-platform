@@ -186,6 +186,69 @@ export async function loadHubActivity(locationId: string, limit = 40): Promise<H
   });
 }
 
+/* ─── Conversas pausadas / handoff (feedback Pedro 1c) ──────────── */
+export interface PausedConversationRow {
+  agent_id: string;
+  agent_name: string;
+  contact_id: string;
+  contact_label: string; // nome/telefone quando conhecido, senão id curto
+  status: string;
+  reason: string | null;
+  paused_at: string | null; // formatado pt-BR
+}
+
+function fmtDateTime(iso?: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(d);
+}
+
+/**
+ * Conversas de lead REPASSADAS PRA EQUIPE (status='handed_off') — a IA parou de
+ * responder esse contato. Escopo por location. Importante: pro agente de lead o
+ * sinal de pausa é o enum `status` (a coluna ai_paused_at vive em
+ * assistant_conversations, do SparkBot — NÃO em conversation_state). Nome do
+ * contato é best-effort via followup_sequences; senão mostra id curto.
+ */
+export async function loadPausedConversations(locationId: string): Promise<PausedConversationRow[]> {
+  const supabase = createAdminClient();
+  const { data: convs } = await supabase
+    .from("conversation_state")
+    .select("agent_id, contact_id, status, updated_at")
+    .eq("location_id", locationId)
+    .eq("status", "handed_off")
+    .order("updated_at", { ascending: false })
+    .limit(200);
+  const rows = (convs || []) as { agent_id: string; contact_id: string; status: string | null; updated_at: string | null }[];
+  if (rows.length === 0) return [];
+
+  const agentIds = [...new Set(rows.map((r) => r.agent_id))];
+  const contactIds = [...new Set(rows.map((r) => r.contact_id))];
+  const [agentsRes, seqRes] = await Promise.all([
+    supabase.from("agents").select("id, name").in("id", agentIds),
+    supabase.from("followup_sequences").select("contact_id, contact_name, contact_phone").eq("location_id", locationId).in("contact_id", contactIds),
+  ]);
+  const agentName = new Map((agentsRes.data || []).map((a) => [a.id as string, a.name as string]));
+  const contactLabel = new Map<string, string>();
+  for (const s of (seqRes.data || []) as { contact_id: string; contact_name: string | null; contact_phone: string | null }[]) {
+    if (!contactLabel.has(s.contact_id)) {
+      const lbl = s.contact_name || s.contact_phone;
+      if (lbl) contactLabel.set(s.contact_id, lbl);
+    }
+  }
+
+  return rows.map((r) => ({
+    agent_id: r.agent_id,
+    agent_name: agentName.get(r.agent_id) || "Agente",
+    contact_id: r.contact_id,
+    contact_label: contactLabel.get(r.contact_id) || ("Contato " + r.contact_id.slice(0, 8)),
+    status: r.status || "handed_off",
+    reason: "Repassada pra equipe",
+    paused_at: fmtDateTime(r.updated_at),
+  }));
+}
+
 /* ─── Detalhe de 1 agente (header + config + módulos ligados) ────── */
 export interface HubAgentModuleRow {
   key: string;
