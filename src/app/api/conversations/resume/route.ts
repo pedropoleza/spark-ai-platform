@@ -3,11 +3,10 @@ import { getSession } from "@/lib/auth/sso";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
- * Retoma a IA de uma conversa repassada pra equipe (status='handed_off' →
- * 'active'). Ação iniciada pelo admin, reversível. Usado pela aba "Pausadas"
- * do /hub (feedback Pedro 1c). OBS: conversation_state (lead) NÃO tem
- * ai_paused_at — o sinal de pausa é o enum `status` (ai_paused_at é do SparkBot,
- * em assistant_conversations). Por isso aqui só mexemos em `status`.
+ * Retoma a IA de uma conversa de lead pausada: limpa ai_paused_at/
+ * ai_paused_reason e volta status pra 'active' (inverso do auto-pause do
+ * webhook). Ação iniciada pelo admin, reversível. Usado pela aba "Pausadas"
+ * do /hub (feedback Pedro 1c).
  *
  * Anti-IDOR: confere que o agente pertence à location da sessão antes de mexer.
  */
@@ -36,7 +35,7 @@ export async function POST(request: NextRequest) {
 
   const { error } = await supabase
     .from("conversation_state")
-    .update({ status: "active", updated_at: new Date().toISOString() })
+    .update({ status: "active", ai_paused_at: null, ai_paused_reason: null, updated_at: new Date().toISOString() })
     .eq("agent_id", agentId)
     .eq("contact_id", contactId)
     .eq("location_id", session.locationId);

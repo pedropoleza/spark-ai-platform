@@ -204,23 +204,33 @@ function fmtDateTime(iso?: string | null): string | null {
   return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(d);
 }
 
+// Motivos vêm do runtime (ex: "opt_out:parar", "auto_pause:human_message",
+// "handoff_message:...", "ai_parse_failure_loop"). Humaniza pro admin.
+function humanizePauseReason(raw?: string | null): string {
+  if (!raw) return "Pausada";
+  const r = raw.toLowerCase();
+  if (r.startsWith("opt_out")) return "Lead pediu pra parar";
+  if (r.includes("human_message") || r.includes("human")) return "Atendente humano assumiu";
+  if (r.includes("handoff")) return "Repassada pra equipe";
+  if (r.includes("parse_failure") || r.includes("parse")) return "Pausada por erro técnico";
+  return "Pausada";
+}
+
 /**
- * Conversas de lead REPASSADAS PRA EQUIPE (status='handed_off') — a IA parou de
- * responder esse contato. Escopo por location. Importante: pro agente de lead o
- * sinal de pausa é o enum `status` (a coluna ai_paused_at vive em
- * assistant_conversations, do SparkBot — NÃO em conversation_state). Nome do
- * contato é best-effort via followup_sequences; senão mostra id curto.
+ * Conversas de lead em que a IA está PAUSADA pra um contato (ai_paused_at setado
+ * — opt-out, handoff humano ou erro). Escopo por location. Nome do contato é
+ * best-effort via followup_sequences; senão mostra id curto.
  */
 export async function loadPausedConversations(locationId: string): Promise<PausedConversationRow[]> {
   const supabase = createAdminClient();
   const { data: convs } = await supabase
     .from("conversation_state")
-    .select("agent_id, contact_id, status, updated_at")
+    .select("agent_id, contact_id, status, ai_paused_at, ai_paused_reason")
     .eq("location_id", locationId)
-    .eq("status", "handed_off")
-    .order("updated_at", { ascending: false })
+    .not("ai_paused_at", "is", null)
+    .order("ai_paused_at", { ascending: false })
     .limit(200);
-  const rows = (convs || []) as { agent_id: string; contact_id: string; status: string | null; updated_at: string | null }[];
+  const rows = (convs || []) as { agent_id: string; contact_id: string; status: string | null; ai_paused_at: string | null; ai_paused_reason: string | null }[];
   if (rows.length === 0) return [];
 
   const agentIds = [...new Set(rows.map((r) => r.agent_id))];
@@ -244,8 +254,8 @@ export async function loadPausedConversations(locationId: string): Promise<Pause
     contact_id: r.contact_id,
     contact_label: contactLabel.get(r.contact_id) || ("Contato " + r.contact_id.slice(0, 8)),
     status: r.status || "handed_off",
-    reason: "Repassada pra equipe",
-    paused_at: fmtDateTime(r.updated_at),
+    reason: humanizePauseReason(r.ai_paused_reason),
+    paused_at: fmtDateTime(r.ai_paused_at),
   }));
 }
 
