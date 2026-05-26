@@ -3,6 +3,72 @@ import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+// Visão (OCR de imagem) e parse de PDF podem demorar.
+export const maxDuration = 60;
+
+/**
+ * Extrai texto de um arquivo subido pra base de conhecimento. Suporta:
+ *  - PDF (pdf-parse), Excel .xlsx/.xls (xlsx → CSV por aba), Word .docx (mammoth),
+ *  - txt/csv/md (utf-8), imagens .png/.jpg/.webp (OpenAI vision → texto/descrição).
+ * Falha graciosa: devolve um marcador em vez de quebrar o upload.
+ */
+async function extractFileContent(file: File, buffer: Buffer): Promise<string> {
+  const name = (file.name || "").toLowerCase();
+  const type = file.type || "";
+  try {
+    if (name.endsWith(".pdf")) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const pdfParse = require("pdf-parse");
+      const d = await pdfParse(buffer);
+      return d.text || "";
+    }
+    if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const XLSX = require("xlsx");
+      const wb = XLSX.read(buffer, { type: "buffer" });
+      return (wb.SheetNames as string[])
+        .map((sn) => `## Planilha: ${sn}\n${XLSX.utils.sheet_to_csv(wb.Sheets[sn])}`)
+        .join("\n\n");
+    }
+    if (name.endsWith(".docx")) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mammoth = require("mammoth");
+      const r = await mammoth.extractRawText({ buffer });
+      return r.value || "";
+    }
+    if (/\.(png|jpe?g|webp|gif)$/.test(name) || type.startsWith("image/")) {
+      const OpenAI = (await import("openai")).default;
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 45000 });
+      const dataUrl = `data:${type || "image/png"};base64,${buffer.toString("base64")}`;
+      const comp = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Extraia TODO o texto legível desta imagem e descreva o conteúdo de forma útil pra um agente de seguros (tabelas, números, nomes, valores). Responda em português, só o conteúdo — sem comentários seus." },
+              { type: "image_url", image_url: { url: dataUrl } },
+            ],
+          },
+        ],
+        max_tokens: 1500,
+      });
+      return comp.choices[0]?.message?.content || "";
+    }
+    if (name.endsWith(".txt") || name.endsWith(".csv") || name.endsWith(".md")) {
+      return buffer.toString("utf-8");
+    }
+    if (name.endsWith(".doc")) {
+      // .doc legado (binário) — extração crua (melhor pedir .docx/.pdf).
+      return buffer.toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ").replace(/\s+/g, " ").trim();
+    }
+    return buffer.toString("utf-8");
+  } catch (err) {
+    console.error("[knowledge-base] extração falhou:", file.name, err instanceof Error ? err.message : err);
+    return `[Não consegui extrair o texto de ${file.name}. Tenta converter pra PDF ou colar o texto.]`;
+  }
+}
+
 /**
  * Resolve location_id efetivo pra um agent. Sparkbot (account_assistant) é
  * global — sua KB pertence à location do agent_id, não à location do admin
@@ -71,27 +137,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "file e agent_id obrigatorios" }, { status: 400 });
     }
 
-    // Extrair texto do arquivo
-    let content = "";
+    // Extrair texto do arquivo (PDF, Excel, Word, CSV/txt, imagem via visão).
     const buffer = Buffer.from(await file.arrayBuffer());
-
-    if (file.name.endsWith(".pdf")) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const pdfParse = require("pdf-parse");
-        const pdfData = await pdfParse(buffer);
-        content = pdfData.text;
-      } catch (error) {
-        console.error("Erro ao parsear PDF:", error);
-        content = "[Erro ao extrair texto do PDF]";
-      }
-    } else if (file.name.endsWith(".txt") || file.name.endsWith(".csv") || file.name.endsWith(".md")) {
-      content = buffer.toString("utf-8");
-    } else if (file.name.endsWith(".doc") || file.name.endsWith(".docx")) {
-      content = buffer.toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ").trim();
-    } else {
-      content = buffer.toString("utf-8");
-    }
+    let content = await extractFileContent(file, buffer);
 
     // Truncar conteudo muito grande
     const maxChars = 50000;

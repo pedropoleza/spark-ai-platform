@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { AMark, StatusBadge, ChannelChip, PriceBadge } from "@/components/hub/primitives";
 import { TestChat } from "./test-chat";
+import { KbManager } from "./kb-manager";
 import type { HubAgentDetail } from "@/lib/hub/data";
 import type { AgentStatus, ChannelKey } from "@/components/hub/types";
 import { channelsFromDb, channelsToDb } from "@/components/hub/types";
@@ -393,7 +394,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
                 {cat === "scheduling" && <CatScheduling e={e} patch={patch} isRecruitment={isRecruitment} />}
                 {cat === "followup" && <CatFollowup e={e} patch={patch} />}
                 {cat === "outreach" && <CatOutreach e={e} patch={patch} />}
-                {cat === "knowledge" && <CatKnowledge e={e} patch={patch} />}
+                {cat === "knowledge" && <CatKnowledge e={e} patch={patch} agentId={detail.id} />}
                 {cat === "hours" && <CatHours e={e} patch={patch} />}
                 {cat === "automations" && <CatAutomations e={e} patch={patch} />}
                 {cat === "pause" && <CatPause e={e} patch={patch} />}
@@ -757,16 +758,20 @@ const KB_TEMPLATES: { v: string; l: string; d: string }[] = [
   { v: "national_life_group", l: "National Life Group", d: "Produtos, IUL, regras de carrier" },
   { v: "agency_brazillionaires", l: "Brazillionaires", d: "Material e processos da agência" },
 ];
-function CatKnowledge({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
+function CatKnowledge({ e, patch, agentId }: { e: Editable; patch: (p: Partial<Editable>) => void; agentId: string }) {
   const toggleKb = (v: string) => patch({ enabled_kbs: e.enabled_kbs.includes(v) ? e.enabled_kbs.filter((k) => k !== v) : [...e.enabled_kbs, v] });
   return (
     <>
-      <Field label="O que o agente sabe da agência" hint="Cole aqui o conhecimento principal: produtos, preços, regras, perguntas frequentes. É o que o agente consulta ao responder.">
-        <textarea className="textarea" rows={6} maxLength={10000} value={e.knowledge_base_instructions} onChange={(ev) => patch({ knowledge_base_instructions: ev.target.value })} placeholder={"Ex: Planos família a partir de $X. Atendemos FL, GA, TX. Não cite valores sem confirmar o estado. FAQ: ..."} />
+      <Field label="O que o agente sabe da agência" hint="O essencial em texto: produtos, preços, regras, FAQ. Entra direto no atendimento.">
+        <textarea className="textarea" rows={5} maxLength={10000} value={e.knowledge_base_instructions} onChange={(ev) => patch({ knowledge_base_instructions: ev.target.value })} placeholder={"Ex: Planos família a partir de $X. Atendemos FL, GA, TX. Não cite valores sem confirmar o estado. FAQ: ..."} />
       </Field>
 
+      <SubHd>Documentos & arquivos</SubHd>
+      <p className="fstack__hint" style={{ marginTop: -4, marginBottom: 10 }}>Suba PDF, Excel, Word, CSV ou foto — o sistema lê o conteúdo e o agente passa a usar. Ou cole um texto avulso.</p>
+      <KbManager agentId={agentId} />
+
       <SubHd>Templates de conhecimento</SubHd>
-      <Field label="Bibliotecas prontas" hint="Ative pacotes de conhecimento mantidos pela Spark.">
+      <Field label="Bibliotecas prontas" hint="Pacotes mantidos pela Spark — o agente consulta sob demanda (busca por relevância).">
         <div className="col" style={{ gap: 8 }}>
           {KB_TEMPLATES.map((kb) => {
             const on = e.enabled_kbs.includes(kb.v);
@@ -782,13 +787,6 @@ function CatKnowledge({ e, patch }: { e: Editable; patch: (p: Partial<Editable>)
           })}
         </div>
       </Field>
-
-      <SubHd>Treinar com arquivos</SubHd>
-      <div className="card card--flat" style={{ padding: 14, background: "var(--surface-2)", border: "1px dashed var(--line)", textAlign: "center" }}>
-        <FileText size={18} style={{ color: "var(--ink-4)", marginBottom: 6 }} />
-        <div style={{ fontSize: 13, fontWeight: 500 }}>Subir PDF, Excel, fotos e textos</div>
-        <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>O sistema lê e indexa o arquivo pro agente usar. <strong>Em breve.</strong></div>
-      </div>
     </>
   );
 }
