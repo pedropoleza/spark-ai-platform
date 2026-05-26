@@ -7,6 +7,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { listEntitlements, getAgentModuleInstances, listModules } from "@/lib/repositories/agent-platform.repo";
+import { isEntitlementsEnforced } from "@/lib/agent-platform/entitlements";
 import { DEFAULT_AGENT_MODULE_PRICE_USD, type AgentCapability } from "@/types/agent-platform";
 import type { AgentConfig, CommunicationChannel } from "@/types/agent";
 import type { AgentStatus, ChannelKey, HubAgentView, HubActivityItem } from "@/components/hub/types";
@@ -80,7 +81,9 @@ export async function loadHubAgents(locationId: string): Promise<HubAgentView[]>
     const audience = (a.audience as "rep" | "lead") || (templateKey === "sparkbot" ? "rep" : "lead");
     const included = templateKey === "sparkbot";
     const cap = templateCapability(templateKey);
-    const entitled = included || (cap ? activeCaps.has(cap) : false);
+    // Flag-aware: com AGENT_ENTITLEMENTS_ENFORCED OFF (default), nada é bloqueado
+    // — não mostra "Bloqueado" pra agente usável (fix ultra-review 2026-05-26).
+    const entitled = included || !isEntitlementsEnforced() || (cap ? activeCaps.has(cap) : false);
 
     let status: AgentStatus;
     if (!included && !entitled) status = "blocked";

@@ -118,7 +118,7 @@ function makeSeed(c: Record<string, any>): Editable {
     follow_up_config: {
       enabled: bool(fu.enabled), mode: fu.mode === "manual" ? "manual" : "ai_auto",
       intensity: clampNum(fu.intensity, 1, 10, 5), max_attempts: clampNum(fu.max_attempts, 1, 20, 3),
-      min_delay_minutes: num(fu.min_delay_minutes, 10), max_delay_minutes: num(fu.max_delay_minutes, 10080),
+      min_delay_minutes: Math.max(1, num(fu.min_delay_minutes, 10)), max_delay_minutes: Math.max(1, num(fu.max_delay_minutes, 10080)),
       custom_prompt: str(fu.custom_prompt), manual_steps: Array.isArray(fu.manual_steps) ? fu.manual_steps : [],
     },
     post_booking: { behavior: pb.behavior === "continue_until_appointment" ? "continue_until_appointment" : "stop_and_handoff", handoff_message: str(pb.handoff_message), allow_reschedule: bool(pb.allow_reschedule, true) },
@@ -141,8 +141,8 @@ function makeSeed(c: Record<string, any>): Editable {
     notifications: { on_qualified: bool(nt.on_qualified, true), on_booked: bool(nt.on_booked, true), on_handed_off: bool(nt.on_handed_off, false), on_error: bool(nt.on_error, true), notification_email: str(nt.notification_email) },
     outreach: {
       tag_filter: { tags: Array.isArray(oc.tag_filter?.tags) ? (oc.tag_filter.tags as string[]) : [], match: oc.tag_filter?.match === "all" ? "all" : "any" },
-      rate_per_hour: num(oc.rate_per_hour, 20),
-      daily_cap: num(oc.daily_cap, 100),
+      rate_per_hour: clampNum(oc.rate_per_hour, 1, 500, 20),
+      daily_cap: clampNum(oc.daily_cap, 1, 5000, 100),
       respect_working_hours: bool(oc.respect_working_hours, true),
       opening_message: str(oc.opening_message),
     },
@@ -886,7 +886,7 @@ function ActionList({ actions, onChange }: { actions: AutomationAction[]; onChan
             <input className="input" value={a.media_id || ""} onChange={(ev) => upd(i, { media_id: ev.target.value })} placeholder="ID da mídia" style={{ width: 150 }} />
             <input className="input grow" value={a.media_caption || ""} onChange={(ev) => upd(i, { media_caption: ev.target.value })} placeholder="legenda (opcional)" />
           </>)}
-          {a.type === "pause_ai" && <input className="input" type="number" min={0} value={a.pause_minutes ?? 0} onChange={(ev) => upd(i, { pause_minutes: Number(ev.target.value) })} placeholder="min (0=indef.)" style={{ width: 130 }} />}
+          {a.type === "pause_ai" && <input className="input" type="number" min={0} max={10080} step={1} value={a.pause_minutes ?? 0} onChange={(ev) => upd(i, { pause_minutes: Math.max(0, Math.min(10080, Math.round(Number(ev.target.value) || 0))) })} placeholder="min (0=indef.)" style={{ width: 130 }} />}
           {a.type === "webhook" && <input className="input grow" value={a.webhook_url || ""} onChange={(ev) => upd(i, { webhook_url: ev.target.value })} placeholder="https://…" />}
           <button className="btn btn--quiet btn--icon btn--sm" onClick={() => rem(i)} aria-label="Remover"><Trash2 size={13} /></button>
         </div>
