@@ -31,21 +31,22 @@ export async function validateGHLUser(
 ): Promise<{ user: GHLUser; isAdmin: boolean } | null> {
   const client = new GHLClient(companyId, locationId);
 
-  // Tentar buscar lista de usuarios
-  try {
-    const response = await client.get<{ users: GHLUser[] }>("/users/", {
-      locationId,
-    });
-
-    console.log("[SSO] Users response count:", response.users?.length);
-
-    const user = response.users?.find((u) => u.id === userId);
-    if (user) {
-      console.log("[SSO] User found:", { id: user.id, role: user.role, type: user.type });
-      return { user, isAdmin: isUserAdmin(user) };
+  // Lista de usuários — com 1 retry pra instabilidade transitória da GHL (assim o
+  // fail-closed abaixo raramente trava um usuário legítimo por flap de rede).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await client.get<{ users: GHLUser[] }>("/users/", { locationId });
+      console.log("[SSO] Users response count:", response.users?.length);
+      const user = response.users?.find((u) => u.id === userId);
+      if (user) {
+        console.log("[SSO] User found:", { id: user.id, role: user.role, type: user.type });
+        return { user, isAdmin: isUserAdmin(user) };
+      }
+      break; // lista respondeu mas o user não está nela → tenta fetch individual (sem re-listar)
+    } catch (err) {
+      console.log(`[SSO] Users list failed (tentativa ${attempt + 1}/2):`, err instanceof Error ? err.message : err);
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 300));
     }
-  } catch (err) {
-    console.log("[SSO] Users list failed:", err instanceof Error ? err.message : err);
   }
 
   // Tentar buscar usuario individual
@@ -59,15 +60,19 @@ export async function validateGHLUser(
     console.log("[SSO] Direct user fetch failed:", err instanceof Error ? err.message : err);
   }
 
-  // GHL API não validou — aceitar com permissão limitada.
-  // O Custom Menu Link do GHL já autentica o usuário. Se a API falhar
-  // (GHL instável, rate limit, etc), permitimos acesso mas sem admin.
-  console.warn("[SSO] GHL API validation failed — accepting with limited access. userId:", userId);
-  return {
-    user: { id: userId, name: "", firstName: "", lastName: "", email: "",
-            role: "user", type: "user", permissions: {} },
-    isAdmin: false,
-  };
+  // FAIL-CLOSED (fix P0-1 ultra-review 2026-05-26): ANTES fabricava um usuário e
+  // deixava entrar quando a GHL não confirmava. Como POST /api/auth/sso é público
+  // e o Custom Menu Link manda só user_id/location_id CRUS (sem assinatura), isso
+  // forjava sessão válida pra QUALQUER location_id → bypass de login cross-tenant.
+  // A confirmação via API da GHL É a prova de origem; sem ela, NEGA o acesso.
+  // Location ativa tem token OAuth (o bot precisa dele) → usuário real é
+  // confirmado → sem lockout. AUDIT log abaixo pro Pedro vigiar nos logs do Vercel
+  // se algum legítimo bate na trava (ex: outage da GHL) antes/depois do deploy.
+  console.error(
+    "[SSO][AUDIT] fail-closed — GHL não confirmou o usuário; acesso NEGADO:",
+    JSON.stringify({ userId, locationId, companyId, at: new Date().toISOString() }),
+  );
+  return null;
 }
 
 function isUserAdmin(user: GHLUser): boolean {
