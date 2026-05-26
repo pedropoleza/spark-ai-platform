@@ -325,31 +325,31 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
 
   return (
     <div>
-      {/* Header */}
-      <div style={{ padding: "20px 32px", borderBottom: "1px solid var(--line)", background: "var(--surface)" }}>
-        <Link href="/hub/agents" className="btn btn--quiet btn--sm" style={{ marginBottom: 12 }}>
-          <ChevronLeft /> Voltar para agentes
+      {/* Header — sticky compacto (nome + status + ações sempre visíveis) */}
+      <div className="cfg-hdr">
+        <Link href="/hub/agents" className="btn btn--quiet btn--icon btn--sm" aria-label="Voltar para agentes" title="Voltar para agentes">
+          <ChevronLeft />
         </Link>
-        <div className="row" style={{ gap: 16, alignItems: "flex-start" }}>
-          <AMark templateKey={detail.template_key} size="xl" />
-          <div className="grow">
-            <div style={{ fontSize: 12.5, color: "var(--ink-3)", marginBottom: 4 }}>{TEMPLATE_LABEL[detail.template_key] || detail.template_key}</div>
-            <h1 style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-.018em", margin: 0 }}>{detail.name}</h1>
-            <div className="row wrap" style={{ gap: 16, marginTop: 8 }}>
-              <StatusBadge status={status} />
-              {detail.channels.map((c2) => <ChannelChip key={c2} name={c2} />)}
-              <PriceBadge included={detail.included} entitled={detail.entitled} />
-              {detail.since && <span style={{ fontSize: 12.5, color: "var(--ink-3)" }}>{detail.since}</span>}
-            </div>
+        <AMark templateKey={detail.template_key} size="lg" />
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="row" style={{ gap: 8, alignItems: "center", minWidth: 0 }}>
+            <h1 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-.01em", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{detail.name}</h1>
+            <StatusBadge status={status} />
           </div>
-          <div className="row" style={{ gap: 8 }}>
-            <button className="btn btn--ghost" onClick={() => setShowTest(true)} disabled={isSparkbot} title={isSparkbot ? "Teste o SparkBot direto no WhatsApp" : undefined}>
-              <Play /> Testar
-            </button>
-            <button className="btn btn--ghost" onClick={toggleStatus} disabled={togglingStatus || status === "blocked"}>
-              {status === "active" ? <><Pause /> Pausar</> : <><Play /> Ativar</>}
-            </button>
+          <div className="row wrap" style={{ gap: 10, marginTop: 3, alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{TEMPLATE_LABEL[detail.template_key] || detail.template_key}</span>
+            {detail.channels.map((c2) => <ChannelChip key={c2} name={c2} />)}
+            <PriceBadge included={detail.included} entitled={detail.entitled} />
+            {detail.since && <span style={{ fontSize: 12, color: "var(--ink-4)" }}>{detail.since}</span>}
           </div>
+        </div>
+        <div className="row" style={{ gap: 8, flexShrink: 0 }}>
+          <button className="btn btn--ghost btn--sm" onClick={() => setShowTest(true)} disabled={isSparkbot} title={isSparkbot ? "Teste o SparkBot direto no WhatsApp" : undefined}>
+            <Play /> Testar
+          </button>
+          <button className="btn btn--ghost btn--sm" onClick={toggleStatus} disabled={togglingStatus || status === "blocked"}>
+            {status === "active" ? <><Pause /> Pausar</> : <><Play /> Ativar</>}
+          </button>
         </div>
       </div>
 
@@ -428,9 +428,11 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="fstack">
-      <div className="fstack__lbl">{label}</div>
-      {hint && <div className="fstack__hint">{hint}</div>}
-      <div>{children}</div>
+      <div className="fstack__head">
+        <div className="fstack__lbl">{label}</div>
+        <div className="fstack__hint">{hint || " "}</div>
+      </div>
+      <div className="fstack__ctrl">{children}</div>
     </div>
   );
 }

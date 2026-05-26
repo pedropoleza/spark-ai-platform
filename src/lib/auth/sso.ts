@@ -131,10 +131,14 @@ export async function createSession(payload: SessionPayload) {
     .sign(getJwtSecret());
 
   const cookieStore = await cookies();
+  const isProd = process.env.NODE_ENV === "production";
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "none", // Necessario para iframe cross-origin (GHL)
+    // Prod: iframe cross-origin do GHL exige SameSite=None+Secure. Dev (http
+    // localhost): "none" sem "secure" é REJEITADO pelo browser → Lax pra sessão
+    // funcionar no preview local.
+    secure: isProd,
+    sameSite: isProd ? "none" : "lax",
     maxAge: SESSION_MAX_AGE,
     path: "/",
   });
