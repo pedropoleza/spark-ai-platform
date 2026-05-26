@@ -218,6 +218,18 @@ export const updateAgentConfigSchema = z.object({
   fallback_model: z.string().min(1).max(100).nullable().optional(),
   disabled_tools: z.array(z.string().min(1).max(80)).max(60).nullable().optional(),
   enabled_kbs: z.array(z.enum(["national_life_group", "agency_brazillionaires"])).nullable().optional(),
+  // Prospecção (agente de lead inicia conversas) — review de lógica 2026-05-26.
+  outreach_config: z.object({
+    enabled: z.boolean().optional(),
+    tag_filter: z.object({
+      tags: z.array(z.string().max(80)).max(50).optional(),
+      match: z.enum(["any", "all"]).optional(),
+    }).nullable().optional(),
+    rate_per_hour: z.number().min(1).max(500).optional(),
+    daily_cap: z.number().min(1).max(5000).optional(),
+    respect_working_hours: z.boolean().optional(),
+    opening_message: z.string().max(2000).optional(),
+  }).nullable().optional(),
 });
 
 // Feedback

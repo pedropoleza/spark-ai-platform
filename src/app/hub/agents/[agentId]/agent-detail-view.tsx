@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   ChevronLeft, Play, Pause, Check, Plus, Trash2,
-  Sparkles, Clock, Calendar, MessageCircle, Users, Send, FileText, Shield,
+  Sparkles, Clock, Calendar, MessageCircle, Users, Send, FileText, Shield, Zap,
   type LucideIcon,
 } from "lucide-react";
 import { AMark, StatusBadge, ChannelChip, PriceBadge } from "@/components/hub/primitives";
@@ -20,7 +20,7 @@ const TEMPLATE_LABEL: Record<string, string> = { sparkbot: "SparkBot", sales: "V
 
 type ConfMode = "always" | "medium_and_high" | "high_only";
 type Objective = "qualification_only" | "qualification_and_booking" | "booking_only";
-type Cat = "personality" | "channel" | "hours" | "qualification" | "followup" | "scheduling" | "knowledge" | "limits" | "messages" | "docs" | "history";
+type Cat = "personality" | "channel" | "hours" | "qualification" | "followup" | "scheduling" | "outreach" | "knowledge" | "limits" | "messages" | "docs" | "history";
 
 const num = (v: unknown, d: number) => (typeof v === "number" && !isNaN(v) ? v : d);
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -29,6 +29,7 @@ const bool = (v: unknown, d = false) => (typeof v === "boolean" ? v : d);
 interface Quiet { enabled: boolean; start: string; end: string; timezone?: string; days?: number[] }
 interface PostBooking { behavior: "stop_and_handoff" | "continue_until_appointment"; handoff_message: string; allow_reschedule: boolean }
 interface Notif { on_qualified: boolean; on_booked: boolean; on_handed_off: boolean; on_error: boolean; notification_email: string }
+interface Outreach { tag_filter: { tags: string[]; match: "any" | "all" }; rate_per_hour: number; daily_cap: number; respect_working_hours: boolean; opening_message: string }
 
 interface Editable {
   identity_name: string;
@@ -60,6 +61,7 @@ interface Editable {
   enable_pdf_reading: boolean;
   enable_summary_notes: boolean;
   notifications: Notif;
+  outreach: Outreach;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,6 +72,8 @@ function makeSeed(c: Record<string, any>): Editable {
   const pb = (c.post_booking ?? {}) as Partial<PostBooking>;
   const qh = (c.quiet_hours ?? {}) as Partial<Quiet>;
   const nt = (c.notifications ?? {}) as Partial<Notif>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oc = (c.outreach_config ?? {}) as Record<string, any>;
   return {
     identity_name: str(p.name),
     identity_mode: p.identity_mode === "human" ? "human" : "assistant",
@@ -108,6 +112,13 @@ function makeSeed(c: Record<string, any>): Editable {
     enable_pdf_reading: bool(c.enable_pdf_reading, true),
     enable_summary_notes: bool(c.enable_summary_notes, false),
     notifications: { on_qualified: bool(nt.on_qualified, true), on_booked: bool(nt.on_booked, true), on_handed_off: bool(nt.on_handed_off, false), on_error: bool(nt.on_error, true), notification_email: str(nt.notification_email) },
+    outreach: {
+      tag_filter: { tags: Array.isArray(oc.tag_filter?.tags) ? (oc.tag_filter.tags as string[]) : [], match: oc.tag_filter?.match === "all" ? "all" : "any" },
+      rate_per_hour: num(oc.rate_per_hour, 20),
+      daily_cap: num(oc.daily_cap, 100),
+      respect_working_hours: bool(oc.respect_working_hours, true),
+      opening_message: str(oc.opening_message),
+    },
   };
 }
 
@@ -115,10 +126,10 @@ function makeSeed(c: Record<string, any>): Editable {
 const CAT_MODULE: Partial<Record<Cat, string>> = {
   personality: "behavior", channel: "channel", hours: "active_hours",
   qualification: "qualification", followup: "followup", scheduling: "scheduling",
-  knowledge: "knowledge", limits: "compliance",
+  outreach: "outreach", knowledge: "knowledge", limits: "compliance",
 };
 // Categorias com toggle mestre (ligar/desligar a capacidade). As demais são sempre-on.
-const TOGGLE_CATS = new Set<Cat>(["hours", "qualification", "followup", "scheduling", "knowledge"]);
+const TOGGLE_CATS = new Set<Cat>(["hours", "qualification", "followup", "scheduling", "outreach", "knowledge"]);
 // Sempre visíveis (independente de módulo).
 const ALWAYS_CATS = new Set<Cat>(["personality", "limits"]);
 
@@ -129,6 +140,7 @@ const CATS: { id: Cat; label: string; icon: LucideIcon; group: "config" | "agent
   { id: "qualification", label: "Qualificação", icon: Users, group: "config" },
   { id: "followup", label: "Follow-up", icon: Send, group: "config" },
   { id: "scheduling", label: "Agendamento", icon: Calendar, group: "config" },
+  { id: "outreach", label: "Prospecção", icon: Zap, group: "config" },
   { id: "knowledge", label: "Conhecimento", icon: FileText, group: "config" },
   { id: "limits", label: "Limites & Avisos", icon: Shield, group: "config" },
   { id: "messages", label: "Mensagens", icon: MessageCircle, group: "agent" },
@@ -142,6 +154,7 @@ const CAT_META: Record<Cat, { title: string; sub: string }> = {
   qualification: { title: "Qualificação de leads", sub: "O que perguntar para identificar um bom lead." },
   followup: { title: "Follow-up", sub: "Retomada automática de quem não respondeu." },
   scheduling: { title: "Agendamento", sub: "O que o agente faz depois de marcar a reunião." },
+  outreach: { title: "Prospecção", sub: "O agente inicia conversas com uma lista (por tag), no ritmo certo, e conduz." },
   knowledge: { title: "Conhecimento", sub: "Documentos e bases que o agente consulta." },
   limits: { title: "Limites & Avisos", sub: "Volume, silêncio, mídia e notificações." },
   messages: { title: "Mensagens", sub: "Conversas recentes deste agente." },
@@ -189,6 +202,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
     toggleModule(mod, !on);
     if (mod === "active_hours") patch({ working_hours: { ...e.working_hours, enabled: !on } });
     else if (mod === "followup") patch({ follow_up_config: { ...e.follow_up_config, enabled: !on } });
+    else if (mod === "outreach") patch({ outreach: { ...e.outreach } }); // marca dirty; enabled deriva no save
   }
 
   async function save() {
@@ -212,6 +226,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
           max_messages_per_conversation: e.max_messages_per_conversation, daily_proactive_limit: e.daily_proactive_limit, no_response_threshold: e.no_response_threshold, quiet_hours: e.quiet_hours,
           enable_audio_transcription: e.enable_audio_transcription, enable_image_analysis: e.enable_image_analysis, enable_pdf_reading: e.enable_pdf_reading, enable_summary_notes: e.enable_summary_notes,
           notifications: e.notifications,
+          outreach_config: { ...e.outreach, enabled: enabled.has("outreach") },
         }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "falhou");
@@ -329,6 +344,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
                 {cat === "qualification" && <CatQualification e={e} patch={patch} />}
                 {cat === "followup" && <CatFollowup e={e} patch={patch} />}
                 {cat === "scheduling" && <CatScheduling e={e} patch={patch} />}
+                {cat === "outreach" && <CatOutreach e={e} patch={patch} />}
                 {cat === "knowledge" && <CatKnowledge e={e} patch={patch} />}
                 {cat === "limits" && <CatLimits e={e} patch={patch} audience={detail.audience} />}
                 {cat === "messages" && <div className="empty">As conversas deste agente aparecerão aqui.</div>}
@@ -506,6 +522,43 @@ function CatScheduling({ e, patch }: { e: Editable; patch: (p: Partial<Editable>
       <Field label="Depois de agendar"><Seg value={pb.behavior} options={[{ v: "stop_and_handoff", l: "Passar pra humano" }, { v: "continue_until_appointment", l: "Continuar até a reunião" }]} onChange={(v) => set({ behavior: v })} /></Field>
       <Field label="Mensagem ao passar pra humano"><textarea className="textarea" rows={2} value={pb.handoff_message} onChange={(ev) => set({ handoff_message: ev.target.value })} placeholder="Ex: Perfeito! Já agendei. Um especialista vai te acompanhar a partir daqui." /></Field>
       <Toggle label="Permitir reagendamento" checked={pb.allow_reschedule} onChange={() => set({ allow_reschedule: !pb.allow_reschedule })} />
+    </>
+  );
+}
+
+function CatOutreach({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
+  const o = e.outreach;
+  const set = (p: Partial<Outreach>) => patch({ outreach: { ...o, ...p } });
+  return (
+    <>
+      <Field label="Quem o agente aborda" hint="Contatos com estas tags (separe por vírgula). Uma ou mais.">
+        <input
+          className="input"
+          value={o.tag_filter.tags.join(", ")}
+          onChange={(ev) => set({ tag_filter: { ...o.tag_filter, tags: ev.target.value.split(",").map((t) => t.trim()).filter(Boolean) } })}
+          placeholder="ex: feirao_2026, sem_contato"
+        />
+        <div style={{ marginTop: 8 }}>
+          <Seg
+            value={o.tag_filter.match}
+            options={[{ v: "any" as const, l: "Qualquer uma das tags" }, { v: "all" as const, l: "Todas as tags" }]}
+            onChange={(v) => set({ tag_filter: { ...o.tag_filter, match: v } })}
+          />
+        </div>
+      </Field>
+      <div className="fgrid">
+        <Field label="Mensagens por hora" hint="Ritmo — espalha no tempo, sem rajada."><input className="input" type="number" min={1} max={500} value={o.rate_per_hour} onChange={(ev) => set({ rate_per_hour: Number(ev.target.value) })} style={{ width: 110 }} /></Field>
+        <Field label="Limite por dia"><input className="input" type="number" min={1} max={5000} value={o.daily_cap} onChange={(ev) => set({ daily_cap: Number(ev.target.value) })} style={{ width: 110 }} /></Field>
+      </div>
+      <Toggle label="Respeitar horário de atendimento" hint="Só aborda dentro do horário configurado." checked={o.respect_working_hours} onChange={() => set({ respect_working_hours: !o.respect_working_hours })} />
+      <Field label="Mensagem de abertura" hint="A 1ª mensagem. Vazio = a IA cria com base no propósito.">
+        <textarea className="textarea" rows={3} value={o.opening_message} onChange={(ev) => set({ opening_message: ev.target.value })} placeholder="Ex: Oi {first_name}! Vi que você passou no nosso feirão — posso te ajudar com a cotação?" />
+      </Field>
+      <div className="card card--flat" style={{ padding: 12, background: "var(--surface-2)", marginTop: 8 }}>
+        <span style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
+          Depois de iniciar, o agente <strong>conduz</strong> a conversa normalmente (qualifica, agenda…). O disparo real é liberado pela agência (supervisionado) antes de ligar em produção.
+        </span>
+      </div>
     </>
   );
 }
