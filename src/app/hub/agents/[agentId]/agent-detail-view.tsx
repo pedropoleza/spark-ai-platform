@@ -603,7 +603,7 @@ function CatQualification({ e, patch }: { e: Editable; patch: (p: Partial<Editab
           {fields.map((f, i) => (
             <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 130px auto auto", gap: 10, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8 }}>
               <input className="input" value={f.label} onChange={(ev) => update(i, { label: ev.target.value })} />
-              <select className="select" value={f.type} onChange={(ev) => update(i, { type: ev.target.value as DataField["type"] })}><option value="text">Texto</option><option value="date">Data</option><option value="boolean">Sim/Não</option><option value="select">Opções</option></select>
+              <select className="select" aria-label="Tipo do campo" value={f.type} onChange={(ev) => update(i, { type: ev.target.value as DataField["type"] })}><option value="text">Texto</option><option value="date">Data</option><option value="boolean">Sim/Não</option><option value="select">Opções</option></select>
               <label className="row" style={{ gap: 6, fontSize: 12, color: "var(--ink-3)" }}><button type="button" className="switch" role="switch" aria-checked={f.required} aria-label="Campo obrigatório" onClick={() => update(i, { required: !f.required })} /> obrig.</label>
               <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remove(i)} aria-label="Remover"><Trash2 size={13} /></button>
             </div>
@@ -617,7 +617,7 @@ function CatQualification({ e, patch }: { e: Editable; patch: (p: Partial<Editab
         <div className="col" style={{ gap: 8 }}>
           {tr.map((r, i) => (
             <div key={r.id} className="row" style={{ gap: 8, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8, flexWrap: "wrap" }}>
-              <select className="select" value={r.type} onChange={(ev) => updT(i, { type: ev.target.value as TargetingRule["type"] })} style={{ width: 170 }}>
+              <select className="select" aria-label="Tipo de regra de segmentação" value={r.type} onChange={(ev) => updT(i, { type: ev.target.value as TargetingRule["type"] })} style={{ width: 170 }}>
                 <option value="tag">Tem a tag</option>
                 <option value="custom_field">Campo personalizado</option>
                 <option value="pipeline_stage">Etapa do funil</option>
@@ -649,7 +649,7 @@ function DelayInput({ minutes, onChange }: { minutes: number; onChange: (m: numb
   return (
     <div className="row" style={{ gap: 6 }}>
       <input className="input" type="number" min={1} value={val} onChange={(ev) => onChange(Math.max(1, Math.round(Number(ev.target.value) * mult(unit))))} style={{ width: 84 }} />
-      <select className="select" value={unit} onChange={(ev) => onChange(Math.max(1, Math.round(val * mult(ev.target.value))))} style={{ width: 104 }}>
+      <select className="select" aria-label="Unidade de tempo" value={unit} onChange={(ev) => onChange(Math.max(1, Math.round(val * mult(ev.target.value))))} style={{ width: 104 }}>
         <option value="m">minutos</option><option value="h">horas</option><option value="d">dias</option>
       </select>
     </div>
@@ -746,7 +746,7 @@ function CatScheduling({ e, patch, isRecruitment }: { e: Editable; patch: (p: Pa
         ) : opts.length === 0 ? (
           <span className="muted" style={{ fontSize: 13 }}>Nenhum calendário encontrado nesta conta do Spark Leads. Crie um lá e recarregue a página.</span>
         ) : (
-          <select className="select" value={e.calendar_id || ""} onChange={(ev) => patch({ calendar_id: ev.target.value })} style={{ maxWidth: 420 }}>
+          <select className="select" aria-label="Calendário para agendamento" value={e.calendar_id || ""} onChange={(ev) => patch({ calendar_id: ev.target.value })} style={{ maxWidth: 420 }}>
             <option value="">— Não agendar (só qualificar)</option>
             {opts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
@@ -882,13 +882,13 @@ function CatAutomations({ e, patch }: { e: Editable; patch: (p: Partial<Editable
                 <button className="btn btn--quiet btn--icon btn--sm" onClick={() => rem(i)} aria-label="Remover"><Trash2 size={13} /></button>
               </div>
               <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-                <select className="select" value={ev} onChange={(evt) => setTrigger(i, evt.target.value)} style={{ width: 200 }}>
+                <select className="select" aria-label="Evento que dispara a automação" value={ev} onChange={(evt) => setTrigger(i, evt.target.value)} style={{ width: 200 }}>
                   {EVENT_OPTS.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
                   <option value="__field__">Campo preenchido…</option>
                 </select>
                 {isField && a.trigger?.kind === "on_data_field_set" && (<>
                   <input className="input" value={a.trigger.field_key} onChange={(evt) => upd(i, { trigger: { ...a.trigger as Extract<AutomationRule["trigger"], { kind: "on_data_field_set" }>, field_key: evt.target.value } })} placeholder="chave do campo" style={{ width: 150 }} />
-                  <select className="select" value={a.trigger.operator} onChange={(evt) => upd(i, { trigger: { ...a.trigger as Extract<AutomationRule["trigger"], { kind: "on_data_field_set" }>, operator: evt.target.value as "any_value" | "equals" | "contains" | "matches_regex" } })} style={{ width: 140 }}>
+                  <select className="select" aria-label="Operador da condição" value={a.trigger.operator} onChange={(evt) => upd(i, { trigger: { ...a.trigger as Extract<AutomationRule["trigger"], { kind: "on_data_field_set" }>, operator: evt.target.value as "any_value" | "equals" | "contains" | "matches_regex" } })} style={{ width: 140 }}>
                     <option value="any_value">tem valor</option><option value="equals">igual a</option><option value="contains">contém</option><option value="matches_regex">regex</option>
                   </select>
                   {a.trigger.operator !== "any_value" && <input className="input grow" value={a.trigger.value || ""} onChange={(evt) => upd(i, { trigger: { ...a.trigger as Extract<AutomationRule["trigger"], { kind: "on_data_field_set" }>, value: evt.target.value } })} placeholder="valor" />}
@@ -912,7 +912,7 @@ function ActionList({ actions, onChange }: { actions: AutomationAction[]; onChan
     <div className="col" style={{ gap: 6 }}>
       {actions.map((a, i) => (
         <div key={i} className="row" style={{ gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <select className="select" value={a.type} onChange={(ev) => upd(i, { type: ev.target.value as AutomationAction["type"] })} style={{ width: 170 }}>
+          <select className="select" aria-label="Ação da automação" value={a.type} onChange={(ev) => upd(i, { type: ev.target.value as AutomationAction["type"] })} style={{ width: 170 }}>
             {ACTION_OPTS.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
           </select>
           {(a.type === "add_tag" || a.type === "remove_tag") && <input className="input grow" value={a.tag || ""} onChange={(ev) => upd(i, { tag: ev.target.value })} placeholder="nome da tag" />}
@@ -1064,7 +1064,7 @@ function CatLimits({ e, patch, isRep }: { e: Editable; patch: (p: Partial<Editab
             <div className="col" style={{ gap: 8 }}>
               {dr.map((r, i) => (
                 <div key={r.id} className="row" style={{ gap: 8, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8, flexWrap: "wrap" }}>
-                  <select className="select" value={r.type} onChange={(ev) => updD(i, { type: ev.target.value as DeactivationRule["type"] })} style={{ width: 170 }}>
+                  <select className="select" aria-label="Tipo de regra de desativação" value={r.type} onChange={(ev) => updD(i, { type: ev.target.value as DeactivationRule["type"] })} style={{ width: 170 }}>
                     <option value="tag_added">Tag adicionada</option><option value="tag_removed">Tag removida</option><option value="custom_field_equals">Campo = valor</option>
                   </select>
                   {(r.type === "tag_added" || r.type === "tag_removed") && <input className="input grow" value={r.tag || ""} onChange={(ev) => updD(i, { tag: ev.target.value })} placeholder="nome da tag" />}
