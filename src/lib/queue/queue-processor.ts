@@ -582,10 +582,16 @@ async function processGroup(
 
   const promptCtx = {
     config,
-    // custom_agent (Plataforma Modular) roda no runtime de lead provado (caminho
-    // sales); o comportamento vem do custom_instructions. Motor modular dedicado
-    // pro custom entra depois, validado. Recrutamento mantém o seu; o resto = sales.
-    agentType: (agent.type === "recruitment_agent" ? "recruitment_agent" : "sales_agent") as "sales_agent" | "recruitment_agent",
+    // custom_agent (Plataforma Modular) roda no runtime de lead provado, mas com
+    // framing NEUTRO (C2-4 ultra-review 2026-05-26): antes era forçado a
+    // "sales_agent" e herdava as REGRAS INVIOLÁVEIS DE VENDAS, que brigavam com o
+    // custom_instructions de um agente não-comercial. Agora passa o tipo real e o
+    // prompt builder dá um enquadramento que defere ao custom_instructions.
+    agentType: (agent.type === "recruitment_agent"
+      ? "recruitment_agent"
+      : agent.type === "custom_agent"
+        ? "custom_agent"
+        : "sales_agent") as "sales_agent" | "recruitment_agent" | "custom_agent",
     contactName,
     collectedData,
     locationName: location.location_name || "Nossa empresa",

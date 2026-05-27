@@ -53,7 +53,7 @@ export interface KnowledgeBaseItem {
 
 export interface PromptContext {
   config: AgentConfig;
-  agentType?: "sales_agent" | "recruitment_agent";
+  agentType?: "sales_agent" | "recruitment_agent" | "custom_agent";
   contactName: string;
   collectedData: Record<string, string>;
   locationName: string;
@@ -331,6 +331,19 @@ REGRAS INVIOLÁVEIS DE VENDAS:
 - NUNCA use linguagem de recrutamento: "candidato", "vaga", "oportunidade de carreira", "trabalhar conosco", "fazer parte do time", "desenvolvimento profissional".
 - Se o lead perguntar "é oportunidade de trabalho?" ou similar: esclareça gentilmente que é sobre o produto/serviço e direcione para o que o corretor pode apresentar.
 - O agendamento é para o lead conversar com um especialista sobre contratação/cotação.`;
+  }
+
+  // C2-4 (ultra-review 2026-05-26): custom_agent NÃO é forçado a vendas/recrutamento.
+  // Enquadramento neutro que defere ao custom_instructions como diretriz principal —
+  // sem REGRAS INVIOLÁVEIS comerciais que brigam com um propósito não-comercial.
+  if (ctx.agentType === "custom_agent") {
+    return `## NATUREZA DO ATENDIMENTO: PERSONALIZADO
+Este é um agente PERSONALIZADO. Sua função, tom e regras vêm das INSTRUÇÕES CUSTOMIZADAS e do OBJETIVO definidos abaixo — trate-os como sua diretriz principal.
+
+REGRAS:
+- NÃO assuma que é venda nem recrutamento por padrão. Siga exatamente o propósito descrito nas instruções customizadas.
+- Não force linguagem comercial ("cotação", "apólice", "contratar") nem de recrutamento ("vaga", "candidato", "carreira"), a menos que as instruções peçam.
+- Se as instruções não cobrirem uma situação, seja útil, claro e neutro.`;
   }
 
   return "";
@@ -1016,7 +1029,7 @@ export function buildResponseJsonSchema(ctx: PromptContext) {
 
 interface FollowUpPromptContext {
   config: AgentConfig;
-  agentType?: "sales_agent" | "recruitment_agent";
+  agentType?: "sales_agent" | "recruitment_agent" | "custom_agent";
   attemptNumber: number;
   locationName: string;
   currentDate: string;
