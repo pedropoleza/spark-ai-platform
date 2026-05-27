@@ -9,7 +9,6 @@ import {
   findStaleUnbilledRecords,
   claimUnbilledBatch,
   reapStaleClaims,
-  releaseClaimForRecord,
   markWalletCharged,
 } from "@/lib/repositories/usage-records.repo";
 import { getMonthlySpendCap } from "@/lib/repositories/agents.repo";
@@ -279,7 +278,9 @@ export async function isMonthlyCapReached(
  *   1. claimUnbilledBatch reivindica até N rows não-claimed e marca com nosso
  *      token. Cada row é atribuída a UM claim (concorrência segura).
  *   2. Apenas as rows reivindicadas por nós são processadas.
- *   3. Em caso de falha por record, claim é resetado no catch (retry).
+ *   3. Em caso de falha por record, o claim NÃO é liberado — fica reivindicado e
+ *      o reaper (15min) retenta. Backoff que não martela o GHL nem deixa records
+ *      insolúveis (ex: insufficient funds) bloquearem o front da fila.
  *
  * C3-1/P0-3 (ultra-review 2026-05-26): ANTES do claim, roda o reaper que solta
  * claims órfãos (>15min, não cobrados) — o caso em que uma execução anterior
@@ -360,7 +361,8 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
       if (!companyId) {
         failed++;
         sampleErr(record.id, `sem company_id pra location ${record.location_id}`);
-        await releaseClaimForRecord(record.id);
+        // Não libera: deixa reivindicado pro reaper (15min) retentar. Evita
+        // re-claim imediato e o bloqueio do front da fila por records insolúveis.
         continue;
       }
 
@@ -376,8 +378,13 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
       charged++;
     } catch (err) {
       failed++;
-      // Libera claim pra próxima tentativa (não loga retries pra evitar spam)
-      await releaseClaimForRecord(record.id);
+      // NÃO libera o claim aqui (mudança 2026-05-26). Deixa reivindicado: o
+      // reaper (15min) retenta. Motivo: a falha mais comum é o GHL 400
+      // "insufficient funds" (carteira da location sem saldo). Liberar pra retry
+      // a cada 5min martelava o GHL (~10k 400/dia) e os fundless mais antigos
+      // bloqueavam o front da fila (claim por created_at ASC), atrasando os
+      // records COM saldo. Backoff de 15min via reaper resolve os dois e ainda
+      // auto-cura quando o cliente recarrega.
       const msg = err instanceof Error ? err.message.slice(0, 200) : String(err);
       sampleErr(record.id, msg);
       console.warn(`[Billing] Single charge failed for record ${record.id}: ${msg}`);
