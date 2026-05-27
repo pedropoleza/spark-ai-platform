@@ -8,6 +8,7 @@ import {
   getMonthlySpend,
   findStaleUnbilledRecords,
   claimUnbilledBatch,
+  reapStaleClaims,
   releaseClaimForRecord,
   markWalletCharged,
 } from "@/lib/repositories/usage-records.repo";
@@ -273,17 +274,31 @@ export async function isMonthlyCapReached(
 /**
  * Cobra registros pendentes que falharam anteriormente.
  *
- * P1 (review 2026-04-28): claim atômico via UPDATE...RETURNING pra evitar
- * 2 crons concorrentes pegarem o mesmo batch.
- *   1. UPDATE pega rows não-claimed (claim_token IS NULL) e marca com nosso
- *      token. Postgres garante que cada row é atribuída a UM claim.
- *   2. Apenas rows com claim_token = nosso token são processadas.
- *   3. Em caso de falha, claim é resetado em finally.
+ * P1 (review 2026-04-28): claim atômico (SELECT ids → UPDATE by ids, bounded)
+ * pra evitar 2 crons concorrentes pegarem o mesmo batch.
+ *   1. claimUnbilledBatch reivindica até N rows não-claimed e marca com nosso
+ *      token. Cada row é atribuída a UM claim (concorrência segura).
+ *   2. Apenas as rows reivindicadas por nós são processadas.
+ *   3. Em caso de falha por record, claim é resetado no catch (retry).
+ *
+ * C3-1/P0-3 (ultra-review 2026-05-26): ANTES do claim, roda o reaper que solta
+ * claims órfãos (>15min, não cobrados) — o caso em que uma execução anterior
+ * morreu por timeout no meio do loop e deixou records travados pra sempre. Sem
+ * isso, 192 records (~$15) ficaram presos desde 2026-05-21.
  */
-export async function chargeUnbilledRecords(): Promise<{ charged: number; failed: number }> {
+export async function chargeUnbilledRecords(): Promise<{ charged: number; failed: number; reaped: number }> {
   const supabase = createAdminClient();
   let charged = 0;
   let failed = 0;
+
+  // Reaper de claims órfãos (C3-1/P0-3): solta records reivindicados há >15min
+  // que nunca foram cobrados nem liberados (lambda morreu no loop). Eles voltam
+  // a ser elegíveis ao claim abaixo. Roda SEMPRE, antes de tudo.
+  const fifteenMinAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const reaped = await reapStaleClaims(fifteenMinAgo);
+  if (reaped > 0) {
+    console.warn(`[Billing] Reaper soltou ${reaped} claim(s) órfão(s) (>15min, não cobrados) pra retry.`);
+  }
 
   // Alerta: registros unbilled antigos indicam problema recorrente com o GHL wallet.
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
@@ -302,12 +317,15 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
     }
   }
 
-  // Atomic claim via repo — query EXATA: UPDATE...RETURNING com filters de
+  // Claim atômico via repo (SELECT ids → UPDATE by ids) com filters de
   // idempotência (P1 review 2026-04-28, Fix Track 10 H4 review 2026-05-05).
+  // Batch bounded em 40: agora que claimUnbilledBatch limita de verdade, 40
+  // charges sequenciais ao GHL cabem com folga nos 60s da lambda (margem de
+  // segurança). O cron dedicado (5min) drena o resto nos runs seguintes.
   const claimToken = (globalThis.crypto as Crypto).randomUUID();
-  const claimed = await claimUnbilledBatch(claimToken, new Date().toISOString(), 50);
+  const claimed = await claimUnbilledBatch(claimToken, new Date().toISOString(), 40);
 
-  if (claimed.length === 0) return { charged: 0, failed: 0 };
+  if (claimed.length === 0) return { charged: 0, failed: 0, reaped };
 
   // Cache location → company_id pra evitar N queries
   const locCompanyCache = new Map<string, string | null>();
@@ -357,5 +375,5 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
     }
   }
 
-  return { charged, failed };
+  return { charged, failed, reaped };
 }

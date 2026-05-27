@@ -203,13 +203,20 @@ export async function markCapBlocked(recordId: string): Promise<void> {
 /**
  * Claim atômico de batch de records não cobrados (para chargeUnbilledRecords).
  *
- * Replica EXATAMENTE a query de billing/charge.ts:chargeUnbilledRecords —
- * UPDATE ... WHERE charged_to_wallet=false AND uses_custom_key=false AND
- * cap_blocked=false AND total_charge_usd>0 AND claim_token IS NULL
- * RETURNING *.
+ * Faz em 2 passos (SELECT ids → UPDATE by ids) em vez de um único
+ * `UPDATE ... LIMIT ... RETURNING`. Motivo (C3-1/P0-3 ultra-review 2026-05-26):
+ * o `.limit()` do postgrest-js NÃO capa o UPDATE nesta stack — em 2026-05-21 um
+ * único claim reivindicou 192 records (todos com claimed_at idêntico) em vez de
+ * 50, o loop de charge não coube no orçamento de 60s da lambda, ela morreu, e os
+ * reivindicados-mas-não-processados ficaram órfãos (claim_token preso) pra
+ * sempre. O `.limit()` é confiável no SELECT, então selecionamos os ids primeiro
+ * — isso GARANTE o tamanho do lote, que é o que mantém o loop de charge dentro do
+ * tempo.
  *
- * Postgres garante que cada row é atribuída a UM claim (sem race condition).
- * Em caso de falha, caller deve resetar claim_token=null nos records falhos.
+ * Concorrência preservada: o `.is("claim_token", null)` no UPDATE garante que,
+ * se 2 crons selecionarem ids sobrepostos, o row-lock do Postgres serializa os
+ * UPDATEs e o segundo não casa (claim_token já != null) — cada row é
+ * reivindicada por exatamente UM claim.
  *
  * P1 (review 2026-04-28): idempotência por claimToken (UUID por execução).
  * Fix Track 10 H4 (review 2026-05-05): cap_blocked.eq.false evita loop de
@@ -221,18 +228,57 @@ export async function claimUnbilledBatch(
   limit: number,
 ): Promise<UsageRecordRow[]> {
   const supabase = createAdminClient();
-  const { data } = await supabase
+
+  // Passo 1: SELECIONA até `limit` ids candidatos (o `.limit()` é confiável no
+  // SELECT — ver nota acima). Mesmos filtros de idempotência do claim original.
+  const { data: candidates } = await supabase
     .from("usage_records")
-    .update({ claim_token: claimToken, claimed_at: claimedAt })
+    .select("id")
     .eq("charged_to_wallet", false)
     .eq("uses_custom_key", false)
     .eq("cap_blocked", false)
     .gt("total_charge_usd", 0)
     .is("claim_token", null)
-    .select("*")
     .order("created_at", { ascending: true })
     .limit(limit);
+
+  const ids = (candidates ?? []).map((r) => (r as { id: string }).id);
+  if (ids.length === 0) return [];
+
+  // Passo 2: claim atômico SÓ desses ids que ainda estão sem dono.
+  const { data } = await supabase
+    .from("usage_records")
+    .update({ claim_token: claimToken, claimed_at: claimedAt })
+    .in("id", ids)
+    .is("claim_token", null)
+    .select("*");
   return (data ?? []) as UsageRecordRow[];
+}
+
+/**
+ * Reaper de claims órfãos (C3-1/P0-3 ultra-review 2026-05-26).
+ *
+ * Solta (claim_token=null, claimed_at=null) os records reivindicados mas nunca
+ * cobrados nem liberados — o caso em que a lambda do cron morre por timeout no
+ * meio do loop de charge. O `releaseClaimForRecord` só roda no catch de CADA
+ * record, então um kill da função inteira deixa os reivindicados-mas-não-
+ * processados travados pra sempre (já que `claimUnbilledBatch` só pega
+ * claim_token IS NULL). Em 2026-05-21 isso travou 192 records (~$15) sem reaper.
+ *
+ * Chamado no topo de `chargeUnbilledRecords` com cutoff de 15min. Coberto pelo
+ * índice parcial `idx_usage_records_claim_token` (WHERE claim_token IS NOT NULL).
+ * Retorna quantos foram soltos (pra log/observabilidade).
+ */
+export async function reapStaleClaims(cutoffIso: string): Promise<number> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("usage_records")
+    .update({ claim_token: null, claimed_at: null })
+    .eq("charged_to_wallet", false)
+    .not("claim_token", "is", null)
+    .lt("claimed_at", cutoffIso)
+    .select("id");
+  return (data ?? []).length;
 }
 
 /**
