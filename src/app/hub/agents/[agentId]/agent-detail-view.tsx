@@ -1044,7 +1044,14 @@ function CatLimits({ e, patch, isRep }: { e: Editable; patch: (p: Partial<Editab
       <Toggle label="Ler PDFs" checked={e.enable_pdf_reading} onChange={() => patch({ enable_pdf_reading: !e.enable_pdf_reading })} />
       <Toggle label="Resumo automático em nota" checked={e.enable_summary_notes} onChange={() => patch({ enable_summary_notes: !e.enable_summary_notes })} />
 
-      <SubHd>Avisos por email</SubHd>
+      <SubHd>Avisos por email (em breve)</SubHd>
+      {/* C2-3 (ultra-review 2026-05-26): os avisos por email ainda NÃO são
+          enviados (não há infra de email ligada). A config salva, mas nada
+          consome. Nota honesta pra não prometer o que não acontece; quando o
+          envio for ligado, é só remover este aviso. */}
+      <p className="muted" style={{ fontSize: 12.5, margin: "0 0 10px" }}>
+        Ainda não enviamos esses avisos por email — por enquanto acompanhe os leads na aba Mensagens. Em breve.
+      </p>
       <Toggle label="Lead qualificado" checked={nt.on_qualified} onChange={() => setN({ on_qualified: !nt.on_qualified })} />
       <Toggle label="Reunião agendada" checked={nt.on_booked} onChange={() => setN({ on_booked: !nt.on_booked })} />
       <Toggle label="Passou pra humano" checked={nt.on_handed_off} onChange={() => setN({ on_handed_off: !nt.on_handed_off })} />
