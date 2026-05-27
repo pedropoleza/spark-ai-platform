@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -65,6 +65,7 @@ interface Editable {
   post_booking: PostBooking;
   specialist_name: string;
   preferred_time_slot: string;
+  calendar_id: string;
   check_legal_docs: boolean;
   handoff_messages: HandoffMessage[];
   automations: AutomationRule[];
@@ -124,6 +125,7 @@ function makeSeed(c: Record<string, any>): Editable {
     post_booking: { behavior: pb.behavior === "continue_until_appointment" ? "continue_until_appointment" : "stop_and_handoff", handoff_message: str(pb.handoff_message), allow_reschedule: bool(pb.allow_reschedule, true) },
     specialist_name: str(c.specialist_name),
     preferred_time_slot: str(c.preferred_time_slot),
+    calendar_id: str(c.calendar_id),
     check_legal_docs: bool(c.check_legal_docs),
     handoff_messages: Array.isArray(c.handoff_messages) ? (c.handoff_messages as HandoffMessage[]) : [],
     automations: Array.isArray(c.automations) ? (c.automations as AutomationRule[]) : [],
@@ -263,7 +265,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
           enabled_channels: [...channelsToDb(e.channels), ...e.extra_channels],
           follow_up_config: { ...e.follow_up_config, enabled: enabled.has("followup"), intensity: clampNum(e.follow_up_config.intensity, 1, 10, 5), max_attempts: clampNum(e.follow_up_config.max_attempts, 1, 20, 3) },
           post_booking: e.post_booking,
-          specialist_name: e.specialist_name, preferred_time_slot: e.preferred_time_slot, check_legal_docs: e.check_legal_docs,
+          specialist_name: e.specialist_name, preferred_time_slot: e.preferred_time_slot, calendar_id: e.calendar_id, check_legal_docs: e.check_legal_docs,
           handoff_messages: cleanHandoff, automations: cleanAutos, deactivation_rules: cleanDeact,
           knowledge_base_instructions: e.knowledge_base_instructions, enabled_kbs: e.enabled_kbs,
           max_messages_per_conversation: clampNum(e.max_messages_per_conversation, 10, 200, 100), daily_proactive_limit: clampNum(e.daily_proactive_limit, 0, 100, 10), no_response_threshold: clampNum(e.no_response_threshold, 1, 20, 3), quiet_hours: e.quiet_hours,
@@ -709,9 +711,47 @@ function CatFollowup({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) 
 function CatScheduling({ e, patch, isRecruitment }: { e: Editable; patch: (p: Partial<Editable>) => void; isRecruitment: boolean }) {
   const pb = e.post_booking;
   const set = (p: Partial<PostBooking>) => patch({ post_booking: { ...pb, ...p } });
+  // Calendários da location (Spark Leads) pra escolher onde o agente marca.
+  // Fix C2-1 (ultra-review 2026-05-26): antes era placeholder "em breve" e o
+  // calendar_id NUNCA era setado pelo hub → book_appointment caía com calendário
+  // vazio (agendamento quebrado). Agora busca de /api/ghl/calendars e persiste.
+  const [cals, setCals] = useState<{ id: string; name: string }[]>([]);
+  const [calsLoading, setCalsLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/ghl/calendars")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive) return;
+        const list = Array.isArray(d?.calendars)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ? d.calendars.map((c: any) => ({ id: String(c?.id ?? c?.calendarId ?? c?.value ?? ""), name: String(c?.name ?? c?.calendarName ?? "Calendário") })).filter((c: { id: string }) => c.id)
+          : [];
+        setCals(list);
+      })
+      .catch(() => { /* mantém vazio → mostra aviso */ })
+      .finally(() => { if (alive) setCalsLoading(false); });
+    return () => { alive = false; };
+  }, []);
+  // Preserva o calendar_id já salvo mesmo se a lista falhar/não incluir (não limpa sem querer).
+  const opts = cals.slice();
+  if (e.calendar_id && !opts.some((c) => c.id === e.calendar_id)) {
+    opts.unshift({ id: e.calendar_id, name: `Calendário atual (${e.calendar_id.slice(0, 8)}…)` });
+  }
   return (
     <>
-      <Field label="Calendário"><span className="muted" style={{ fontSize: 13 }}>Conectado pela agência (Spark Leads). A escolha de calendário entra em breve aqui.</span></Field>
+      <Field label="Calendário" hint="Onde o agente marca as reuniões. Sem calendário, ele só qualifica (não agenda).">
+        {calsLoading ? (
+          <span className="muted" style={{ fontSize: 13 }}>Carregando calendários do Spark Leads…</span>
+        ) : opts.length === 0 ? (
+          <span className="muted" style={{ fontSize: 13 }}>Nenhum calendário encontrado nesta conta do Spark Leads. Crie um lá e recarregue a página.</span>
+        ) : (
+          <select className="select" value={e.calendar_id || ""} onChange={(ev) => patch({ calendar_id: ev.target.value })} style={{ maxWidth: 420 }}>
+            <option value="">— Não agendar (só qualificar)</option>
+            {opts.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        )}
+      </Field>
       <div className="fgrid">
         <Field label="Especialista responsável" hint="Nome de quem conduz a reunião/entrevista."><input className="input" value={e.specialist_name} onChange={(ev) => patch({ specialist_name: ev.target.value })} placeholder="Ex: Dr. Pereira" /></Field>
         <Field label="Horário preferido" hint="Faixa que o agente sugere primeiro."><Seg value={e.preferred_time_slot || "any"} options={[{ v: "any", l: "Qualquer" }, { v: "morning", l: "Manhã" }, { v: "afternoon_evening", l: "Tarde/Noite" }]} onChange={(v) => patch({ preferred_time_slot: v })} /></Field>
