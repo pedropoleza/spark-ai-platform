@@ -119,6 +119,7 @@ Quando criar nova entry: pegue próximo número disponível na categoria, adicio
 | **OpenAI quota alert** | 2026-05-03 | Quando Whisper retorna 429, msg específica ao rep + log destacado. Sem isso, falha aparecia como "Não consigo processar áudio". |
 | **Claude rejeita user msg vazio** | 2026-05-03 | Filter `content=""` antes de mandar histórico ao LLM + nunca persistir vazio. Cleanup retroativo de 4 rows. |
 | **Outbound channel routing** | 2026-05-02 | `ASSISTANT_OUTBOUND_CHANNEL` env (`SMS` default agora; `auto` futuro com window 24h check). |
+| **xlsx CVE — risco aceito** | 2026-05-27 | `xlsx@0.18.5` tem CVEs high sem fix no npm (proto pollution GHSA-4r6h-8v6p-xvw6 + ReDoS GHSA-5pgg-2g8v-p4x9; lib abandonada no npm). MANTIDO: parse só roda em upload de rep/admin **autenticado** (anexo SparkBot / base de conhecimento) com limite de tamanho — não exposto a lead externo → exploitabilidade real baixa. Fix futuro = tarball oficial SheetJS (vira build-dep do `cdn.sheetjs.com`). Comentário em `file-processor.ts`. (ultra-review 2026-05-26, Pedro escolheu "aceitar + documentar".) |
 
 ---
 

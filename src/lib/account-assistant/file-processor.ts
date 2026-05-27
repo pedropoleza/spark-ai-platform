@@ -15,6 +15,14 @@
  */
 
 import { parse as papaParse } from "papaparse";
+// RISCO ACEITO (Pedro 2026-05-27, ultra-review): xlsx@0.18.5 tem CVEs high sem fix
+// no npm (GHSA-4r6h-8v6p-xvw6 prototype pollution, GHSA-5pgg-2g8v-p4x9 ReDoS) — a
+// lib foi abandonada no npm (SheetJS migrou pro tarball próprio). Mantido por ora:
+// o parse SÓ roda em upload de rep/admin AUTENTICADO (anexo ao SparkBot / base de
+// conhecimento), com limite de tamanho (FILE_LIMITS.xlsx) — NÃO é exposto a lead
+// externo, então a exploitabilidade real é baixa. Migrar pro tarball oficial do
+// SheetJS é a saída quando valer adicionar a build-dep do cdn.sheetjs.com. Ver
+// docs/DECISIONS.md.
 import * as XLSX from "xlsx";
 import type { RepInput, TabularData, TabularSheet } from "@/types/account-assistant";
 
