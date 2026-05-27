@@ -11,7 +11,7 @@ import {
   reapStaleClaims,
   markWalletCharged,
 } from "@/lib/repositories/usage-records.repo";
-import { getMonthlySpendCap } from "@/lib/repositories/agents.repo";
+import { getLocationSpendCap } from "@/lib/repositories/agents.repo";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 interface TrackUsageParams {
@@ -95,7 +95,6 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
   // mas custo fica com Pedro até reset mensal ou liberação manual.
   if (cost.totalChargeUsd > 0) {
     const capCheck = await isMonthlyCapReached(
-      params.agentId,
       params.locationId,
       cost.totalChargeUsd,
     ).catch(() => ({ blocked: false, cap: 0, spentSoFar: 0 }));
@@ -234,15 +233,13 @@ export async function checkWalletBalance(
  * Future: pode evoluir pra notificar admin via webhook quando atingir 80%.
  */
 export async function isMonthlyCapReached(
-  agentId: string,
   locationId: string,
   newChargeUsd: number,
 ): Promise<{ blocked: boolean; cap: number; spentSoFar: number }> {
-  // 1. Lê cap da config (default 100). Se NULL explicitamente, sem cap.
-  const agentConfig = await getMonthlySpendCap(agentId);
-
-  const cap = agentConfig?.monthly_spend_cap_usd;
-  if (cap === null || cap === undefined) {
+  // 1. Cap resolvido POR LOCATION (não pelo agent que disparou) — C3-4.
+  // Default $100/sub-account; null = sem cap (MIN dos caps não-nulos da location).
+  const cap = await getLocationSpendCap(locationId);
+  if (cap === null) {
     return { blocked: false, cap: Number.POSITIVE_INFINITY, spentSoFar: 0 };
   }
   const capUsd = Number(cap);

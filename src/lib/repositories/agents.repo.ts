@@ -158,19 +158,41 @@ export async function findAgentConfig(
 }
 
 /**
- * Busca apenas o monthly_spend_cap_usd de um agent.
- * Usado por billing/charge.ts:isMonthlyCapReached.
+ * Resolve o hard-cap mensal de gasto de uma LOCATION (não de um agent).
+ *
+ * C3-4 (ultra-review 2026-05-26): o cap é proteção anti-runaway POR SUB-ACCOUNT
+ * (CLAUDE.md, Pedro 2026-05-04). Como o spend é somado pela location inteira
+ * (getMonthlySpend), o cap também tem que ser resolvido por location — antes
+ * lia o cap do agent QUE DISPAROU a cobrança (getMonthlySpendCap(agentId)), o
+ * que fazia o cap efetivo "piscar" quando agentes da mesma location tinham caps
+ * diferentes (ex: SparkBot $100 + agente de lead sem cap). Hoje benigno (todos
+ * os configs têm $100), mas há locations com até 5 agentes.
+ *
+ * Regra: MIN dos caps NÃO-nulos dos agentes da location (o mais apertado vence —
+ * mais protetivo). Se NENHUM agente tem cap → null (sem cap).
  */
-export async function getMonthlySpendCap(
-  agentId: string,
-): Promise<{ monthly_spend_cap_usd: number | null } | null> {
+export async function getLocationSpendCap(
+  locationId: string,
+): Promise<number | null> {
   const supabase = createAdminClient();
-  const { data } = await supabase
+  const { data: agentRows } = await supabase
+    .from("agents")
+    .select("id")
+    .eq("location_id", locationId);
+  const ids = (agentRows ?? []).map((r) => (r as { id: string }).id);
+  if (ids.length === 0) return null;
+
+  const { data: capRows } = await supabase
     .from("agent_configs")
     .select("monthly_spend_cap_usd")
-    .eq("agent_id", agentId)
-    .maybeSingle();
-  return data ?? null;
+    .in("agent_id", ids);
+  const caps = (capRows ?? [])
+    .map((r) => (r as { monthly_spend_cap_usd: number | null }).monthly_spend_cap_usd)
+    .filter((c): c is number => c !== null && c !== undefined)
+    .map(Number)
+    .filter((c) => Number.isFinite(c) && c > 0);
+  if (caps.length === 0) return null; // nenhum agent com cap válido → sem cap
+  return Math.min(...caps);
 }
 
 // ---------------------------------------------------------------------------
