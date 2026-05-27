@@ -570,7 +570,7 @@ function CatHours({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => 
           })}
         </div>
         {w.mode === "only_during" && !anyDay && (
-          <div className="card card--flat" style={{ padding: 10, marginTop: 10, background: "var(--warn-soft, var(--surface-2))" }}>
+          <div className="card card--flat" style={{ padding: 10, marginTop: 10, background: "var(--warning-soft, var(--surface-2))" }}>
             <span style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
               Nenhum dia ativo com modo <strong>“No horário”</strong> = o agente não responde nunca. Ative ao menos um dia (ou use o botão acima).
             </span>
