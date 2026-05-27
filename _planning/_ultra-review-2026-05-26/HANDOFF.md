@@ -50,11 +50,13 @@ Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5.
 - **Precisa do Pedro (marcos):** ligar RLS (defesa-em-profundidade) · cutover PM-F3.I.
 - **🤖 seguros restantes (poucos, baixo valor):** C1-P2b ($50→preço real, threadar
   monthly_price_usd das entitlements até o PriceBadge — benigno, todos $50 hoje).
+- **C2-P2d (commit 932a70d) FEITO:** offset de tz do agendamento agora via Intl (resolve DST +
+  cobre tz não-US); antes hardcoded no verão → 1h torto no inverno. Validado 5/5.
 - **Tradeoff/decisão (precisa Pedro):** C2-P2c (custom_instructions/conversation_examples
   truncados a 3k/2k no prompt builder vs 10k/20k na UI — alinhar = subir custo de token
   por turn OU baixar cap da UI; perda silenciosa hoje) · C3-RISK (PII: conteúdo de
   message em execution_log sem TTL — política de retenção/redação) · C2-P2a (morning
-  slot no-op p/ sales) · C2-P2d (DST offset fixo no agendamento).
+  slot no-op p/ sales — niche).
 
 ---
 
