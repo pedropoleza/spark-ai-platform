@@ -1021,7 +1021,10 @@ function CatLimits({ e, patch, isRep }: { e: Editable; patch: (p: Partial<Editab
       )}
       <div className="fgrid">
         <Field label="Espera antes de responder" hint="Segundos — agrupa mensagens em sequência."><input className="input" type="number" min={5} max={60} value={e.debounce_seconds} onChange={(ev) => patch({ debounce_seconds: Number(ev.target.value) })} /></Field>
-        <Field label="Máx. mensagens por conversa"><input className="input" type="number" min={10} max={200} value={e.max_messages_per_conversation} onChange={(ev) => patch({ max_messages_per_conversation: Number(ev.target.value) })} /></Field>
+        {/* C2-P2b (ultra-review 2026-05-26): max_messages_per_conversation ainda
+            não é aplicado pelo runtime (dead-write) — marcado "em breve" até o
+            enforcement existir. */}
+        <Field label="Máx. mensagens por conversa (em breve)"><input className="input" type="number" min={10} max={200} value={e.max_messages_per_conversation} onChange={(ev) => patch({ max_messages_per_conversation: Number(ev.target.value) })} /></Field>
       </div>
       <p className="muted" style={{ fontSize: 12, marginTop: 4 }}>Quando o bot para e devolve a conversa pra uma pessoa fica na aba <strong>Pausa do bot</strong>.</p>
       {isRep && (

@@ -81,12 +81,19 @@ export function SettingsForm({
       </div>
 
       <div className="card" style={{ marginTop: 14 }}>
-        <div className="card-hd"><h3>Limites</h3></div>
+        <div className="card-hd"><h3>Limites (em breve)</h3></div>
         <div className="card-body">
-          <Field label="Limite de mensagens por dia" hint="Deixe vazio para sem limite.">
+          {/* C3-7 (ultra-review 2026-05-26): estes 2 ainda NÃO são aplicados pelo
+              runtime (dead-write). Nota honesta + o hard cap mensal real (por
+              sub-account) já protege contra runaway. Remover o "em breve" quando
+              ligar o enforcement. */}
+          <p className="muted" style={{ fontSize: 12.5, margin: "0 0 10px" }}>
+            Ainda não aplicamos estes limites automaticamente — em breve. O teto mensal de gasto por sub-account já está ativo e protege contra disparada de custo.
+          </p>
+          <Field label="Limite de mensagens por dia" hint="Em breve — ainda não aplicado.">
             <input className="input" type="number" min={0} value={dailyLimit} onChange={(e) => setDailyLimit(e.target.value)} style={{ width: 140 }} />
           </Field>
-          <Field label="Alerta de custo (USD)" hint="Avisa quando o gasto do mês passar desse valor.">
+          <Field label="Alerta de custo (USD)" hint="Em breve — ainda não enviamos esse alerta.">
             <input className="input" type="number" min={0} value={costAlert} onChange={(e) => setCostAlert(e.target.value)} style={{ width: 140 }} />
           </Field>
         </div>
