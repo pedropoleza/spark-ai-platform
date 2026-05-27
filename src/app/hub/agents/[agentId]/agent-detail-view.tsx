@@ -7,10 +7,11 @@ import { toast } from "sonner";
 import {
   ChevronLeft, Play, Pause, Check, Plus, Trash2,
   Sparkles, Clock, Calendar, MessageCircle, Users, Send, FileText, Shield, Zap,
-  Wand2, Workflow, PauseCircle,
+  Wand2, Workflow, PauseCircle, Bell,
   type LucideIcon,
 } from "lucide-react";
 import { AMark, StatusBadge, ChannelChip, PriceBadge } from "@/components/hub/primitives";
+import { useHubSession } from "@/components/hub/hub-session";
 import { TestChat } from "./test-chat";
 import { KbManager } from "./kb-manager";
 import type { HubAgentDetail } from "@/lib/hub/data";
@@ -28,7 +29,8 @@ type Objective = "qualification_only" | "qualification_and_booking" | "booking_o
 type Cat =
   | "identity" | "tone"
   | "channel" | "qualification" | "scheduling" | "followup" | "outreach" | "knowledge"
-  | "hours" | "automations" | "pause" | "limits";
+  | "hours" | "automations" | "pause" | "limits"
+  | "proactivity";
 
 const num = (v: unknown, d: number) => (typeof v === "number" && !isNaN(v) ? v : d);
 // Clamp pra faixa do schema — legado fora da faixa derrubava o PUT inteiro (400).
@@ -179,6 +181,7 @@ const CATS: { id: Cat; label: string; icon: LucideIcon; group: string }[] = [
   { id: "automations", label: "Automações", icon: Workflow, group: "operacao" },
   { id: "pause", label: "Pausa do bot", icon: PauseCircle, group: "operacao" },
   { id: "limits", label: "Limites & avisos", icon: Shield, group: "operacao" },
+  { id: "proactivity", label: "Proatividade", icon: Bell, group: "operacao" },
 ];
 const CAT_META: Record<Cat, { title: string; sub: string }> = {
   identity: { title: "Identidade", sub: "Quem é o agente, como se apresenta e o que sabe da agência." },
@@ -193,6 +196,7 @@ const CAT_META: Record<Cat, { title: string; sub: string }> = {
   automations: { title: "Automações", sub: "Ações automáticas quando algo acontece na conversa." },
   pause: { title: "Pausa do bot", sub: "Quando o agente para e devolve a conversa pra uma pessoa." },
   limits: { title: "Limites & avisos", sub: "Volume, confirmações, silêncio, mídia e notificações." },
+  proactivity: { title: "Proatividade", sub: "Quando o SparkBot te procura sozinho — resumos agendados e alertas." },
 };
 
 export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
@@ -299,6 +303,9 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
   }
 
   function catVisible(id: Cat): boolean {
+    // Proatividade: só o SparkBot (rep-facing). Em lead, escondido. (Antes do
+    // isLead pra não vazar pra agente de lead.)
+    if (id === "proactivity") return isSparkbot;
     // Sempre: identidade, tom, pausa, limites.
     if (id === "identity" || id === "tone" || id === "pause" || id === "limits") return true;
     // Lead: TODAS as capacidades aparecem. As com toggle mestre nascem em "off"
@@ -408,6 +415,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
                 {cat === "automations" && <CatAutomations e={e} patch={patch} />}
                 {cat === "pause" && <CatPause e={e} patch={patch} />}
                 {cat === "limits" && <CatLimits e={e} patch={patch} isRep={!isLead} />}
+                {cat === "proactivity" && <CatProactivity />}
               </>
             )}
           </div>
@@ -430,6 +438,151 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
 }
 
 /* ─── Helpers de form ───────────────────────────────────────────── */
+// ─────────────────────────────────────────────────────────────────────────
+// Proatividade do SparkBot — CRUD via /api/agents/sparkbot/rules.
+// Eventos reactive que JÁ disparam no runtime: post_meeting. Scheduled (cron):
+// todos disparam. Os demais reactive são stub/gated → marcados "em breve"
+// (toggle travado pra não ligar algo que não acontece). PUT/DELETE são
+// admin-only no backend, então só admin edita aqui.
+// ─────────────────────────────────────────────────────────────────────────
+const LIVE_REACTIVE_EVENTS = new Set<string>(["post_meeting"]);
+
+interface ProactiveRule {
+  id: string;
+  rule_type: "reactive" | "scheduled";
+  name: string;
+  description: string | null;
+  enabled: boolean;
+  trigger_config: { event?: string; cron?: string; timezone?: string };
+  prompt_instruction: string;
+  cooldown_minutes: number;
+  source: "system" | "custom";
+}
+
+function ruleIsLive(r: ProactiveRule): boolean {
+  return r.rule_type === "scheduled" || LIVE_REACTIVE_EVENTS.has(String(r.trigger_config?.event || ""));
+}
+
+function cronHuman(cron?: string): string {
+  if (!cron) return "Agendado";
+  const map: Record<string, string> = {
+    "0 8 * * 1-5": "Dias úteis às 8h",
+    "0 18 * * 1-5": "Dias úteis às 18h",
+    "0 9 * * 1": "Segundas às 9h",
+    "0 17 * * 5": "Sextas às 17h",
+  };
+  return map[cron.trim()] || `cron: ${cron}`;
+}
+
+function CatProactivity() {
+  const session = useHubSession();
+  const isAdmin = !!session?.isAdmin;
+  const [rules, setRules] = useState<ProactiveRule[] | null>(null);
+  const [loadErr, setLoadErr] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/agents/sparkbot/rules")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("load"))))
+      .then((d) => { if (alive) setRules(Array.isArray(d.rules) ? d.rules : []); })
+      .catch(() => { if (alive) setLoadErr(true); });
+    return () => { alive = false; };
+  }, []);
+
+  async function patchRule(id: string, body: Partial<ProactiveRule>) {
+    setBusy(id);
+    try {
+      const res = await fetch(`/api/agents/sparkbot/rules/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "falhou");
+      setRules((prev) => prev?.map((r) => (r.id === id ? { ...r, ...body } : r)) ?? prev);
+      toast.success("Proatividade atualizada");
+    } catch (err) {
+      toast.error("Não consegui salvar: " + (err instanceof Error ? err.message : ""));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (loadErr) return <div className="empty">Não consegui carregar as regras de proatividade.</div>;
+  if (!rules) return <div className="muted" style={{ fontSize: 13, padding: "8px 0" }}>Carregando…</div>;
+
+  const renderRule = (r: ProactiveRule) => {
+    const live = ruleIsLive(r);
+    const trigger = r.rule_type === "scheduled" ? cronHuman(r.trigger_config?.cron) : "Quando acontece o evento";
+    const isOpen = open === r.id;
+    const canToggle = isAdmin && live && busy !== r.id;
+    return (
+      <div key={r.id} style={{ padding: "11px 0", borderBottom: "1px solid var(--line-faint)" }}>
+        <div className="row between" style={{ alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0 }}>
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13.5, fontWeight: 500 }}>{r.name}</span>
+              {!live && <span className="pill pill--muted">em breve</span>}
+              {r.source === "custom" && <span className="pill pill--info">custom</span>}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--ink-3)", marginTop: 2 }}>
+              {trigger}{r.description ? ` · ${r.description}` : ""}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="switch"
+            role="switch"
+            aria-checked={r.enabled && live}
+            aria-label={`Ativar ${r.name}`}
+            disabled={!canToggle}
+            style={!canToggle ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+            onClick={() => { if (canToggle) patchRule(r.id, { enabled: !r.enabled }); }}
+          />
+        </div>
+        {isAdmin && live && (
+          <>
+            <button className="btn btn--ghost btn--sm" style={{ marginTop: 6 }} onClick={() => setOpen(isOpen ? null : r.id)}>
+              {isOpen ? "Fechar" : "Editar instrução"}
+            </button>
+            {isOpen && (
+              <div style={{ marginTop: 8 }}>
+                <Field label="O que o bot faz/diz" hint="Linguagem natural. A IA gera a mensagem a partir disso.">
+                  <textarea className="input" rows={3} maxLength={3000} defaultValue={r.prompt_instruction}
+                    onBlur={(ev) => { const v = ev.target.value.trim(); if (v && v !== r.prompt_instruction) patchRule(r.id, { prompt_instruction: v }); }} />
+                </Field>
+                <Field label="Cooldown (min)" hint="Tempo mínimo entre disparos do mesmo tipo.">
+                  <input className="input" type="number" min={0} max={10080} defaultValue={r.cooldown_minutes} style={{ width: 120 }}
+                    onBlur={(ev) => { const n = Number(ev.target.value); if (Number.isFinite(n) && n !== r.cooldown_minutes) patchRule(r.id, { cooldown_minutes: n }); }} />
+                </Field>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const scheduled = rules.filter((r) => r.rule_type === "scheduled");
+  const reactive = rules.filter((r) => r.rule_type === "reactive");
+
+  return (
+    <div>
+      <p className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
+        O SparkBot pode te procurar sozinho: resumos em horário fixo e alertas quando algo acontece no Spark Leads. As marcadas <strong>em breve</strong> ainda não disparam.
+      </p>
+      {!isAdmin && <p className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>Só admins ligam/editam a proatividade.</p>}
+
+      <SubHd>Resumos agendados</SubHd>
+      {scheduled.length === 0 ? <div className="muted" style={{ fontSize: 13, padding: "6px 0" }}>Nenhum resumo agendado.</div> : scheduled.map(renderRule)}
+
+      <SubHd>Alertas reativos</SubHd>
+      {reactive.length === 0 ? <div className="muted" style={{ fontSize: 13, padding: "6px 0" }}>Nenhum alerta reativo.</div> : reactive.map(renderRule)}
+    </div>
+  );
+}
+
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="fstack">
