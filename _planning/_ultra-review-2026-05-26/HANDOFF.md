@@ -24,6 +24,10 @@ Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5.
 - **C2-3:** avisos por email marcados "(em breve)" (eram dead-write; sem infra de email).
 - **C1 P2:** billing humanizado, Acessos não some locations sem nome, CTA fora do wizard, CSS órfão (.sb__loc/.sb__foot; .searchbox NÃO era órfão).
 - **C4 P2:** removido seed.ts órfão + dep pdf-parse morta; synthetic-test timing-safe.
+- **Hardening/a11y/honestidade (commits f8a3fa2, 4b3d6d4, f2d4453):** PUT `/api/settings`
+  validado (C3-6); `.or()` do followup sanitizado (C4-P2-1); aria-label nos 8 selects
+  do config (C1-P2a); settings sem enforcement marcados "(em breve)" — daily_message_limit,
+  cost_alert_threshold, max_messages_per_conversation (C3-7, C2-P2b, dead-write confirmados).
 
 **⚠️ OPERACIONAL (👤 Pedro):**
 - **Company `TdmQMjj86Y3LgppiB96K` precisa recarregar o wallet GHL** — ~$15.67 (10 sub-accounts, inclui "Alves Cury Financial"/"Magnet Money") travados por insufficient funds. Cobra sozinho quando recarregar. Se não for tão cedo, pedir pra adicionar backoff maior/dead-letter (hoje retenta a cada ~15min).
@@ -32,7 +36,13 @@ Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5.
 
 **RESTANTE (próximos):**
 - **Precisa do Pedro:** C2-4 (custom_agent com framing de VENDAS hardcoded — muda prompt de 3 custom agents em prod; validar 1 conversa) · deps CVE (`next@latest` + `xlsx`; testar build/smoke) · C3-P2 settings mortos (`daily_message_limit`/`cost_alert_threshold` — implementar consumo ou esconder) · ligar RLS · cutover PM-F3.I.
-- **🤖 seguros restantes:** C1-P2b ($50→preço real, threadar monthly_price_usd) · C1-P2a (aria-label em 7 selects do agent-detail-view) · C4-P2-1 (sanitizar `.or()` em followup.ts:499 — não é cross-tenant) · C2-P2b (max_messages_per_conversation não aplicado a lead) · C2-P2c (truncation 3k/2k no prompt builder vs 10k/20k na UI) · validar PUT `/api/settings`.
+- **🤖 seguros restantes (poucos, baixo valor):** C1-P2b ($50→preço real, threadar
+  monthly_price_usd das entitlements até o PriceBadge — benigno, todos $50 hoje).
+- **Tradeoff/decisão (precisa Pedro):** C2-P2c (custom_instructions/conversation_examples
+  truncados a 3k/2k no prompt builder vs 10k/20k na UI — alinhar = subir custo de token
+  por turn OU baixar cap da UI; perda silenciosa hoje) · C3-RISK (PII: conteúdo de
+  message em execution_log sem TTL — política de retenção/redação) · C2-P2a (morning
+  slot no-op p/ sales) · C2-P2d (DST offset fixo no agendamento).
 
 ---
 
