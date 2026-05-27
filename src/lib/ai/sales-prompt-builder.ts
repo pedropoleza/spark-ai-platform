@@ -684,6 +684,25 @@ ${situacoesBlock}`;
 }
 
 /**
+ * Offset UTC ATUAL de uma timezone IANA no formato "+HH:MM"/"-HH:MM".
+ * Usa Intl (longOffset) → resolve DST automaticamente (C2-P2d). Fallback -05:00.
+ */
+function currentTzOffset(timeZone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      timeZoneName: "longOffset",
+    }).formatToParts(new Date());
+    const name = parts.find((p) => p.type === "timeZoneName")?.value || "";
+    const m = name.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
+    if (!m) return "-05:00";
+    return `${m[1]}${m[2].padStart(2, "0")}:${m[3] || "00"}`;
+  } catch {
+    return "-05:00";
+  }
+}
+
+/**
  * Template ESTÁVEL de agendamento — apenas fluxo e regras de timezone.
  * Horários disponíveis e "agora" ficam em buildRuntimeContext.
  */
@@ -703,10 +722,11 @@ function buildBookingSection(ctx: PromptContext): string {
   else if (effectiveTimezone.includes("Denver")) tzLabel = "MT";
   else if (effectiveTimezone.includes("Los_Angeles")) tzLabel = "PT";
 
-  const tzOffsetMap: Record<string, string> = {
-    ET: "-04:00", CT: "-05:00", MT: "-06:00", PT: "-07:00",
-  };
-  const tzOffset = tzOffsetMap[tzLabel] || "-04:00";
+  // C2-P2d (ultra-review 2026-05-26): offset computado dinamicamente (lida com
+  // DST + cobre tz não-US). Antes era hardcoded no horário de VERÃO (ET=-04:00),
+  // ficando 1h errado no inverno — e o book_appointment usa esse offset no
+  // start_time, então o agendamento saía 1h torto metade do ano.
+  const tzOffset = currentTzOffset(effectiveTimezone);
 
   return `## AGENDAMENTO
 Timezone padrão: ${tzLabel} (${effectiveTimezone})
