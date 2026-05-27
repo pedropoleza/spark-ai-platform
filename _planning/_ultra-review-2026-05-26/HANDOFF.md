@@ -58,6 +58,15 @@ Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5.
   monthly_price_usd das entitlements até o PriceBadge — benigno, todos $50 hoje).
 - **C2-P2d (commit 932a70d) FEITO:** offset de tz do agendamento agora via Intl (resolve DST +
   cobre tz não-US); antes hardcoded no verão → 1h torto no inverno. Validado 5/5.
+- **Proatividade do SparkBot na UI do /hub (commit e123813) FEITO** (Pedro 2026-05-27): aba
+  "Proatividade" no agente SparkBot (gate isSparkbot — typeToTemplateKey normaliza o legado
+  template_key=null→sparkbot, verificado) consumindo a CRUD `/api/agents/sparkbot/rules`.
+  Lista scheduled + reactive, liga/desliga (admin-only), edita instrução/cooldown. Reactive
+  ainda-stub marcados "em breve" (toggle travado). Escopo: UI + ligar os que funcionam.
+  **Pendente (Fase B, se Pedro quiser):** implementar os reactive stub (task_due_soon/overdue,
+  inbound_unanswered, contact_inactive, opportunity_stale, appointment_upcoming/no_show) +
+  ligar o event-router (PROACTIVE_EVENTS_ENABLED) p/ os webhook-driven. Decisão sobre
+  monetização (entitlements): **adiada** — criação de agente fica GRÁTIS por enquanto.
 - **Tradeoff/decisão (precisa Pedro):** C2-P2c (custom_instructions/conversation_examples
   truncados a 3k/2k no prompt builder vs 10k/20k na UI — alinhar = subir custo de token
   por turn OU baixar cap da UI; perda silenciosa hoje) · C3-RISK (PII: conteúdo de
