@@ -849,142 +849,67 @@ async function processGroup(
   // conversation_state com o novo collected_data.
   if (config.automations && Array.isArray(config.automations) && config.automations.length > 0) {
     const rules = config.automations as AutomationRule[];
-    const dataFieldRules = rules.filter((r) => r.trigger?.kind === "on_data_field_set");
 
+    // Dedup COMPARTILHADO entre os dois ramos (cada regra dispara 1× por
+    // conversa). Lido 1× no início e mergeado num ÚNICO update no fim — evita
+    // que um ramo sobrescreva o triggered_automations do outro.
+    const alreadyTriggered = new Set<string>(
+      Array.isArray(convState?.triggered_automations)
+        ? (convState.triggered_automations as string[])
+        : []
+    );
+    const reactionCtx = {
+      agentId: agent.id,
+      locationId: group.locationId,
+      companyId: location.company_id,
+      contactId: group.contactId,
+      conversationId: group.conversationId,
+      channel: group.channel,
+    };
+    const justExecuted: string[] = [];
+
+    // 11a. Reacoes a dados coletados (on_data_field_set).
+    const dataFieldRules = rules.filter((r) => r.trigger?.kind === "on_data_field_set");
     if (dataFieldRules.length > 0) {
       const newCollected = (aiResult.response.collected_data || {}) as Record<string, string>;
-      const alreadyTriggered = new Set<string>(
-        Array.isArray(convState?.triggered_automations)
-          ? (convState.triggered_automations as string[])
-          : []
-      );
-
       const toFire = pickTriggeredDataFieldRules(
         dataFieldRules,
         previousCollectedData,
         newCollected,
         alreadyTriggered
       );
-
       if (toFire.length > 0) {
-        const { executedRuleIds } = await executeReactionRules(toFire, {
-          agentId: agent.id,
-          locationId: group.locationId,
-          companyId: location.company_id,
-          contactId: group.contactId,
-          conversationId: group.conversationId,
-          channel: group.channel,
-        });
-
-        if (executedRuleIds.length > 0) {
-          const mergedSet = new Set<string>();
-          alreadyTriggered.forEach((v) => mergedSet.add(v));
-          executedRuleIds.forEach((v) => mergedSet.add(v));
-          const merged: string[] = [];
-          mergedSet.forEach((v) => merged.push(v));
-          await supabase
-            .from("conversation_state")
-            .update({ triggered_automations: merged })
-            .eq("agent_id", agent.id)
-            .eq("contact_id", group.contactId);
-        }
+        const { executedRuleIds } = await executeReactionRules(toFire, reactionCtx);
+        justExecuted.push(...executedRuleIds);
       }
     }
 
-    // 11b. Automacoes event-based legadas (qualified, booked, etc)
+    // 11b. Automacoes event-based (qualified, booked, etc).
+    // C2-2 (ultra-review 2026-05-26): roteado pelo MESMO reaction-engine do ramo
+    // de dados — antes ia pro executeAutomations legado, que só tratava 4 das 8
+    // acoes (send_text_fixed/send_media/pause_ai/webhook eram descartadas em
+    // silencio). Dedup via triggered_automations evita re-disparo a cada turn
+    // enquanto o status permanece no evento (essencial p/ send_text/media/webhook
+    // nao spammar o lead).
     const eventRules = rules.filter(
-      (r) => !r.trigger || r.trigger.kind === "event"
+      (r) =>
+        (!r.trigger || r.trigger.kind === "event") &&
+        (r.trigger?.kind === "event" ? r.trigger.event : r.event) === finalStatus &&
+        !alreadyTriggered.has(r.id)
     );
     if (eventRules.length > 0) {
-      await executeAutomations(
-        ghlClient,
-        eventRules,
-        finalStatus,
-        group.contactId,
-        group.locationId,
-        supabase,
-        agent.id
-      );
+      const { executedRuleIds } = await executeReactionRules(eventRules, reactionCtx);
+      justExecuted.push(...executedRuleIds);
     }
-  }
-}
 
-/**
- * Executa automacoes event-based para um evento especifico.
- * Aceita tanto o shape legado (`event: "qualified"`) quanto o novo
- * (`trigger: { kind: "event", event: "qualified" }`).
- */
-async function executeAutomations(
-  client: GHLClient,
-  automations: AutomationRule[],
-  currentEvent: string,
-  contactId: string,
-  locationId: string,
-  supabase: ReturnType<typeof createAdminClient>,
-  agentId: string
-): Promise<void> {
-  const matchingRules = automations.filter((a) => {
-    if (a.trigger?.kind === "event") return a.trigger.event === currentEvent;
-    return a.event === currentEvent;
-  });
-
-  for (const rule of matchingRules) {
-    for (const action of rule.actions) {
-      try {
-        switch (action.type) {
-          case "add_tag":
-            if (action.tag) {
-              await client.post(`/contacts/${contactId}/tags`, { tags: [action.tag] });
-            }
-            break;
-          case "remove_tag":
-            if (action.tag) {
-              await client.delete(`/contacts/${contactId}/tags`, { tags: [action.tag] });
-            }
-            break;
-          case "move_pipeline":
-            if (action.pipeline_id && action.stage_id) {
-              await client.put("/opportunities/", {
-                pipelineId: action.pipeline_id,
-                pipelineStageId: action.stage_id,
-                contactId,
-                locationId,
-              });
-            }
-            break;
-          case "update_field":
-            if (action.field_key && action.field_value) {
-              if (action.field_key.startsWith("contact.")) {
-                const fieldName = action.field_key.replace("contact.", "");
-                await client.put(`/contacts/${contactId}`, { [fieldName]: action.field_value });
-              } else {
-                await client.put(`/contacts/${contactId}`, {
-                  customFields: [{ id: action.field_key, value: action.field_value }],
-                });
-              }
-            }
-            break;
-        }
-
-        await supabase.from("execution_log").insert({
-          agent_id: agentId,
-          contact_id: contactId,
-          location_id: locationId,
-          action_type: `automation_${action.type}`,
-          action_payload: { event: currentEvent, ...action },
-          success: true,
-        });
-      } catch (error) {
-        await supabase.from("execution_log").insert({
-          agent_id: agentId,
-          contact_id: contactId,
-          location_id: locationId,
-          action_type: `automation_${action.type}`,
-          action_payload: { event: currentEvent, ...action },
-          success: false,
-          error_message: error instanceof Error ? error.message : String(error),
-        });
-      }
+    // Persiste o dedup uma única vez (merge dos dois ramos).
+    if (justExecuted.length > 0) {
+      const merged = Array.from(new Set<string>([...alreadyTriggered, ...justExecuted]));
+      await supabase
+        .from("conversation_state")
+        .update({ triggered_automations: merged })
+        .eq("agent_id", agent.id)
+        .eq("contact_id", group.contactId);
     }
   }
 }
