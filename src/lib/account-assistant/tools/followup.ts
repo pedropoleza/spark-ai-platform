@@ -488,7 +488,13 @@ async function resolveSeqIdFromArgs(
     const ok = await verifyOwnership(args.sequence_id, repId, locationId);
     return ok ? args.sequence_id : null;
   }
-  if (typeof args.contact_query === "string" && args.contact_query.length > 0) {
+  if (typeof args.contact_query === "string" && args.contact_query.trim().length > 0) {
+    // C4-P2-1 (ultra-review 2026-05-26): sanitiza chars que quebram/distorcem a
+    // sintaxe do PostgREST .or() (vírgula = separador, () = grupo, % * = wildcard
+    // ilike, \ = escape). NÃO é cross-tenant (eq rep_id+location_id em AND antes),
+    // mas evita filtro malformado / wildcard injetado no próprio escopo do rep.
+    const safeQuery = args.contact_query.replace(/[,()%*\\]/g, "").trim();
+    if (!safeQuery) return null;
     const supabase = createAdminClient();
     const { data } = await supabase
       .from("followup_sequences")
@@ -496,7 +502,7 @@ async function resolveSeqIdFromArgs(
       .eq("rep_id", repId)
       .eq("location_id", locationId)
       .in("status", ["draft", "scheduled", "running", "paused"])
-      .or(`contact_name.ilike.%${args.contact_query}%,contact_phone.ilike.%${args.contact_query}%`)
+      .or(`contact_name.ilike.%${safeQuery}%,contact_phone.ilike.%${safeQuery}%`)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();

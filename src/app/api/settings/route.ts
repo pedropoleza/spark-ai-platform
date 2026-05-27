@@ -43,17 +43,57 @@ export async function PUT(request: NextRequest) {
   const body = await request.json();
   const supabase = createServerClient();
 
-  const allowedFields = [
-    "openai_api_key",
-    "default_timezone",
-    "daily_message_limit",
-    "cost_alert_threshold",
-  ];
-
+  // C3-6 (ultra-review 2026-05-26): valida cada campo antes de gravar (antes
+  // aceitava qualquer valor cru — key malformada, tz inválida, número negativo).
   const updateData: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  for (const field of allowedFields) {
-    if (field in body) {
-      updateData[field] = body[field];
+
+  if ("openai_api_key" in body) {
+    const k = body.openai_api_key;
+    if (k === null || k === "") {
+      updateData.openai_api_key = null; // limpar BYO key
+    } else if (typeof k === "string" && /^sk-/.test(k.trim()) && k.trim().length >= 20) {
+      updateData.openai_api_key = k.trim();
+    } else {
+      return NextResponse.json({ error: "Chave de API inválida (deve começar com sk-)" }, { status: 400 });
+    }
+  }
+
+  if ("default_timezone" in body) {
+    const tz = body.default_timezone;
+    if (typeof tz !== "string" || !tz.trim()) {
+      return NextResponse.json({ error: "Fuso horário inválido" }, { status: 400 });
+    }
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: tz }); // lança se tz inválida
+      updateData.default_timezone = tz;
+    } catch {
+      return NextResponse.json({ error: `Fuso horário inválido: ${tz}` }, { status: 400 });
+    }
+  }
+
+  if ("daily_message_limit" in body) {
+    const v = body.daily_message_limit;
+    if (v === null) {
+      updateData.daily_message_limit = null;
+    } else {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 0) {
+        return NextResponse.json({ error: "Limite diário deve ser inteiro >= 0" }, { status: 400 });
+      }
+      updateData.daily_message_limit = n;
+    }
+  }
+
+  if ("cost_alert_threshold" in body) {
+    const v = body.cost_alert_threshold;
+    if (v === null) {
+      updateData.cost_alert_threshold = null;
+    } else {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) {
+        return NextResponse.json({ error: "Limite de alerta de custo deve ser número >= 0" }, { status: 400 });
+      }
+      updateData.cost_alert_threshold = n;
     }
   }
 
