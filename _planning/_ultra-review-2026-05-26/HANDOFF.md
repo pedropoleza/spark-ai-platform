@@ -28,6 +28,11 @@ Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5.
   validado (C3-6); `.or()` do followup sanitizado (C4-P2-1); aria-label nos 8 selects
   do config (C1-P2a); settings sem enforcement marcados "(em breve)" — daily_message_limit,
   cost_alert_threshold, max_messages_per_conversation (C3-7, C2-P2b, dead-write confirmados).
+- **C2-4 (commit 105306a):** custom_agent NÃO é mais forçado a "sales_agent" — recebe
+  framing PERSONALIZADO neutro (defere ao custom_instructions), sem REGRAS INVIOLÁVEIS DE
+  VENDAS. queue-processor + agents/test passam o tipo real; buildTypeFramingSection ganhou
+  branch custom. Validado por diff de prompt (8/8); sales/recrut intactos. **Watch:** se um
+  custom_agent em prod mudar de comportamento, validar 1 conversa no test-chat.
 
 **⚠️ OPERACIONAL (👤 Pedro):**
 - **Company `TdmQMjj86Y3LgppiB96K` precisa recarregar o wallet GHL** — ~$15.67 (10 sub-accounts, inclui "Alves Cury Financial"/"Magnet Money") travados por insufficient funds. Cobra sozinho quando recarregar. Se não for tão cedo, pedir pra adicionar backoff maior/dead-letter (hoje retenta a cada ~15min).
@@ -35,7 +40,7 @@ Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5.
 - Continua valendo: watch `[SSO][AUDIT]` (P0-1 da sessão anterior).
 
 **RESTANTE (próximos):**
-- **Precisa do Pedro:** C2-4 (custom_agent com framing de VENDAS hardcoded — muda prompt de 3 custom agents em prod; validar 1 conversa) · deps CVE (`next@latest` + `xlsx`; testar build/smoke) · C3-P2 settings mortos (`daily_message_limit`/`cost_alert_threshold` — implementar consumo ou esconder) · ligar RLS · cutover PM-F3.I.
+- **Precisa do Pedro:** deps CVE (`next@latest` + `xlsx`; testar build/smoke — o `next` é o único gate do `/admin/*`) · ligar RLS (defesa-em-profundidade) · cutover PM-F3.I.
 - **🤖 seguros restantes (poucos, baixo valor):** C1-P2b ($50→preço real, threadar
   monthly_price_usd das entitlements até o PriceBadge — benigno, todos $50 hoje).
 - **Tradeoff/decisão (precisa Pedro):** C2-P2c (custom_instructions/conversation_examples
