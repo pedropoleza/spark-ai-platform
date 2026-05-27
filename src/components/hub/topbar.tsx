@@ -42,9 +42,13 @@ export function TopBar() {
       {/* Busca global + sino removidos (eram placeholders sem handler). Voltam
           quando houver implementação real. (ultra-review 2026-05-26) */}
       <div className="row" style={{ gap: 10 }}>
-        <Link href="/hub/agents/new" className="btn btn--primary">
-          <Plus /> Novo agente
-        </Link>
+        {/* C1-P2e (ultra-review 2026-05-26): esconde o CTA dentro do próprio
+            wizard de criação — antes "Novo agente" aparecia até em /hub/agents/new. */}
+        {!pathname.startsWith("/hub/agents/new") && (
+          <Link href="/hub/agents/new" className="btn btn--primary">
+            <Plus /> Novo agente
+          </Link>
+        )}
       </div>
     </header>
   );

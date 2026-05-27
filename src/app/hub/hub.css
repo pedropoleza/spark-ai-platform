@@ -156,9 +156,6 @@
 .hub-root .sb__mark { width: 28px; height: 28px; border-radius: 7px; background: var(--primary); color: #fff; display: grid; place-items: center; flex: 0 0 28px; }
 .hub-root .sb__word { font-size: 14px; font-weight: 600; color: var(--sb-ink); letter-spacing: -.005em; }
 .hub-root .sb__word span { font-weight: 400; color: var(--sb-ink-3); }
-.hub-root .sb__loc { margin: 0 4px 10px; padding: 8px 10px; background: var(--surface); border-radius: var(--r-md); border: 1px solid var(--sb-line); cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; }
-.hub-root .sb__loc-name { font-size: 12.5px; color: var(--sb-ink); font-weight: 500; line-height: 1.2; }
-.hub-root .sb__loc-meta { font-size: 11px; color: var(--sb-ink-3); margin-top: 1px; }
 .hub-root .sb__group { padding: 12px 10px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: .06em; color: var(--sb-ink-3); text-transform: uppercase; }
 .hub-root .sb__link { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--r-sm); font-size: 13.5px; color: var(--sb-ink-2); cursor: pointer; font-weight: 500; }
 .hub-root .sb__link:hover { background: var(--sb-bg-2); color: var(--sb-ink); }
@@ -167,9 +164,6 @@
 .hub-root .sb__link[aria-current="true"] svg { color: var(--primary); }
 .hub-root .sb__link .count { margin-left: auto; font-size: 11px; color: var(--sb-ink-3); font-variant-numeric: tabular-nums; }
 .hub-root .sb__link[aria-current="true"] .count { color: var(--primary); }
-.hub-root .sb__foot { margin-top: auto; padding: 10px; border-top: 1px solid var(--sb-line); display: flex; align-items: center; gap: 10px; }
-.hub-root .sb__foot-name { font-size: 12.5px; font-weight: 500; color: var(--sb-ink); line-height: 1.15; }
-.hub-root .sb__foot-role { font-size: 11px; color: var(--sb-ink-3); }
 
 /* Topbar */
 .hub-root .topbar { height: 52px; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; border-bottom: 1px solid var(--line); background: var(--surface); position: sticky; top: 0; z-index: 30; }
@@ -440,9 +434,8 @@
 /* Sidebar colapsa em largura estreita (iframe estreito do Spark Leads) */
 @media (max-width: 880px) {
   .hub-app { grid-template-columns: 60px 1fr; }
-  .hub-root .sb__word, .hub-root .sb__loc, .hub-root .sb__group,
-  .hub-root .sb__link span, .hub-root .sb__link .count,
-  .hub-root .sb__foot-name, .hub-root .sb__foot-role { display: none; }
+  .hub-root .sb__word, .hub-root .sb__group,
+  .hub-root .sb__link span, .hub-root .sb__link .count { display: none; }
   .hub-root .sb__link { justify-content: center; }
   .hub-root .page { padding: 20px 16px 48px; }
 }

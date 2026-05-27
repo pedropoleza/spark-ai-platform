@@ -360,8 +360,10 @@ export async function loadEntitlementsGrid(companyId: string): Promise<Entitleme
     .from("locations")
     .select("location_id, location_name")
     .eq("company_id", companyId)
-    .not("location_name", "is", null)
-    .order("location_name");
+    // C1-P2g (ultra-review 2026-05-26): NÃO filtra location_name IS NOT NULL —
+    // antes escritórios sem nome sumiam silenciosamente da grade de Acessos.
+    // A linha que monta a row já usa location_id como fallback de exibição.
+    .order("location_name", { nullsFirst: false });
   const locs = locations || [];
   const ids = locs.map((l) => l.location_id);
 
@@ -449,6 +451,35 @@ export async function loadBilling(locationId: string): Promise<HubBilling> {
     const d = new Date(iso);
     return isNaN(d.getTime()) ? "" : new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(d);
   };
+  // C1-P2d (ultra-review 2026-05-26): humaniza action_type/ai_model crus
+  // (antes a tabela mostrava "ai_processing" / "claude-sonnet-4-6-..." direto).
+  const ACTION_LABELS: Record<string, string> = {
+    ai_processing: "Conversa (IA)",
+    account_assistant_turn: "SparkBot",
+    send_message: "Mensagem enviada",
+    audio_transcription: "Transcrição de áudio",
+    summary_note: "Resumo de conversa",
+    history_compression: "Compressão de histórico",
+    follow_up: "Follow-up",
+  };
+  const humanizeAction = (raw: string): string => {
+    if (!raw) return "—";
+    if (raw.startsWith("proactive:")) return "Proativo: " + raw.slice("proactive:".length);
+    return ACTION_LABELS[raw] || raw;
+  };
+  const humanizeModel = (raw: string): string => {
+    if (!raw) return "—";
+    const r = raw.toLowerCase();
+    if (r.includes("sonnet")) return "Claude Sonnet";
+    if (r.includes("haiku")) return "Claude Haiku";
+    if (r.includes("opus")) return "Claude Opus";
+    if (r.includes("whisper")) return "Whisper";
+    if (r.includes("gpt-4.1-nano")) return "GPT-4.1 nano";
+    if (r.includes("gpt-4.1-mini")) return "GPT-4.1 mini";
+    if (r.includes("gpt-4.1")) return "GPT-4.1";
+    if (r.startsWith("gpt-")) return raw.toUpperCase();
+    return raw;
+  };
 
   return {
     paidAgents,
@@ -460,8 +491,8 @@ export async function loadBilling(locationId: string): Promise<HubBilling> {
     monthInteractions: u.length,
     recent: u.slice(0, 15).map((r) => ({
       date: fmtT(r.created_at as string),
-      action: String(r.action_type || "—"),
-      model: String(r.ai_model || "—"),
+      action: humanizeAction(String(r.action_type || "")),
+      model: humanizeModel(String(r.ai_model || "")),
       tokens: r.total_tokens || 0,
       charge: Number(r.total_charge_usd || 0),
     })),
