@@ -25,6 +25,7 @@ export interface UsageRecordInsert {
   prompt_tokens: number;
   completion_tokens: number;
   cached_tokens: number;
+  cache_creation_tokens: number;
   total_tokens: number;
   audio_seconds: number;
   image_count: number;

@@ -66,6 +66,7 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
     prompt_tokens: cost.promptTokens,
     completion_tokens: cost.completionTokens,
     cached_tokens: cost.cachedTokens,
+    cache_creation_tokens: cost.cacheCreationTokens,
     total_tokens: cost.totalTokens,
     audio_seconds: cost.audioSeconds,
     image_count: params.imageCount ?? 0,

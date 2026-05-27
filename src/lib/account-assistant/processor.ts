@@ -634,6 +634,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
         promptTokens: result.prompt_tokens,
         completionTokens: result.completion_tokens,
         cachedTokens: result.cached_tokens,
+        cacheCreationTokens: result.cache_creation_tokens ?? 0,
         // Internal team usa "custom key" semantics: tracked em usage_records
         // mas NÃO cobrado do wallet. Audit trail mantido pra Pedro ver custo
         // mesmo internal em Supabase queries.

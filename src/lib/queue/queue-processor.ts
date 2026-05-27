@@ -767,6 +767,7 @@ async function processGroup(
       promptTokens: aiResult.prompt_tokens || 0,
       completionTokens: aiResult.completion_tokens || 0,
       cachedTokens: aiResult.cached_tokens || 0,
+      cacheCreationTokens: aiResult.cache_creation_tokens ?? 0,
       imageCount: imageInputs.length,
       usesCustomKey,
     });

@@ -228,6 +228,7 @@ async function processWithOpenAI(
     completion.usage?.prompt_tokens,
     completion.usage?.completion_tokens,
     cachedTokens,
+    0, // OpenAI não tem cache-write premium (cacheWriteInput == input)
     startTime,
     Boolean(useStrictSchema),
     input.priorTurnCount,
@@ -295,11 +296,20 @@ async function processWithClaude(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const usage = response.usage as any;
   const cachedTokens = (usage?.cache_read_input_tokens ?? 0);
+  const cacheCreationTokens = (usage?.cache_creation_input_tokens ?? 0);
+  const freshInput = response.usage?.input_tokens ?? 0;
+  // prompt_tokens = TOTAL de input (fresh + cache_read + cache_creation), igual
+  // ao SparkBot llm-client e ao formato OpenAI — casa com a convenção do
+  // calculateCost (fresh = prompt − cached − creation). Antes passava só
+  // input_tokens (fresh), o que fazia o calculateCost descontar cached do fresh
+  // de novo (subcobrança) e ignorava o cache-write 125% (C3-3).
+  const totalPrompt = freshInput + cachedTokens + cacheCreationTokens;
   return buildResult(
     responseText,
-    response.usage?.input_tokens,
+    totalPrompt,
     response.usage?.output_tokens,
     cachedTokens,
+    cacheCreationTokens,
     startTime,
     false,
     input.priorTurnCount,
@@ -312,6 +322,7 @@ function buildResult(
   promptTokens: number | undefined,
   completionTokens: number | undefined,
   cachedTokens: number,
+  cacheCreationTokens: number,
   startTime: number,
   strictSchemaUsed: boolean,
   priorTurnCount: number | undefined,
@@ -355,6 +366,7 @@ function buildResult(
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     cached_tokens: cachedTokens,
+    cache_creation_tokens: cacheCreationTokens,
     cache_hit_ratio: cacheHitRatio,
     duration_ms: duration,
     parse_failed: parseFailed,

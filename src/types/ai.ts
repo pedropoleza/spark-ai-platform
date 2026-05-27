@@ -27,6 +27,8 @@ export interface AIProcessingResult {
   prompt_tokens?: number;
   completion_tokens?: number;
   cached_tokens?: number;
+  /** Tokens gravados no cache (Anthropic, cobrado a 125%). C3-3. */
+  cache_creation_tokens?: number;
   duration_ms?: number;
   cache_hit_ratio?: number;
   /**

@@ -130,6 +130,13 @@ export interface RunWithToolsOutput {
   prompt_tokens: number;
   completion_tokens: number;
   cached_tokens: number;
+  /**
+   * Tokens GRAVADOS no cache (Anthropic cache_creation_input_tokens). Subconjunto
+   * de prompt_tokens, cobrado a 125% (cacheWriteInput). Opcional: só o caminho
+   * Claude popula; OpenAI/erro deixam undefined → call site usa `?? 0`. Sem isso,
+   * o billing cobrava esses tokens ao fresh rate (subcobrança ~25%) — C3-3.
+   */
+  cache_creation_tokens?: number;
   iterations: number;
   stopped_reason: "end_turn" | "max_iterations" | "error";
   /** Erro do modelo primário, se houve fallback. Ajuda debug Claude vs OpenAI. */
@@ -354,6 +361,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   let totalCachedTokens = 0;
+  let totalCacheCreationTokens = 0;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     let response;
@@ -421,6 +429,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
     totalPromptTokens += freshInput + cachedInput + cacheCreation;
     totalCompletionTokens += response.usage?.output_tokens || 0;
     totalCachedTokens += cachedInput;
+    totalCacheCreationTokens += cacheCreation;
 
     // Append response como assistant message
     messages.push({ role: "assistant", content: response.content as AnthropicBlock[] });
@@ -438,6 +447,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
         prompt_tokens: totalPromptTokens,
         completion_tokens: totalCompletionTokens,
         cached_tokens: totalCachedTokens,
+        cache_creation_tokens: totalCacheCreationTokens,
         iterations: i + 1,
         stopped_reason: "end_turn",
       };
@@ -461,6 +471,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
         prompt_tokens: totalPromptTokens,
         completion_tokens: totalCompletionTokens,
         cached_tokens: totalCachedTokens,
+        cache_creation_tokens: totalCacheCreationTokens,
         iterations: i + 1,
         stopped_reason: "end_turn",
       };
@@ -502,6 +513,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
     prompt_tokens: totalPromptTokens,
     completion_tokens: totalCompletionTokens,
     cached_tokens: totalCachedTokens,
+    cache_creation_tokens: totalCacheCreationTokens,
     iterations: MAX_ITERATIONS,
     stopped_reason: "max_iterations",
   };

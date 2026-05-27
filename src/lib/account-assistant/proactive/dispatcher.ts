@@ -568,12 +568,13 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
   let costUsd: number | undefined;
   try {
     const { calculateCost } = await import("@/lib/billing/pricing");
-    const cost = calculateCost(
-      llmResult.model_used,
-      llmResult.prompt_tokens,
-      llmResult.completion_tokens,
-      llmResult.cached_tokens,
-    );
+    const cost = calculateCost({
+      model: llmResult.model_used,
+      promptTokens: llmResult.prompt_tokens,
+      completionTokens: llmResult.completion_tokens,
+      cachedTokens: llmResult.cached_tokens,
+      cacheCreationTokens: llmResult.cache_creation_tokens ?? 0,
+    });
     costUsd = cost.totalChargeUsd;
     await trackAndCharge({
       locationId: activeLocationId,
@@ -585,6 +586,7 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
       promptTokens: llmResult.prompt_tokens,
       completionTokens: llmResult.completion_tokens,
       cachedTokens: llmResult.cached_tokens,
+      cacheCreationTokens: llmResult.cache_creation_tokens ?? 0,
       usesCustomKey: false,
     });
   } catch (err) {
