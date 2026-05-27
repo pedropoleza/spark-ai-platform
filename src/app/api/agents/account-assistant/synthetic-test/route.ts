@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { identifyRep, normalizePhone, acceptTerms } from "@/lib/account-assistant/identity";
 import { processIncoming } from "@/lib/account-assistant/processor";
 import { errorResponse } from "@/lib/utils/api";
+import { isAuthorizedCron } from "@/lib/utils/cron-auth";
 import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import type { RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
@@ -30,13 +31,10 @@ import type { ConversationTurn } from "@/lib/ai/openai-client";
  * de escrita. Use rep_phone que aponta pra location dummy pra evitar lixo.
  */
 export async function POST(request: NextRequest) {
-  // Auth via Bearer (mesma key dos crons)
-  const cronSecret = process.env.CRON_SECRET?.trim();
-  if (!cronSecret) {
-    return errorResponse("CRON_SECRET não configurado", 500, "no_secret");
-  }
-  const auth = request.headers.get("authorization");
-  if (auth !== `Bearer ${cronSecret}`) {
+  // Auth via Bearer CRON_SECRET — timing-safe + padronizado pelo helper central
+  // (C4-P2-5 ultra-review 2026-05-26: antes comparava a string direto, sem
+  // constante-time; isAuthorizedCron também rejeita o secret vazado conhecido).
+  if (!isAuthorizedCron(request)) {
     return errorResponse("Bearer auth required", 401, "unauthorized");
   }
 
