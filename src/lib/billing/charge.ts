@@ -286,10 +286,17 @@ export async function isMonthlyCapReached(
  * morreu por timeout no meio do loop e deixou records travados pra sempre. Sem
  * isso, 192 records (~$15) ficaram presos desde 2026-05-21.
  */
-export async function chargeUnbilledRecords(): Promise<{ charged: number; failed: number; reaped: number }> {
+export async function chargeUnbilledRecords(): Promise<{ charged: number; failed: number; reaped: number; errors: string[] }> {
   const supabase = createAdminClient();
   let charged = 0;
   let failed = 0;
+  // Observabilidade: coleta amostras de erro de charge (até 5) pra surfacear na
+  // resposta do cron — sem depender de log do Vercel. Ajuda a diagnosticar
+  // falhas recorrentes do GHL wallet (ex: dup eventId, token, 4xx).
+  const errors: string[] = [];
+  const sampleErr = (recordId: string, msg: string) => {
+    if (errors.length < 5) errors.push(`${recordId}: ${msg}`);
+  };
 
   // Reaper de claims órfãos (C3-1/P0-3): solta records reivindicados há >15min
   // que nunca foram cobrados nem liberados (lambda morreu no loop). Eles voltam
@@ -325,7 +332,7 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
   const claimToken = (globalThis.crypto as Crypto).randomUUID();
   const claimed = await claimUnbilledBatch(claimToken, new Date().toISOString(), 40);
 
-  if (claimed.length === 0) return { charged: 0, failed: 0, reaped };
+  if (claimed.length === 0) return { charged: 0, failed: 0, reaped, errors };
 
   // Cache location → company_id pra evitar N queries
   const locCompanyCache = new Map<string, string | null>();
@@ -352,6 +359,7 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
       const companyId = await getCompanyId(record.location_id);
       if (!companyId) {
         failed++;
+        sampleErr(record.id, `sem company_id pra location ${record.location_id}`);
         await releaseClaimForRecord(record.id);
         continue;
       }
@@ -371,9 +379,10 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
       // Libera claim pra próxima tentativa (não loga retries pra evitar spam)
       await releaseClaimForRecord(record.id);
       const msg = err instanceof Error ? err.message.slice(0, 200) : String(err);
+      sampleErr(record.id, msg);
       console.warn(`[Billing] Single charge failed for record ${record.id}: ${msg}`);
     }
   }
 
-  return { charged, failed, reaped };
+  return { charged, failed, reaped, errors };
 }
