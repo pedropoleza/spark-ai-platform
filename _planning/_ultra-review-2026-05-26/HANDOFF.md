@@ -8,6 +8,34 @@
 
 ---
 
+## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
+
+Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5..HEAD`).
+
+**FASE 2 (Billing) — COMPLETA e no ar:**
+- **C3-1/P0-3 reaper:** `reapStaleClaims` + claim bounded (SELECT-ids→UPDATE; o `.limit()` não capava UPDATE nesta stack). Reapou os 192 órfãos. `charge.ts`+`usage-records.repo.ts`.
+- **C3-2 cron:** endpoint `/api/cron/billing-retry` + pg_cron `billing-retry` (jobid 12, `*/5`, guard WHERE EXISTS). **Migrations 00086 (cron) + 00087 (cron_config — a 00070 NUNCA tinha sido aplicada à prod) aplicadas via MCP.**
+- **Throttle:** em falha de charge NÃO libera o claim (deixa pro reaper 15min) — a maioria das falhas é GHL 400 "insufficient funds"; evitava martelar + spam.
+- **C3-3 cache_creation a 125%:** threadado `cache_creation_tokens` do LLM→trackAndCharge→insert (`llm-client.ts`, `openai-client.ts`, `types/ai.ts`, `charge.ts`, `repo`, processor/dispatcher/queue-processor). Era subcobrança ~25%. Teste 7/7. **É aumento de cobrança (cobre nosso custo Anthropic) — Pedro ciente.** Coluna já existia (00056), sem migration.
+- **C3-4 cap por-location:** `getLocationSpendCap` (MIN dos caps não-nulos) substitui `getMonthlySpendCap(agentId)`. Zero mudança hoje (todos $100).
+
+**FASE 3/4 (parcial):**
+- **C2-2:** automações de evento agora via `executeReactionRules` (8 ações, antes 4) + dedup compartilhado. `executeAutomations` removido. Zero impacto hoje (0 automações em prod).
+- **C2-3:** avisos por email marcados "(em breve)" (eram dead-write; sem infra de email).
+- **C1 P2:** billing humanizado, Acessos não some locations sem nome, CTA fora do wizard, CSS órfão (.sb__loc/.sb__foot; .searchbox NÃO era órfão).
+- **C4 P2:** removido seed.ts órfão + dep pdf-parse morta; synthetic-test timing-safe.
+
+**⚠️ OPERACIONAL (👤 Pedro):**
+- **Company `TdmQMjj86Y3LgppiB96K` precisa recarregar o wallet GHL** — ~$15.67 (10 sub-accounts, inclui "Alves Cury Financial"/"Magnet Money") travados por insufficient funds. Cobra sozinho quando recarregar. Se não for tão cedo, pedir pra adicionar backoff maior/dead-letter (hoje retenta a cada ~15min).
+- **C3-3 verificação end-to-end** pendente do próximo turn real do SparkBot (confirmar `cache_creation_tokens > 0` em `usage_records`).
+- Continua valendo: watch `[SSO][AUDIT]` (P0-1 da sessão anterior).
+
+**RESTANTE (próximos):**
+- **Precisa do Pedro:** C2-4 (custom_agent com framing de VENDAS hardcoded — muda prompt de 3 custom agents em prod; validar 1 conversa) · deps CVE (`next@latest` + `xlsx`; testar build/smoke) · C3-P2 settings mortos (`daily_message_limit`/`cost_alert_threshold` — implementar consumo ou esconder) · ligar RLS · cutover PM-F3.I.
+- **🤖 seguros restantes:** C1-P2b ($50→preço real, threadar monthly_price_usd) · C1-P2a (aria-label em 7 selects do agent-detail-view) · C4-P2-1 (sanitizar `.or()` em followup.ts:499 — não é cross-tenant) · C2-P2b (max_messages_per_conversation não aplicado a lead) · C2-P2c (truncation 3k/2k no prompt builder vs 10k/20k na UI) · validar PUT `/api/settings`.
+
+---
+
 ## 1. Onde estamos (TL;DR)
 
 Rodamos uma **ultra-análise em pirâmide** (4 coordenadores + síntese) → **44
