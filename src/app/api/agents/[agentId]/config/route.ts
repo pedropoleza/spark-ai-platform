@@ -36,6 +36,13 @@ export async function GET(
     if (!agent.location_id || !(await assertLocationInCompany(agent.location_id, session.companyId))) {
       return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
     }
+    // E admin-only (fix P0 ultra-review 2026-05-26): a config global do SparkBot
+    // (system_prompt_override/custom_instructions/disabled_tools/confirmation_mode)
+    // não pode ser lida nem editada por não-admin. Casa com o hardening do
+    // isUserAdmin (sso.ts, mesma review) que tirou o "todo usuário logado é admin".
+    if (!session.isAdmin) {
+      return NextResponse.json({ error: "Apenas admin pode acessar a config do SparkBot" }, { status: 403 });
+    }
   } else if (agent.location_id !== session.locationId) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
   }
@@ -89,6 +96,13 @@ export async function PUT(
   if (agent.type === "account_assistant") {
     if (!agent.location_id || !(await assertLocationInCompany(agent.location_id, session.companyId))) {
       return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
+    }
+    // E admin-only (fix P0 ultra-review 2026-05-26): a config global do SparkBot
+    // (system_prompt_override/custom_instructions/disabled_tools/confirmation_mode)
+    // não pode ser lida nem editada por não-admin. Casa com o hardening do
+    // isUserAdmin (sso.ts, mesma review) que tirou o "todo usuário logado é admin".
+    if (!session.isAdmin) {
+      return NextResponse.json({ error: "Apenas admin pode acessar a config do SparkBot" }, { status: 403 });
     }
   } else if (agent.location_id !== session.locationId) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });

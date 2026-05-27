@@ -33,6 +33,10 @@ export async function PUT(
 ) {
   const session = await getSession();
   if (!session) return unauthorized();
+  // Admin-only (fix P1 ultra-review 2026-05-26): gerenciar regras de proatividade
+  // do SparkBot é operação de admin. ruleOwnedByCaller (abaixo) já trava cross-company;
+  // este gate de papel completa o par — isUserAdmin foi endurecido na mesma review.
+  if (!session.isAdmin) return errorResponse("Apenas admin pode gerenciar regras do SparkBot", 403, "forbidden");
 
   const { ruleId } = await params;
   const body = await request.json();
@@ -113,6 +117,10 @@ export async function DELETE(
 ) {
   const session = await getSession();
   if (!session) return unauthorized();
+  // Admin-only (fix P1 ultra-review 2026-05-26): gerenciar regras de proatividade
+  // do SparkBot é operação de admin. ruleOwnedByCaller (abaixo) já trava cross-company;
+  // este gate de papel completa o par — isUserAdmin foi endurecido na mesma review.
+  if (!session.isAdmin) return errorResponse("Apenas admin pode gerenciar regras do SparkBot", 403, "forbidden");
 
   const { ruleId } = await params;
   const supabase = createAdminClient();
