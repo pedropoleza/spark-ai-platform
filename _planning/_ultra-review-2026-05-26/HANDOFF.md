@@ -28,6 +28,10 @@ Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5.
   validado (C3-6); `.or()` do followup sanitizado (C4-P2-1); aria-label nos 8 selects
   do config (C1-P2a); settings sem enforcement marcados "(em breve)" — daily_message_limit,
   cost_alert_threshold, max_messages_per_conversation (C3-7, C2-P2b, dead-write confirmados).
+- **Deps next (commit 0b34fba):** bump next 15.5.15→**15.5.18** (patch, não major) corrige
+  os CVEs de Middleware/Proxy bypass (o /admin) + DoS/SSRF/cache-poisoning · `npm audit fix`
+  limpou ws. De 6→4 vulns. **Verificado em prod:** `/admin`→401 (gate barra), `/`→200,
+  cron 401. Resta postcss moderate (transitivo do next) — sai quando next subir de minor.
 - **C2-4 (commit 105306a):** custom_agent NÃO é mais forçado a "sales_agent" — recebe
   framing PERSONALIZADO neutro (defere ao custom_instructions), sem REGRAS INVIOLÁVEIS DE
   VENDAS. queue-processor + agents/test passam o tipo real; buildTypeFramingSection ganhou
@@ -40,7 +44,10 @@ Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5.
 - Continua valendo: watch `[SSO][AUDIT]` (P0-1 da sessão anterior).
 
 **RESTANTE (próximos):**
-- **Precisa do Pedro:** deps CVE (`next@latest` + `xlsx`; testar build/smoke — o `next` é o único gate do `/admin/*`) · ligar RLS (defesa-em-profundidade) · cutover PM-F3.I.
+- **Precisa do Pedro:** xlsx CVE (high, SEM fix no npm — risco real BAIXO aqui: parse só em
+  upload de rep/admin autenticado + limite de tamanho, não exposto a lead. Opções: (a) tarball
+  oficial SheetJS [drop-in, mas vira build-dep do cdn.sheetjs.com]; (b) aceitar o risco baixo e
+  documentar; (c) migrar p/ exceljs [maior]) · ligar RLS (defesa-em-profundidade) · cutover PM-F3.I.
 - **🤖 seguros restantes (poucos, baixo valor):** C1-P2b ($50→preço real, threadar
   monthly_price_usd das entitlements até o PriceBadge — benigno, todos $50 hoje).
 - **Tradeoff/decisão (precisa Pedro):** C2-P2c (custom_instructions/conversation_examples
