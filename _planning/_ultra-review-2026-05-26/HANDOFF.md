@@ -47,7 +47,13 @@ Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5.
 - **xlsx CVE: RESOLVIDO** como "risco aceito + documentado" (opção B, Pedro 2026-05-27) —
   parse só em upload autenticado + size-limit, não exposto a lead → risco real baixo. Doc em
   `docs/DECISIONS.md` + comentário em `file-processor.ts`. Fix futuro = tarball oficial SheetJS.
-- **Precisa do Pedro (marcos):** ligar RLS (defesa-em-profundidade) · cutover PM-F3.I.
+- **RLS defesa-em-profundidade: FEITO** (commit b3a17ec, migration 00088) — deny-anon agora
+  em 43/43 tabelas public (era 27/43; fechou PII de followup/bulk + segredos cron_config/
+  stevo). Zero impacto runtime (provado: service_role+postgres com rolbypassrls=true; anon é
+  dead code). NÃO confundir com RLS de ISOLAMENTO real por-tenant (policies permissivas +
+  migrar clients pro anon key) — isso é arquitetura MAIOR e NÃO necessária hoje (isolamento
+  é aplicacional via `.eq(location_id)`); fica como decisão futura.
+- **Precisa do Pedro (marco):** cutover PM-F3.I (/hub vira produção — substitui /dashboard).
 - **🤖 seguros restantes (poucos, baixo valor):** C1-P2b ($50→preço real, threadar
   monthly_price_usd das entitlements até o PriceBadge — benigno, todos $50 hoje).
 - **C2-P2d (commit 932a70d) FEITO:** offset de tz do agendamento agora via Intl (resolve DST +
