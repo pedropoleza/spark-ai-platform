@@ -106,7 +106,7 @@ export default async function HubHome() {
           </Link>
         </div>
         {activity.length === 0 ? (
-          <div className="empty">Nenhuma atividade dos agentes de leads ainda.</div>
+          <div className="empty">Nenhuma atividade dos seus agentes ainda.</div>
         ) : (
           <div>
             {activity.map((it, i) => (

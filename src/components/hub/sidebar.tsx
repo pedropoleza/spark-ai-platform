@@ -28,8 +28,11 @@ export function Sidebar() {
 
   const renderLink = (it: NavItem) => {
     const Icon = it.icon;
+    // title + aria-label: quando a sidebar colapsa (≤880px) o <span> some via CSS
+    // — sem isso o link vira só ícone, sem nome acessível nem tooltip (fix C1
+    // ultra-review 2026-05-26).
     return (
-      <Link key={it.id} href={it.href} className="sb__link" aria-current={isActive(pathname, it.href) ? "true" : undefined}>
+      <Link key={it.id} href={it.href} className="sb__link" title={it.label} aria-label={it.label} aria-current={isActive(pathname, it.href) ? "true" : undefined}>
         <Icon />
         <span>{it.label}</span>
       </Link>

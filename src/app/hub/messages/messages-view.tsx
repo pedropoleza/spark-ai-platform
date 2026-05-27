@@ -55,7 +55,7 @@ export function MessagesView({ activity, paused }: { activity: HubActivityItem[]
 
       {tab === "activity" ? (
         activity.length === 0 ? (
-          <div className="empty">Nenhuma atividade dos agentes de leads ainda.</div>
+          <div className="empty">Nenhuma atividade dos seus agentes ainda.</div>
         ) : (
           <div>{activity.map((it, i) => <ActRow key={i} item={it} />)}</div>
         )

@@ -19,7 +19,7 @@ export default async function MessagesPage() {
       <div className="page-hd">
         <div>
           <h1 className="page-hd__title">Mensagens</h1>
-          <p className="page-hd__sub">Atividade dos agentes de leads e conversas pausadas.</p>
+          <p className="page-hd__sub">Atividade dos seus agentes e conversas pausadas.</p>
         </div>
       </div>
 
