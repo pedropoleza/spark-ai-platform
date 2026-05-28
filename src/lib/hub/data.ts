@@ -802,9 +802,25 @@ export interface HubBilling {
   monthImages: number;
   monthInteractions: number;
   recent: { date: string; action: string; model: string; tokens: number; charge: number }[];
+  // Etapa 3.3 (Pedro 2026-05-28): range efetivo carregado (pra UI mostrar).
+  rangeLabel: string;
+  rangeFromIso: string;
+  rangeToIso: string;
 }
 
-export async function loadBilling(locationId: string): Promise<HubBilling> {
+export interface BillingRange {
+  /** ISO start date (inclusive). Default: 1º dia do mês atual. */
+  fromIso?: string;
+  /** ISO end date (inclusive). Default: agora. */
+  toIso?: string;
+  /** Label pra UI ("Este mês", "Últimos 30d", etc). */
+  label?: string;
+}
+
+export async function loadBilling(
+  locationId: string,
+  range?: BillingRange,
+): Promise<HubBilling> {
   const supabase = createAdminClient();
   const LEAD = new Set(["sales_agent", "recruitment_agent", "custom_agent"]);
 
@@ -823,15 +839,28 @@ export async function loadBilling(locationId: string): Promise<HubBilling> {
     }));
   const subscriptionTotal = paidAgents.length * DEFAULT_AGENT_MODULE_PRICE_USD;
 
-  const since = new Date();
-  since.setDate(1);
-  since.setHours(0, 0, 0, 0);
+  // Etapa 3.3 (Pedro 2026-05-28): range customizável. Default: mês atual.
+  let fromDate: Date;
+  if (range?.fromIso) {
+    fromDate = new Date(range.fromIso);
+    if (isNaN(fromDate.getTime())) {
+      fromDate = new Date();
+      fromDate.setDate(1);
+      fromDate.setHours(0, 0, 0, 0);
+    }
+  } else {
+    fromDate = new Date();
+    fromDate.setDate(1);
+    fromDate.setHours(0, 0, 0, 0);
+  }
+  const toIso = range?.toIso || new Date().toISOString();
 
   const { data: usage } = await supabase
     .from("usage_records")
     .select("total_tokens, total_charge_usd, audio_seconds, image_count, action_type, ai_model, created_at")
     .eq("location_id", locationId)
-    .gte("created_at", since.toISOString())
+    .gte("created_at", fromDate.toISOString())
+    .lte("created_at", toIso)
     .order("created_at", { ascending: false })
     .limit(2000);
 
@@ -885,6 +914,9 @@ export async function loadBilling(locationId: string): Promise<HubBilling> {
       tokens: r.total_tokens || 0,
       charge: Number(r.total_charge_usd || 0),
     })),
+    rangeLabel: range?.label || "Este mês",
+    rangeFromIso: fromDate.toISOString(),
+    rangeToIso: toIso,
   };
 }
 

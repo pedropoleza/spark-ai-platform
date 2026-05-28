@@ -31,6 +31,13 @@ interface Answers {
   postBooking?: "stop_and_handoff" | "continue_until_appointment";
   followup?: boolean;
   hours?: boolean;
+  // Etapa 3.1 (Pedro 2026-05-28): captura quiet_hours também (paridade
+  // detail-view). hoursMode é a janela de atendimento ("24/7" / "comercial");
+  // quietHoursEnabled liga janela de silêncio noturno (default 22-7).
+  hoursMode?: "always" | "business";
+  quietHoursEnabled?: boolean;
+  quietStart?: string; // HH:mm
+  quietEnd?: string;   // HH:mm
   // Filtros extras (Pedro 2026-05-28): paridade com detail-view. A regra
   // principal vem do intakeMode/intakeDetail (tag simples); aqui o admin pode
   // adicionar pipeline_stage, custom_field ou mais tags compostas. Vazio = sem
@@ -89,7 +96,7 @@ type NodeKey =
   | "purpose" | "intake" | "intake_detail" | "outreach_opening" | "outreach_params"
   | "advanced_targeting" | "knowledge" | "channel"
   | "identity" | "identity_name" | "objective" | "qualification"
-  | "specialist" | "postbooking" | "followup" | "hours";
+  | "specialist" | "postbooking" | "followup" | "hours" | "quiet_hours";
 
 type Chip = { label: string; value: string };
 interface NodeDef {
@@ -228,6 +235,18 @@ function buildNodes(template: WizardTemplate): Record<NodeKey, NodeDef> {
       q: "Tem horário de atendimento?",
       chips: [{ label: "24/7 — responde sempre", value: "always" }, { label: "Horário comercial (seg–sex)", value: "business" }],
     },
+    // Etapa 3.1 (Pedro 2026-05-28): node skippable de janela de silêncio.
+    // Independente de hours — útil pra agentes 24/7 que ainda querem evitar
+    // disparos de madrugada (ex: outreach noturno parece spam).
+    quiet_hours: {
+      type: "choice",
+      skippable: true,
+      q: "Quer evitar disparos em horário noturno? (janela de silêncio)",
+      chips: [
+        { label: "Não, pode disparar 24h", value: "off" },
+        { label: "Sim, das 22h às 7h", value: "default" },
+      ],
+    },
   };
 }
 
@@ -235,7 +254,7 @@ const ORDER: NodeKey[] = [
   "purpose", "intake", "intake_detail", "outreach_opening", "outreach_params",
   "advanced_targeting", "knowledge", "channel",
   "identity", "identity_name", "objective", "qualification",
-  "specialist", "postbooking", "followup", "hours",
+  "specialist", "postbooking", "followup", "hours", "quiet_hours",
 ];
 const isBooking = (a: Answers) => a.objective === "qualification_and_booking" || a.objective === "booking_only";
 function nodeVisible(key: NodeKey, a: Answers): boolean {
@@ -325,7 +344,19 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
     if (node === "objective") return answer({ objective: c.value as Objective }, c.label);
     if (node === "postbooking") return answer({ postBooking: c.value as Answers["postBooking"] }, c.label);
     if (node === "followup") return answer({ followup: c.value === "yes" }, c.label);
-    if (node === "hours") return answer({ hours: c.value === "business" }, c.label);
+    if (node === "hours") return answer({ hours: c.value === "business", hoursMode: c.value as "always" | "business" }, c.label);
+    // Etapa 3.1 (Pedro 2026-05-28): quiet_hours skippable.
+    if (node === "quiet_hours") {
+      const enabled = c.value === "default";
+      return answer(
+        {
+          quietHoursEnabled: enabled,
+          quietStart: enabled ? "22:00" : undefined,
+          quietEnd: enabled ? "07:00" : undefined,
+        },
+        c.label,
+      );
+    }
   }
   function submitMulti() {
     if (a.channels.length === 0) { toast.info("Escolha ao menos um canal."); return; }
@@ -417,7 +448,18 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
       },
       qualification_fields: composed.qualification_fields,
       followup: { enabled: !!a.followup, intensity: 5, max_attempts: 3 },
+      // Etapa 3.1 (Pedro 2026-05-28): quiet_hours também enviado quando rep
+      // ativou no wizard. Default 22:00-07:00. Independente de active_hours.
       active_hours: { enabled: !!a.hours, timezone: "America/New_York", mode: "only_during" },
+      quiet_hours: a.quietHoursEnabled
+        ? {
+            enabled: true,
+            timezone: "America/New_York",
+            start: a.quietStart || "22:00",
+            end: a.quietEnd || "07:00",
+            days: [0, 1, 2, 3, 4, 5, 6],
+          }
+        : undefined,
       identity: { name: composed.identity_name || a.identityName || "", mode: a.identityMode || "assistant" },
       objective: a.objective || "qualification_and_booking",
       scheduling: booking

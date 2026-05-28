@@ -105,6 +105,18 @@ export const AgentSpecSchema = z.object({
       mode: z.enum(["only_during", "only_outside"]).default("only_during"),
     })
     .optional(),
+  // Etapa 3.1 (Pedro 2026-05-28): quiet_hours captado pelo wizard. Diferente
+  // de active_hours — quiet é a janela em que NÃO dispara (default 22-7).
+  // Aplica a outbound/proativos, não a respostas a inbound.
+  quiet_hours: z
+    .object({
+      enabled: z.boolean().default(false),
+      timezone: z.string().default("America/New_York"),
+      start: z.string().default("22:00"),
+      end: z.string().default("07:00"),
+      days: z.array(z.number().int().min(0).max(6)).default([0, 1, 2, 3, 4, 5, 6]),
+    })
+    .optional(),
   identity: z
     .object({
       name: z.string().max(80).default(""),
@@ -387,6 +399,18 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
       mode: spec.active_hours?.mode || "only_during",
       schedule: defaultSchedule,
     },
+    // Etapa 3.1 (Pedro 2026-05-28): quiet_hours opcional capturado pelo wizard.
+    // Independente de working_hours — útil pra agentes 24/7 que ainda querem
+    // evitar disparos noturnos (runtime bulk-runner respeita).
+    quiet_hours: spec.quiet_hours?.enabled
+      ? {
+          enabled: true,
+          timezone: spec.quiet_hours.timezone || "America/New_York",
+          start: spec.quiet_hours.start || "22:00",
+          end: spec.quiet_hours.end || "07:00",
+          days: spec.quiet_hours.days || [0, 1, 2, 3, 4, 5, 6],
+        }
+      : { enabled: false, timezone: "America/New_York", start: "22:00", end: "07:00", days: [0, 1, 2, 3, 4, 5, 6] },
   };
 
   if (spec.scheduling?.specialist_name) config.specialist_name = spec.scheduling.specialist_name;
