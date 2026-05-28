@@ -53,6 +53,9 @@ export function RecurringWizard({ agents }: { agents: AgentChoice[] }) {
   const [customCron, setCustomCron] = useState("");
   const [useCustom, setUseCustom] = useState(false);
   const [perRunCap, setPerRunCap] = useState("1000");
+  // Etapa 4.6: default ON. False só é opção avançada (snapshot reuse) —
+  // hoje runtime ignora false e segue refresh (documentado como follow-up).
+  const [refreshSegmentOnRun, setRefreshSegmentOnRun] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   const selectedAgent = agents.find((a) => a.id === agentId);
@@ -87,6 +90,7 @@ export function RecurringWizard({ agents }: { agents: AgentChoice[] }) {
           template: template.trim(),
           cron_expression: effectiveCron,
           per_run_cap: Math.max(1, Math.min(50000, Number(perRunCap) || 1000)),
+          refresh_segment_on_run: refreshSegmentOnRun,
         }),
       });
       const json = (await res.json().catch(() => ({}))) as {
@@ -291,6 +295,28 @@ export function RecurringWizard({ agents }: { agents: AgentChoice[] }) {
                 Proteção anti-spam: nunca dispara pra mais que esse número por execução, mesmo que o filtro pegue mais.
               </div>
             </div>
+
+            {/* Etapa 4.6: refresh do segmento. Default ON. */}
+            <label
+              className="row"
+              style={{ gap: 10, padding: "8px 12px", border: "1px solid var(--line)", borderRadius: "var(--r-md)", cursor: "pointer", alignItems: "flex-start" }}
+            >
+              <input
+                type="checkbox"
+                checked={refreshSegmentOnRun}
+                onChange={(e) => setRefreshSegmentOnRun(e.target.checked)}
+                style={{ marginTop: 3 }}
+              />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500 }}>
+                  Atualizar lista a cada execução
+                  <span className="muted" style={{ fontWeight: 400 }}> (recomendado)</span>
+                </div>
+                <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>
+                  Quando ligado, re-pesquisa contatos no Spark Leads a cada disparo (novos contatos com a tag entram automaticamente). Desligado: usa snapshot da primeira execução — útil pra campanhas com lista fixa.
+                </div>
+              </div>
+            </label>
           </div>
         )}
 
@@ -310,6 +336,7 @@ export function RecurringWizard({ agents }: { agents: AgentChoice[] }) {
             <Row label="Quando" value={cronExplanation} />
             <Row label="Tag" value={tag || "—"} />
             <Row label="Hard cap" value={`${perRunCap || 1000} contatos por execução`} />
+            <Row label="Refresh da lista" value={refreshSegmentOnRun ? "Sim (re-pesquisa a cada disparo)" : "Não (snapshot fixo)"} />
 
             <div>
               <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 4 }}>Mensagem</div>

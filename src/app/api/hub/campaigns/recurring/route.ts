@@ -28,6 +28,11 @@ const CreateSchema = z.object({
   timezone: z.string().min(3).max(60).optional(),
   per_run_cap: z.number().int().min(1).max(50000).optional(),
   delivery_channel: z.enum(["whatsapp_web_sms", "whatsapp_api"]).optional(),
+  // Etapa 4.6 (Pedro 2026-05-28): controle de refresh do segmento.
+  // Default true = re-executa Filter Engine fresh a cada disparo (comportamento
+  // atual do runner). false = opt-in pra reuso de snapshot (NÃO implementado
+  // hoje — follow-up; runner ignora o false e segue refresh).
+  refresh_segment_on_run: z.boolean().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -119,7 +124,7 @@ export async function POST(request: NextRequest) {
       filter_config: { tag: body.tag.trim() },
       message_template: body.template.trim(),
       delivery_channel: body.delivery_channel ?? "whatsapp_web_sms",
-      refresh_segment_on_run: true,
+      refresh_segment_on_run: body.refresh_segment_on_run ?? true,
       enabled: true,
       next_run_at: nextRunAt.toISOString(),
       per_run_cap: body.per_run_cap ?? 1000,

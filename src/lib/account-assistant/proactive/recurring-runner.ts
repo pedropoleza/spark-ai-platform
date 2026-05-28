@@ -104,6 +104,41 @@ export async function processRecurringTick(): Promise<RecurringTickResult> {
 
 type FireOutcome = "fired" | "skipped" | "failed";
 
+/**
+ * Etapa 4.6: helper extraído pra rodar Filter Engine quando refresh
+ * é true (default) ou quando refresh=false mas é a primeira execução.
+ */
+async function fetchViaFilter(
+  row: RecurringRow,
+  companyId: string,
+  tag: string,
+): Promise<{ id: string; name: string | null; phone: string | null }[]> {
+  const ghlClient = new GHLClient(companyId, row.location_id);
+  const filterCtx: FilterExecutionContext = {
+    rep_id: row.rep_id,
+    location_id: row.location_id,
+    company_id: companyId,
+    agent_id: row.agent_id,
+    ghl_client: ghlClient,
+    consumer_tool: "recurring_runner",
+  };
+  const filter: FilterExpression = {
+    field: "tags",
+    op: "contains",
+    value: tag,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+  const filterResult = await executeContactsFilter(filter, filterCtx, {
+    limit: Math.min(row.per_run_cap, 5000),
+  });
+  if (filterResult.status !== "ok") return [];
+  return ((filterResult.items as ContactResult[]) || []).map((c) => ({
+    id: c.id,
+    name: c.name,
+    phone: c.phone,
+  }));
+}
+
 async function fireRecurringCampaign(row: RecurringRow): Promise<FireOutcome> {
   const supabase = createAdminClient();
   const nowIso = new Date().toISOString();
@@ -150,42 +185,65 @@ async function fireRecurringCampaign(row: RecurringRow): Promise<FireOutcome> {
     return "failed";
   }
 
-  // 2. Executa Filter Engine (refresh = re-roda sempre por enquanto; futuro
-  // pode reusar snapshot se refresh_segment_on_run=false).
-  const ghlClient = new GHLClient(location.company_id, row.location_id);
-  const filterCtx: FilterExecutionContext = {
-    rep_id: row.rep_id,
-    location_id: row.location_id,
-    company_id: location.company_id,
-    agent_id: row.agent_id,
-    ghl_client: ghlClient,
-    consumer_tool: "recurring_runner",
-  };
-
-  // Reusa o mesmo formato do campaign-populator: tag-based filter.
+  // 2. Resolve lista de contatos. Etapa 4.6: respeita refresh_segment_on_run.
+  //   - true (default): re-executa Filter Engine fresh (novos contatos entram,
+  //     removidos não recebem).
+  //   - false: tenta reusar contact_ids da última execução (snapshot fixo);
+  //     se não houver execução anterior, cai pro refresh inicial.
+  type SnapshotContact = { id: string; name: string | null; phone: string | null };
+  let contacts: SnapshotContact[];
   const tag = (row.filter_config as { tag?: string })?.tag;
   if (!tag) {
     await writeAfterRun("failed", null);
     return "failed";
   }
-  const filter: FilterExpression = {
-    field: "tags",
-    op: "contains",
-    value: tag,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any;
-  const filterResult = await executeContactsFilter(filter, filterCtx, {
-    limit: Math.min(row.per_run_cap, 5000),
-  });
-  if (filterResult.status !== "ok") {
-    await writeAfterRun("failed", null);
-    return "failed";
+
+  if (!row.refresh_segment_on_run) {
+    // Snapshot reuse: pega contact_ids do último bulk_job filho dessa recurring.
+    const { data: lastRun } = await supabase
+      .from("outreach_runs")
+      .select("bulk_job_id")
+      .eq("agent_id", row.agent_id)
+      .eq("location_id", row.location_id)
+      .eq("status", "created")
+      .not("bulk_job_id", "is", null)
+      .order("ran_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (lastRun?.bulk_job_id) {
+      const { data: lastRecipients } = await supabase
+        .from("bulk_message_recipients")
+        .select("contact_id, contact_name, contact_phone")
+        .eq("job_id", lastRun.bulk_job_id)
+        .limit(row.per_run_cap);
+      const distinct = new Map<string, SnapshotContact>();
+      for (const r of (lastRecipients || []) as Array<{
+        contact_id: string;
+        contact_name: string | null;
+        contact_phone: string | null;
+      }>) {
+        if (!distinct.has(r.contact_id)) {
+          distinct.set(r.contact_id, {
+            id: r.contact_id,
+            name: r.contact_name,
+            phone: r.contact_phone,
+          });
+        }
+      }
+      contacts = Array.from(distinct.values());
+    } else {
+      // Sem execução anterior — refresh inicial.
+      contacts = await fetchViaFilter(row, location.company_id, tag);
+    }
+  } else {
+    contacts = await fetchViaFilter(row, location.company_id, tag);
   }
-  const contacts: ContactResult[] = (filterResult.items || []).slice(0, row.per_run_cap);
+
   if (contacts.length === 0) {
     await writeAfterRun("skipped", null);
     return "skipped";
   }
+  contacts = contacts.slice(0, row.per_run_cap);
 
   // 3. Cria bulk_message_job filho em status='running' (já dispara — diferente
   // do flow do /hub/campaigns que nasce paused). Recorrente é admin-aprovado
