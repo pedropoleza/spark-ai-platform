@@ -71,6 +71,13 @@ function SparkbotPanel() {
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Etapa 2.5 do plano de gaps (Pedro 2026-05-28): status do bot pra colorir
+  // o dot no header + tooltip. Antes era dot verde sempre — quando agente
+  // pausado pela agência ou silence-gate ativava, user mandava msg e bot
+  // não respondia. Parecia bug.
+  const [botStatus, setBotStatus] = useState<{ online: boolean; status: string; message: string }>({
+    online: true, status: "online", message: "Conectado.",
+  });
   const scrollRef = useRef<HTMLDivElement>(null);
   const mediaRec = useRef<MediaRecorder | null>(null);
   const recChunks = useRef<Blob[]>([]);
@@ -137,6 +144,29 @@ function SparkbotPanel() {
     fetchInbox();
     const iv = setInterval(fetchInbox, 6000);
     return () => clearInterval(iv);
+  }, [token]);
+
+  // Etapa 2.5 (Pedro 2026-05-28): polling do rep-status a cada 60s. Falha
+  // silenciosa preserva estado anterior — não pisca quando rede oscila.
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch("/api/sparkbot/rep-status", { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return;
+        const j = (await res.json()) as { online?: boolean; status?: string; message?: string };
+        if (cancelled) return;
+        setBotStatus({
+          online: j.online !== false,
+          status: j.status || "online",
+          message: j.message || "Conectado.",
+        });
+      } catch { /* silencia */ }
+    };
+    fetchStatus();
+    const iv = setInterval(fetchStatus, 60_000);
+    return () => { cancelled = true; clearInterval(iv); };
   }, [token]);
 
   const sendMessage = useCallback(async (overrideText?: string) => {
@@ -444,8 +474,8 @@ function SparkbotPanel() {
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
         </button>
-        <span className="header-status" title="online">
-          <span className="dot" />
+        <span className="header-status" title={botStatus.message} aria-label={`Status: ${botStatus.status}`}>
+          <span className={`dot${botStatus.status === "paused" ? " dot--paused" : botStatus.status === "silenced" ? " dot--silenced" : ""}`} />
         </span>
       </header>
 
@@ -661,6 +691,17 @@ function SparkbotPanel() {
         @keyframes dotPulse {
           0%, 100% { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18); }
           50% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.06); }
+        }
+        /* Pedro 2026-05-28 — variantes de status (paused/silenced) substituem
+           a animação verde fixa quando o bot não está totalmente online. */
+        .dot--silenced {
+          background: #f59e0b;
+          box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.18);
+        }
+        .dot--paused {
+          background: #ef4444;
+          box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+          animation: none;
         }
         .scroll {
           flex: 1;

@@ -173,15 +173,28 @@ export const HUB_LIST_LIMITS = {
 
 export async function loadHubActivity(locationId: string, limit = 40): Promise<HubActivityItem[]> {
   const supabase = createAdminClient();
+  // Pedro 2026-05-28: include agent_id pra resolver agent_name real (antes era
+  // "Agente" hardcoded). Channel segue "Spark Leads" como rótulo do CRM (não
+  // mudou — é nome user-facing do GHL conforme CLAUDE.md, não literalmente
+  // o canal técnico WhatsApp/SMS).
   const { data } = await supabase
     .from("execution_log")
-    .select("id, action_type, contact_id, created_at, success")
+    .select("id, action_type, contact_id, created_at, success, agent_id")
     .eq("location_id", locationId)
     .neq("action_type", "ai_processing") // rúido interno
     .order("created_at", { ascending: false })
     .limit(limit);
 
-  return (data || []).map((r): HubActivityItem => {
+  const rows = data || [];
+  // Lookup map de agent_id → name (1 query batched pra todos os IDs únicos).
+  const agentIds = Array.from(new Set(rows.map((r) => r.agent_id).filter((id): id is string => !!id)));
+  let agentName: Record<string, string> = {};
+  if (agentIds.length) {
+    const { data: agents } = await supabase.from("agents").select("id, name").in("id", agentIds);
+    agentName = Object.fromEntries((agents || []).map((a) => [a.id as string, (a.name as string) || "Agente"]));
+  }
+
+  return rows.map((r): HubActivityItem => {
     const map = ACTION_MAP[r.action_type as string] || { type: "msg" as const, label: String(r.action_type) };
     const d = new Date(r.created_at as string);
     const t = isNaN(d.getTime())
@@ -190,7 +203,7 @@ export async function loadHubActivity(locationId: string, limit = 40): Promise<H
     return {
       t,
       text: map.label + (r.success === false ? " (falhou)" : ""),
-      agent: "Agente",
+      agent: (r.agent_id && agentName[r.agent_id as string]) || "Agente",
       channel: "Spark Leads",
       type: map.type,
     };
