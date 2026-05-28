@@ -43,6 +43,9 @@ interface BulkRecipientRow {
   contact_phone: string | null;
   scheduled_at: string;
   status: string;
+  // Etapa 4.4 (Pedro 2026-05-28): quando setado, o runner usa esse template
+  // em vez do job.message_template. Sequence-runner seta isso pra steps 2+.
+  message_template_override?: string | null;
 }
 
 interface BulkJobRow {
@@ -115,7 +118,8 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
     // Pega top MAX_PER_TICK por priority+sched
     const { data: candidates } = await supabase
       .from("bulk_message_recipients")
-      .select("id, job_id, contact_id, contact_name, contact_phone, scheduled_at, status, bulk_message_jobs!inner(priority, status)")
+      // Etapa 4.4: inclui message_template_override pra runner usar quando presente.
+      .select("id, job_id, contact_id, contact_name, contact_phone, scheduled_at, status, message_template_override, bulk_message_jobs!inner(priority, status)")
       .eq("status", "pending")
       .lte("scheduled_at", nowIso)
       .order("scheduled_at", { ascending: true })
@@ -127,6 +131,7 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
         id: string; job_id: string; contact_id: string;
         contact_name: string | null; contact_phone: string | null;
         scheduled_at: string; status: string;
+        message_template_override: string | null;
         bulk_message_jobs: { priority: number | null; status: string } | { priority: number | null; status: string }[];
       };
       const sorted = (candidates as CandRow[])
@@ -218,11 +223,17 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
       }
     }
 
-    // Gera variation
+    // Etapa 4.4 (Pedro 2026-05-28): se recipient tem message_template_override
+    // (usado por sequence-runner pra steps 2+), usa ele. Senão, usa o template
+    // do job (caminho original). variation_mode ainda se aplica em ambos.
+    const effectiveTemplate = recipient.message_template_override?.trim()
+      ? recipient.message_template_override
+      : job.message_template;
+
     let messageToSend: string;
     try {
       messageToSend = await generateVariation(
-        job.message_template,
+        effectiveTemplate,
         job.variation_mode,
         recipient.contact_name,
       );
@@ -231,7 +242,7 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
         `[bulk-runner] variation falhou pra recipient ${recipient.id}, usando template direto:`,
         err instanceof Error ? err.message : err,
       );
-      messageToSend = job.message_template;
+      messageToSend = effectiveTemplate;
     }
 
     // Envia via GHL

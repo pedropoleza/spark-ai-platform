@@ -85,6 +85,26 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
         );
       }
     })();
+
+    // Etapa 4.4 (Pedro 2026-05-28): pause-on-reply pra bulk_message_sequence_state
+    // (campanhas multi-toque do /hub/campaigns). Schema/regras diferentes do
+    // followup, daí monitor separado. Mesma estratégia async/silent.
+    (async () => {
+      try {
+        const { pauseBulkSequencesOnReply } = await import("./proactive/bulk-sequence-monitor");
+        const r = await pauseBulkSequencesOnReply(contactId, hubLocationId);
+        if (r.paused_states > 0) {
+          console.log(
+            `[Sparkbot] bulk-seq: pausou ${r.paused_states} state(s) + cancelou ${r.cancelled_recipients} pending pra contato ${contactId}`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          "[Sparkbot] bulk-seq pause-on-reply falhou:",
+          err instanceof Error ? err.message.slice(0, 150) : err,
+        );
+      }
+    })();
   }
 
   // Idempotency (fix audit C3 + concurrent retry):

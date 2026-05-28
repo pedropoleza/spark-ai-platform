@@ -240,6 +240,22 @@ export async function loadHubCampaigns(
 }
 
 /* ─── Detail de campanha (Etapa 4.1 Commit C) ────────────────────── */
+export interface HubCampaignSequenceStep {
+  step_number: number;
+  template: string;
+  delay_days: number;
+  pause_on_reply: boolean;
+  sent_count: number;
+  pending_count: number;
+  cancelled_count: number;
+}
+
+export interface HubCampaignSequenceStats {
+  active_states: number;
+  paused_by_reply: number;
+  completed: number;
+}
+
 export interface HubCampaignDetail extends HubCampaignRow {
   rep_id: string;
   filter_config: Record<string, unknown>;
@@ -248,6 +264,11 @@ export interface HubCampaignDetail extends HubCampaignRow {
   interval_seconds: number;
   jitter_seconds: number;
   respect_quiet_hours: boolean;
+  // Etapa 4.4: sequência multi-toque. Quando has_sequence=true, sequence_steps
+  // tem N rows (1 por step). sequence_stats agrega state machine pra UI.
+  has_sequence: boolean;
+  sequence_steps?: HubCampaignSequenceStep[];
+  sequence_stats?: HubCampaignSequenceStats;
 }
 
 /**
@@ -274,6 +295,67 @@ export async function loadHubCampaignDetail(
     if (agent?.name) agent_name = String(agent.name);
   }
 
+  // Etapa 4.4: se has_sequence, hidrata steps + counts por step + agrega stats
+  // de bulk_message_sequence_state (active/paused_by_reply/completed).
+  const hasSequence = Boolean(job.has_sequence);
+  let sequenceSteps: HubCampaignSequenceStep[] | undefined;
+  let sequenceStats: HubCampaignSequenceStats | undefined;
+  if (hasSequence) {
+    const { data: steps } = await supabase
+      .from("bulk_message_sequences")
+      .select("step_number, template, delay_days, pause_on_reply")
+      .eq("job_id", job.id)
+      .order("step_number", { ascending: true });
+
+    // Counts por step+status. 1 query agregação JS (não tem RPC GROUP BY simples
+    // no PostgREST, mas dataset por job costuma ser <5k rows — aceitável).
+    const { data: recipientStats } = await supabase
+      .from("bulk_message_recipients")
+      .select("sequence_step, status")
+      .eq("job_id", job.id);
+    const countMap = new Map<string, number>(); // key = "step|status"
+    for (const r of (recipientStats || []) as Array<{ sequence_step: number | null; status: string }>) {
+      const stp = r.sequence_step ?? 1; // jobs antigos sem sequence_step
+      const key = `${stp}|${r.status}`;
+      countMap.set(key, (countMap.get(key) || 0) + 1);
+    }
+
+    sequenceSteps = ((steps || []) as Array<{
+      step_number: number;
+      template: string;
+      delay_days: number;
+      pause_on_reply: boolean;
+    }>).map((s) => ({
+      step_number: s.step_number,
+      template: s.template,
+      delay_days: s.delay_days,
+      pause_on_reply: s.pause_on_reply,
+      sent_count: countMap.get(`${s.step_number}|sent`) || 0,
+      pending_count:
+        (countMap.get(`${s.step_number}|pending`) || 0) +
+        (countMap.get(`${s.step_number}|sending`) || 0),
+      cancelled_count:
+        (countMap.get(`${s.step_number}|cancelled`) || 0) +
+        (countMap.get(`${s.step_number}|skipped`) || 0) +
+        (countMap.get(`${s.step_number}|failed`) || 0),
+    }));
+
+    // Stats globais da máquina de estado
+    const { data: states } = await supabase
+      .from("bulk_message_sequence_state")
+      .select("status")
+      .eq("job_id", job.id);
+    const stMap = new Map<string, number>();
+    for (const r of (states || []) as Array<{ status: string }>) {
+      stMap.set(r.status, (stMap.get(r.status) || 0) + 1);
+    }
+    sequenceStats = {
+      active_states: stMap.get("active") || 0,
+      paused_by_reply: stMap.get("paused_by_reply") || 0,
+      completed: stMap.get("completed") || 0,
+    };
+  }
+
   return {
     id: job.id as string,
     label: (job.label as string) || "Sem rótulo",
@@ -297,6 +379,9 @@ export async function loadHubCampaignDetail(
     interval_seconds: Number(job.interval_seconds) || 90,
     jitter_seconds: Number(job.jitter_seconds) || 30,
     respect_quiet_hours: Boolean(job.respect_quiet_hours),
+    has_sequence: hasSequence,
+    sequence_steps: sequenceSteps,
+    sequence_stats: sequenceStats,
   };
 }
 

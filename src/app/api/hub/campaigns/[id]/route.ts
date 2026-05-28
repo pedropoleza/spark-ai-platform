@@ -14,14 +14,22 @@
  *
  * Não-permitidas (silenciosamente recusadas):
  *   completed/failed/cancelled → qualquer coisa (estado final)
+ *
+ * Etapa 4.4 (Pedro 2026-05-28): quando a transição é paused → running E o
+ * job ainda não tem recipients populados, chama o campaign-populator pra
+ * resolver contatos via Filter Engine e popular bulk_message_recipients +
+ * (se has_sequence) bulk_message_sequence_state. Idempotente — pause/resume
+ * múltiplas vezes não duplica fila. maxDuration sobe pra 30s pra acomodar
+ * filter+insert de até ~5k contatos.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getSession } from "@/lib/auth/sso";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
+import { populateCampaignRecipients } from "@/lib/account-assistant/proactive/campaign-populator";
 
-export const maxDuration = 10;
+export const maxDuration = 30;
 
 const PatchSchema = z.object({
   status: z.enum(["running", "paused", "cancelled"]),
@@ -82,5 +90,39 @@ export async function PATCH(
     .eq("id", id);
   if (error) return errorResponse(error.message, 500, "db_error");
 
-  return NextResponse.json({ ok: true, id, status: target });
+  // Etapa 4.4: quando paused → running, popula recipients (+ sequence_state
+  // se for multi-toque). Idempotente — re-resume noop se já populado.
+  let populated: { populated: number; state_created: number; reason?: string } | null = null;
+  if (current === "paused" && target === "running") {
+    try {
+      const popResult = await populateCampaignRecipients(id);
+      populated = {
+        populated: popResult.populated,
+        state_created: popResult.state_created,
+        reason: popResult.reason,
+      };
+      // Se populator falhou (ex: location não sincronizada), reverte job pra
+      // paused pra admin não ficar achando que vai disparar.
+      if (!popResult.ok && popResult.reason !== "already_populated") {
+        await supabase
+          .from("bulk_message_jobs")
+          .update({ status: "paused" })
+          .eq("id", id);
+        return errorResponse(
+          `Não consegui montar a lista: ${popResult.reason}. Campanha voltou pra pausa — verifique a tag.`,
+          400,
+          "populate_failed",
+        );
+      }
+    } catch (popErr) {
+      console.warn(
+        `[campaigns/PATCH] populator falhou pra job ${id}:`,
+        popErr instanceof Error ? popErr.message.slice(0, 200) : popErr,
+      );
+      // Não rollback agressivo nesse path — populator pode ter inserido parte;
+      // admin pode pausar manualmente se quiser.
+    }
+  }
+
+  return NextResponse.json({ ok: true, id, status: target, populated });
 }

@@ -189,24 +189,129 @@ export function CampaignDetailView({ campaign }: { campaign: HubCampaignDetail }
         </div>
       </div>
 
-      {/* Mensagem template */}
-      <div className="card">
-        <div className="card-hd"><h3>Mensagem</h3></div>
-        <div className="card-body" style={{ padding: 16 }}>
-          <div
-            style={{
-              fontSize: 13.5,
-              padding: 12,
-              background: "var(--surface-2)",
-              borderRadius: "var(--r-sm)",
-              whiteSpace: "pre-wrap",
-              lineHeight: 1.5,
-            }}
-          >
-            {campaign.message_template}
+      {/* Mensagem template — só se NÃO é sequência. Sequência tem seu card próprio. */}
+      {!campaign.has_sequence && (
+        <div className="card">
+          <div className="card-hd"><h3>Mensagem</h3></div>
+          <div className="card-body" style={{ padding: 16 }}>
+            <div
+              style={{
+                fontSize: 13.5,
+                padding: 12,
+                background: "var(--surface-2)",
+                borderRadius: "var(--r-sm)",
+                whiteSpace: "pre-wrap",
+                lineHeight: 1.5,
+              }}
+            >
+              {campaign.message_template}
+            </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Etapa 4.4: timeline de sequência multi-toque. */}
+      {campaign.has_sequence && campaign.sequence_steps && campaign.sequence_steps.length > 0 && (
+        <div className="card">
+          <div className="card-hd">
+            <h3>Sequência de toques</h3>
+            {campaign.sequence_stats && (
+              <div className="row" style={{ gap: 12, fontSize: 12 }}>
+                <span className="muted">
+                  <strong>{campaign.sequence_stats.active_states}</strong> ativos
+                </span>
+                <span className="muted">
+                  <strong>{campaign.sequence_stats.paused_by_reply}</strong> pausados (responderam)
+                </span>
+                <span className="muted">
+                  <strong>{campaign.sequence_stats.completed}</strong> completos
+                </span>
+              </div>
+            )}
+          </div>
+          <div className="card-body" style={{ padding: 16 }}>
+            <div className="col" style={{ gap: 14 }}>
+              {campaign.sequence_steps.map((s, idx) => {
+                const isLast = idx === campaign.sequence_steps!.length - 1;
+                return (
+                  <div key={s.step_number} style={{ position: "relative" }}>
+                    {/* Conector vertical entre steps */}
+                    {!isLast && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          left: 11,
+                          top: 24,
+                          bottom: -14,
+                          width: 2,
+                          background: "var(--line)",
+                        }}
+                      />
+                    )}
+                    <div className="row" style={{ gap: 12, alignItems: "flex-start" }}>
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 24,
+                          height: 24,
+                          borderRadius: 12,
+                          background: "var(--primary)",
+                          color: "#fff",
+                          fontSize: 12,
+                          fontWeight: 600,
+                          flexShrink: 0,
+                          position: "relative",
+                          zIndex: 1,
+                        }}
+                      >
+                        {s.step_number}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="row" style={{ gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+                          <strong style={{ fontSize: 13 }}>
+                            {s.step_number === 1 ? "Mensagem inicial" : `Toque ${s.step_number}`}
+                          </strong>
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            {s.step_number === 1
+                              ? "imediato"
+                              : `+${s.delay_days} ${s.delay_days === 1 ? "dia" : "dias"}`}
+                          </span>
+                          {s.pause_on_reply && (
+                            <span
+                              className="pill pill--muted"
+                              style={{ fontSize: 10, padding: "2px 6px" }}
+                            >
+                              pausa se responder
+                            </span>
+                          )}
+                          <span className="muted" style={{ fontSize: 12, marginLeft: "auto" }}>
+                            {s.sent_count} enviado · {s.pending_count} fila
+                            {s.cancelled_count > 0 ? ` · ${s.cancelled_count} pulado` : ""}
+                          </span>
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            padding: 10,
+                            background: "var(--surface-2)",
+                            borderRadius: "var(--r-sm)",
+                            whiteSpace: "pre-wrap",
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {s.template}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TODO Commit posterior: recipients table com pagina */}
       <div className="muted" style={{ fontSize: 12, marginTop: 12, textAlign: "center" }}>

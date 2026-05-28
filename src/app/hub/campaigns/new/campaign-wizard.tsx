@@ -12,11 +12,16 @@
  * (pipeline_stage, custom_field, AND/OR composto) vem em iteração futura, junto
  * com preview de destinatários. Antes disso, o admin usa o SparkBot chat pra
  * filtros complexos.
+ *
+ * Etapa 4.4 (Pedro 2026-05-28): adiciona modo "Sequência multi-toque" — toggle
+ * no step 2 que troca o template único por um editor de N passos (até 10), cada
+ * um com delay_days (step 1 sempre 0). API aceita `sequence_steps[]` opcional.
+ * Pause-on-reply default true por step.
  */
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Check, Megaphone, AlertCircle } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Megaphone, AlertCircle, Plus, Trash2, Layers } from "lucide-react";
 
 export interface AgentChoice {
   id: string;
@@ -32,6 +37,14 @@ const TPL_LABEL: Record<string, string> = {
 
 type Step = 1 | 2 | 3;
 
+interface SequenceStep {
+  template: string;
+  delay_days: number;
+  pause_on_reply: boolean;
+}
+
+const MAX_SEQUENCE_STEPS = 10;
+
 export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
   const router = useRouter();
   const [step, setStep] = useState<Step>(1);
@@ -42,30 +55,82 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
   const [intervalSec, setIntervalSec] = useState("90");
   const [submitting, setSubmitting] = useState(false);
 
+  // Etapa 4.4: modo sequência. Toggle off = single template como antes.
+  const [sequenceMode, setSequenceMode] = useState(false);
+  // Step 1 sempre delay=0 (regra de API). Steps adicionais começam com 3 dias.
+  const [sequenceSteps, setSequenceSteps] = useState<SequenceStep[]>([
+    { template: "", delay_days: 0, pause_on_reply: true },
+  ]);
+
   const selectedAgent = agents.find((a) => a.id === agentId);
 
   const canAdvance1 = !!agentId;
-  const canAdvance2 = label.trim().length > 0 && tag.trim().length > 0 && template.trim().length > 0;
+  const canAdvance2 = sequenceMode
+    ? label.trim().length > 0 &&
+      tag.trim().length > 0 &&
+      sequenceSteps.length >= 1 &&
+      sequenceSteps.every((s) => s.template.trim().length > 0) &&
+      sequenceSteps.slice(1).every((s) => s.delay_days >= 1)
+    : label.trim().length > 0 && tag.trim().length > 0 && template.trim().length > 0;
+
+  function updateStep(idx: number, patch: Partial<SequenceStep>) {
+    setSequenceSteps((prev) => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)));
+  }
+
+  function addStep() {
+    if (sequenceSteps.length >= MAX_SEQUENCE_STEPS) return;
+    // Default 3 dias entre toques (sweet spot pra outreach).
+    setSequenceSteps((prev) => [...prev, { template: "", delay_days: 3, pause_on_reply: true }]);
+  }
+
+  function removeStep(idx: number) {
+    // Nunca remove o step 1 (precisa de pelo menos 1).
+    if (idx === 0) return;
+    setSequenceSteps((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  // Quando liga o modo sequência, herda o template do textarea como step 1.
+  function toggleSequenceMode(on: boolean) {
+    setSequenceMode(on);
+    if (on && template.trim().length > 0 && sequenceSteps[0].template.trim().length === 0) {
+      updateStep(0, { template });
+    }
+    if (!on && sequenceSteps[0].template.trim().length > 0 && template.trim().length === 0) {
+      setTemplate(sequenceSteps[0].template);
+    }
+  }
 
   async function submit() {
     setSubmitting(true);
     try {
+      const payload: Record<string, unknown> = {
+        agent_id: agentId,
+        label: label.trim(),
+        tag: tag.trim(),
+        template: sequenceMode ? sequenceSteps[0].template.trim() : template.trim(),
+        interval_seconds: Number(intervalSec) || 90,
+      };
+      if (sequenceMode && sequenceSteps.length > 0) {
+        payload.sequence_steps = sequenceSteps.map((s) => ({
+          template: s.template.trim(),
+          delay_days: s.delay_days,
+          pause_on_reply: s.pause_on_reply,
+        }));
+      }
       const res = await fetch("/api/hub/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agent_id: agentId,
-          label: label.trim(),
-          tag: tag.trim(),
-          template: template.trim(),
-          interval_seconds: Number(intervalSec) || 90,
-        }),
+        body: JSON.stringify(payload),
       });
       const json = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; error?: string };
       if (!res.ok || !json.ok) {
         throw new Error(json.error || "falha");
       }
-      toast.success("Campanha criada em pausa — ative pelo SparkBot pra iniciar");
+      toast.success(
+        sequenceMode
+          ? `Sequência de ${sequenceSteps.length} toques criada em pausa — ative pelo SparkBot`
+          : "Campanha criada em pausa — ative pelo SparkBot pra iniciar"
+      );
       router.push("/hub/campaigns");
     } catch (err) {
       toast.error("Não consegui criar: " + (err instanceof Error ? err.message : ""));
@@ -176,21 +241,161 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
               />
             </div>
 
-            <div>
-              <label style={{ fontSize: 13, fontWeight: 500 }}>Mensagem (template)</label>
-              <div className="muted" style={{ fontSize: 12 }}>
-                Suporta variáveis: <code>{`{first_name}`}</code>, <code>{`{tags[0]}`}</code>, <code>{`{custom.slug}`}</code>.
+            {/* Etapa 4.4: toggle modo sequência (acima do template pra deixar
+                claro que essa escolha muda a UI abaixo). */}
+            <div
+              className="row between"
+              style={{
+                padding: "10px 12px",
+                border: "1px solid var(--line)",
+                borderRadius: "var(--r-md)",
+                background: sequenceMode ? "var(--primary-soft)" : "transparent",
+                gap: 12,
+              }}
+            >
+              <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
+                <Layers size={16} style={{ color: sequenceMode ? "var(--primary-ink)" : "var(--ink-3)", marginTop: 2 }} />
+                <div>
+                  <div style={{ fontSize: 13.5, fontWeight: 500 }}>Sequência multi-toque</div>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    Mande N mensagens com intervalo de dias. Pausa quando o contato responde.
+                  </div>
+                </div>
               </div>
-              <textarea
-                className="textarea"
-                rows={5}
-                maxLength={3000}
-                value={template}
-                onChange={(e) => setTemplate(e.target.value)}
-                placeholder="Oi {first_name}! Vi que você passou no feirão — posso te ajudar com a cotação?"
-                style={{ marginTop: 6 }}
-              />
+              <label className="row" style={{ gap: 6, alignItems: "center", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={sequenceMode}
+                  onChange={(e) => toggleSequenceMode(e.target.checked)}
+                  aria-label="Ativar sequência multi-toque"
+                />
+                <span style={{ fontSize: 12 }}>{sequenceMode ? "Ativada" : "Desativada"}</span>
+              </label>
             </div>
+
+            {!sequenceMode && (
+              <div>
+                <label style={{ fontSize: 13, fontWeight: 500 }}>Mensagem (template)</label>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Suporta variáveis: <code>{`{first_name}`}</code>, <code>{`{tags[0]}`}</code>, <code>{`{custom.slug}`}</code>.
+                </div>
+                <textarea
+                  className="textarea"
+                  rows={5}
+                  maxLength={3000}
+                  value={template}
+                  onChange={(e) => setTemplate(e.target.value)}
+                  placeholder="Oi {first_name}! Vi que você passou no feirão — posso te ajudar com a cotação?"
+                  style={{ marginTop: 6 }}
+                />
+              </div>
+            )}
+
+            {sequenceMode && (
+              <div className="col" style={{ gap: 12 }}>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Step 1 sai junto com a ativação da campanha. Steps seguintes esperam o delay (em dias) após o step anterior. Máximo {MAX_SEQUENCE_STEPS} passos.
+                </div>
+                {sequenceSteps.map((s, idx) => (
+                  <div
+                    key={idx}
+                    className="card card--flat"
+                    style={{
+                      padding: 12,
+                      border: "1px solid var(--line)",
+                      borderRadius: "var(--r-md)",
+                      background: "var(--surface-2)",
+                    }}
+                  >
+                    <div className="row between" style={{ marginBottom: 8 }}>
+                      <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: 22,
+                            height: 22,
+                            borderRadius: 11,
+                            background: "var(--primary)",
+                            color: "#fff",
+                            fontSize: 12,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {idx + 1}
+                        </span>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>
+                          {idx === 0 ? "Mensagem inicial" : `Toque ${idx + 1}`}
+                        </span>
+                      </div>
+                      {idx > 0 && (
+                        <button
+                          type="button"
+                          className="btn btn--quiet btn--sm"
+                          onClick={() => removeStep(idx)}
+                          aria-label={`Remover toque ${idx + 1}`}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+
+                    {idx === 0 ? (
+                      <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                        Sai junto com a ativação (delay 0).
+                      </div>
+                    ) : (
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ fontSize: 12.5, fontWeight: 500 }}>Dias após o toque anterior</label>
+                        <input
+                          className="input"
+                          type="number"
+                          min={1}
+                          max={90}
+                          value={s.delay_days}
+                          onChange={(e) => updateStep(idx, { delay_days: Math.max(1, Math.min(90, Number(e.target.value) || 1)) })}
+                          style={{ marginTop: 4, width: 100 }}
+                        />
+                      </div>
+                    )}
+
+                    <textarea
+                      className="textarea"
+                      rows={4}
+                      maxLength={3000}
+                      value={s.template}
+                      onChange={(e) => updateStep(idx, { template: e.target.value })}
+                      placeholder={idx === 0 ? "Oi {first_name}! ..." : "Oi {first_name}, dei uma olhada e..."}
+                      aria-label={`Texto do toque ${idx + 1}`}
+                    />
+
+                    <label className="row" style={{ gap: 6, alignItems: "center", marginTop: 8, cursor: "pointer" }}>
+                      <input
+                        type="checkbox"
+                        checked={s.pause_on_reply}
+                        onChange={(e) => updateStep(idx, { pause_on_reply: e.target.checked })}
+                        aria-label="Pausar próximos toques se contato responder"
+                      />
+                      <span style={{ fontSize: 12 }} className="muted">
+                        Pausar próximos toques se contato responder
+                      </span>
+                    </label>
+                  </div>
+                ))}
+
+                {sequenceSteps.length < MAX_SEQUENCE_STEPS && (
+                  <button
+                    type="button"
+                    className="btn btn--quiet btn--sm"
+                    onClick={addStep}
+                    style={{ alignSelf: "flex-start" }}
+                  >
+                    <Plus size={14} /> Adicionar toque
+                  </button>
+                )}
+              </div>
+            )}
 
             <div>
               <label style={{ fontSize: 13, fontWeight: 500 }}>Intervalo entre envios (segundos)</label>
@@ -224,12 +429,51 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
             <Row label="Nome" value={label || "—"} />
             <Row label="Tag" value={tag || "—"} />
             <Row label="Intervalo" value={`${intervalSec || 90}s entre envios`} />
-            <div>
-              <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 4 }}>Mensagem</div>
-              <div style={{ fontSize: 13, padding: 10, background: "var(--surface-2)", borderRadius: "var(--r-sm)", whiteSpace: "pre-wrap" }}>
-                {template || "—"}
+            <Row
+              label="Modo"
+              value={sequenceMode ? `Sequência ${sequenceSteps.length} toques` : "Mensagem única"}
+            />
+
+            {!sequenceMode && (
+              <div>
+                <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 4 }}>Mensagem</div>
+                <div style={{ fontSize: 13, padding: 10, background: "var(--surface-2)", borderRadius: "var(--r-sm)", whiteSpace: "pre-wrap" }}>
+                  {template || "—"}
+                </div>
               </div>
-            </div>
+            )}
+
+            {sequenceMode && (
+              <div className="col" style={{ gap: 8 }}>
+                <div style={{ fontSize: 12, color: "var(--ink-3)" }}>Sequência de toques</div>
+                {sequenceSteps.map((s, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      padding: 10,
+                      background: "var(--surface-2)",
+                      borderRadius: "var(--r-sm)",
+                      borderLeft: "3px solid var(--primary)",
+                    }}
+                  >
+                    <div className="row" style={{ gap: 8, marginBottom: 6, alignItems: "center" }}>
+                      <strong style={{ fontSize: 12.5 }}>Toque {idx + 1}</strong>
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        {idx === 0 ? "imediato" : `+${s.delay_days} ${s.delay_days === 1 ? "dia" : "dias"}`}
+                      </span>
+                      {s.pause_on_reply && (
+                        <span className="muted" style={{ fontSize: 11 }}>
+                          · pausa se responder
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>
+                      {s.template || "—"}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
