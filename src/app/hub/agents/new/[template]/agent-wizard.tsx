@@ -45,6 +45,12 @@ interface Composed {
   custom_instructions: string;
   qualification_fields: { label: string; type: string; required: boolean }[];
   tone: { creativity: number; formality: number; naturalness: number; assertiveness: number };
+  // Pedro 2026-05-28: 4 campos a mais (paridade vs detail-view). Composer gera
+  // baseado no propósito — se composer falhar (fallback), ficam "".
+  persona_description?: string;
+  greeting_style?: string;
+  farewell_style?: string;
+  conversation_examples?: string;
 }
 
 // Copy por template — só o que muda de venda/recrutamento/custom.
@@ -346,7 +352,21 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
         // Filtros extras (Pedro 2026-05-28): mescla com tag/stage derivado do mode no builder-spec.
         advanced_rules: a.advancedRules || [],
       },
-      behavior: { tone: composed.tone, custom_instructions: composed.custom_instructions, confirmation_mode: "medium_and_high" },
+      behavior: {
+        tone: composed.tone,
+        custom_instructions: composed.custom_instructions,
+        // Pedro 2026-05-28: composer gera examples; antes ficava sempre vazio.
+        conversation_examples: composed.conversation_examples || "",
+        confirmation_mode: "medium_and_high",
+      },
+      // Pedro 2026-05-28: greeting/farewell/persona vêm do composer (paridade
+      // detail-view). Sem isso, antes greeting/farewell ficavam "" e persona
+      // caía no purpose_summary — agora é gerado coerente com o propósito.
+      personality: {
+        greeting_style: composed.greeting_style || "",
+        farewell_style: composed.farewell_style || "",
+        persona_description: composed.persona_description || "",
+      },
       qualification_fields: composed.qualification_fields,
       followup: { enabled: !!a.followup, intensity: 5, max_attempts: 3 },
       active_hours: { enabled: !!a.hours, timezone: "America/New_York", mode: "only_during" },

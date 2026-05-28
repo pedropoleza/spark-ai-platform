@@ -108,6 +108,17 @@ export const AgentSpecSchema = z.object({
       mode: z.enum(["assistant", "human"]).default("assistant"),
     })
     .optional(),
+  // Personality (Pedro 2026-05-28, paridade wizard ↔ detail-view): greeting,
+  // farewell, persona_description. Editáveis no detail-view (CatPersonality);
+  // composer agora gera baseado no propósito. Antes, wizard não capturava →
+  // greeting/farewell ficavam "" e persona caía no purpose_summary.
+  personality: z
+    .object({
+      greeting_style: z.string().max(2000).default(""),
+      farewell_style: z.string().max(2000).default(""),
+      persona_description: z.string().max(2000).default(""),
+    })
+    .optional(),
   objective: z.enum(["qualification_only", "qualification_and_booking", "booking_only"]).optional(),
   scheduling: z
     .object({
@@ -338,10 +349,12 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
     personality: {
       name: spec.identity?.name || "",
       identity_mode: spec.identity?.mode || "assistant",
-      greeting_style: "",
-      farewell_style: "",
+      // Pedro 2026-05-28: usa spec.personality (gerado pelo composer) se veio;
+      // antes era sempre "" / purpose_summary.
+      greeting_style: spec.personality?.greeting_style || "",
+      farewell_style: spec.personality?.farewell_style || "",
       language: "pt-BR",
-      persona_description: spec.purpose_summary || "",
+      persona_description: spec.personality?.persona_description || spec.purpose_summary || "",
     },
     tone_creativity: clamp(spec.behavior.tone.creativity),
     tone_formality: clamp(spec.behavior.tone.formality),

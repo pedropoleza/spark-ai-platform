@@ -71,8 +71,14 @@ export async function POST(request: NextRequest) {
     "(4) name: nome curto do agente (aparece no Spark Leads). purpose_summary: 1 frase. " +
     "(5) identity_name: APENAS o primeiro nome que o agente usa pra se apresentar, extraído do brief. " +
     "Se a pessoa escreveu algo como 'eu mesmo, Pedro' ou 'me chama de Bia', extraia só 'Pedro'/'Bia'. Se não houver nome, deixe vazio. " +
+    // Pedro 2026-05-28: 4 campos a mais pra paridade com o detail-view (antes ficavam
+    // sempre vazios → persona caía no purpose_summary, greeting/farewell em branco).
+    "(6) persona_description: 1-2 frases sobre a personalidade/jeito do agente (ex: 'Consultora experiente, paciente mas direta — não enrola'). " +
+    "(7) greeting_style: 1 frase descrevendo como cumprimenta (ex: 'Sempre puxa o nome do contato e mostra entusiasmo de cara'). " +
+    "(8) farewell_style: 1 frase descrevendo como se despede (ex: 'Despede de forma calorosa e reforça o próximo passo combinado'). " +
+    "(9) conversation_examples: 2 trocas curtas exemplo no estilo do agente, formato 'Lead: ...\\nAgente: ...' separadas por linha em branco. Use placeholders {first_name} se fizer sentido. " +
     "NUNCA escreva 'GHL' nem 'GoHighLevel' — o CRM se chama 'Spark Leads'. Não invente fatos que não estão no brief. " +
-    'Responda SÓ um JSON: {"name":string,"identity_name":string,"purpose_summary":string,"custom_instructions":string,"qualification_fields":[{"label":string,"type":string,"required":boolean}],"tone":{"creativity":number,"formality":number,"naturalness":number,"assertiveness":number}}';
+    'Responda SÓ um JSON: {"name":string,"identity_name":string,"purpose_summary":string,"custom_instructions":string,"qualification_fields":[{"label":string,"type":string,"required":boolean}],"tone":{"creativity":number,"formality":number,"naturalness":number,"assertiveness":number},"persona_description":string,"greeting_style":string,"farewell_style":string,"conversation_examples":string}';
 
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 40000 });
@@ -117,6 +123,12 @@ export async function POST(request: NextRequest) {
         naturalness: clampN(tone.naturalness, 80),
         assertiveness: clampN(tone.assertiveness, 50),
       },
+      // Pedro 2026-05-28: 4 campos a mais (paridade vs detail-view). Antes não vinham
+      // do composer → persona caía no purpose_summary, greeting/farewell em branco.
+      persona_description: String(parsed.persona_description || "").slice(0, 2000),
+      greeting_style: String(parsed.greeting_style || "").slice(0, 2000),
+      farewell_style: String(parsed.farewell_style || "").slice(0, 2000),
+      conversation_examples: String(parsed.conversation_examples || "").slice(0, 8000),
     });
   } catch (err) {
     console.warn("[builder/compose] fallback:", err instanceof Error ? err.message : err);
@@ -128,6 +140,11 @@ export async function POST(request: NextRequest) {
       custom_instructions: purpose,
       qualification_fields: [],
       tone: { creativity: 60, formality: 50, naturalness: 80, assertiveness: 50 },
+      // Defaults pra os 4 novos (Pedro 2026-05-28); detail-view permite editar.
+      persona_description: "",
+      greeting_style: "",
+      farewell_style: "",
+      conversation_examples: "",
       degraded: true,
     });
   }

@@ -84,6 +84,14 @@ interface Editable {
   enable_summary_notes: boolean;
   notifications: Notif;
   outreach: Outreach;
+  // Pedro 2026-05-28: 4 campos missing-UI / dead-write (auditoria de gaps).
+  // ai_model antes era display read-only mas NÃO no PUT (mentira de UI);
+  // fallback_model/disabled_tools/system_prompt_override existiam no schema
+  // (00047 + validation.ts) mas zero UI — admin só editava via SQL.
+  ai_model: string;
+  fallback_model: string;
+  disabled_tools: string[];
+  system_prompt_override: string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -150,6 +158,12 @@ function makeSeed(c: Record<string, any>): Editable {
       respect_working_hours: bool(oc.respect_working_hours, true),
       opening_message: str(oc.opening_message),
     },
+    // Pedro 2026-05-28: reads novos pros 4 campos. ai_model "" = vai pro padrão
+    // do dispatcher (Sonnet/Haiku). disabled_tools [] = nenhuma desabilitada.
+    ai_model: str(c.ai_model),
+    fallback_model: str(c.fallback_model),
+    disabled_tools: Array.isArray(c.disabled_tools) ? (c.disabled_tools as string[]) : [],
+    system_prompt_override: str(c.system_prompt_override),
   };
 }
 
@@ -206,7 +220,6 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
   const isRecruitment = detail.template_key === "recruitment";
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const c = (detail.config ?? {}) as Record<string, any>;
-  const aiModel = str(c.ai_model) || "padrão";
   const availableMods = new Set(detail.modules.map((m) => m.key));
 
   const [cat, setCat] = useState<Cat>("identity");
@@ -276,6 +289,12 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
           enable_audio_transcription: e.enable_audio_transcription, enable_image_analysis: e.enable_image_analysis, enable_pdf_reading: e.enable_pdf_reading, enable_summary_notes: e.enable_summary_notes,
           notifications: e.notifications,
           outreach_config: { ...e.outreach, enabled: enabled.has("outreach"), rate_per_hour: clampNum(e.outreach.rate_per_hour, 1, 500, 20), daily_cap: clampNum(e.outreach.daily_cap, 1, 5000, 100) },
+          // Pedro 2026-05-28: 4 campos antes missing-UI / dead-write. null quando
+          // vazio (schema é nullable) pra cair pro default do dispatcher.
+          ai_model: e.ai_model || null,
+          fallback_model: e.fallback_model || null,
+          disabled_tools: e.disabled_tools.length ? e.disabled_tools : null,
+          system_prompt_override: e.system_prompt_override.trim() || null,
         }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "falhou");
@@ -404,7 +423,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
             ) : (
               <>
                 {cat === "identity" && <CatIdentity e={e} patch={patch} isLead={isLead} />}
-                {cat === "tone" && <CatTone e={e} patch={patch} aiModel={aiModel} />}
+                {cat === "tone" && <CatTone e={e} patch={patch} />}
                 {cat === "channel" && <CatChannel e={e} patch={patch} />}
                 {cat === "qualification" && <CatQualification e={e} patch={patch} />}
                 {cat === "scheduling" && <CatScheduling e={e} patch={patch} isRecruitment={isRecruitment} />}
@@ -641,7 +660,18 @@ function CatIdentity({ e, patch, isLead }: { e: Editable; patch: (p: Partial<Edi
 }
 
 /* ─── Tom & estilo ──────────────────────────────────────────────── */
-function CatTone({ e, patch, aiModel }: { e: Editable; patch: (p: Partial<Editable>) => void; aiModel: string }) {
+// Pedro 2026-05-28: ai_model + fallback_model viraram editáveis (antes ai_model
+// era display read-only mas não no PUT — mentira de UI). Lista de modelos
+// curada (Sonnet/Haiku/GPT-4.1) bate com o dispatcher do `llm-client.ts`.
+// "padrão" = vazio = dispatcher escolhe pelo template do agente.
+const AI_MODELS: { value: string; label: string }[] = [
+  { value: "", label: "Padrão (gerenciado pelo Spark)" },
+  { value: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5 (qualidade)" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (rápido)" },
+  { value: "gpt-4.1-mini", label: "GPT-4.1 mini" },
+  { value: "gpt-4.1", label: "GPT-4.1" },
+];
+function CatTone({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
   return (
     <>
       <Field label="Personalidade" hint="Onde o agente fica em cada eixo.">
@@ -651,7 +681,18 @@ function CatTone({ e, patch, aiModel }: { e: Editable; patch: (p: Partial<Editab
         <Sld label="Assertividade" left="Tímido" right="Direto" value={e.tone_aggressiveness} onChange={(v) => patch({ tone_aggressiveness: v })} />
       </Field>
       <Field label="Exemplos de conversa" hint="Como responder em situações comuns (opcional, mas ajuda muito)."><textarea className="textarea" rows={5} maxLength={20000} value={e.conversation_examples} onChange={(ev) => patch({ conversation_examples: ev.target.value })} placeholder={"Ex:\nLead: Quanto custa?\nAgente: Depende do perfil — me conta sua idade e cidade que eu já te dou uma ideia 😊"} /></Field>
-      <Field label="Modelo de IA"><span className="pill pill--muted">{aiModel}</span><span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>gerenciado pelo Spark</span></Field>
+      <div className="fgrid">
+        <Field label="Modelo de IA" hint="Vazio = o Spark escolhe pelo tipo do agente.">
+          <select className="select" aria-label="Modelo de IA primário" value={e.ai_model} onChange={(ev) => patch({ ai_model: ev.target.value })}>
+            {AI_MODELS.map((m) => (<option key={m.value} value={m.value}>{m.label}</option>))}
+          </select>
+        </Field>
+        <Field label="Modelo de fallback" hint="Quando o primário falha. Vazio = sem fallback.">
+          <select className="select" aria-label="Modelo de fallback" value={e.fallback_model} onChange={(ev) => patch({ fallback_model: ev.target.value })}>
+            {AI_MODELS.map((m) => (<option key={m.value} value={m.value}>{m.label}</option>))}
+          </select>
+        </Field>
+      </div>
     </>
   );
 }
@@ -678,6 +719,26 @@ function CatChannel({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) =
           </label>
         ))}
       </div>
+      {/* Pedro 2026-05-28 — footgun: zero canais ativos = agente mudo silencioso.
+          Espelha o aviso de "nenhum dia ativo" do CatHours. extra_channels conta
+          (canais preservados que o /hub não edita, ex: Email). */}
+      {e.channels.length === 0 && e.extra_channels.length === 0 && (
+        <div
+          role="alert"
+          style={{
+            marginTop: 12,
+            padding: 10,
+            border: "1px solid #DC2626",
+            background: "#FEF2F2",
+            borderRadius: "var(--r-sm)",
+          }}
+        >
+          <strong style={{ fontSize: 13, color: "#991B1B" }}>⚠️ Nenhum canal selecionado</strong>
+          <p style={{ fontSize: 12.5, margin: "4px 0 0", color: "#991B1B", lineHeight: 1.4 }}>
+            Sem canal ativo, o agente não consegue responder a ninguém. Selecione pelo menos 1 canal acima.
+          </p>
+        </div>
+      )}
     </Field>
   );
 }
@@ -1199,6 +1260,39 @@ function CatLimits({ e, patch, isRep }: { e: Editable; patch: (p: Partial<Editab
       <Toggle label="Analisar imagens" checked={e.enable_image_analysis} onChange={() => patch({ enable_image_analysis: !e.enable_image_analysis })} />
       <Toggle label="Ler PDFs" checked={e.enable_pdf_reading} onChange={() => patch({ enable_pdf_reading: !e.enable_pdf_reading })} />
       <Toggle label="Resumo automático em nota" checked={e.enable_summary_notes} onChange={() => patch({ enable_summary_notes: !e.enable_summary_notes })} />
+
+      {/* Avançado (Pedro 2026-05-28) — 4 campos antes missing-UI: disabled_tools
+          + system_prompt_override (auditoria de gaps). Só pra non-rep (admin)
+          pra reduzir footgun. disabled_tools usa CSV simples no input — multi-select
+          chip exigiria enumerar as 38 tools, deixei pragmático. */}
+      {!isRep && (
+        <>
+          <SubHd>Avançado (modo treinamento)</SubHd>
+          <p className="muted" style={{ fontSize: 12.5, margin: "0 0 10px" }}>
+            Configurações sensíveis. Use só pra experimentar — pode quebrar o agente. Reverte deixando os campos vazios.
+          </p>
+          <Field label="Ferramentas desabilitadas" hint="Nome das tools separados por vírgula. Vazio = todas habilitadas.">
+            <input
+              className="input"
+              aria-label="Tools desabilitadas (CSV)"
+              value={e.disabled_tools.join(", ")}
+              onChange={(ev) => patch({ disabled_tools: ev.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+              placeholder="ex: delete_contact, archive_conversation"
+            />
+          </Field>
+          <Field label="Override do prompt de sistema" hint="Substitui o prompt-base inteiro. Vazio = o Spark monta o prompt automaticamente.">
+            <textarea
+              className="textarea"
+              aria-label="System prompt override"
+              rows={6}
+              maxLength={20000}
+              value={e.system_prompt_override}
+              onChange={(ev) => patch({ system_prompt_override: ev.target.value })}
+              placeholder="Vazio = padrão do Spark (recomendado)."
+            />
+          </Field>
+        </>
+      )}
 
       <SubHd>Avisos por email (em breve)</SubHd>
       {/* C2-3 (ultra-review 2026-05-26): os avisos por email ainda NÃO são
