@@ -211,74 +211,107 @@ export function CampaignDetailView({ campaign }: { campaign: HubCampaignDetail }
       )}
 
       {/* Etapa 4.7: variantes A/B com stats. */}
-      {campaign.ab_variants && campaign.ab_variants.length >= 2 && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-hd">
-            <h3>Variantes A/B</h3>
-            <span className="muted" style={{ fontSize: 12 }}>
-              {campaign.ab_variants.length} variantes · stats por variante
-            </span>
-          </div>
-          <div className="card-body" style={{ padding: 16 }}>
-            <div className="col" style={{ gap: 14 }}>
-              {campaign.ab_variants.map((v) => (
-                <div
-                  key={v.variant_id}
-                  style={{
-                    padding: 12,
-                    background: "var(--surface-2)",
-                    borderRadius: "var(--r-sm)",
-                    borderLeft: "3px solid var(--primary)",
-                  }}
-                >
-                  <div className="row" style={{ gap: 10, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
-                    <span
+      {campaign.ab_variants && campaign.ab_variants.length >= 2 && (() => {
+        // Etapa 4.7 final: identifica winner (maior reply_rate com sent>0).
+        // Empate ou poucos dados (<5 sent por variant) = não destaca.
+        const eligible = campaign.ab_variants.filter((v) => v.sent_count >= 5);
+        const winnerVid = eligible.length >= 2
+          ? eligible.reduce((best, v) => (v.reply_rate > best.reply_rate ? v : best), eligible[0]).variant_id
+          : null;
+        const hasReplies = campaign.ab_variants.some((v) => v.reply_count > 0);
+        return (
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-hd">
+              <h3>Variantes A/B</h3>
+              <span className="muted" style={{ fontSize: 12 }}>
+                {campaign.ab_variants.length} variantes
+                {hasReplies && " · reply rate calculada"}
+              </span>
+            </div>
+            <div className="card-body" style={{ padding: 16 }}>
+              <div className="col" style={{ gap: 14 }}>
+                {campaign.ab_variants.map((v) => {
+                  const isWinner = v.variant_id === winnerVid;
+                  return (
+                    <div
+                      key={v.variant_id}
                       style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 24,
-                        height: 24,
-                        borderRadius: 12,
-                        background: "var(--primary)",
-                        color: "#fff",
-                        fontSize: 12,
-                        fontWeight: 600,
+                        padding: 12,
+                        background: "var(--surface-2)",
+                        borderRadius: "var(--r-sm)",
+                        borderLeft: `3px solid ${isWinner ? "#10b981" : "var(--primary)"}`,
                       }}
                     >
-                      {v.letter}
-                    </span>
-                    <strong style={{ fontSize: 13 }}>Variante {v.letter}</strong>
-                    <span className="muted" style={{ fontSize: 12 }}>
-                      peso {v.weight} (~{v.weight_pct}%)
-                    </span>
-                    <span className="muted" style={{ fontSize: 12, marginLeft: "auto" }}>
-                      {v.sent_count} enviado · {v.pending_count} fila
-                      {v.failed_count > 0 ? ` · ${v.failed_count} pulado` : ""}
-                      {v.total > 0 ? ` · total ${v.total}` : ""}
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      padding: 10,
-                      background: "var(--bg)",
-                      borderRadius: "var(--r-sm)",
-                      whiteSpace: "pre-wrap",
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    {v.template}
-                  </div>
+                      <div className="row" style={{ gap: 10, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+                        <span
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: 24,
+                            height: 24,
+                            borderRadius: 12,
+                            background: isWinner ? "#10b981" : "var(--primary)",
+                            color: "#fff",
+                            fontSize: 12,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {v.letter}
+                        </span>
+                        <strong style={{ fontSize: 13 }}>Variante {v.letter}</strong>
+                        {isWinner && (
+                          <span className="pill" style={{ fontSize: 10, background: "#10b981", color: "#fff", padding: "2px 6px" }}>
+                            🏆 Melhor reply rate
+                          </span>
+                        )}
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          peso {v.weight} (~{v.weight_pct}%)
+                        </span>
+                        <span className="muted" style={{ fontSize: 12, marginLeft: "auto" }}>
+                          {v.sent_count} enviado · {v.pending_count} fila
+                          {v.failed_count > 0 ? ` · ${v.failed_count} pulado` : ""}
+                        </span>
+                      </div>
+                      {v.sent_count > 0 && (
+                        <div className="row" style={{ gap: 12, marginBottom: 8, fontSize: 12, flexWrap: "wrap" }}>
+                          <span>
+                            <strong className="tnum">{v.reply_count}</strong>
+                            <span className="muted"> respostas</span>
+                          </span>
+                          <span>
+                            <strong className="tnum" style={{ color: isWinner ? "#10b981" : undefined }}>
+                              {v.reply_rate}%
+                            </strong>
+                            <span className="muted"> reply rate</span>
+                          </span>
+                        </div>
+                      )}
+                      <div
+                        style={{
+                          fontSize: 13,
+                          padding: 10,
+                          background: "var(--bg)",
+                          borderRadius: "var(--r-sm)",
+                          whiteSpace: "pre-wrap",
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        {v.template}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {!hasReplies && (
+                <div className="muted" style={{ fontSize: 11.5, marginTop: 12, fontStyle: "italic" }}>
+                  Reply rate aparece quando contatos responderem (lookback 7d a partir do envio).
                 </div>
-              ))}
-            </div>
-            <div className="muted" style={{ fontSize: 11.5, marginTop: 12, fontStyle: "italic" }}>
-              Stats de resposta (replied) virão quando integrarmos o tracking de inbound por variante.
+              )}
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Etapa 4.4: timeline de sequência multi-toque. */}
       {campaign.has_sequence && campaign.sequence_steps && campaign.sequence_steps.length > 0 && (

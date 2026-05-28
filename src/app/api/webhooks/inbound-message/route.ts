@@ -117,6 +117,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "server_misconfigured" }, { status: 500 });
     } else {
       console.warn("[Webhook] ⚠️  No signature verification — GHL_WEBHOOK_SECRET not set");
+      // Etapa pós-cutover (Pedro 2026-05-28): em prod, faltar GHL_WEBHOOK_SECRET
+      // significa que qualquer um pode disparar webhook fake (spoofing). Dispara
+      // admin_signal 1x/hora pra Pedro lembrar de gerar secret no GHL e setar
+      // GHL_WEBHOOK_SECRET + WEBHOOK_REQUIRE_SIGNATURE=true no Vercel.
+      // Dedup curto via signal fingerprint (1 sinal/hora não inunda painel).
+      if (process.env.VERCEL_ENV === "production") {
+        try {
+          const { recordSignal } = await import("@/lib/admin-signals/recorder");
+          const { waitUntil } = await import("@vercel/functions");
+          waitUntil(
+            recordSignal({
+              type: "error",
+              source: "system",
+              severity: "high",
+              title: "Webhook GHL sem GHL_WEBHOOK_SECRET",
+              description:
+                "Inbound webhooks chegam SEM verificação de assinatura. " +
+                "Risco: spoofing (qualquer um pode disparar custos de IA). " +
+                "Fix: gerar secret no GHL Developer Portal → adicionar GHL_WEBHOOK_SECRET + WEBHOOK_REQUIRE_SIGNATURE=true no Vercel.",
+              metadata: { gap: "webhook_signature", env: "production" },
+            }).catch(() => null),
+          );
+        } catch {
+          /* não-fatal */
+        }
+      }
     }
 
     // ===== PARSING =====

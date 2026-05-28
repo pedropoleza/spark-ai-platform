@@ -15,6 +15,14 @@ const nextConfig = {
       { source: "/dashboard/billing", destination: "/hub/billing", permanent: true },
       // activity legacy → messages (equivalente conceitual no /hub).
       { source: "/dashboard/activity", destination: "/hub/messages", permanent: true },
+      // Pedro 2026-05-28 cleanup: /agents legacy redirecionam pra /hub/agents.
+      // Views específicas por type (/agents/sales etc) eram da época pre-modular;
+      // hoje a config é por agent_id (/hub/agents/<id>), então redirect cai no listing.
+      { source: "/agents", destination: "/hub/agents", permanent: true },
+      { source: "/agents/sales", destination: "/hub/agents", permanent: true },
+      { source: "/agents/recruitment", destination: "/hub/agents", permanent: true },
+      { source: "/agents/account-assistant", destination: "/hub/agents", permanent: true },
+      { source: "/agents/new", destination: "/hub/agents/new", permanent: true },
     ];
   },
 };

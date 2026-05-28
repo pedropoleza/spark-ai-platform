@@ -106,6 +106,26 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
       }
     })();
 
+    // Etapa 4.7 final (Pedro 2026-05-28): variant reply tracker. Marca
+    // replied_at no recipient enviado mais recente (últimos 7d) → UI A/B
+    // mostra reply rate por variante. Não bloqueia inbound se DB cair.
+    (async () => {
+      try {
+        const { trackVariantReply } = await import("./proactive/variant-reply-tracker");
+        const r = await trackVariantReply(contactId, hubLocationId);
+        if (r.matched && r.variant_id) {
+          console.log(
+            `[Sparkbot] variant-reply: job=${r.job_id?.slice(0, 8)} variant=${r.variant_id} step=${r.sequence_step ?? "n/a"}`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          "[Sparkbot] variant-reply tracker falhou:",
+          err instanceof Error ? err.message.slice(0, 150) : err,
+        );
+      }
+    })();
+
     // Etapa 4.8 (Pedro 2026-05-28): detector de opt-out (STOP/PARAR/etc).
     // Match estrito por palavra inteira. Insere em outreach_optouts. Runner
     // do bulk-message-runner depois pula recipients com opt-out ativo.

@@ -266,6 +266,9 @@ export interface HubCampaignAbVariant {
   pending_count: number;
   failed_count: number;
   total: number;
+  // Etapa 4.7 final (Pedro 2026-05-28): reply tracking.
+  reply_count: number;
+  reply_rate: number; // 0-100 (% sobre sent_count)
 }
 
 export interface HubCampaignDetail extends HubCampaignRow {
@@ -315,16 +318,20 @@ export async function loadHubCampaignDetail(
   const abVariantsRaw = (job.ab_variants as AbVariant[] | null) || null;
   if (Array.isArray(abVariantsRaw) && abVariantsRaw.length >= 2) {
     const totalWeight = abVariantsRaw.reduce((sum, v) => sum + Math.max(1, v.weight), 0);
-    // Agrega counts em 1 query
+    // Agrega counts em 1 query. Inclui replied_at pra reply rate por variant.
     const { data: variantCounts } = await supabase
       .from("bulk_message_recipients")
-      .select("variant_id, status")
+      .select("variant_id, status, replied_at")
       .eq("job_id", job.id)
       .not("variant_id", "is", null);
     const cMap = new Map<string, number>(); // "vid|status"
-    for (const r of (variantCounts || []) as Array<{ variant_id: number; status: string }>) {
+    const replyMap = new Map<number, number>(); // variant_id → reply count
+    for (const r of (variantCounts || []) as Array<{ variant_id: number; status: string; replied_at: string | null }>) {
       const key = `${r.variant_id}|${r.status}`;
       cMap.set(key, (cMap.get(key) || 0) + 1);
+      if (r.replied_at) {
+        replyMap.set(r.variant_id, (replyMap.get(r.variant_id) || 0) + 1);
+      }
     }
     abVariantsStats = abVariantsRaw.map((v, idx) => {
       const vid = idx + 1;
@@ -335,6 +342,7 @@ export async function loadHubCampaignDetail(
         (cMap.get(`${vid}|failed`) || 0) +
         (cMap.get(`${vid}|cancelled`) || 0) +
         (cMap.get(`${vid}|skipped`) || 0);
+      const replies = replyMap.get(vid) || 0;
       return {
         variant_id: vid,
         letter: String.fromCharCode(65 + idx),
@@ -345,6 +353,8 @@ export async function loadHubCampaignDetail(
         pending_count: pending,
         failed_count: failed,
         total: sent + pending + failed,
+        reply_count: replies,
+        reply_rate: sent > 0 ? Math.round((replies / sent) * 1000) / 10 : 0,
       };
     });
   }
