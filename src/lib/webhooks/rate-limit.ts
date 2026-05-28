@@ -18,7 +18,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const RATE_LIMIT_WINDOW_SEC = 60;
 const RATE_LIMIT_MAX_HITS = 50;
-const ANOMALY_UNIQUE_IPS_THRESHOLD = 5;
+// F25 fix (Pedro 2026-05-28): threshold 5 era muito baixo — GHL usa pool de
+// IPs legitimamente (já vimos 7 IPs/min em prod sem ataque). Subindo pra 20
+// que é claramente suspeito (DDoS coordenado ou spoofing real).
+const ANOMALY_UNIQUE_IPS_THRESHOLD = 20;
 
 export interface RateLimitCheck {
   allowed: boolean;
