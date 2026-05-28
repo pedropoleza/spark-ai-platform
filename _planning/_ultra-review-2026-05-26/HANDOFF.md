@@ -10,7 +10,76 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28b — Auditoria de gaps do hub + Plano de prospecção 2.0 (LER PRIMEIRO)
+### 2026-05-28c — Etapas 1+2 do plano FECHADAS, Etapa 4 (Prospecção 2.0) em curso (LER PRIMEIRO)
+
+Continuação direta da auditoria/plano (2026-05-28b abaixo). Executou Etapas 0,
+1, 2 inteiras + 4.1.A + 4.1.B do `_planning/_gaps-prospeccao-2026-05-28/PLANO.md`.
+
+**Etapa 0 (anti-padrão + handoff):** CLAUDE.md ganhou seção "Refazer fluxo sem
+gate de paridade" em Anti-patterns; toda sessão futura aplica gate antes de
+fechar refeitura. Commit `ee4f019`.
+
+**Etapa 1 — 10 ALTAs fechadas:**
+- `2543847`: composer gera persona/greeting/farewell/conversation_examples (4
+  campos do wizard, paridade detail-view); detail-view ganhou edição de
+  `ai_model` (antes era mentira de UI) + `fallback_model` + `disabled_tools`
+  + `system_prompt_override` (todos missing-UI dead-write); CatChannel min=1
+  footgun; Settings timezone via Intl.supportedValuesOf IANA.
+- `35bf8f8`: truncagens silenciosas viraram visíveis — paused = janela 30d +
+  cap 200 (filtro de tempo novo); entitlements ganhou `statusFilter` param
+  server-side; HUB_LIST_LIMITS exportado; labels "Últimas N" em home/messages.
+
+**Etapa 2 — 8 MÉDIAs fechadas:**
+- `a45a42d` (Commit A, 6 fixes): wizard nodes `knowledge` + `outreach_params`
+  (cap customizável; antes hardcoded 100); CatOutreach footgun (tags vazias
+  ou respect_hours+hours conflict); confirmation_mode com hint inline; Settings
+  beforeunload warn; KB Manager size check client (15 MB); builder-spec aceita
+  `intake.daily_cap` opcional.
+- `d1737a6` (Commit B, 2 fixes): novo `GET /api/sparkbot/rep-status` (auth JWT
+  do check-admin) retorna `{ online, status: online|silenced|paused, message }`
+  baseado em agent.status + rep.consecutive_proactive_without_reply. Embed
+  ganhou `botStatus` state + polling 60s + dot dinâmico verde/amarelo/vermelho
+  + tooltip. Activity exibe agent_name real via batch lookup (antes
+  "Agente" hardcoded). Follow-up rastreado: off_hours/cap_reached check
+  (tz + cap em runtime) fica pra iteração futura.
+
+**Etapa 4 (Prospecção 2.0) — 4.1 em curso, 4.1.A+B já LIVE:**
+- `afa01d3` (4.1.A — listagem read-only): novo item "Campanhas" na sidebar
+  entre Agentes e Mensagens; `/hub/campaigns/page.tsx` lista bulk_message_jobs
+  via novo `loadHubCampaigns` (HUB_LIST_LIMITS.campaigns=50); cards com label,
+  status chip (Em execução/Pausada/Concluída/Cancelada/Falhou), agent, channel,
+  timestamps, preview do template (200 chars), progress bar colorida por
+  status. Padrão: batch lookup de agent_name.
+- `0156bf9` (4.1.B — wizard de criação): `POST /api/hub/campaigns` zod-validated
+  (agent_id uuid, label 1-100, tag 1-80, template 1-3000, interval_seconds
+  30-600 opcional). Valida agente lead-facing E ativo da location. Resolve
+  rep_id via identifyRepByGhlUser. INSERT em bulk_message_jobs com
+  `status='paused'` por segurança. Wizard 3 steps (agente → filtro+mensagem
+  → revisar) com indicador visual + validação por step. **Decisão pragmática
+  documentada (anti-padrão aplicado):** filtro só por tag no MVP; Filter Engine
+  completo + preview de destinatários ficam pra próxima iteração; admin usa
+  SparkBot chat pra filtros complexos. Wizard avisa o user no step 3 que a
+  campanha sai em pausa — admin ativa via "iniciar campanha &lt;label&gt;" no
+  SparkBot chat até Commit C trazer botões direto na UI.
+
+**Restante do PLANO (Pedro decidiu ordem: ALTAs→MÉDIAs→Prospecção→BAIXAs→Cutover):**
+- 4.1.C: detail page `/hub/campaigns/[id]` com recipients table + botões
+  pause/resume/cancel (próximo)
+- 4.2: UI outreach config no detail-view (CatOutreach já existe; falta enabled
+  toggle + cross-check `enabled=true requires tags || pipeline_stage`)
+- 4.3: **Runner do outreach_config — gap CRÍTICO** (armazenado em DB sem
+  execução). Plano: migration `outreach_runs`, `runOutreachForAgent`, wire em
+  cron sparkbot-proactive, dedup, guard `OUTREACH_RUNNER_ENABLED` flag.
+- 4.4-4.8: sequência multi-toque · recorrência (cron) · segmentos dinâmicos
+  (FEL refresh) · A/B templates · whitelist/blacklist opt-outs.
+- Etapa 3 (7 BAIXAs) depois da 4.
+- Etapa 5: smoke E2E + cutover PM-F3.I.
+
+**Decisões pendentes do PLANO seguem em aberto (D1-D5)** — defaults Claude
+aplicáveis se Pedro não responder; D1 ai_model editável foi confirmado (já
+implementado em Etapa 1.2).
+
+### 2026-05-28b — Auditoria de gaps do hub + Plano de prospecção 2.0 (LER DEPOIS)
 
 Pedro descobriu que o wizard de criação tinha PERDIDO `targeting` (pipeline_stage +
 custom_field) — só restou tag simples. Fix: commit `adb42e8` (etapa avançada no

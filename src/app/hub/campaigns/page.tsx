@@ -97,13 +97,16 @@ export default async function CampaignsPage() {
             {campaigns.map((c) => {
               const pct = progressPct(c.sent_count, c.total_contacts);
               return (
-                <div
+                <Link
                   key={c.id}
+                  href={`/hub/campaigns/${c.id}`}
                   className="lrow"
                   style={{
                     gridTemplateColumns: "1fr auto",
-                    cursor: "default",
+                    cursor: "pointer",
                     padding: "14px 16px",
+                    textDecoration: "none",
+                    color: "inherit",
                   }}
                 >
                   <div style={{ minWidth: 0 }}>
@@ -173,7 +176,7 @@ export default async function CampaignsPage() {
                       </div>
                     )}
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>

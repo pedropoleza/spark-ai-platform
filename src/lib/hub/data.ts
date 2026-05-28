@@ -239,6 +239,67 @@ export async function loadHubCampaigns(
   }));
 }
 
+/* ─── Detail de campanha (Etapa 4.1 Commit C) ────────────────────── */
+export interface HubCampaignDetail extends HubCampaignRow {
+  rep_id: string;
+  filter_config: Record<string, unknown>;
+  message_template: string; // full text (não truncado)
+  variation_mode: string;
+  interval_seconds: number;
+  jitter_seconds: number;
+  respect_quiet_hours: boolean;
+}
+
+/**
+ * Detail completo de uma campanha. Inclui scope-check por location_id pra
+ * impedir IDOR (admin de outra location não consegue ler/mudar campanha
+ * alheia). Retorna null se não pertencer.
+ */
+export async function loadHubCampaignDetail(
+  campaignId: string,
+  locationId: string,
+): Promise<HubCampaignDetail | null> {
+  const supabase = createAdminClient();
+  const { data: job } = await supabase
+    .from("bulk_message_jobs")
+    .select("*")
+    .eq("id", campaignId)
+    .eq("location_id", locationId)
+    .maybeSingle();
+  if (!job) return null;
+
+  let agent_name = "Agente";
+  if (job.agent_id) {
+    const { data: agent } = await supabase.from("agents").select("name").eq("id", job.agent_id).maybeSingle();
+    if (agent?.name) agent_name = String(agent.name);
+  }
+
+  return {
+    id: job.id as string,
+    label: (job.label as string) || "Sem rótulo",
+    status: job.status as HubCampaignDetail["status"],
+    agent_id: (job.agent_id as string) || null,
+    agent_name,
+    sent_count: Number(job.sent_count) || 0,
+    total_contacts: Number(job.total_contacts) || 0,
+    failed_count: Number(job.failed_count) || 0,
+    skipped_count: Number(job.skipped_count) || 0,
+    delivery_channel: (job.delivery_channel as string) || "whatsapp_web_sms",
+    start_at: job.start_at as string,
+    completed_at: (job.completed_at as string) || null,
+    estimated_completion_at: (job.estimated_completion_at as string) || null,
+    priority: Number(job.priority) || 0,
+    message_preview: ((job.message_template as string) || "").slice(0, 200),
+    rep_id: job.rep_id as string,
+    filter_config: (job.filter_config as Record<string, unknown>) || {},
+    message_template: (job.message_template as string) || "",
+    variation_mode: (job.variation_mode as string) || "none",
+    interval_seconds: Number(job.interval_seconds) || 90,
+    jitter_seconds: Number(job.jitter_seconds) || 30,
+    respect_quiet_hours: Boolean(job.respect_quiet_hours),
+  };
+}
+
 export async function loadHubActivity(locationId: string, limit = 40): Promise<HubActivityItem[]> {
   const supabase = createAdminClient();
   // Pedro 2026-05-28: include agent_id pra resolver agent_name real (antes era
