@@ -21,7 +21,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Check, Megaphone, AlertCircle, Plus, Trash2, Layers } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Megaphone, AlertCircle, Plus, Trash2, Layers, Split } from "lucide-react";
 
 export interface AgentChoice {
   id: string;
@@ -43,7 +43,13 @@ interface SequenceStep {
   pause_on_reply: boolean;
 }
 
+interface AbVariant {
+  template: string;
+  weight: number;
+}
+
 const MAX_SEQUENCE_STEPS = 10;
+const MAX_AB_VARIANTS = 5;
 
 export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
   const router = useRouter();
@@ -62,10 +68,22 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
     { template: "", delay_days: 0, pause_on_reply: true },
   ]);
 
+  // Etapa 4.7: modo A/B. Mutuamente exclusivo com sequenceMode no MVP.
+  const [abMode, setAbMode] = useState(false);
+  const [abVariants, setAbVariants] = useState<AbVariant[]>([
+    { template: "", weight: 50 },
+    { template: "", weight: 50 },
+  ]);
+
   const selectedAgent = agents.find((a) => a.id === agentId);
 
   const canAdvance1 = !!agentId;
-  const canAdvance2 = sequenceMode
+  const canAdvance2 = abMode
+    ? label.trim().length > 0 &&
+      tag.trim().length > 0 &&
+      abVariants.length >= 2 &&
+      abVariants.every((v) => v.template.trim().length > 0 && v.weight >= 1)
+    : sequenceMode
     ? label.trim().length > 0 &&
       tag.trim().length > 0 &&
       sequenceSteps.length >= 1 &&
@@ -92,6 +110,7 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
   // Quando liga o modo sequência, herda o template do textarea como step 1.
   function toggleSequenceMode(on: boolean) {
     setSequenceMode(on);
+    if (on) setAbMode(false); // mutuamente exclusivo (4.7)
     if (on && template.trim().length > 0 && sequenceSteps[0].template.trim().length === 0) {
       updateStep(0, { template });
     }
@@ -100,14 +119,49 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
     }
   }
 
+  // Etapa 4.7: toggle A/B. Mutuamente exclusivo com sequência. Herda template
+  // do textarea como variant A se ainda não preenchido.
+  function toggleAbMode(on: boolean) {
+    setAbMode(on);
+    if (on) setSequenceMode(false);
+    if (on && template.trim().length > 0 && abVariants[0].template.trim().length === 0) {
+      setAbVariants((prev) => prev.map((v, i) => (i === 0 ? { ...v, template } : v)));
+    }
+    if (!on && abVariants[0].template.trim().length > 0 && template.trim().length === 0) {
+      setTemplate(abVariants[0].template);
+    }
+  }
+
+  function updateVariant(idx: number, patch: Partial<AbVariant>) {
+    setAbVariants((prev) => prev.map((v, i) => (i === idx ? { ...v, ...patch } : v)));
+  }
+
+  function addVariant() {
+    if (abVariants.length >= MAX_AB_VARIANTS) return;
+    setAbVariants((prev) => [...prev, { template: "", weight: 50 }]);
+  }
+
+  function removeVariant(idx: number) {
+    if (abVariants.length <= 2) return; // mínimo 2 pra ser A/B
+    setAbVariants((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  // Total de weight pra mostrar % normalizado no preview.
+  const abTotalWeight = abVariants.reduce((sum, v) => sum + Math.max(1, v.weight), 0);
+
   async function submit() {
     setSubmitting(true);
     try {
+      const templateField = abMode
+        ? abVariants[0].template.trim()
+        : sequenceMode
+        ? sequenceSteps[0].template.trim()
+        : template.trim();
       const payload: Record<string, unknown> = {
         agent_id: agentId,
         label: label.trim(),
         tag: tag.trim(),
-        template: sequenceMode ? sequenceSteps[0].template.trim() : template.trim(),
+        template: templateField,
         interval_seconds: Number(intervalSec) || 90,
       };
       if (sequenceMode && sequenceSteps.length > 0) {
@@ -115,6 +169,12 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
           template: s.template.trim(),
           delay_days: s.delay_days,
           pause_on_reply: s.pause_on_reply,
+        }));
+      }
+      if (abMode && abVariants.length >= 2) {
+        payload.ab_variants = abVariants.map((v) => ({
+          template: v.template.trim(),
+          weight: Math.max(1, Math.min(100, v.weight)),
         }));
       }
       const res = await fetch("/api/hub/campaigns", {
@@ -127,7 +187,9 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
         throw new Error(json.error || "falha");
       }
       toast.success(
-        sequenceMode
+        abMode
+          ? `Campanha A/B com ${abVariants.length} variantes criada — ative pra começar`
+          : sequenceMode
           ? `Sequência de ${sequenceSteps.length} toques criada em pausa — ative pelo SparkBot`
           : "Campanha criada em pausa — ative pelo SparkBot pra iniciar"
       );
@@ -241,39 +303,76 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
               />
             </div>
 
-            {/* Etapa 4.4: toggle modo sequência (acima do template pra deixar
-                claro que essa escolha muda a UI abaixo). */}
-            <div
-              className="row between"
-              style={{
-                padding: "10px 12px",
-                border: "1px solid var(--line)",
-                borderRadius: "var(--r-md)",
-                background: sequenceMode ? "var(--primary-soft)" : "transparent",
-                gap: 12,
-              }}
-            >
-              <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
-                <Layers size={16} style={{ color: sequenceMode ? "var(--primary-ink)" : "var(--ink-3)", marginTop: 2 }} />
-                <div>
-                  <div style={{ fontSize: 13.5, fontWeight: 500 }}>Sequência multi-toque</div>
-                  <div className="muted" style={{ fontSize: 12 }}>
-                    Mande N mensagens com intervalo de dias. Pausa quando o contato responde.
+            {/* Etapa 4.4 + 4.7: toggles de modo. Mutuamente exclusivos no MVP. */}
+            <div className="col" style={{ gap: 8 }}>
+              <div
+                className="row between"
+                style={{
+                  padding: "10px 12px",
+                  border: "1px solid var(--line)",
+                  borderRadius: "var(--r-md)",
+                  background: sequenceMode ? "var(--primary-soft)" : "transparent",
+                  gap: 12,
+                }}
+              >
+                <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
+                  <Layers size={16} style={{ color: sequenceMode ? "var(--primary-ink)" : "var(--ink-3)", marginTop: 2 }} />
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 500 }}>Sequência multi-toque</div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      N mensagens com intervalo de dias. Pausa quando o contato responde.
+                    </div>
                   </div>
                 </div>
+                <label className="row" style={{ gap: 6, alignItems: "center", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={sequenceMode}
+                    onChange={(e) => toggleSequenceMode(e.target.checked)}
+                    disabled={abMode}
+                    aria-label="Ativar sequência multi-toque"
+                  />
+                  <span style={{ fontSize: 12 }}>{sequenceMode ? "Ativada" : "Desativada"}</span>
+                </label>
               </div>
-              <label className="row" style={{ gap: 6, alignItems: "center", cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={sequenceMode}
-                  onChange={(e) => toggleSequenceMode(e.target.checked)}
-                  aria-label="Ativar sequência multi-toque"
-                />
-                <span style={{ fontSize: 12 }}>{sequenceMode ? "Ativada" : "Desativada"}</span>
-              </label>
+              <div
+                className="row between"
+                style={{
+                  padding: "10px 12px",
+                  border: "1px solid var(--line)",
+                  borderRadius: "var(--r-md)",
+                  background: abMode ? "var(--primary-soft)" : "transparent",
+                  gap: 12,
+                }}
+              >
+                <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
+                  <Split size={16} style={{ color: abMode ? "var(--primary-ink)" : "var(--ink-3)", marginTop: 2 }} />
+                  <div>
+                    <div style={{ fontSize: 13.5, fontWeight: 500 }}>Testar variações A/B</div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      2-5 versões da mensagem com peso configurável. Sorteia por contato.
+                    </div>
+                  </div>
+                </div>
+                <label className="row" style={{ gap: 6, alignItems: "center", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={abMode}
+                    onChange={(e) => toggleAbMode(e.target.checked)}
+                    disabled={sequenceMode}
+                    aria-label="Ativar variações A/B"
+                  />
+                  <span style={{ fontSize: 12 }}>{abMode ? "Ativada" : "Desativada"}</span>
+                </label>
+              </div>
+              {sequenceMode && abMode && (
+                <div className="muted" style={{ fontSize: 11.5, fontStyle: "italic" }}>
+                  Os modos são mutuamente exclusivos — escolha um.
+                </div>
+              )}
             </div>
 
-            {!sequenceMode && (
+            {!sequenceMode && !abMode && (
               <div>
                 <label style={{ fontSize: 13, fontWeight: 500 }}>Mensagem (template)</label>
                 <div className="muted" style={{ fontSize: 12 }}>
@@ -288,6 +387,99 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
                   placeholder="Oi {first_name}! Vi que você passou no feirão — posso te ajudar com a cotação?"
                   style={{ marginTop: 6 }}
                 />
+              </div>
+            )}
+
+            {/* Etapa 4.7: editor de variants A/B. */}
+            {abMode && (
+              <div className="col" style={{ gap: 12 }}>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Cada contato recebe UMA variante, sorteada por peso normalizado. Atualmente totalizando {abTotalWeight} pontos.
+                </div>
+                {abVariants.map((v, idx) => {
+                  const pct = abTotalWeight > 0 ? Math.round((Math.max(1, v.weight) / abTotalWeight) * 100) : 0;
+                  return (
+                    <div
+                      key={idx}
+                      className="card card--flat"
+                      style={{
+                        padding: 12,
+                        border: "1px solid var(--line)",
+                        borderRadius: "var(--r-md)",
+                        background: "var(--surface-2)",
+                      }}
+                    >
+                      <div className="row between" style={{ marginBottom: 8 }}>
+                        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 24,
+                              height: 24,
+                              borderRadius: 12,
+                              background: "var(--primary)",
+                              color: "#fff",
+                              fontSize: 12,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {String.fromCharCode(65 + idx)}
+                          </span>
+                          <span style={{ fontSize: 13, fontWeight: 500 }}>Variante {String.fromCharCode(65 + idx)}</span>
+                          <span className="muted" style={{ fontSize: 12 }}>(~{pct}% dos contatos)</span>
+                        </div>
+                        {abVariants.length > 2 && (
+                          <button
+                            type="button"
+                            className="btn btn--quiet btn--sm"
+                            onClick={() => removeVariant(idx)}
+                            aria-label={`Remover variante ${String.fromCharCode(65 + idx)}`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+
+                      <textarea
+                        className="textarea"
+                        rows={4}
+                        maxLength={3000}
+                        value={v.template}
+                        onChange={(e) => updateVariant(idx, { template: e.target.value })}
+                        placeholder={`Oi {first_name}! (versão ${String.fromCharCode(65 + idx)})`}
+                        aria-label={`Texto da variante ${String.fromCharCode(65 + idx)}`}
+                      />
+
+                      <div className="row" style={{ gap: 10, alignItems: "center", marginTop: 10 }}>
+                        <span className="muted" style={{ fontSize: 12 }}>Peso</span>
+                        <input
+                          type="range"
+                          min={1}
+                          max={100}
+                          value={v.weight}
+                          onChange={(e) => updateVariant(idx, { weight: Number(e.target.value) || 1 })}
+                          style={{ flex: 1 }}
+                          aria-label={`Peso da variante ${String.fromCharCode(65 + idx)}`}
+                        />
+                        <span className="tnum" style={{ fontSize: 12.5, minWidth: 32, textAlign: "right" }}>
+                          {v.weight}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {abVariants.length < MAX_AB_VARIANTS && (
+                  <button
+                    type="button"
+                    className="btn btn--quiet btn--sm"
+                    onClick={addVariant}
+                    style={{ alignSelf: "flex-start" }}
+                  >
+                    <Plus size={14} /> Adicionar variante
+                  </button>
+                )}
               </div>
             )}
 
@@ -431,15 +623,51 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
             <Row label="Intervalo" value={`${intervalSec || 90}s entre envios`} />
             <Row
               label="Modo"
-              value={sequenceMode ? `Sequência ${sequenceSteps.length} toques` : "Mensagem única"}
+              value={
+                abMode
+                  ? `A/B ${abVariants.length} variantes`
+                  : sequenceMode
+                  ? `Sequência ${sequenceSteps.length} toques`
+                  : "Mensagem única"
+              }
             />
 
-            {!sequenceMode && (
+            {!sequenceMode && !abMode && (
               <div>
                 <div style={{ fontSize: 12, color: "var(--ink-3)", marginBottom: 4 }}>Mensagem</div>
                 <div style={{ fontSize: 13, padding: 10, background: "var(--surface-2)", borderRadius: "var(--r-sm)", whiteSpace: "pre-wrap" }}>
                   {template || "—"}
                 </div>
+              </div>
+            )}
+
+            {abMode && (
+              <div className="col" style={{ gap: 8 }}>
+                <div style={{ fontSize: 12, color: "var(--ink-3)" }}>Variantes A/B</div>
+                {abVariants.map((v, idx) => {
+                  const pct = abTotalWeight > 0 ? Math.round((Math.max(1, v.weight) / abTotalWeight) * 100) : 0;
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        padding: 10,
+                        background: "var(--surface-2)",
+                        borderRadius: "var(--r-sm)",
+                        borderLeft: "3px solid var(--primary)",
+                      }}
+                    >
+                      <div className="row" style={{ gap: 8, marginBottom: 6, alignItems: "center" }}>
+                        <strong style={{ fontSize: 12.5 }}>Variante {String.fromCharCode(65 + idx)}</strong>
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          peso {v.weight} · ~{pct}%
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>
+                        {v.template || "—"}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
 

@@ -256,6 +256,18 @@ export interface HubCampaignSequenceStats {
   completed: number;
 }
 
+export interface HubCampaignAbVariant {
+  variant_id: number;
+  letter: string; // "A", "B", ...
+  template: string;
+  weight: number;
+  weight_pct: number; // % normalizado
+  sent_count: number;
+  pending_count: number;
+  failed_count: number;
+  total: number;
+}
+
 export interface HubCampaignDetail extends HubCampaignRow {
   rep_id: string;
   filter_config: Record<string, unknown>;
@@ -269,6 +281,8 @@ export interface HubCampaignDetail extends HubCampaignRow {
   has_sequence: boolean;
   sequence_steps?: HubCampaignSequenceStep[];
   sequence_stats?: HubCampaignSequenceStats;
+  // Etapa 4.7: A/B variants + stats agregados por variant_id em recipients.
+  ab_variants?: HubCampaignAbVariant[];
 }
 
 /**
@@ -293,6 +307,46 @@ export async function loadHubCampaignDetail(
   if (job.agent_id) {
     const { data: agent } = await supabase.from("agents").select("name").eq("id", job.agent_id).maybeSingle();
     if (agent?.name) agent_name = String(agent.name);
+  }
+
+  // Etapa 4.7: se tem ab_variants (JSONB), agrega stats por variant_id.
+  let abVariantsStats: HubCampaignAbVariant[] | undefined;
+  type AbVariant = { template: string; weight: number };
+  const abVariantsRaw = (job.ab_variants as AbVariant[] | null) || null;
+  if (Array.isArray(abVariantsRaw) && abVariantsRaw.length >= 2) {
+    const totalWeight = abVariantsRaw.reduce((sum, v) => sum + Math.max(1, v.weight), 0);
+    // Agrega counts em 1 query
+    const { data: variantCounts } = await supabase
+      .from("bulk_message_recipients")
+      .select("variant_id, status")
+      .eq("job_id", job.id)
+      .not("variant_id", "is", null);
+    const cMap = new Map<string, number>(); // "vid|status"
+    for (const r of (variantCounts || []) as Array<{ variant_id: number; status: string }>) {
+      const key = `${r.variant_id}|${r.status}`;
+      cMap.set(key, (cMap.get(key) || 0) + 1);
+    }
+    abVariantsStats = abVariantsRaw.map((v, idx) => {
+      const vid = idx + 1;
+      const sent = cMap.get(`${vid}|sent`) || 0;
+      const pending =
+        (cMap.get(`${vid}|pending`) || 0) + (cMap.get(`${vid}|sending`) || 0);
+      const failed =
+        (cMap.get(`${vid}|failed`) || 0) +
+        (cMap.get(`${vid}|cancelled`) || 0) +
+        (cMap.get(`${vid}|skipped`) || 0);
+      return {
+        variant_id: vid,
+        letter: String.fromCharCode(65 + idx),
+        template: v.template,
+        weight: v.weight,
+        weight_pct: Math.round((Math.max(1, v.weight) / totalWeight) * 100),
+        sent_count: sent,
+        pending_count: pending,
+        failed_count: failed,
+        total: sent + pending + failed,
+      };
+    });
   }
 
   // Etapa 4.4: se has_sequence, hidrata steps + counts por step + agrega stats
@@ -382,6 +436,7 @@ export async function loadHubCampaignDetail(
     has_sequence: hasSequence,
     sequence_steps: sequenceSteps,
     sequence_stats: sequenceStats,
+    ab_variants: abVariantsStats,
   };
 }
 

@@ -40,7 +40,7 @@ export async function populateCampaignRecipients(jobId: string): Promise<Populat
   const { data: job } = await supabase
     .from("bulk_message_jobs")
     .select(
-      "id, status, location_id, agent_id, rep_id, filter_config, message_template, interval_seconds, jitter_seconds, has_sequence",
+      "id, status, location_id, agent_id, rep_id, filter_config, message_template, interval_seconds, jitter_seconds, has_sequence, ab_variants",
     )
     .eq("id", jobId)
     .maybeSingle();
@@ -119,9 +119,33 @@ export async function populateCampaignRecipients(jobId: string): Promise<Populat
   const jitter = Math.max(0, job.jitter_seconds || 30);
   const baseStart = Date.now() + 5000; // 5s buffer pra evitar sair antes do PATCH retornar
 
+  // Etapa 4.7: prepara distribuição de variants se job tem ab_variants.
+  // Sorteio por weight normalizado. Salva variant_id (1-based) +
+  // message_template_override em cada recipient.
+  type AbVariant = { template: string; weight: number };
+  const abVariants = (job.ab_variants as AbVariant[] | null) || null;
+  const hasAb = Array.isArray(abVariants) && abVariants.length >= 2;
+  let totalWeight = 0;
+  if (hasAb && abVariants) {
+    for (const v of abVariants) totalWeight += Math.max(1, v.weight);
+  }
+  function pickVariant(): { variantId: number; template: string } | null {
+    if (!hasAb || !abVariants || totalWeight <= 0) return null;
+    const r = Math.random() * totalWeight;
+    let cumulative = 0;
+    for (let i = 0; i < abVariants.length; i++) {
+      cumulative += Math.max(1, abVariants[i].weight);
+      if (r < cumulative) {
+        return { variantId: i + 1, template: abVariants[i].template };
+      }
+    }
+    return { variantId: abVariants.length, template: abVariants[abVariants.length - 1].template };
+  }
+
   const recipientRows = contacts.map((c, i) => {
     const jitterMs = Math.floor(Math.random() * jitter * 1000);
     const scheduledAtMs = baseStart + i * interval * 1000 + jitterMs;
+    const variant = pickVariant();
     return {
       job_id: jobId,
       contact_id: c.id,
@@ -132,6 +156,9 @@ export async function populateCampaignRecipients(jobId: string): Promise<Populat
       // step 1 usa job.message_template (= sequences[0].template). Não precisa
       // override aqui. Steps 2+ sequenciados pelo sequence-runner.
       sequence_step: isSequence ? 1 : null,
+      // Etapa 4.7: A/B distribui template via override + variant_id pra stats.
+      message_template_override: variant?.template ?? null,
+      variant_id: variant?.variantId ?? null,
     };
   });
 

@@ -38,6 +38,14 @@ const SequenceStepSchema = z.object({
   pause_on_reply: z.boolean().optional().default(true),
 });
 
+// Etapa 4.7 (D4): A/B variants free-form com slider de peso. Cada variant
+// tem template + weight (relativo — soma normalizada no populator). 2-5
+// variants suportadas no MVP.
+const AbVariantSchema = z.object({
+  template: z.string().min(1).max(3000),
+  weight: z.number().int().min(1).max(100),
+});
+
 const CreateCampaignSchema = z.object({
   agent_id: z.string().uuid(),
   label: z.string().min(1).max(100),
@@ -49,6 +57,10 @@ const CreateCampaignSchema = z.object({
   // Opcional. Se presente: 1-10 steps. Step[0] vira a msg-inicial (delay=0);
   // steps[1..] disparam após delay_days do step anterior.
   sequence_steps: z.array(SequenceStepSchema).min(1).max(10).optional(),
+  // Opcional. Quando presente, populator sorteia variant por weight
+  // (normalizado: weights [60, 40] = 60/40; [3, 1] = 75/25). Incompatível
+  // com sequence_steps no MVP (admin escolhe um ou outro).
+  ab_variants: z.array(AbVariantSchema).min(2).max(5).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -74,6 +86,16 @@ export async function POST(request: NextRequest) {
         return errorResponse(`Passo ${i + 1} precisa ter delay de pelo menos 1 dia (senão dispara junto com o anterior).`, 400, "invalid_sequence_step_delay");
       }
     }
+  }
+
+  // Etapa 4.7: sequência + A/B juntos é confuso (qual variant pra cada step?).
+  // MVP: admin escolhe um ou outro. Wizard já enforce na UI.
+  if (body.sequence_steps && body.ab_variants) {
+    return errorResponse(
+      "Não dá pra combinar sequência multi-toque com A/B no mesmo job. Escolha um modo.",
+      400,
+      "sequence_and_ab_conflict",
+    );
   }
 
   const supabase = createAdminClient();
@@ -110,6 +132,7 @@ export async function POST(request: NextRequest) {
   // Steps adicionais ficam só em bulk_message_sequences.
   const rootTemplate = body.sequence_steps?.[0]?.template?.trim() || body.template.trim();
   const isSequence = !!(body.sequence_steps && body.sequence_steps.length > 1);
+  const isAb = !!(body.ab_variants && body.ab_variants.length >= 2);
 
   const { data: job, error } = await supabase
     .from("bulk_message_jobs")
@@ -127,11 +150,16 @@ export async function POST(request: NextRequest) {
       // Pausada por segurança — admin ativa via SparkBot chat por enquanto.
       // Commit 4.1.C trará botões direto no /hub/campaigns/[id].
       status: "paused",
-      label: body.label.trim() + (isSequence ? ` (${body.sequence_steps!.length} toques)` : ""),
+      label:
+        body.label.trim() +
+        (isSequence ? ` (${body.sequence_steps!.length} toques)` : "") +
+        (isAb ? ` (A/B ${body.ab_variants!.length})` : ""),
       total_contacts: 0,
       // Etapa 4.4: flag pro populator do PATCH saber que precisa criar
       // bulk_message_sequence_state rows quando job vira running.
       has_sequence: isSequence,
+      // Etapa 4.7: salva variants JSON pro populator sortear por weight.
+      ab_variants: isAb ? body.ab_variants : null,
     })
     .select("id")
     .single();
@@ -168,5 +196,6 @@ export async function POST(request: NextRequest) {
     id: job.id,
     status: "paused",
     sequence_steps: body.sequence_steps?.length ?? 1,
+    ab_variants: body.ab_variants?.length ?? 0,
   }, { status: 201 });
 }

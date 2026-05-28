@@ -189,8 +189,8 @@ export function CampaignDetailView({ campaign }: { campaign: HubCampaignDetail }
         </div>
       </div>
 
-      {/* Mensagem template — só se NÃO é sequência. Sequência tem seu card próprio. */}
-      {!campaign.has_sequence && (
+      {/* Mensagem template — só se NÃO é sequência E NÃO é A/B. Cada modo tem card próprio. */}
+      {!campaign.has_sequence && (!campaign.ab_variants || campaign.ab_variants.length === 0) && (
         <div className="card">
           <div className="card-hd"><h3>Mensagem</h3></div>
           <div className="card-body" style={{ padding: 16 }}>
@@ -205,6 +205,76 @@ export function CampaignDetailView({ campaign }: { campaign: HubCampaignDetail }
               }}
             >
               {campaign.message_template}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Etapa 4.7: variantes A/B com stats. */}
+      {campaign.ab_variants && campaign.ab_variants.length >= 2 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-hd">
+            <h3>Variantes A/B</h3>
+            <span className="muted" style={{ fontSize: 12 }}>
+              {campaign.ab_variants.length} variantes · stats por variante
+            </span>
+          </div>
+          <div className="card-body" style={{ padding: 16 }}>
+            <div className="col" style={{ gap: 14 }}>
+              {campaign.ab_variants.map((v) => (
+                <div
+                  key={v.variant_id}
+                  style={{
+                    padding: 12,
+                    background: "var(--surface-2)",
+                    borderRadius: "var(--r-sm)",
+                    borderLeft: "3px solid var(--primary)",
+                  }}
+                >
+                  <div className="row" style={{ gap: 10, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 24,
+                        height: 24,
+                        borderRadius: 12,
+                        background: "var(--primary)",
+                        color: "#fff",
+                        fontSize: 12,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {v.letter}
+                    </span>
+                    <strong style={{ fontSize: 13 }}>Variante {v.letter}</strong>
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      peso {v.weight} (~{v.weight_pct}%)
+                    </span>
+                    <span className="muted" style={{ fontSize: 12, marginLeft: "auto" }}>
+                      {v.sent_count} enviado · {v.pending_count} fila
+                      {v.failed_count > 0 ? ` · ${v.failed_count} pulado` : ""}
+                      {v.total > 0 ? ` · total ${v.total}` : ""}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      padding: 10,
+                      background: "var(--bg)",
+                      borderRadius: "var(--r-sm)",
+                      whiteSpace: "pre-wrap",
+                      lineHeight: 1.45,
+                    }}
+                  >
+                    {v.template}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="muted" style={{ fontSize: 11.5, marginTop: 12, fontStyle: "italic" }}>
+              Stats de resposta (replied) virão quando integrarmos o tracking de inbound por variante.
             </div>
           </div>
         </div>
