@@ -112,13 +112,27 @@ export interface HubMetrics {
   leadsQualified: number;
   appointmentsBooked: number;
   activeConversations: number;
+  // Etapa F6 (Pedro 2026-05-28): visibility de prospecção na home.
+  campaignsRunning: number;
+  sequenceActive: number;
+  recurringEnabled: number;
+  optoutsTotal: number;
 }
 
 export async function loadHubMetrics(locationId: string): Promise<HubMetrics> {
   const supabase = createAdminClient();
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [messagesRes, qualifiedRes, bookedRes, activeRes] = await Promise.all([
+  const [
+    messagesRes,
+    qualifiedRes,
+    bookedRes,
+    activeRes,
+    campaignsRunningRes,
+    sequenceActiveRes,
+    recurringEnabledRes,
+    optoutsTotalRes,
+  ] = await Promise.all([
     supabase
       .from("execution_log")
       .select("id", { count: "exact", head: true })
@@ -141,6 +155,26 @@ export async function loadHubMetrics(locationId: string): Promise<HubMetrics> {
       .select("id", { count: "exact", head: true })
       .eq("location_id", locationId)
       .eq("status", "active"),
+    // F6: prospecção counters per-location.
+    supabase
+      .from("bulk_message_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("location_id", locationId)
+      .eq("status", "running"),
+    supabase
+      .from("bulk_message_sequence_state")
+      .select("id, job_id, bulk_message_jobs!inner(location_id)", { count: "exact", head: true })
+      .eq("status", "active")
+      .eq("bulk_message_jobs.location_id", locationId),
+    supabase
+      .from("recurring_campaigns")
+      .select("id", { count: "exact", head: true })
+      .eq("location_id", locationId)
+      .eq("enabled", true),
+    supabase
+      .from("outreach_optouts")
+      .select("id", { count: "exact", head: true })
+      .eq("location_id", locationId),
   ]);
 
   return {
@@ -148,6 +182,10 @@ export async function loadHubMetrics(locationId: string): Promise<HubMetrics> {
     leadsQualified: qualifiedRes.count || 0,
     appointmentsBooked: bookedRes.count || 0,
     activeConversations: activeRes.count || 0,
+    campaignsRunning: campaignsRunningRes.count || 0,
+    sequenceActive: sequenceActiveRes.count || 0,
+    recurringEnabled: recurringEnabledRes.count || 0,
+    optoutsTotal: optoutsTotalRes.count || 0,
   };
 }
 
@@ -286,6 +324,10 @@ export interface HubCampaignDetail extends HubCampaignRow {
   sequence_stats?: HubCampaignSequenceStats;
   // Etapa 4.7: A/B variants + stats agregados por variant_id em recipients.
   ab_variants?: HubCampaignAbVariant[];
+  // Etapa 4.7 final (Pedro 2026-05-28): reply rate global (válido pra single-shot
+  // E pra A/B sumarizado). Calculado direto da tabela recipients (count replied_at).
+  reply_count: number;
+  reply_rate: number; // 0-100% sobre sent_count
 }
 
 /**
@@ -311,6 +353,17 @@ export async function loadHubCampaignDetail(
     const { data: agent } = await supabase.from("agents").select("name").eq("id", job.agent_id).maybeSingle();
     if (agent?.name) agent_name = String(agent.name);
   }
+
+  // Etapa 4.7 final (Pedro 2026-05-28): reply rate global do job (single-shot
+  // ou A/B sumarizado). Aproveita o COUNT que faríamos pra A/B abaixo se houver.
+  const { count: globalRepliesRaw } = await supabase
+    .from("bulk_message_recipients")
+    .select("id", { count: "exact", head: true })
+    .eq("job_id", job.id)
+    .not("replied_at", "is", null);
+  const globalReplyCount = globalRepliesRaw ?? 0;
+  const globalSent = Number(job.sent_count) || 0;
+  const globalReplyRate = globalSent > 0 ? Math.round((globalReplyCount / globalSent) * 1000) / 10 : 0;
 
   // Etapa 4.7: se tem ab_variants (JSONB), agrega stats por variant_id.
   let abVariantsStats: HubCampaignAbVariant[] | undefined;
@@ -447,6 +500,8 @@ export async function loadHubCampaignDetail(
     sequence_steps: sequenceSteps,
     sequence_stats: sequenceStats,
     ab_variants: abVariantsStats,
+    reply_count: globalReplyCount,
+    reply_rate: globalReplyRate,
   };
 }
 

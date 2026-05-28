@@ -36,7 +36,7 @@ export default async function HubHome() {
       {/* KPIs — todos per-location e reais.
           Etapa 3.2 (Pedro 2026-05-28): label deixa explícito que "30 dias" é
           rolling (últimos 30 dias até agora), não mês calendário. */}
-      <div className="kpi-grid" style={{ marginBottom: 24 }}>
+      <div className="kpi-grid" style={{ marginBottom: 16 }}>
         <KPI
           lbl="Mensagens (últimos 30 dias)"
           val={metrics.messagesSent30d.toLocaleString("pt-BR")}
@@ -58,6 +58,33 @@ export default async function HubHome() {
           title="Conversas com inbound ou outbound nas últimas 48h"
         />
       </div>
+
+      {/* F6 (Pedro 2026-05-28): 2ª linha pra prospecção. Só renderiza se há algo
+          ativo — evita visualmente sugerir "use isso" em location sem campanhas. */}
+      {(metrics.campaignsRunning > 0 || metrics.sequenceActive > 0 || metrics.recurringEnabled > 0 || metrics.optoutsTotal > 0) && (
+        <div className="kpi-grid" style={{ marginBottom: 24 }}>
+          <KPI
+            lbl="Campanhas rodando"
+            val={metrics.campaignsRunning}
+            title="Jobs de bulk-message em status=running. Veja em /hub/campaigns."
+          />
+          <KPI
+            lbl="Sequências ativas"
+            val={metrics.sequenceActive}
+            title="Contatos seguindo sequência multi-toque (em algum step pendente)"
+          />
+          <KPI
+            lbl="Recorrentes ON"
+            val={metrics.recurringEnabled}
+            title="Campanhas cron-agendadas habilitadas"
+          />
+          <KPI
+            lbl="Opt-outs"
+            val={metrics.optoutsTotal}
+            title="Contatos que responderam STOP/PARAR/etc — nunca recebem campanha"
+          />
+        </div>
+      )}
 
       <div className="hub-row-2col" style={{ marginBottom: 24 }}>
         {/* Seus agentes */}

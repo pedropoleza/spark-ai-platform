@@ -162,11 +162,22 @@ export function CampaignDetailView({ campaign }: { campaign: HubCampaignDetail }
                 }}
               />
             </div>
-            <div className="row" style={{ gap: 20, fontSize: 13 }}>
+            <div className="row" style={{ gap: 20, fontSize: 13, flexWrap: "wrap" }}>
               <Stat label="Enviadas" value={campaign.sent_count.toLocaleString("pt-BR")} />
               <Stat label="Total" value={campaign.total_contacts.toLocaleString("pt-BR")} />
               {campaign.failed_count > 0 && <Stat label="Falhas" value={campaign.failed_count.toLocaleString("pt-BR")} danger />}
               {campaign.skipped_count > 0 && <Stat label="Puladas" value={campaign.skipped_count.toLocaleString("pt-BR")} />}
+              {/* Etapa 4.7 final: reply rate global (single-shot ou A/B). */}
+              {campaign.sent_count > 0 && (
+                <>
+                  <Stat label="Respostas" value={campaign.reply_count.toLocaleString("pt-BR")} />
+                  <Stat
+                    label="Reply rate"
+                    value={`${campaign.reply_rate}%`}
+                    danger={false}
+                  />
+                </>
+              )}
             </div>
           </div>
         </div>

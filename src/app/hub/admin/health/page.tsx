@@ -1,0 +1,266 @@
+/**
+ * /hub/admin/health — UI visual do cron-health (hypercare 48h).
+ *
+ * Renderiza o mesmo JSON do /api/admin/cron-health mas em cards visuais.
+ * Auth via SSO (session.isAdmin) — diferente do endpoint /api/admin/* que
+ * usa Basic Auth. Aqui o admin já entrou no hub.
+ */
+import { redirect } from "next/navigation";
+import { getSession } from "@/lib/auth/sso";
+import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  ShieldCheck,
+  ShieldAlert,
+  Activity,
+  Megaphone,
+  Layers,
+  Repeat,
+  Ban,
+} from "lucide-react";
+
+export const dynamic = "force-dynamic";
+
+// Lib local (espelha /api/admin/cron-health pra evitar fetch interno em SSR).
+async function loadHealth() {
+  const supabase = createAdminClient();
+  const flags = {
+    OUTREACH_RUNNER_ENABLED: process.env.OUTREACH_RUNNER_ENABLED === "1",
+    BULK_SEQUENCES_ENABLED: process.env.BULK_SEQUENCES_ENABLED === "1",
+    RECURRING_CAMPAIGNS_ENABLED: process.env.RECURRING_CAMPAIGNS_ENABLED === "1",
+    WEBHOOK_REQUIRE_SIGNATURE: process.env.WEBHOOK_REQUIRE_SIGNATURE === "true",
+    has_ghl_webhook_secret: !!process.env.GHL_WEBHOOK_SECRET,
+  };
+
+  const [
+    bulkHealth,
+    jobsRunning,
+    jobsPaused,
+    jobsCompleted24h,
+    sequenceActive,
+    sequencePaused,
+    recurringEnabled,
+    optoutsTotal,
+    outreachRuns24h,
+    signalsHigh24h,
+    signalsCritical24h,
+  ] = await Promise.all([
+    supabase.from("bulk_runner_health").select("*").eq("id", 1).maybeSingle(),
+    supabase.from("bulk_message_jobs").select("id", { count: "exact", head: true }).eq("status", "running"),
+    supabase.from("bulk_message_jobs").select("id", { count: "exact", head: true }).eq("status", "paused"),
+    supabase.from("bulk_message_jobs").select("id", { count: "exact", head: true })
+      .eq("status", "completed")
+      .gte("completed_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+    supabase.from("bulk_message_sequence_state").select("id", { count: "exact", head: true }).eq("status", "active"),
+    supabase.from("bulk_message_sequence_state").select("id", { count: "exact", head: true }).eq("status", "paused_by_reply"),
+    supabase.from("recurring_campaigns").select("id", { count: "exact", head: true }).eq("enabled", true),
+    supabase.from("outreach_optouts").select("id", { count: "exact", head: true }),
+    supabase.from("outreach_runs").select("id", { count: "exact", head: true })
+      .gte("ran_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+    supabase.from("admin_signals").select("id", { count: "exact", head: true })
+      .eq("severity", "high")
+      .gte("last_seen_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+    supabase.from("admin_signals").select("id", { count: "exact", head: true })
+      .eq("severity", "critical")
+      .gte("last_seen_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+  ]);
+
+  const lastTickAt = bulkHealth.data?.last_tick_at as string | null;
+  const tickAgeSeconds = lastTickAt ? Math.round((Date.now() - new Date(lastTickAt).getTime()) / 1000) : -1;
+  const errStreak = (bulkHealth.data?.consecutive_errors as number) ?? 0;
+
+  let overall: "healthy" | "warning" | "degraded" = "healthy";
+  if (errStreak >= 3 || (signalsCritical24h.count ?? 0) > 0) overall = "degraded";
+  else if (tickAgeSeconds < 0 || tickAgeSeconds > 300 || (signalsHigh24h.count ?? 0) > 5) overall = "warning";
+
+  return {
+    flags,
+    overall,
+    bulk: {
+      last_tick_at: lastTickAt,
+      tick_age_seconds: tickAgeSeconds,
+      consecutive_errors: errStreak,
+      last_fired: (bulkHealth.data?.last_fired as number) ?? 0,
+      last_failed: (bulkHealth.data?.last_failed as number) ?? 0,
+      last_skipped: (bulkHealth.data?.last_skipped as number) ?? 0,
+      last_error: bulkHealth.data?.last_error as string | null,
+    },
+    campaigns: {
+      jobs_running: jobsRunning.count ?? 0,
+      jobs_paused: jobsPaused.count ?? 0,
+      jobs_completed_24h: jobsCompleted24h.count ?? 0,
+      sequence_active: sequenceActive.count ?? 0,
+      sequence_paused_by_reply: sequencePaused.count ?? 0,
+      recurring_enabled: recurringEnabled.count ?? 0,
+      optouts_total: optoutsTotal.count ?? 0,
+      outreach_runs_24h: outreachRuns24h.count ?? 0,
+    },
+    signals: {
+      high_24h: signalsHigh24h.count ?? 0,
+      critical_24h: signalsCritical24h.count ?? 0,
+    },
+  };
+}
+
+function fmtAgo(seconds: number): string {
+  if (seconds < 0) return "nunca";
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}min`;
+  return `${Math.round(seconds / 3600)}h`;
+}
+
+const STATUS_LABEL = { healthy: "Saudável", warning: "Atenção", degraded: "Degradado" };
+const STATUS_BG = { healthy: "#10b981", warning: "#f59e0b", degraded: "#ef4444" };
+
+export default async function HealthPage() {
+  const session = await getSession();
+  if (!session) redirect("/");
+  if (!session.isAdmin) redirect("/hub");
+
+  const h = await loadHealth();
+  const StatusIcon = h.overall === "healthy" ? CheckCircle2 : h.overall === "warning" ? AlertTriangle : XCircle;
+
+  return (
+    <div className="page">
+      <div className="page-hd" style={{ flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h1 className="page-hd__title">
+            <Activity size={20} style={{ verticalAlign: "-3px", marginRight: 6 }} />
+            Health do sistema
+          </h1>
+          <p className="page-hd__sub">Hypercare 48h pós-cutover. Atualiza a cada refresh.</p>
+        </div>
+        <div
+          className="row"
+          style={{
+            gap: 8,
+            alignItems: "center",
+            padding: "8px 14px",
+            background: STATUS_BG[h.overall],
+            color: "#fff",
+            borderRadius: 6,
+            fontWeight: 600,
+            fontSize: 14,
+          }}
+        >
+          <StatusIcon size={16} />
+          {STATUS_LABEL[h.overall]}
+        </div>
+      </div>
+
+      {/* Flags */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-hd">
+          <h3>Flags de runtime</h3>
+        </div>
+        <div className="card-body" style={{ padding: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+          <FlagPill label="Outreach runner" on={h.flags.OUTREACH_RUNNER_ENABLED} />
+          <FlagPill label="Bulk sequences" on={h.flags.BULK_SEQUENCES_ENABLED} />
+          <FlagPill label="Recurring campaigns" on={h.flags.RECURRING_CAMPAIGNS_ENABLED} />
+          <FlagPill
+            label="Webhook GHL assinado"
+            on={h.flags.WEBHOOK_REQUIRE_SIGNATURE && h.flags.has_ghl_webhook_secret}
+            warning={!h.flags.has_ghl_webhook_secret}
+          />
+        </div>
+        {!h.flags.has_ghl_webhook_secret && (
+          <div style={{ padding: "10px 16px", background: "#fef3c7", borderTop: "1px solid #f59e0b", fontSize: 12.5, color: "#78350f" }}>
+            <ShieldAlert size={14} style={{ verticalAlign: "-2px", marginRight: 6 }} />
+            <strong>Atenção:</strong> webhook GHL aceita requests sem assinatura. Gere secret no GHL Developer Portal → seta <code>GHL_WEBHOOK_SECRET</code> + <code>WEBHOOK_REQUIRE_SIGNATURE=true</code> no Vercel.
+          </div>
+        )}
+      </div>
+
+      {/* Bulk runner */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-hd">
+          <h3>Bulk-runner</h3>
+          <span className="muted" style={{ fontSize: 12 }}>
+            Tick a cada 30s — sparkbot-proactive
+          </span>
+        </div>
+        <div className="card-body" style={{ padding: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 16 }}>
+          <Stat
+            label="Último tick"
+            value={fmtAgo(h.bulk.tick_age_seconds)}
+            danger={h.bulk.tick_age_seconds > 300 || h.bulk.tick_age_seconds < 0}
+          />
+          <Stat label="Erros consecutivos" value={String(h.bulk.consecutive_errors)} danger={h.bulk.consecutive_errors >= 3} />
+          <Stat label="Último envio (fired)" value={String(h.bulk.last_fired)} />
+          <Stat label="Falhas" value={String(h.bulk.last_failed)} danger={h.bulk.last_failed > 0} />
+          <Stat label="Skipped" value={String(h.bulk.last_skipped)} />
+        </div>
+        {h.bulk.last_error && (
+          <div style={{ padding: "10px 16px", background: "#fee2e2", borderTop: "1px solid #ef4444", fontSize: 12, color: "#7f1d1d", fontFamily: "monospace" }}>
+            <strong>Último erro:</strong> {h.bulk.last_error.slice(0, 240)}
+          </div>
+        )}
+      </div>
+
+      {/* Campaigns */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-hd">
+          <h3>Campanhas</h3>
+        </div>
+        <div className="card-body" style={{ padding: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16 }}>
+          <Stat label={<><Megaphone size={12} style={{ verticalAlign: "-1px" }} /> Jobs rodando</>} value={String(h.campaigns.jobs_running)} />
+          <Stat label="Jobs pausados" value={String(h.campaigns.jobs_paused)} />
+          <Stat label="Completados 24h" value={String(h.campaigns.jobs_completed_24h)} />
+          <Stat label={<><Layers size={12} style={{ verticalAlign: "-1px" }} /> Sequências ativas</>} value={String(h.campaigns.sequence_active)} />
+          <Stat label="Pausadas por reply" value={String(h.campaigns.sequence_paused_by_reply)} />
+          <Stat label={<><Repeat size={12} style={{ verticalAlign: "-1px" }} /> Recorrentes ON</>} value={String(h.campaigns.recurring_enabled)} />
+          <Stat label={<><Ban size={12} style={{ verticalAlign: "-1px" }} /> Opt-outs total</>} value={String(h.campaigns.optouts_total)} />
+          <Stat label="Outreach runs 24h" value={String(h.campaigns.outreach_runs_24h)} />
+        </div>
+      </div>
+
+      {/* Signals */}
+      <div className="card">
+        <div className="card-hd">
+          <h3>Signals 24h</h3>
+          <span className="muted" style={{ fontSize: 12 }}>
+            <a href="/api/admin/signals" target="_blank" style={{ color: "inherit", textDecoration: "underline" }}>
+              ver todos
+            </a>
+          </span>
+        </div>
+        <div className="card-body" style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          <Stat label="High severity" value={String(h.signals.high_24h)} danger={h.signals.high_24h > 5} />
+          <Stat label="Critical" value={String(h.signals.critical_24h)} danger={h.signals.critical_24h > 0} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FlagPill({ label, on, warning }: { label: string; on: boolean; warning?: boolean }) {
+  const color = on && !warning ? "#10b981" : warning ? "#f59e0b" : "#94a3b8";
+  return (
+    <div className="row" style={{ gap: 8, padding: "10px 12px", border: `1px solid ${color}`, borderRadius: 6, background: `${color}22`, alignItems: "center" }}>
+      {on && !warning ? (
+        <ShieldCheck size={14} style={{ color }} />
+      ) : warning ? (
+        <ShieldAlert size={14} style={{ color }} />
+      ) : (
+        <XCircle size={14} style={{ color }} />
+      )}
+      <span style={{ fontSize: 13, fontWeight: 500 }}>{label}</span>
+      <span className="muted" style={{ fontSize: 11, marginLeft: "auto" }}>
+        {on && !warning ? "ATIVA" : warning ? "PARCIAL" : "DESLIGADA"}
+      </span>
+    </div>
+  );
+}
+
+function Stat({ label, value, danger }: { label: React.ReactNode; value: string; danger?: boolean }) {
+  return (
+    <div>
+      <div className="muted" style={{ fontSize: 11 }}>{label}</div>
+      <div className="tnum" style={{ fontSize: 22, fontWeight: 600, color: danger ? "#ef4444" : undefined, marginTop: 4 }}>
+        {value}
+      </div>
+    </div>
+  );
+}

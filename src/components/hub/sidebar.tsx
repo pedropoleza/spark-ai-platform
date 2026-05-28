@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Layers, Mail, CreditCard, Settings, Shield, Zap, Megaphone, type LucideIcon } from "lucide-react";
+import { Home, Layers, Mail, CreditCard, Settings, Shield, Zap, Megaphone, Activity, type LucideIcon } from "lucide-react";
 import { useHubSession } from "./hub-session";
 
 type NavItem = { id: string; label: string; href: string; icon: LucideIcon };
@@ -16,7 +16,10 @@ const PRIMARY: NavItem[] = [
   { id: "settings", label: "Conta", href: "/hub/settings", icon: Settings },
 ];
 
-const ADMIN: NavItem[] = [{ id: "access", label: "Acessos", href: "/hub/access", icon: Shield }];
+const ADMIN: NavItem[] = [
+  { id: "access", label: "Acessos", href: "/hub/access", icon: Shield },
+  { id: "health", label: "Health", href: "/hub/admin/health", icon: Activity },
+];
 
 function isActive(pathname: string, href: string): boolean {
   if (href === "/hub") return pathname === "/hub";
