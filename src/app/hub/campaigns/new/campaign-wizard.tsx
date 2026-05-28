@@ -21,7 +21,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Check, Megaphone, AlertCircle, Plus, Trash2, Layers, Split } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, Megaphone, AlertCircle, Plus, Trash2, Layers, Split, Users, Loader2 } from "lucide-react";
 
 export interface AgentChoice {
   id: string;
@@ -148,6 +148,45 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
 
   // Total de weight pra mostrar % normalizado no preview.
   const abTotalWeight = abVariants.reduce((sum, v) => sum + Math.max(1, v.weight), 0);
+
+  // F21 (Pedro 2026-05-28): preview de count de contatos com a tag.
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [preview, setPreview] = useState<{
+    count: number;
+    capped: boolean;
+    sample_names: string[];
+  } | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  // Invalida preview quando muda tag/agente.
+  function resetPreview() {
+    setPreview(null);
+    setPreviewError(null);
+  }
+  async function loadPreview() {
+    if (!agentId || tag.trim().length === 0) return;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const res = await fetch("/api/hub/campaigns/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: agentId, tag: tag.trim() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || "falha");
+      }
+      setPreview({
+        count: json.count || 0,
+        capped: !!json.capped,
+        sample_names: json.sample_names || [],
+      });
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : "falha desconhecida");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
 
   async function submit() {
     setSubmitting(true);
@@ -293,14 +332,71 @@ export function CampaignWizard({ agents }: { agents: AgentChoice[] }) {
             <div>
               <label style={{ fontSize: 13, fontWeight: 500 }}>Tag dos contatos</label>
               <div className="muted" style={{ fontSize: 12 }}>O agente vai abordar contatos com essa tag no Spark Leads.</div>
-              <input
-                className="input"
-                value={tag}
-                onChange={(e) => setTag(e.target.value)}
-                maxLength={80}
-                placeholder="ex: feirao_2026"
-                style={{ marginTop: 6 }}
-              />
+              <div className="row" style={{ gap: 6, marginTop: 6, alignItems: "stretch" }}>
+                <input
+                  className="input"
+                  value={tag}
+                  onChange={(e) => { setTag(e.target.value); resetPreview(); }}
+                  maxLength={80}
+                  placeholder="ex: feirao_2026"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  type="button"
+                  className="btn btn--quiet btn--sm"
+                  onClick={loadPreview}
+                  disabled={previewLoading || tag.trim().length === 0 || !agentId}
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {previewLoading ? <Loader2 size={14} className="spin" /> : <Users size={14} />}
+                  {previewLoading ? " Buscando…" : " Quantos?"}
+                </button>
+              </div>
+              {/* F21: feedback do preview */}
+              {preview && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: "8px 12px",
+                    background: preview.count === 0 ? "#fef3c7" : preview.count >= 5000 ? "#fee2e2" : "var(--primary-soft)",
+                    borderRadius: 4,
+                    fontSize: 12.5,
+                  }}
+                >
+                  {preview.count === 0 ? (
+                    <span style={{ color: "#92400e" }}>
+                      ⚠️ Nenhum contato encontrado com a tag <strong>&quot;{tag.trim()}&quot;</strong>. Confirme a grafia no Spark Leads.
+                    </span>
+                  ) : preview.count >= 5000 ? (
+                    <span style={{ color: "#7f1d1d" }}>
+                      ⚠️ <strong>{preview.count.toLocaleString("pt-BR")}+</strong> contatos (cap atingido). Em escala desse tamanho, revise tag pra refinar antes.
+                    </span>
+                  ) : (
+                    <span style={{ color: "var(--primary-ink)" }}>
+                      ✅ <strong>{preview.count.toLocaleString("pt-BR")}</strong> contato{preview.count > 1 ? "s" : ""} encontrado{preview.count > 1 ? "s" : ""}
+                      {preview.sample_names.length > 0 && (
+                        <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                          (ex: {preview.sample_names.slice(0, 3).join(", ")}{preview.sample_names.length > 3 ? "…" : ""})
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              )}
+              {previewError && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: "8px 12px",
+                    background: "#fee2e2",
+                    borderRadius: 4,
+                    fontSize: 12,
+                    color: "#7f1d1d",
+                  }}
+                >
+                  Não consegui buscar: {previewError}
+                </div>
+              )}
             </div>
 
             {/* Etapa 4.4 + 4.7: toggles de modo. Mutuamente exclusivos no MVP. */}
