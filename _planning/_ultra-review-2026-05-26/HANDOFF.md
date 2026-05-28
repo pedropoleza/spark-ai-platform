@@ -10,7 +10,82 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28d — Etapas 1+2+4.1+4.3 fechadas; Prospecção 2.0 infra completa (LER PRIMEIRO)
+### 2026-05-28e — Prospecção 2.0 COMPLETA + Etapa 3 (5/7 BAIXAs) (LER PRIMEIRO)
+
+Sessão fechou Etapas 4.4 → 4.8 inteiras + 5 dos 7 BAIXAs. Total 7 commits.
+
+**Etapa 4.4 — Sequência multi-toque (`a7dddf2`):**
+- Migration 00090: bulk_message_jobs.has_sequence + recipients.message_template_override + recipients.sequence_step.
+- Wizard step 2 com toggle "Sequência multi-toque" + editor multi-step (até 10 toques, delay 0-90 dias, pause_on_reply por step).
+- API POST aceita sequence_steps[]; insere bulk_message_sequences rows.
+- Populator novo `proactive/campaign-populator.ts`: quando PATCH paused→running, resolve contatos via Filter Engine (tag-based) + popula recipients + (se sequência) sequence_state. Idempotente. Reverte job pra paused se filter falhar.
+- Sequence-runner `proactive/sequence-runner.ts`: tick varre state com next_send_at vencido → cria recipient pro próximo step com message_template_override + avança current_step. Flag-gate `BULK_SEQUENCES_ENABLED` default OFF.
+- Bulk-message-runner: honra message_template_override quando presente.
+- Bulk-sequence-monitor: hook no webhook GHL inbound pausa state.status='paused_by_reply' + cancela recipients pending. Separado do followup/sequence-monitor.
+- Detail view: card "Sequência de toques" com timeline + stats globais (active/paused_by_reply/completed).
+- Smoke `scripts/test-bulk-sequence.ts` 5/5.
+
+**Etapa 4.5 — Recorrência cron (`d1c208b`):**
+- `cron-evaluator.computeNextRunAt` + `previewNextRuns` (lookahead 100d, minuto-a-minuto, timezone do agente — D2).
+- `proactive/recurring-runner.ts`: tick processa ≤5 recurring_campaigns enabled+vencidas. Cria job filho 'running'+popula+atualiza last_run_at+next_run_at. Flag-gate `RECURRING_CAMPAIGNS_ENABLED` default OFF.
+- API POST/PATCH/DELETE /api/hub/campaigns/recurring. Scope-check.
+- UI: seção "Recorrentes" em /hub/campaigns + wizard `/hub/campaigns/recurring/new` com 5 presets + cron custom.
+- Smoke `scripts/test-recurring.ts` 9/9 (UTC + BRT).
+
+**Etapa 4.6 — Segmentos dinâmicos (`e9afa19`):**
+- Runner honra `refresh_segment_on_run`: true=re-executa Filter Engine fresh (default); false=reusa contact_ids do último bulk_job filho.
+- Wizard toggle + Row no review.
+
+**Etapa 4.7 — A/B com slider (`22fee99`):**
+- API POST aceita ab_variants[] (2-5 com weight 1-100). Mutuamente exclusivo com sequence_steps.
+- Wizard editor multi-variant com slider de peso + label de % normalizado.
+- Populator distribui via random + cumulative weights; salva variant_id + message_template_override.
+- Detail view: card "Variantes A/B" com sent/pending/failed por variant.
+
+**Etapa 4.8 — Opt-outs STOP/PARAR (`2db00fd`):**
+- Migration 00091: location_outreach_settings.custom_optout_keywords.
+- Detector `proactive/optout-detector.ts`: default global PT+EN (STOP, UNSUBSCRIBE, PARAR, CANCELAR, SAIR, DESCADASTRAR, REMOVER) + custom per-location. Match palavra inteira case-insensitive sem acentos. Skip msgs >200 chars.
+- Hook webhook-handler chama processInboundForOptOut async/silent.
+- Bulk-runner pré-check em batch (1 query por location).
+- API GET/POST/DELETE /api/hub/campaigns/opt-outs + GET/PUT /api/hub/campaigns/opt-out-keywords.
+- UI `/hub/campaigns/opt-outs` com keywords ativas (default chips + custom editável), listing opt-outs com remover, add manual.
+- Link "Opt-outs" no header de /hub/campaigns.
+
+**Etapa 3 — 5 dos 7 BAIXAs polish (`1d345b2` + `07937a5`):**
+- 3.2: KPIs home com labels "(últimos 30 dias)" + tooltip por KPI.
+- 3.4: Agents list ganhou dropdown filtro template (só mostra os que existem na location).
+- 3.5: Embed polling com error streak + backoff exponencial (6s→12s→24s) + console.warn 3ª/10ª falha.
+- 3.7: `hub/error.tsx` classifica 5 buckets (404/timeout/auth/network/genérico) com ícone+mensagem contextual.
+- 3.6: scheduling-prefs clear de calendário também limpa duration órfã.
+
+**Pendências dessa onda (follow-up):**
+- 3.1 wizard sem quiet hours node skippable
+- 3.3 billing período customizável (date picker do legado)
+- Tracking de reply matching variant_id (pra "qual variante ganhou")
+- Wizard novo: smoke E2E supervisionado pra cada feature antes do cutover
+
+**Flags pra ativar em prod (quando Pedro quiser, após smoke supervisionado):**
+- `OUTREACH_RUNNER_ENABLED=1` — outreach runner (Etapa 4.3, sessão anterior)
+- `BULK_SEQUENCES_ENABLED=1` — sequence-runner (4.4)
+- `RECURRING_CAMPAIGNS_ENABLED=1` — recurring-runner (4.5)
+
+**Decisões aplicadas (D2-D5 do PLANO.md):**
+- D2 Recurring tz = agente ✅
+- D3 Opt-out global + custom per-location ✅
+- D4 A/B free-form slider ✅
+- D5 (admin + opt-in rep) — não implementado (assumido admin only no MVP atual; reps acessam tudo se têm SSO)
+
+**Migrations aplicadas em prod nesta sessão (2):**
+- 00090 bulk_sequence_runtime (has_sequence, template_override, sequence_step)
+- 00091 outreach_optout_settings (custom keywords per-location)
+
+**Próximo (Pedro decide):**
+1. Etapa 3 final (3.1 + 3.3) — polish completo
+2. Etapa 5 PM-F3.I Cutover (/hub vira produção)
+3. Tracking variant reply (4.7 final)
+4. Smoke supervisionado E2E + ligar flags
+
+### 2026-05-28d — Etapas 1+2+4.1+4.3 fechadas; Prospecção 2.0 infra completa
 
 Continuação do bloco "c" abaixo. Sessão fechou 14 commits totais.
 
