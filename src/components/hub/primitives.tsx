@@ -78,10 +78,23 @@ export function PriceBadge({ included, entitled }: { included: boolean; entitled
 }
 
 /* ─── KPI ───────────────────────────────────────────────────────── */
-export function KPI({ lbl, val, delta, up }: { lbl: string; val: string | number; delta?: string; up?: boolean }) {
+export function KPI({
+  lbl,
+  val,
+  delta,
+  up,
+  title,
+}: {
+  lbl: string;
+  val: string | number;
+  delta?: string;
+  up?: boolean;
+  // Etapa 3.2 (Pedro 2026-05-28): tooltip pra explicar período / definição.
+  title?: string;
+}) {
   const deltaClass = up === true ? "kpi__delta kpi__delta--up" : up === false ? "kpi__delta kpi__delta--down" : "kpi__delta";
   return (
-    <div className="kpi">
+    <div className="kpi" title={title}>
       <div className="kpi__lbl">{lbl}</div>
       <div className="kpi__val tnum">{val}</div>
       {delta && (

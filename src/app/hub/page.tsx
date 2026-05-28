@@ -33,12 +33,30 @@ export default async function HubHome() {
         </div>
       </div>
 
-      {/* KPIs — todos per-location e reais */}
+      {/* KPIs — todos per-location e reais.
+          Etapa 3.2 (Pedro 2026-05-28): label deixa explícito que "30 dias" é
+          rolling (últimos 30 dias até agora), não mês calendário. */}
       <div className="kpi-grid" style={{ marginBottom: 24 }}>
-        <KPI lbl="Mensagens (30 dias)" val={metrics.messagesSent30d.toLocaleString("pt-BR")} />
-        <KPI lbl="Leads qualificados" val={metrics.leadsQualified} />
-        <KPI lbl="Reuniões agendadas" val={metrics.appointmentsBooked} />
-        <KPI lbl="Conversas ativas" val={metrics.activeConversations} />
+        <KPI
+          lbl="Mensagens (últimos 30 dias)"
+          val={metrics.messagesSent30d.toLocaleString("pt-BR")}
+          title="Total de mensagens dos seus agentes nos últimos 30 dias (janela rolling, não mês calendário)"
+        />
+        <KPI
+          lbl="Leads qualificados"
+          val={metrics.leadsQualified}
+          title="Leads que avançaram pra estágio qualificado nos últimos 30 dias"
+        />
+        <KPI
+          lbl="Reuniões agendadas"
+          val={metrics.appointmentsBooked}
+          title="Appointments criados pelos seus agentes nos últimos 30 dias"
+        />
+        <KPI
+          lbl="Conversas ativas"
+          val={metrics.activeConversations}
+          title="Conversas com inbound ou outbound nas últimas 48h"
+        />
       </div>
 
       <div className="hub-row-2col" style={{ marginBottom: 24 }}>

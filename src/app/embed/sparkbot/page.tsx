@@ -85,6 +85,8 @@ function SparkbotPanel() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
+  // Etapa 3.5: error streak do inbox polling (controla backoff exponencial).
+  const inboxErrorStreak = useRef(0);
 
   // Boot: lê token + repName da URL
   useEffect(() => {
@@ -139,11 +141,39 @@ function SparkbotPanel() {
             body: JSON.stringify({ message_ids: [] }),
           }).catch(() => {});
         }
-      } catch { /* silencia */ }
+        // Etapa 3.5 (Pedro 2026-05-28): reset error streak após sucesso.
+        inboxErrorStreak.current = 0;
+      } catch (err) {
+        // Etapa 3.5: logging + backoff exponencial após 3 falhas seguidas
+        // (antes era silenciosa = quando rede ficava lenta, polling parava
+        // sem aviso e rep só via "nada nova" sem entender).
+        inboxErrorStreak.current = (inboxErrorStreak.current || 0) + 1;
+        if (inboxErrorStreak.current === 3 || inboxErrorStreak.current % 10 === 0) {
+          console.warn(
+            `[embed-inbox] polling falhou ${inboxErrorStreak.current}x:`,
+            err instanceof Error ? err.message.slice(0, 120) : err,
+          );
+        }
+      }
     };
     fetchInbox();
-    const iv = setInterval(fetchInbox, 6000);
-    return () => clearInterval(iv);
+    // Etapa 3.5: pollerEffectiveInterval cresce após erros (6s → 12s → 24s).
+    const pickInterval = () =>
+      inboxErrorStreak.current >= 5
+        ? 24_000
+        : inboxErrorStreak.current >= 3
+        ? 12_000
+        : 6_000;
+    let iv = setInterval(fetchInbox, pickInterval());
+    // Re-cria interval a cada 30s pra ajustar pace baseado em streak atual.
+    const adjustTimer = setInterval(() => {
+      clearInterval(iv);
+      iv = setInterval(fetchInbox, pickInterval());
+    }, 30_000);
+    return () => {
+      clearInterval(iv);
+      clearInterval(adjustTimer);
+    };
   }, [token]);
 
   // Etapa 2.5 (Pedro 2026-05-28): polling do rep-status a cada 60s. Falha

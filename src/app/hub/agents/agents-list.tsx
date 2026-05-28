@@ -13,10 +13,18 @@ const TEMPLATE_LABEL: Record<string, string> = {
 };
 
 type Filter = "all" | "active" | "paused";
+type TemplateFilter = "all" | "sparkbot" | "sales" | "recruitment" | "custom";
 
 export function AgentsList({ agents }: { agents: HubAgentView[] }) {
   const [filter, setFilter] = useState<Filter>("all");
-  const list = filter === "all" ? agents : agents.filter((a) => a.status === filter);
+  // Etapa 3.4 (Pedro 2026-05-28): filtro por template_key adicional.
+  const [templateFilter, setTemplateFilter] = useState<TemplateFilter>("all");
+
+  const list = agents.filter((a) => {
+    if (filter !== "all" && a.status !== filter) return false;
+    if (templateFilter !== "all" && a.template_key !== templateFilter) return false;
+    return true;
+  });
   const counts = {
     all: agents.length,
     active: agents.filter((a) => a.status === "active").length,
@@ -29,9 +37,22 @@ export function AgentsList({ agents }: { agents: HubAgentView[] }) {
     ["paused", "Pausados"],
   ];
 
+  // Conta agentes por template pra mostrar nas opções (só templates que existem
+  // na location pra não poluir a UI com "Personalizado (0)").
+  const templateCounts: Record<string, number> = {};
+  for (const a of agents) {
+    templateCounts[a.template_key] = (templateCounts[a.template_key] || 0) + 1;
+  }
+  const templateOptions: TemplateFilter[] = [
+    "all",
+    ...(["sparkbot", "sales", "recruitment", "custom"] as TemplateFilter[]).filter(
+      (k) => templateCounts[k as string] && templateCounts[k as string] > 0,
+    ),
+  ];
+
   return (
     <div className="card">
-      <div className="card-hd">
+      <div className="card-hd" style={{ flexWrap: "wrap", gap: 10 }}>
         <div className="row" style={{ gap: 4 }}>
           {tabs.map(([k, l]) => (
             <button
@@ -43,6 +64,23 @@ export function AgentsList({ agents }: { agents: HubAgentView[] }) {
             </button>
           ))}
         </div>
+        {templateOptions.length > 2 && (
+          <select
+            value={templateFilter}
+            onChange={(e) => setTemplateFilter(e.target.value as TemplateFilter)}
+            className="input"
+            style={{ fontSize: 12.5, padding: "4px 8px", maxWidth: 200 }}
+            aria-label="Filtrar por tipo de agente"
+          >
+            {templateOptions.map((k) => (
+              <option key={k} value={k}>
+                {k === "all"
+                  ? "Todos os tipos"
+                  : `${TEMPLATE_LABEL[k as string] || k} (${templateCounts[k as string] || 0})`}
+              </option>
+            ))}
+          </select>
+        )}
         <span className="muted" style={{ fontSize: 12 }}>
           {list.length} {list.length === 1 ? "agente" : "agentes"}
         </span>
