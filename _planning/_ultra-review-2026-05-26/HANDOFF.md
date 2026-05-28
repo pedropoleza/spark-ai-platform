@@ -10,7 +10,68 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28e — Prospecção 2.0 COMPLETA + Etapa 3 (5/7 BAIXAs) (LER PRIMEIRO)
+### 2026-05-28f — FLAGS LIGADAS em prod + Etapa 3 100% + Banner soft de cutover (LER PRIMEIRO)
+
+Continuação do bloco "e". Sessão adicionou 4 commits sobre Prospecção 2.0:
+
+**Flags ATIVADAS em prod (Pedro autorizou):**
+- ✅ `OUTREACH_RUNNER_ENABLED=1` (Etapa 4.3)
+- ✅ `BULK_SEQUENCES_ENABLED=1` (Etapa 4.4)
+- ✅ `RECURRING_CAMPAIGNS_ENABLED=1` (Etapa 4.5)
+- Redeploy production OK em https://spark-ai-platform.vercel.app
+
+**Etapa 3 completa (`ca5dfe3`) — 2 últimos BAIXAs:**
+- 3.1 Wizard quiet_hours: node skippable "quiet_hours" no agent-wizard (chips Não/22-7). Estende builder-spec.zod + buildSpec propaga pro agent_configs.quiet_hours (bulk-runner já respeita).
+- 3.3 Billing período customizável: loadBilling aceita BillingRange opcional. /hub/billing tem 4 presets (este mês / 30d / 7d / ytd) + form date pra range custom via searchParams. Card "Uso (...)" mostra label dinâmica + datas.
+
+**Cutover prep (`e790c60`) — banner soft:**
+- Banner no topo do /dashboard avisando do novo hub com botão "Abrir novo hub →".
+- NÃO rewrite hard: cutover real (next.config rewrites /dashboard → /hub) precisa smoke supervisionado das flags ativas antes — Pedro decide quando.
+
+**Total da sessão (5 commits):**
+- `a7dddf2` Etapa 4.4 sequência multi-toque
+- `d1c208b` Etapa 4.5 recorrência cron
+- `e9afa19` Etapa 4.6 refresh segmento
+- `22fee99` Etapa 4.7 A/B slider
+- `2db00fd` Etapa 4.8 opt-outs STOP/PARAR
+- `1d345b2` Etapa 3 — 4 BAIXAs polish
+- `07937a5` Etapa 3.6 scheduling prefs
+- `fe82f6c` HANDOFF 2026-05-28e
+- `ca5dfe3` Etapa 3.1 + 3.3 (fechamento)
+- `e790c60` Banner soft /dashboard
+
+**Status global do plano `_planning/_gaps-prospeccao-2026-05-28/PLANO.md`:**
+- ✅ Etapa 0 — Anti-padrão (CLAUDE.md atualizado em sessão anterior)
+- ✅ Etapa 1 — 10 ALTAs (sessão anterior)
+- ✅ Etapa 2 — 8 MÉDIAs (sessão anterior)
+- ✅ Etapa 3 — 7/7 BAIXAs
+- ✅ Etapa 4.1 — UI Campanhas (sessão anterior)
+- ✅ Etapa 4.2 — UI Outreach config (sessão anterior)
+- ✅ Etapa 4.3 — Outreach runner (sessão anterior)
+- ✅ Etapa 4.4 — Sequência multi-toque
+- ✅ Etapa 4.5 — Recorrência cron
+- ✅ Etapa 4.6 — Segmentos dinâmicos
+- ✅ Etapa 4.7 — A/B slider
+- ✅ Etapa 4.8 — Opt-outs
+- 🟡 Etapa 5 — Cutover PM-F3.I (banner soft só; rewrite hard pendente até smoke)
+
+**Smoke E2E pendente (👤 Pedro):**
+Pra cada feature ativada, validar 1 conversa/campanha real em location de teste:
+1. Criar agente lead-facing pelo wizard → conferir outreach_config + quiet_hours + advanced_targeting (paridade verificada).
+2. Criar campanha sequência 2-3 toques → ativar → ver step 1 disparar + step 2 após delay + pause se contato responder.
+3. Criar campanha recorrente "todo dia útil 9h" → deixar 1 ciclo rodar → confirmar disparo automático + log em outreach_runs.
+4. Criar campanha A/B 2 variantes → ativar → checar variant_id distribuído ~ratio nas recipients.
+5. Contato responder STOP → conferir opt-out em outreach_optouts + skip nas campanhas seguintes.
+
+**Migrations aplicadas em prod nesta sessão:** (nenhuma nova — todas as 90/91 já estavam de sessões anteriores)
+
+**Próximo (Pedro decide):**
+1. Smoke supervisionado das 5 features ativadas
+2. Etapa 5 Cutover hard (rewrite /dashboard → /hub) — só após smoke
+3. Tracking variant reply (4.7 final)
+4. Bug fixes que aparecerem no smoke real
+
+### 2026-05-28e — Prospecção 2.0 COMPLETA + Etapa 3 (5/7 BAIXAs)
 
 Sessão fechou Etapas 4.4 → 4.8 inteiras + 5 dos 7 BAIXAs. Total 7 commits.
 
