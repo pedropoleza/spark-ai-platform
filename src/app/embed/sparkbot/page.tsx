@@ -1253,13 +1253,25 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
     setError(null);
     setSavedOk(false);
     try {
-      const durNum = duration.trim() ? parseInt(duration, 10) : undefined;
+      // Etapa 3.6 (Pedro 2026-05-28): se selectedCal === "" (rep limpou
+      // calendário padrão), também limpa duration — duration órfã sem
+      // calendário não faz sentido e confunde o agendador.
+      const isClearingCalendar = selectedCal === "";
+      if (isClearingCalendar) {
+        setDuration("");
+      }
+      const durNum = !isClearingCalendar && duration.trim()
+        ? parseInt(duration, 10)
+        : undefined;
       const res = await fetch(`/api/sparkbot/scheduling-prefs`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           default_calendar_id: selectedCal, // "" limpa a pref
           ...(durNum && !isNaN(durNum) ? { default_duration_min: durNum } : {}),
+          // Se está limpando calendário, força default_duration_min=null pro
+          // backend remover a pref órfã.
+          ...(isClearingCalendar ? { default_duration_min: null } : {}),
         }),
       });
       const data = await res.json();
