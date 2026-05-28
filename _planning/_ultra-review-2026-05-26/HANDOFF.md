@@ -10,7 +10,52 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28o — Smoke real detectou 3 bugs + fix completo (LER PRIMEIRO)
+### 2026-05-28q — F26 fix do próprio detector (anomaly threshold 5→20) (LER PRIMEIRO)
+
+Após F20 (2026-05-28m) deployar, vi 3 signals novos "Webhook GHL: location com 5/6/7 IPs únicos em 1min" — eram **falsos positivos do meu próprio detector**. Investigação: GHL usa **pool de IPs legitimamente** (data center), 5-7 IPs/min em location ativa não é spoofing.
+
+**Fix em `src/lib/webhooks/rate-limit.ts`:**
+- `ANOMALY_UNIQUE_IPS_THRESHOLD: 5 → 20` (claramente suspeito agora — DDoS coordenado ou spoofing real)
+- 3 signals existentes marcados como wontfix (UPDATE em admin_signals)
+
+Commit: `0108067 fix(webhook): anomaly threshold 5→20 (GHL pool legit, F26)`.
+
+**Validação pós-deploy:** `/api/health` agora retorna `"healthy"` (antes seria `"warning"` por high signals > 5 — 4 Soraia HIGH triagedos + 3 anomaly HIGH wontfix). ✅
+
+**Aprendizado:** quando adicionar detector novo (anomaly/rate/limit), começar com threshold conservador (mais alto que o teórico) e ajustar pra baixo se necessário. Threshold MUITO baixo polui signals e some no ruído.
+
+### 2026-05-28p — Auditoria Signals (caso Soraia) + 3 regras F25
+
+Pedro pediu auditoria da aba Signals do SparkBot — reclamação real da Soraia Close (rep_id `1fae9c35`, location `dF2FDDZzSv715e1av4gr`). Investiguei 19 signals dela + panorâmica 72h e achei o bug de hoje (19:48-19:56) + 2 padrões repetidos. Reclamação é real.
+
+**Cronologia do bug (Soraia 2026-05-28 19:48-19:56):**
+- 19:42 Soraia mandou nota da Priscila Foz (+14078642472) → bot salvou ok
+- 19:46 Soraia mandou áudio sobre Joelma Gouveia (outra cliente) → bot perguntou phone dela
+- 19:48 Soraia mandou "Marque Priscila Foz sábado 30 11am" → bot disse "Slot bloqueado — forço?"
+- 19:49 Soraia mandou **+16782948275** ← era TELEFONE DA JOELMA, mas bot interpretou como **confirmação do forçar slot**
+- 19:50 Bot disse "Tudo feito ✅ Nota Joelma salva ✅ Reunião Priscila Foz marcada ✅"
+- 19:51 "Gente HELP! Você marcou com Priscila Mendonça"
+- Notificação saiu pro telefone errado (+16782948275 virou "Priscila Mendonça" no fluxo de notificação)
+
+**3 causas raiz identificadas:**
+1. 🔴 **Mistura de contexto multi-tarefa**: bot perdeu track de 3 perguntas abertas simultaneamente.
+2. 🟡 **Hallucination "✅ Feito"**: Joelma ainda nem estava no CRM mas bot disse ✅ (9 ocorrências em 14 dias detectadas pelo Coherence).
+3. 🟡 **Override admin oferecido pra rep comum**: "Slot bloqueado — forço?" pra rep que não tem permissão (4 ocorrências).
+
+**Fixes em `src/lib/account-assistant/prompt-builder.ts` (F25):**
+1. **REGRA F25 — RESUMO DE MÚLTIPLAS PENDÊNCIAS**: cada ✅ exige tool chamada NESTE turno (`tools_called` array). Senão usa ⏳/❌ com motivo.
+2. **REGRA F25 — ANCORAGEM DE CONTEXTO**: se 2+ perguntas abertas e rep responde com phone/email isolado, perguntar "Esse telefone é da X ou Y?" — NUNCA assumir.
+3. **REGRA F25 — OVERRIDE DE CALENDAR**: oferta de forçar slot/min notice é ADMIN-ONLY. Default rep comum = nunca oferecer override. Conservador.
+
+Auditoria completa em `_planning/_smoke-2026-05-28/SIGNALS-AUDIT-SORAIA.md` (mapeia 4 fixes priorizados, 19 signals dela, padrões em outros reps).
+
+Commit: `fa344fc fix(sparkbot): 3 regras F25 (caso Soraia + signals audit)`.
+
+**Estado dos signals da Soraia depois da triagem:** 4 HIGH signals triagedos (override admin, hallucination, override gate, slot 400). 9 MEDIUM signals continuam open mas conhecidos (Pausado por silêncio é fluxo correto; create_note 403 = token expired do rep `1eeb02cc` em outra location).
+
+**Próximo:** validar em 1 conversa real da Soraia ou outro rep com fluxo multi-tarefa (criar 2 contatos novos + 1 appointment em paralelo). Se bot pedir desambiguação de phone isolado = fix funcionando.
+
+### 2026-05-28o — Smoke real detectou 3 bugs + fix completo
 
 Pedro pediu smoke real de agentes. Rodei harness via OpenAI SDK direto (Anthropic key vazia em prod). 3 agents × 5 turnos = 15 respostas REAIS.
 
