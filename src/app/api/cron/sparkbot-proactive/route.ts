@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { shouldFireCron } from "@/lib/account-assistant/proactive/cron-evaluator";
 import { fireScheduledReminders } from "@/lib/account-assistant/proactive/reminder-runner";
 import { fireBulkRecipients } from "@/lib/account-assistant/proactive/bulk-message-runner";
+import { processOutreachTick } from "@/lib/account-assistant/proactive/outreach-runner";
 import { dispatchRule } from "@/lib/account-assistant/proactive/dispatcher";
 import { pollDeliveryStatuses } from "@/lib/account-assistant/proactive/delivery-status-poller";
 import { GHLClient } from "@/lib/ghl/client";
@@ -218,6 +219,15 @@ export async function GET(request: NextRequest) {
     return { checked: 0, delivered: 0, failed: 0, still_pending: 0, errors: 1 };
   });
 
+  // Etapa 4.3 (Pedro 2026-05-28): outreach runner. Flag-gated dentro
+  // (OUTREACH_RUNNER_ENABLED=1). Sem a flag = no-op imediato. Quando ativo,
+  // varre agents lead-facing com outreach_config.enabled, respeita cooldown 24h,
+  // cria bulk_message_jobs em status='paused' (admin ativa via UI ou SparkBot).
+  const outreachResult = await processOutreachTick().catch((err) => {
+    console.warn("[cron] outreach failed:", err instanceof Error ? err.message : err);
+    return { scanned: 0, created: 0, errors: 1 };
+  });
+
   const durationMs = Date.now() - startTs;
   return NextResponse.json({
     ok: true,
@@ -230,6 +240,9 @@ export async function GET(request: NextRequest) {
     bulk_failed: bulkResult.failed,
     bulk_skipped: bulkResult.skipped,
     bulk_jobs_completed: bulkResult.jobs_completed,
+    outreach_scanned: outreachResult.scanned,
+    outreach_created: outreachResult.created,
+    outreach_errors: outreachResult.errors,
     delivery_poller: pollerResult,
     duration_ms: durationMs,
   });
