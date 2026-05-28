@@ -10,7 +10,38 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28 — Sentry error monitoring + ponte pro painel de Signals (NOVA — LER PRIMEIRO)
+### 2026-05-28b — Auditoria de gaps do hub + Plano de prospecção 2.0 (LER PRIMEIRO)
+
+Pedro descobriu que o wizard de criação tinha PERDIDO `targeting` (pipeline_stage +
+custom_field) — só restou tag simples. Fix: commit `adb42e8` (etapa avançada no
+wizard com paridade ao detail-view). Após o fix, Pedro pediu **auditoria completa**
+e questionou a confiabilidade das revisões.
+
+**Auditoria (4 Explore agents paralelos, cross-reference UI ↔ schema ↔ runtime ↔
+legado) catalogou 25 gaps reais:** 10 ALTA · 8 MÉDIA · 7 BAIXA. Achados notáveis:
+`fallback_model`/`disabled_tools`/`system_prompt_override` no schema sem UI (admin
+edita só via SQL); `ai_model` lido na UI mas não no PUT (mentira de UI); footgun
+canal=0 silencioso; truncagem hardcoded em activity/billing/paused/access sem
+indicador; `outreach_config` armazenado em DB mas **sem runner** (gap crítico, bot
+fala "em breve" no wizard porque NÃO HÁ EXECUÇÃO).
+
+**Plano completo em `_planning/_gaps-prospeccao-2026-05-28/PLANO.md`.**
+Decisões de Pedro (confirmadas via AskUserQuestion):
+- Escopo prospecção: **completo** (recorrência + segmentos dinâmicos + sequência + A/B + opt-outs).
+- Order: ALTAs → MÉDIAs → Prospecção 2.0 → BAIXAs → Cutover PM-F3.I.
+- Anti-padrão de paridade vs legado **adicionado ao CLAUDE.md** (§ Anti-patterns
+  conhecidos) — toda sessão futura aplica gate antes de fechar refeitura de fluxo.
+
+**Status:** Etapa 0 fechada (este commit). Aguardando autorização pra começar
+Etapa 1 (10 gaps ALTA: 4 campos do wizard + 4 missing-UI/dead-write + 2 footguns
++ 4 truncagens). Estimativa total do plano: 15-20 sessões.
+
+**Decisões pendentes (👤 Pedro):** D1 ai_model editável vs readonly; D2 tz do cron
+recorrente (agente vs agência); D3 keywords opt-out por location; D4 ratio A/B
+livre ou só 50/50; D5 bulk pra todo rep ou só admin. Defaults Claude no PLANO.md
+caso Pedro não responda.
+
+### 2026-05-28a — Sentry error monitoring + ponte pro painel de Signals
 
 **3 commits** (`d2e25ad` → `70d31e4` → `0d43bf8`). Fecha o gap "no error monitoring"
 da production-readiness review (era o item amarelo de maior impacto pra um solo dev

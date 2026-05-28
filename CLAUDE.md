@@ -165,6 +165,12 @@ Reestruturação grande: SparkBot incluso/grátis; venda/recrut/custom = upsell 
 - ❌ **In-memory state cross-lambda**: `inFlightMessages` Map só funciona intra-lambda. Use UNIQUE constraint pra cross-lambda.
 - ❌ **`extractAudioUrl` sem `extractMediaAttachments`**: Stevo manda audio_url em `attachments` array, não em `mediaUrl` direto. Cobrir ambos.
 - ❌ **Esquecer Conventional Commits**: nunca `git commit -m "fix"`. Sempre `fix(<escopo>):`.
+- ❌ **Refazer fluxo sem gate de paridade vs legado** (Pedro 2026-05-28): quando refazermos qualquer fluxo (wizard de criação, página de config, dashboard, embed), **NÃO marcar a task como done sem antes:**
+  1. Listar literalmente os CAMPOS/AÇÕES do flow anterior (legado ou equivalente — `detail-view` se for criação, `/dashboard/*` se for /hub, etc).
+  2. Listar os do flow novo.
+  3. Marcar cada delta como (a) **decisão de design intencional documentada**, (b) **bug a resolver agora**, ou (c) **follow-up rastreado em `_planning/`**.
+
+  Sem esse cruzamento, regressões silenciosas escapam dos guard-rails automáticos (tsc/build/parity-tests). **Caso histórico:** wizard novo (PM-F3.2/RV-W) perdeu `targeting` (pipeline_stage + custom_field) que existia no detail-view — só ficou tag simples. Descoberto em prod por reclamação do Pedro, não pelas revisões. Fix em `0d43bf8` → `adb42e8`. Auditoria subsequente (2026-05-28) achou +24 gaps similares — plano em `_planning/_gaps-prospeccao-2026-05-28/PLANO.md`.
 
 ---
 
