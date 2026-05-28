@@ -64,11 +64,15 @@ export async function GET() {
       .from("admin_signals")
       .select("id", { count: "exact", head: true })
       .eq("severity", "high")
+      .neq("status", "done")
+      .neq("status", "wontfix")
       .gte("last_seen_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
     supabase
       .from("admin_signals")
       .select("id", { count: "exact", head: true })
       .eq("severity", "critical")
+      .neq("status", "done")
+      .neq("status", "wontfix")
       .gte("last_seen_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
     // F17: runner_health unificada.
     supabase

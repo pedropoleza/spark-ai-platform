@@ -259,6 +259,18 @@ export async function GET(request: NextRequest) {
     return { scanned: 0, fired: 0, skipped: 0, errors: 1 };
   });
 
+  // F20 (Pedro 2026-05-28): cleanup periódico de webhook_rate_limit_hits >5min.
+  // Mantém tabela enxuta (steady ~250 rows pra 50 req/min × 5min window).
+  // Roda 1x a cada N ticks (cheap mas não precisa ser todo tick).
+  if (Math.random() < 0.1) {
+    try {
+      const { cleanupWebhookHits } = await import("@/lib/webhooks/rate-limit");
+      await cleanupWebhookHits();
+    } catch {
+      /* não-fatal */
+    }
+  }
+
   const durationMs = Date.now() - startTs;
   return NextResponse.json({
     ok: true,

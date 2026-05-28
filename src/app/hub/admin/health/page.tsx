@@ -64,9 +64,13 @@ async function loadHealth() {
       .gte("ran_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
     supabase.from("admin_signals").select("id", { count: "exact", head: true })
       .eq("severity", "high")
+      .neq("status", "done")
+      .neq("status", "wontfix")
       .gte("last_seen_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
     supabase.from("admin_signals").select("id", { count: "exact", head: true })
       .eq("severity", "critical")
+      .neq("status", "done")
+      .neq("status", "wontfix")
       .gte("last_seen_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
     // F15: top 5 signals high/critical pra mostrar diretamente.
     supabase.from("admin_signals")

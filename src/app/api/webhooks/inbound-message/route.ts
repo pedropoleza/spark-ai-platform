@@ -116,32 +116,35 @@ export async function POST(request: NextRequest) {
       console.error("[Webhook] WEBHOOK_REQUIRE_SIGNATURE=true mas GHL_WEBHOOK_SECRET não configurado — rejeitando");
       return NextResponse.json({ error: "server_misconfigured" }, { status: 500 });
     } else {
-      console.warn("[Webhook] ⚠️  No signature verification — GHL_WEBHOOK_SECRET not set");
-      // Etapa pós-cutover (Pedro 2026-05-28): em prod, faltar GHL_WEBHOOK_SECRET
-      // significa que qualquer um pode disparar webhook fake (spoofing). Dispara
-      // admin_signal 1x/hora pra Pedro lembrar de gerar secret no GHL e setar
-      // GHL_WEBHOOK_SECRET + WEBHOOK_REQUIRE_SIGNATURE=true no Vercel.
-      // Dedup curto via signal fingerprint (1 sinal/hora não inunda painel).
-      if (process.env.VERCEL_ENV === "production") {
-        try {
-          const { recordSignal } = await import("@/lib/admin-signals/recorder");
-          const { waitUntil } = await import("@vercel/functions");
-          waitUntil(
-            recordSignal({
-              type: "error",
-              source: "system",
-              severity: "high",
-              title: "Webhook GHL sem GHL_WEBHOOK_SECRET",
-              description:
-                "Inbound webhooks chegam SEM verificação de assinatura. " +
-                "Risco: spoofing (qualquer um pode disparar custos de IA). " +
-                "Fix: gerar secret no GHL Developer Portal → adicionar GHL_WEBHOOK_SECRET + WEBHOOK_REQUIRE_SIGNATURE=true no Vercel.",
-              metadata: { gap: "webhook_signature", env: "production" },
-            }).catch(() => null),
-          );
-        } catch {
-          /* não-fatal */
+      // Pedro 2026-05-28 (F20): GHL não usa secret HMAC pra inbound webhook
+      // (usa Ed25519 público, que ainda não implementamos). Em vez de assinar,
+      // aplicamos mitigações defensivas:
+      //   1. Rate limit por IP (50/min) — checkWebhookRateLimit logo abaixo
+      //   2. Cost circuit breaker — mesma função
+      //   3. Anomaly signal (>5 IPs únicos/min/location) — dentro do helper
+      // Não dispara signal sobre "secret faltando" porque secret HMAC não é
+      // o esquema do GHL — seria mensagem confusa.
+      console.warn("[Webhook] No HMAC signature (GHL usa Ed25519 público — implementação pendente). Mitigações defensivas ativas.");
+    }
+
+    // F20 (Pedro 2026-05-28): rate limit por IP + cost circuit breaker.
+    // Bloqueia DDoS trivial sem signature.
+    const xForwardedFor = request.headers.get("x-forwarded-for") || "";
+    const clientIp = xForwardedFor.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "unknown";
+    const locId = (body.locationId || body.location_id) as string | undefined;
+    {
+      const { checkWebhookRateLimit } = await import("@/lib/webhooks/rate-limit");
+      const rlCheck = await checkWebhookRateLimit(clientIp, locId || null);
+      if (!rlCheck.allowed) {
+        console.warn(
+          `[Webhook] BLOCKED ${rlCheck.reason} ip=${clientIp.slice(0, 20)} loc=${locId?.slice(0, 8) || "—"} count=${rlCheck.current_count}/${rlCheck.cap}`,
+        );
+        if (rlCheck.reason === "rate_limit") {
+          return NextResponse.json({ error: "rate_limited" }, { status: 429 });
         }
+        // cost_cap: bot continua respondendo mesmo com cap atingido seria
+        // runaway. Aqui hard-stop até reset mensal ou admin aumentar cap.
+        return NextResponse.json({ error: "cost_cap_reached" }, { status: 402 });
       }
     }
 
