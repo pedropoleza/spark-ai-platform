@@ -257,6 +257,15 @@ NÃO invente horários. NÃO inclua action book_appointment neste turno.`);
       parts.push(`### HORÁRIOS DISPONÍVEIS (use APENAS estes — não invente)
 Agora no timezone do lead: ${currentTime}
 ${ctx.availableSlots}`);
+    } else {
+      // F24 BUG-1 fix (Pedro 2026-05-28 smoke): quando NEM slots NEM
+      // slotsUnavailable foram passados, prompt antigo deixava vácuo →
+      // modelo inventava "amanhã 11 AM ou 2 PM ET". Agora bloqueio explícito.
+      parts.push(`### AGENDA AINDA NÃO CONSULTADA
+Não tenho a lista de horários disponíveis nesta mensagem.
+Se o lead pedir agendamento OU se for o momento de propor, pergunte o intervalo preferido (dia + turno tipo "manhã/tarde") e diga: "Deixa eu verificar a agenda aqui e volto em instantes com horários reais."
+NUNCA mencione horários específicos (ex: "amanhã 11 AM" ou "2 PM ET") quando esta seção não tem slots reais.
+NÃO inclua action book_appointment neste turno.`);
     }
   }
 
@@ -294,6 +303,20 @@ NUNCA escreva "—" (travessão longo) ou "–" (travessão curto). Ninguém
 digita isso no WhatsApp, parece robô copy-paste. Use vírgula, ponto,
 dois pontos ou parênteses no lugar. Também evite reticências longas
 ("..."). Prefira frases curtas conectadas com vírgula ou ponto.
+
+REGRA 3 — NÃO INVENTE CLAIMS NUMÉRICOS:
+Você NUNCA cita números (porcentagens, valores em $, prazos específicos,
+quantidades de clientes, taxas) que não foram explicitamente fornecidos
+em: INSTRUÇÕES CUSTOMIZADAS, BASE DE CONHECIMENTO ou CONTEXTO ATUAL.
+- PROIBIDO: "muitos clientes economizaram até 20%", "98% de satisfação",
+  "preços a partir de R$ 50", "mais de 1000 famílias atendidas",
+  "redução média de X%", "em até 24h", "garantimos Y" (se Y é número).
+- PERMITIDO: "muitos clientes conseguem economizar" (sem número),
+  "o especialista vai te passar os valores", "depende do perfil" (vago).
+- Se o lead pedir números: diga "o especialista vai te passar números
+  exatos na conversa" ou peça pra confirmar com a equipe.
+- Isso é REGULATÓRIO em mercados como seguros e saúde — claim falso
+  pode gerar violação de CDC e problemas com a agência.
 ============================================================`;
 }
 
@@ -739,7 +762,9 @@ REGRA DE TIMEZONE:
 FLUXO DE AGENDAMENTO (rapido e fluido):
 - Quando todos os dados estiverem coletados, proponha 2 horarios da lista NA MESMA MENSAGEM
 - Consulte "HORÁRIOS DISPONÍVEIS" no CONTEXTO ATUAL (user message) para os slots reais
-- Exemplo: "Tenho horario amanha as 11 AM ou 2 PM ${tzLabel}, qual vc prefere?"
+- IMPORTANTE: se essa seção NÃO existir OU se "AGENDA AINDA NÃO CONSULTADA" aparecer, NÃO mencione horários específicos — peça intervalo (dia + turno) e diga que vai verificar
+- Exemplo COM lista disponível: "Tenho horario amanha as 11 AM ou 2 PM ${tzLabel}, qual vc prefere?" (horários reais da seção)
+- Exemplo SEM lista disponível: "Qual dia e turno (manhã/tarde) funciona melhor pra vc? Deixa eu confirmar a agenda e te volto com horários."
 - NAO faca perguntas extras antes de propor (timezone, disponibilidade, etc)
 - Se o lead escolher um horario, agende IMEDIATAMENTE com a action book_appointment
 - Se o horario pedido nao esta disponivel, diga e proponha os mais proximos da lista
@@ -919,6 +944,11 @@ REGRAS DO JSON:
 3. "actions": array de acoes. Inclua APENAS acoes NOVAS (nao repita acoes de turnos anteriores)
 4. "collected_data": TODOS os dados coletados ate agora (cumulativo). Use EXATAMENTE as keys dos campos: ${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}
 5. "conversation_status": use "active" (em andamento), "qualified" (todos dados coletados), "booked" (agendamento feito), "stale" (lead sumiu/adiou), "handed_off" (pediu humano), "disqualified" (nao quer mais)
+
+REGRA CRITICA sobre "booked" (F24 fix Pedro 2026-05-28):
+- Use "booked" SOMENTE quando voce ja incluiu action "book_appointment" NESTE turno OU em turno anterior E o agendamento foi confirmado.
+- Nao use "booked" quando: voce ainda esta perguntando dia/turno; voce esta PROPONDO horarios mas o lead nao escolheu; voce mencionou agendamento mas nao executou a action.
+- Em duvida, mantenha "active". KPI inflado por "booked" prematuro afeta decisoes de negocio.
 
 NUNCA retorne texto fora do JSON.`;
 }
