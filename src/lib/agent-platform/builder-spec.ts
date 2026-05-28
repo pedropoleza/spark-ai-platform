@@ -40,6 +40,20 @@ const QualFieldSchema = z.object({
 //  stage    → responde só a contatos numa etapa do funil (targeting_rules).
 //  keyword  → campanha: o lead manda uma palavra-chave; contexto vai pras instruções.
 //  outreach → o agente INICIA a conversa com uma lista (por tag) — outreach_config.
+// Filtros extras de targeting do wizard (Pedro 2026-05-28). Espelha a UI do
+// detail-view (linhas 768-792 de agent-detail-view.tsx) — mesma forma do
+// TargetingRule em @/types/agent. Mescla em targeting_rules junto com o
+// derivado do mode (AND).
+const AdvancedTargetingRuleSchema = z.object({
+  id: z.string(),
+  type: z.enum(["tag", "custom_field", "pipeline_stage"]),
+  tag: z.string().max(200).optional(),
+  custom_field_key: z.string().max(200).optional(),
+  custom_field_value: z.string().max(500).optional(),
+  pipeline_id: z.string().max(200).optional(),
+  pipeline_stage_id: z.string().max(200).optional(),
+});
+
 const IntakeSchema = z
   .object({
     mode: z.enum(["inbound", "tag", "stage", "keyword", "outreach"]).default("inbound"),
@@ -48,8 +62,9 @@ const IntakeSchema = z
     pipeline_id: z.string().max(120).default(""),
     pipeline_stage_id: z.string().max(120).default(""),
     opening_message: z.string().max(2000).default(""),
+    advanced_rules: z.array(AdvancedTargetingRuleSchema).max(15).default([]),
   })
-  .default({ mode: "inbound", tags: [], keyword: "", pipeline_id: "", pipeline_stage_id: "", opening_message: "" });
+  .default({ mode: "inbound", tags: [], keyword: "", pipeline_id: "", pipeline_stage_id: "", opening_message: "", advanced_rules: [] });
 
 const PostBookingSchema = z.object({
   behavior: z.enum(["stop_and_handoff", "continue_until_appointment"]).default("stop_and_handoff"),
@@ -268,6 +283,18 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
       respect_working_hours: true,
       opening_message: intake.opening_message || "",
     };
+  }
+
+  // Mescla filtros avançados do wizard (Pedro 2026-05-28). Só adiciona regras
+  // completas pra não criar lixo no agent_configs.targeting_rules.
+  for (const r of intake.advanced_rules || []) {
+    if (r.type === "tag" && r.tag?.trim()) {
+      targetingRules.push({ id: rid(), type: "tag", tag: r.tag.trim() });
+    } else if (r.type === "custom_field" && r.custom_field_key?.trim() && r.custom_field_value?.trim()) {
+      targetingRules.push({ id: rid(), type: "custom_field", custom_field_key: r.custom_field_key.trim(), custom_field_value: r.custom_field_value.trim() });
+    } else if (r.type === "pipeline_stage" && r.pipeline_stage_id?.trim()) {
+      targetingRules.push({ id: rid(), type: "pipeline_stage", pipeline_id: r.pipeline_id?.trim() || undefined, pipeline_stage_id: r.pipeline_stage_id.trim() });
+    }
   }
 
   // Contexto de intake nas instruções (palavra-chave de campanha / prospecção).

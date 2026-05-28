@@ -9,6 +9,7 @@ import { AMark, ChannelChip } from "@/components/hub/primitives";
 import { MODULE_LABEL } from "@/components/hub/module-labels";
 import type { ChannelKey } from "@/components/hub/types";
 import { CHANNEL_LABEL } from "@/components/hub/types";
+import type { TargetingRule } from "@/types/agent";
 
 export type WizardTemplate = "sales" | "recruitment" | "custom";
 
@@ -30,6 +31,11 @@ interface Answers {
   postBooking?: "stop_and_handoff" | "continue_until_appointment";
   followup?: boolean;
   hours?: boolean;
+  // Filtros extras (Pedro 2026-05-28): paridade com detail-view. A regra
+  // principal vem do intakeMode/intakeDetail (tag simples); aqui o admin pode
+  // adicionar pipeline_stage, custom_field ou mais tags compostas. Vazio = sem
+  // filtros extras. Tudo somado vira targeting_rules no agent_configs (AND).
+  advancedRules?: TargetingRule[];
 }
 
 interface Composed {
@@ -70,7 +76,7 @@ const META: Record<WizardTemplate, {
 };
 
 type NodeKey =
-  | "purpose" | "intake" | "intake_detail" | "outreach_opening" | "channel"
+  | "purpose" | "intake" | "intake_detail" | "outreach_opening" | "advanced_targeting" | "channel"
   | "identity" | "identity_name" | "objective" | "qualification"
   | "specialist" | "postbooking" | "followup" | "hours";
 
@@ -115,6 +121,16 @@ function buildNodes(template: WizardTemplate): Record<NodeKey, NodeDef> {
       skippable: true,
       q: "Como deve ser a 1ª mensagem que ele manda? (deixa em branco que a IA cria com base no propósito)",
       placeholder: "Ex: Oi {first_name}! Vi que você se interessou…",
+    },
+    advanced_targeting: {
+      // Pedro 2026-05-28: filtros extras (paridade detail-view). Renderiza um
+      // editor custom (AdvancedTargetingEditor) em vez do composer padrão —
+      // mesmo padrão que TagInput. Skippable: a regra principal já vem do
+      // intakeMode/intakeDetail; isto é só pra quem precisa de stage/custom_field
+      // ou múltiplas tags compostas.
+      type: "free",
+      skippable: true,
+      q: "Quer filtros extras de ativação? (etapa do funil, campo personalizado, mais tags). Pode pular se a regra principal já dá conta — dá pra ajustar depois.",
     },
     channel: {
       type: "multi",
@@ -186,7 +202,7 @@ function buildNodes(template: WizardTemplate): Record<NodeKey, NodeDef> {
 }
 
 const ORDER: NodeKey[] = [
-  "purpose", "intake", "intake_detail", "outreach_opening", "channel",
+  "purpose", "intake", "intake_detail", "outreach_opening", "advanced_targeting", "channel",
   "identity", "identity_name", "objective", "qualification",
   "specialist", "postbooking", "followup", "hours",
 ];
@@ -286,7 +302,7 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
             template,
             purpose: ans.purpose || "",
             qualification_hint: ans.qualification || "",
-            intake: { mode: ans.intakeMode || "inbound", keyword: ans.intakeMode === "keyword" ? ans.intakeDetail : "", tags: ans.intakeMode === "tag" || ans.intakeMode === "outreach" ? splitTags(ans.intakeDetail) : [] },
+            intake: { mode: ans.intakeMode || "inbound", keyword: ans.intakeMode === "keyword" ? ans.intakeDetail : "", tags: ans.intakeMode === "tag" || ans.intakeMode === "outreach" ? splitTags(ans.intakeDetail) : [], advanced_rules: ans.advancedRules || [] },
             identity: { mode: ans.identityMode || "assistant", name: ans.identityName || "" },
             objective: ans.objective || "qualification_and_booking",
             channels: ans.channels.map((c) => CHANNEL_LABEL[c]),
@@ -327,6 +343,8 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
         tags: a.intakeMode === "tag" || a.intakeMode === "outreach" ? splitTags(a.intakeDetail) : [],
         keyword: a.intakeMode === "keyword" ? (a.intakeDetail || "") : "",
         opening_message: a.outreachOpening || "",
+        // Filtros extras (Pedro 2026-05-28): mescla com tag/stage derivado do mode no builder-spec.
+        advanced_rules: a.advancedRules || [],
       },
       behavior: { tone: composed.tone, custom_instructions: composed.custom_instructions, confirmation_mode: "medium_and_high" },
       qualification_fields: composed.qualification_fields,
@@ -418,10 +436,13 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
   }
 
   const isTagNode = node === "intake_detail" && (a.intakeMode === "tag" || a.intakeMode === "outreach");
+  // Pedro 2026-05-28: node "advanced_targeting" usa componente custom (não composer/chips).
+  const isAdvancedTargeting = node === "advanced_targeting";
   const showChips = phase === "wizard" && def.type === "choice" && !pendingAudio;
   const showMulti = phase === "wizard" && def.type === "multi" && !pendingAudio;
   const showTags = phase === "wizard" && def.type === "free" && isTagNode && !pendingAudio;
-  const showComposer = phase === "wizard" && def.type === "free" && !isTagNode;
+  const showAdvancedTargeting = phase === "wizard" && isAdvancedTargeting && !pendingAudio;
+  const showComposer = phase === "wizard" && def.type === "free" && !isTagNode && !isAdvancedTargeting;
   const audioAllowed = showComposer && !!def.audio;
 
   return (
@@ -495,6 +516,13 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
           )}
 
           {showTags && <TagInput onSubmit={(tags) => submitFree(tags.join(", "))} />}
+
+          {showAdvancedTargeting && (
+            <AdvancedTargetingEditor
+              onSubmit={(rules) => answer({ advancedRules: rules }, rules.length === 0 ? "Sem filtros extras" : `${rules.length} filtro(s) extra(s)`)}
+              onSkip={() => answer({ advancedRules: [] }, "Pulei (sem filtros extras)")}
+            />
+          )}
 
           {showComposer && (
             <div style={{ padding: 12, borderTop: "1px solid var(--line)" }}>
@@ -574,6 +602,72 @@ function TagInput({ onSubmit }: { onSubmit: (tags: string[]) => void }) {
     </div>
   );
 }
+
+// Editor de filtros avançados de ativação (Pedro 2026-05-28). Espelha a UI do
+// detail-view (CatQualification em agent-detail-view.tsx, linhas 768-792) —
+// mesma estrutura TargetingRule[], mesmos 3 tipos (tag/custom_field/
+// pipeline_stage). Resolve a regressão de paridade: o wizard antes só pegava
+// "modo de entrada" simples (tag única via intakeDetail); agora dá pra
+// compor stage/custom_field/múltiplas tags na criação, sem ter que ir editar
+// o agente depois.
+function AdvancedTargetingEditor({ onSubmit, onSkip }: { onSubmit: (rules: TargetingRule[]) => void; onSkip: () => void }) {
+  const [rules, setRules] = useState<TargetingRule[]>([]);
+  const newId = () => Math.random().toString(36).slice(2, 10);
+  const add = () => setRules((p) => [...p, { id: newId(), type: "tag", tag: "" }]);
+  const upd = (i: number, patch: Partial<TargetingRule>) => setRules((p) => p.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const rem = (i: number) => setRules((p) => p.filter((_, idx) => idx !== i));
+  // Continuar exige pelo menos 1 regra completa (sem inputs vazios).
+  const canContinue = rules.length > 0 && rules.every((r) => {
+    if (r.type === "tag") return !!r.tag?.trim();
+    if (r.type === "custom_field") return !!r.custom_field_key?.trim() && !!r.custom_field_value?.trim();
+    if (r.type === "pipeline_stage") return !!r.pipeline_stage_id?.trim();
+    return false;
+  });
+  return (
+    <div style={{ padding: 12, borderTop: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 10 }}>
+      {rules.map((r, i) => (
+        <div key={r.id} className="row" style={{ gap: 6, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8, flexWrap: "wrap" }}>
+          <select
+            className="select"
+            aria-label="Tipo de filtro"
+            value={r.type}
+            onChange={(ev) => upd(i, { type: ev.target.value as TargetingRule["type"], tag: "", custom_field_key: "", custom_field_value: "", pipeline_id: "", pipeline_stage_id: "" })}
+            style={{ width: 160 }}
+          >
+            <option value="tag">Tem a tag</option>
+            <option value="custom_field">Campo personalizado</option>
+            <option value="pipeline_stage">Etapa do funil</option>
+          </select>
+          {r.type === "tag" && (
+            <input className="input" value={r.tag || ""} onChange={(ev) => upd(i, { tag: ev.target.value })} placeholder="nome da tag" style={{ flex: 1, minWidth: 140 }} />
+          )}
+          {r.type === "custom_field" && (<>
+            <input className="input" value={r.custom_field_key || ""} onChange={(ev) => upd(i, { custom_field_key: ev.target.value })} placeholder="chave do campo" style={{ width: 140 }} />
+            <input className="input" value={r.custom_field_value || ""} onChange={(ev) => upd(i, { custom_field_value: ev.target.value })} placeholder="valor esperado" style={{ flex: 1, minWidth: 120 }} />
+          </>)}
+          {r.type === "pipeline_stage" && (<>
+            <input className="input" value={r.pipeline_id || ""} onChange={(ev) => upd(i, { pipeline_id: ev.target.value })} placeholder="ID do funil (opcional)" style={{ width: 170 }} />
+            <input className="input" value={r.pipeline_stage_id || ""} onChange={(ev) => upd(i, { pipeline_stage_id: ev.target.value })} placeholder="ID da etapa" style={{ flex: 1, minWidth: 140 }} />
+          </>)}
+          <button className="btn btn--quiet btn--icon btn--sm" onClick={() => rem(i)} aria-label="Remover filtro">×</button>
+        </div>
+      ))}
+      <button className="btn btn--ghost btn--sm" style={{ alignSelf: "flex-start" }} onClick={add}>+ Adicionar filtro</button>
+      <div className="muted" style={{ fontSize: 12, lineHeight: 1.4 }}>
+        Filtros somam com a regra principal (AND). IDs de funil/etapa vêm do GHL — se ainda não tem em mãos, pode pular e configurar depois nas configurações do agente.
+      </div>
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn btn--quiet btn--sm" onClick={onSkip}>
+          <SkipForward size={13} /> Pular
+        </button>
+        <button className="btn btn--primary btn--sm" disabled={!canContinue} onClick={() => onSubmit(rules)}>
+          Continuar com {rules.length} filtro{rules.length === 1 ? "" : "s"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const INTAKE_TXT: Record<IntakeMode, string> = {
   inbound: "Mandam mensagem", keyword: "Campanha (palavra-chave)", tag: "Por tag", outreach: "Prospecção (agente inicia)",
 };
