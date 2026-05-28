@@ -10,7 +10,38 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28h — Pós-cutover: variant reply tracking + cleanup + observabilidade (LER PRIMEIRO)
+### 2026-05-28i — UI health + reply rate global + home counters + filter campaigns (LER PRIMEIRO)
+
+3 commits adicionais focados em UX de hypercare e completude de stats.
+
+**`b0cc94c` — UI health + reply rate single-shot + home counters:**
+- `/hub/admin/health` (admin-only via SSO). Cards visuais: overall status badge (healthy/warning/degraded), flag pills (verde/amarelo/cinza), bulk-runner stats com last_tick age, campaigns counters, signals 24h, banner amarelo se GHL_WEBHOOK_SECRET faltando. Link "Health" na sidebar admin (Activity icon).
+- HubCampaignDetail.reply_count + reply_rate global (não só A/B). Card "Progresso" mostra respostas + reply rate ao lado de enviadas — funciona pra qualquer job.
+- /hub home: 2ª linha de KPIs (Campanhas rodando, Sequências ativas, Recorrentes ON, Opt-outs total). Só renderiza quando algum >0 (evita ruído em location vazia).
+
+**`93a2c59` — Filter status em campaigns + .env.example refresh:**
+- /hub/campaigns: tabs/chips de filtro por status (Todas/Rodando/Pausadas/etc). Só aparece com >1 campanha. Recorrentes section esconde quando filter != all.
+- .env.example: BULK_SEQUENCES_ENABLED + RECURRING_CAMPAIGNS_ENABLED com descrição.
+
+**Métricas de prod confirmadas (snapshot):**
+- bulk-runner: tick há 4s ✅, 0 erros consecutivos ✅
+- Signals: 1 high (webhook secret, esperado) ✅
+- Webhook signal já com 23 ocorrências dedup'd em 1 row + count ✅
+
+**Score production-ready: 82/100** (subiu de 78)
+- Observabilidade: 90 (era 85) — UI visual de health + 2ª KPI line + filter
+- UX: 80 (era 75) — reply rate visível em qualquer campanha, filter de status
+- Smoke validation continua 40 (gap real, só Pedro fecha)
+
+**Total da onda pós-cutover: 7 commits** (`f3e06e8` → `93a2c59`)
+
+**Próximo (Pedro decide):**
+1. Smoke E2E supervisionado das 5 features (sequência/recorrência/A-B/opt-out/quiet_hours)
+2. Gerar `GHL_WEBHOOK_SECRET` no GHL Developer Portal + setar no Vercel
+3. PM-F4 self-serve billing + IA-builder
+4. Após 48h hypercare OK: arquivar dashboard history se quiser
+
+### 2026-05-28h — Pós-cutover: variant reply tracking + cleanup + observabilidade
 
 5 commits após cutover, focados em fechar gaps reais detectados na auditoria.
 
