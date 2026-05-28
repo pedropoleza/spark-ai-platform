@@ -59,14 +59,45 @@ function progressPct(sent: number, total: number): number {
   return Math.min(100, Math.round((sent / total) * 100));
 }
 
-export default async function CampaignsPage() {
+// F9 (Pedro 2026-05-28): filtro por status via query param.
+type StatusFilter = "all" | "running" | "paused" | "completed" | "cancelled" | "failed";
+const VALID_FILTERS: StatusFilter[] = ["all", "running", "paused", "completed", "cancelled", "failed"];
+const FILTER_LABEL: Record<StatusFilter, string> = {
+  all: "Todas",
+  running: "Rodando",
+  paused: "Pausadas",
+  completed: "Concluídas",
+  cancelled: "Canceladas",
+  failed: "Falhou",
+};
+
+export default async function CampaignsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
   const session = await getSession();
   if (!session) redirect("/");
 
-  const [campaigns, recurring] = await Promise.all([
+  const params = await searchParams;
+  const filter: StatusFilter = VALID_FILTERS.includes(params.status as StatusFilter)
+    ? (params.status as StatusFilter)
+    : "all";
+
+  const [allCampaigns, recurring] = await Promise.all([
     loadHubCampaigns(session.locationId),
     loadHubRecurringCampaigns(session.locationId),
   ]);
+
+  const campaigns = filter === "all" ? allCampaigns : allCampaigns.filter((c) => c.status === filter);
+  const counts: Record<StatusFilter, number> = {
+    all: allCampaigns.length,
+    running: allCampaigns.filter((c) => c.status === "running").length,
+    paused: allCampaigns.filter((c) => c.status === "paused").length,
+    completed: allCampaigns.filter((c) => c.status === "completed").length,
+    cancelled: allCampaigns.filter((c) => c.status === "cancelled").length,
+    failed: allCampaigns.filter((c) => c.status === "failed").length,
+  };
 
   return (
     <div className="page">
@@ -91,8 +122,27 @@ export default async function CampaignsPage() {
         </div>
       </div>
 
+      {/* F9 (Pedro 2026-05-28): tabs de filtro por status. Só mostra se há
+          mais de 1 campanha (não polui empty state). */}
+      {allCampaigns.length > 1 && (
+        <div
+          className="row"
+          style={{ gap: 6, marginBottom: 12, flexWrap: "wrap", padding: "0 2px" }}
+        >
+          {VALID_FILTERS.filter((f) => f === "all" || counts[f] > 0).map((f) => (
+            <Link
+              key={f}
+              href={f === "all" ? "/hub/campaigns" : `/hub/campaigns?status=${f}`}
+              className={`btn btn--sm ${filter === f ? "btn--soft" : "btn--quiet"}`}
+            >
+              {FILTER_LABEL[f]} <span className="muted">{counts[f]}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+
       {/* Etapa 4.5: seção de Recorrentes acima do listing principal. */}
-      {recurring.length > 0 && (
+      {recurring.length > 0 && filter === "all" && (
         <div className="card" style={{ marginBottom: 20 }}>
           <div className="card-hd">
             <h3>
