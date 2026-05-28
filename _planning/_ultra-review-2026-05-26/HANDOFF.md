@@ -10,7 +10,44 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28g — CUTOVER PM-F3.I executado (`/dashboard` → `/hub` redirect 308) (LER PRIMEIRO)
+### 2026-05-28h — Pós-cutover: variant reply tracking + cleanup + observabilidade (LER PRIMEIRO)
+
+5 commits após cutover, focados em fechar gaps reais detectados na auditoria.
+
+**`f3e06e8` — Variant reply tracking + cleanup + webhook warn:**
+- Migration 00092: `bulk_message_recipients.replied_at` + index contact_sent.
+- `variant-reply-tracker.ts`: hook webhook inbound marca replied_at no recipient mais recente (lookback 7d). Idempotente CAS.
+- HubCampaignAbVariant: reply_count + reply_rate (%). UI detail mostra "🏆 Melhor reply rate" no winner (≥5 sent por variante).
+- Deletados `src/app/dashboard/*`, `src/app/agents/*`, `src/components/dashboard/*`. Adicionados redirects `/agents/*` → `/hub/agents` no next.config.
+- Webhook prod sem GHL_WEBHOOK_SECRET emite admin_signal high (fingerprint dedup colapsa em 1 row + count).
+
+**`0e14009` — Global rate cap warn:**
+- `processOutreachTick` conta agentes por location; >5 emite signal 'idea' medium severity sugerindo consolidar ou reduzir cap. Não bloqueia, só avisa.
+
+**`b00b4f2` — Endpoint cron-health pra hypercare:**
+- GET `/api/admin/cron-health` (Basic Auth via ADMIN_PANEL_PASSWORD).
+- Retorna JSON com flags ativas, bulk-runner health (last_tick_at, error streak, last counts), campaigns (jobs running/paused/completed_24h, sequence_active/paused_by_reply, recurring enabled/disabled, optouts, outreach_runs_24h), signals high/critical 24h, overall_status (healthy/warning/degraded), hints sobre webhook security e prospecção status.
+- Pedro abre durante 48h pra ver tudo num só lugar.
+
+**Smoke check pós-deploy:**
+- ✅ `/dashboard` → 308 → `/hub`
+- ✅ `/agents` → 308 → `/hub/agents` (após 2º deploy)
+- ✅ `/api/admin/cron-health` → 401 (auth working) — Pedro tem credenciais.
+
+**Migration aplicada:** 00092 bulk_variant_reply (via MCP).
+
+**Próximo (Pedro decide):**
+1. Smoke E2E supervisionado das 5 features Prospecção 2.0
+2. Setar `GHL_WEBHOOK_SECRET` (você precisa pegar no GHL Developer Portal) + `WEBHOOK_REQUIRE_SIGNATURE=true` no Vercel
+3. Após 48h hypercare OK: pode arquivar `src/app/dashboard` da história git (rebase/squash) se quiser cleanup definitivo
+4. PM-F4 (self-serve billing) ou aguardar smoke validation
+
+**Score production-ready estimado: 78/100** (subiu de 72)
+- Observabilidade: 85 (era 70) — endpoint cron-health resolve "preciso saber estado sem rodar SQL"
+- Risk mitigation: 80 (era 75) — webhook signal + rate cap warn
+- Smoke validation continua 40 (gap real, só você pode fechar)
+
+### 2026-05-28g — CUTOVER PM-F3.I executado (`/dashboard` → `/hub` redirect 308)
 
 Sessão continuou após o "manda bala" do Pedro. Cutover hard feito.
 
