@@ -10,6 +10,52 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
+### 2026-05-28 — Sentry error monitoring + ponte pro painel de Signals (NOVA — LER PRIMEIRO)
+
+**3 commits** (`d2e25ad` → `70d31e4` → `0d43bf8`). Fecha o gap "no error monitoring"
+da production-readiness review (era o item amarelo de maior impacto pra um solo dev
+que testa em prod).
+
+**Sentry (`@sentry/nextjs` v10.54.0):** gated por `NEXT_PUBLIC_SENTRY_DSN`; sem DSN
+o build é idêntico ao de antes (zero risco). Privacy-first pra CRM:
+`sendDefaultPii=false`, Session Replay/local vars/logs OFF (desvio deliberado do guia
+oficial — capturamos o ERRO sem capturar o DADO; LGPD-friendly). Files:
+`sentry.{server,edge}.config.ts`, `src/instrumentation{,-client}.ts`,
+`src/app/global-error.tsx`, `next.config.mjs` (wrap com `tunnelRoute: "/monitoring"`
+— seguro: middleware só toca `/admin/*`, não conflita).
+
+**Ponte Sentry → `admin_signals` (você vê crash no MESMO painel do hub que já usa):**
+server-side `beforeSend` em `sentry.server.config.ts` chama `recordSignal` via
+`waitUntil` (`@vercel/functions`) — estende lifetime do lambda até o write completar.
+Antes era `recordSignalAsync` (fire-and-forget) que o smoke test pegou perdendo
+escritas sob cold start (2 hits Sentry × 1 row admin_signals). Cria signal
+`type='error', source='system', severity='high'`, title PII-free
+(`<errorName> em <route>`), description com `err.message` (admin-only), metadata com
+`sentry_event_id` pra cross-ref Sentry↔Signals. **Só em produção**
+(`VERCEL_ENV === "production"`), nodejs runtime (edge não roda admin client). Kill
+switch: `SENTRY_SIGNALS_BRIDGE=0`.
+
+**Vercel env (production, encrypted, todos via CLI):**
+- `NEXT_PUBLIC_SENTRY_DSN` = DSN do projeto Sentry `spark-leadss/javascript-nextjs`
+- `SENTRY_ORG=spark-leadss` + `SENTRY_PROJECT=javascript-nextjs` + `SENTRY_AUTH_TOKEN`
+  (trio do source map; sem o token o Sentry ainda captura, só stack fica minificado)
+
+**Smoke test validou em prod (2026-05-28 14:23):** endpoint temporário
+`/api/admin/debug/sentry-test` (já REMOVIDO no `0d43bf8`) jogou Error → apareceu no
+Sentry (`JAVASCRIPT-NEXTJS-1`, transaction path legível no título = source maps OK) +
+criou `admin_signals` row `68b6a54b-b37f-4ffc-b566-458c4600bc0b` com `sentry_event_id`
+de correlação. Discrepância 2 events/1 row revelou o problema do fire-and-forget →
+fix `waitUntil`. **Validação 1:1 real vem com 1ª crash de produção** —
+`occurrence_count` do admin_signal deve crescer 1:1 com o `Events` do Sentry pra
+mesma fingerprint.
+
+**Sentry MCP** (`https://mcp.sentry.dev/mcp`) adicionado user-scope via
+`claude mcp add --scope user --transport http sentry ...` → escreve em
+`~/.claude.json`. Em sessões futuras (após restart do Claude Code + OAuth na 1ª uso)
+posso consultar issues do Sentry direto do chat ("Claude, lista os erros novos").
+
+### 2026-05-27 — Billing + agent fixes + C1 frontend
+
 Continuamos a partir deste handoff. **11 commits deployados** (`git log 2a24df5..HEAD`).
 
 **FASE 2 (Billing) — COMPLETA e no ar:**
