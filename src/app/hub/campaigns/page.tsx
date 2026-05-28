@@ -9,9 +9,10 @@
  * Limite: HUB_LIST_LIMITS.campaigns (50 últimas).
  */
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getSession } from "@/lib/auth/sso";
 import { loadHubCampaigns, type HubCampaignRow } from "@/lib/hub/data";
-import { Megaphone } from "lucide-react";
+import { Megaphone, Plus } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 
@@ -66,11 +67,12 @@ export default async function CampaignsPage() {
           <h1 className="page-hd__title">Campanhas</h1>
           <p className="page-hd__sub">Disparos em massa dos seus agentes — status, progresso e histórico.</p>
         </div>
-        {/* CTA "Nova campanha" vem no Commit B desta etapa (wizard).
-            Por ora, só read-only. */}
-        <span className="muted" style={{ fontSize: 12 }}>
-          Criar pelo wizard — em breve
-        </span>
+        {/* CTA Nova campanha (Pedro 2026-05-28, Commit B). Wizard cria em
+            status='paused'; admin ativa via SparkBot chat até Commit C trazer
+            botões pause/resume/cancel direto no detail. */}
+        <Link href="/hub/campaigns/new" className="btn btn--primary btn--sm">
+          <Plus /> Nova campanha
+        </Link>
       </div>
 
       {campaigns.length === 0 ? (
