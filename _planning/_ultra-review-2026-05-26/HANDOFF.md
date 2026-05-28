@@ -10,7 +10,41 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28f — FLAGS LIGADAS em prod + Etapa 3 100% + Banner soft de cutover (LER PRIMEIRO)
+### 2026-05-28g — CUTOVER PM-F3.I executado (`/dashboard` → `/hub` redirect 308) (LER PRIMEIRO)
+
+Sessão continuou após o "manda bala" do Pedro. Cutover hard feito.
+
+**Cutover (`<próximo>`):**
+- `next.config.mjs.redirects()` mapeia 4 rotas legacy → /hub (308 permanent).
+- `/dashboard` → `/hub`
+- `/dashboard/settings` → `/hub/settings`
+- `/dashboard/billing` → `/hub/billing`
+- `/dashboard/activity` → `/hub/messages` (equivalente conceitual)
+- **Arquivos `src/app/dashboard/*` mantidos** — rollback = remover redirects + 1 deploy.
+- CLAUDE.md atualizado: seção "Cutover PM-F3.I: /dashboard deprecated" instrui Claude futuro a não adicionar mais features no /dashboard.
+
+**Hypercare 48h (👤 Pedro):**
+- Monitorar Sentry: erros 404 / "page not found" em rotas /hub/* significam que alguma rota crítica não tem equivalente.
+- Monitorar admin_signals.
+- Reclamações de rep ("não acho a config X"): mapear e adicionar pra /hub OU adicionar mais redirects no next.config.
+
+**Smoke E2E supervisionado pendente — Pedro fará:**
+1. Criar agente lead-facing pelo wizard → conferir outreach + quiet_hours + targeting paridade
+2. Sequência 2-3 toques → ativar → ver step 1 + step 2 após delay + pause on reply
+3. Recorrente "todo dia útil 9h" → 1 ciclo → confirmar disparo + outreach_runs
+4. A/B 2 variantes → ativar → checar variant_id ~ratio
+5. Contato responder STOP → opt-out + skip nas próximas
+
+**Plano `_planning/_gaps-prospeccao-2026-05-28/PLANO.md` = 100% FECHADO** 🎉
+- ✅ Etapas 0, 1, 2, 3, 4.1-4.8, 5
+
+**Próximo (Pedro decide):**
+1. Smoke E2E supervisionado + reportar issues
+2. Após 48h hypercare OK: deletar src/app/dashboard/* (cleanup definitivo)
+3. Tracking variant reply (4.7 final) — feature nova
+4. PM-F4 self-serve billing + IA builder (próxima fase grande)
+
+### 2026-05-28f — FLAGS LIGADAS em prod + Etapa 3 100% + Banner soft de cutover
 
 Continuação do bloco "e". Sessão adicionou 4 commits sobre Prospecção 2.0:
 

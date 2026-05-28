@@ -1,7 +1,23 @@
 import { withSentryConfig } from "@sentry/nextjs";
 
 /** @type {import('next').NextConfig} */
-const nextConfig = {};
+const nextConfig = {
+  // Cutover PM-F3.I (Pedro 2026-05-28): /dashboard → /hub.
+  // Redirects 308 (permanent) pras 4 rotas legacy. permanent=false dá 307
+  // (temp) — escolhemos permanent=true porque a decisão é manter /hub como
+  // canônico, mas reverter é trivial (deletar essas entries + redeploy).
+  // Mantemos arquivos em src/app/dashboard/* por enquanto pra fallback
+  // emergencial (rollback de 1 commit).
+  async redirects() {
+    return [
+      { source: "/dashboard", destination: "/hub", permanent: true },
+      { source: "/dashboard/settings", destination: "/hub/settings", permanent: true },
+      { source: "/dashboard/billing", destination: "/hub/billing", permanent: true },
+      // activity legacy → messages (equivalente conceitual no /hub).
+      { source: "/dashboard/activity", destination: "/hub/messages", permanent: true },
+    ];
+  },
+};
 
 // Sentry só engata quando NEXT_PUBLIC_SENTRY_DSN está setado (env do Vercel).
 // Sem DSN o build segue IDÊNTICO ao de antes — zero risco enquanto a conta/DSN

@@ -172,6 +172,14 @@ Reestruturação grande: SparkBot incluso/grátis; venda/recrut/custom = upsell 
 
   Sem esse cruzamento, regressões silenciosas escapam dos guard-rails automáticos (tsc/build/parity-tests). **Caso histórico:** wizard novo (PM-F3.2/RV-W) perdeu `targeting` (pipeline_stage + custom_field) que existia no detail-view — só ficou tag simples. Descoberto em prod por reclamação do Pedro, não pelas revisões. Fix em `0d43bf8` → `adb42e8`. Auditoria subsequente (2026-05-28) achou +24 gaps similares — plano em `_planning/_gaps-prospeccao-2026-05-28/PLANO.md`.
 
+### Cutover PM-F3.I (Pedro 2026-05-28): `/dashboard` deprecated
+
+- **`/hub` é o painel canônico**. `/dashboard/*` virou redirect 308 pra `/hub/*` via `next.config.mjs` `redirects()`.
+- Mapping: `/dashboard` → `/hub`, `/dashboard/settings` → `/hub/settings`, `/dashboard/billing` → `/hub/billing`, `/dashboard/activity` → `/hub/messages`.
+- Arquivos de `/dashboard/*` ficam por enquanto em `src/app/dashboard/*` (fallback emergencial — rollback = remover redirects + 1 deploy).
+- **Não adicione mais features no `/dashboard`.** Toda UI nova entra em `src/app/hub/*`.
+- Hypercare 48h: monitorar Sentry + admin_signals + reclamações de rep. Issues de cutover marcadas com `Fix bug cutover 2026-05-28:` no comment.
+
 ---
 
 ## Quando inserir comments / decision codes
