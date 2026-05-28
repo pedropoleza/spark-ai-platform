@@ -11,8 +11,13 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "@/lib/auth/sso";
-import { loadHubCampaigns, type HubCampaignRow } from "@/lib/hub/data";
-import { Megaphone, Plus } from "lucide-react";
+import {
+  loadHubCampaigns,
+  loadHubRecurringCampaigns,
+  type HubCampaignRow,
+} from "@/lib/hub/data";
+import { Megaphone, Plus, Repeat } from "lucide-react";
+import { RecurringCampaignRow } from "./recurring-row";
 
 export const dynamic = "force-dynamic";
 
@@ -58,7 +63,10 @@ export default async function CampaignsPage() {
   const session = await getSession();
   if (!session) redirect("/");
 
-  const campaigns = await loadHubCampaigns(session.locationId);
+  const [campaigns, recurring] = await Promise.all([
+    loadHubCampaigns(session.locationId),
+    loadHubRecurringCampaigns(session.locationId),
+  ]);
 
   return (
     <div className="page">
@@ -70,10 +78,35 @@ export default async function CampaignsPage() {
         {/* CTA Nova campanha (Pedro 2026-05-28, Commit B). Wizard cria em
             status='paused'; admin ativa via SparkBot chat até Commit C trazer
             botões pause/resume/cancel direto no detail. */}
-        <Link href="/hub/campaigns/new" className="btn btn--primary btn--sm">
-          <Plus /> Nova campanha
-        </Link>
+        <div className="row" style={{ gap: 8 }}>
+          <Link href="/hub/campaigns/recurring/new" className="btn btn--ghost btn--sm">
+            <Repeat size={14} /> Recorrente
+          </Link>
+          <Link href="/hub/campaigns/new" className="btn btn--primary btn--sm">
+            <Plus /> Nova campanha
+          </Link>
+        </div>
       </div>
+
+      {/* Etapa 4.5: seção de Recorrentes acima do listing principal. */}
+      {recurring.length > 0 && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div className="card-hd">
+            <h3>
+              <Repeat size={16} style={{ marginRight: 6, verticalAlign: "-3px" }} />
+              Recorrentes
+            </h3>
+            <span className="muted" style={{ fontSize: 12 }}>
+              {recurring.filter((r) => r.enabled).length} ativas · {recurring.length} total
+            </span>
+          </div>
+          <div>
+            {recurring.map((r) => (
+              <RecurringCampaignRow key={r.id} row={r} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {campaigns.length === 0 ? (
         <div className="card">

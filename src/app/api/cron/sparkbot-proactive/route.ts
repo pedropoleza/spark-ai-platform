@@ -5,6 +5,7 @@ import { fireScheduledReminders } from "@/lib/account-assistant/proactive/remind
 import { fireBulkRecipients } from "@/lib/account-assistant/proactive/bulk-message-runner";
 import { processOutreachTick } from "@/lib/account-assistant/proactive/outreach-runner";
 import { processSequenceSteps } from "@/lib/account-assistant/proactive/sequence-runner";
+import { processRecurringTick } from "@/lib/account-assistant/proactive/recurring-runner";
 import { dispatchRule } from "@/lib/account-assistant/proactive/dispatcher";
 import { pollDeliveryStatuses } from "@/lib/account-assistant/proactive/delivery-status-poller";
 import { GHLClient } from "@/lib/ghl/client";
@@ -239,6 +240,15 @@ export async function GET(request: NextRequest) {
     return { scanned: 0, created: 0, errors: 1 };
   });
 
+  // Etapa 4.5 (Pedro 2026-05-28): recurring campaigns runner. Flag-gated
+  // (RECURRING_CAMPAIGNS_ENABLED=1). Pra cada recurring_campaigns enabled
+  // com next_run_at <= now, cria bulk_message_job filho (já running) +
+  // popula recipients + computa próximo next_run_at no timezone do agente.
+  const recurringResult = await processRecurringTick().catch((err) => {
+    console.warn("[cron] recurring failed:", err instanceof Error ? err.message : err);
+    return { scanned: 0, fired: 0, skipped: 0, errors: 1 };
+  });
+
   const durationMs = Date.now() - startTs;
   return NextResponse.json({
     ok: true,
@@ -257,6 +267,10 @@ export async function GET(request: NextRequest) {
     sequence_advanced: sequenceResult.advanced,
     sequence_completed: sequenceResult.completed,
     sequence_failed: sequenceResult.failed,
+    recurring_scanned: recurringResult.scanned,
+    recurring_fired: recurringResult.fired,
+    recurring_skipped: recurringResult.skipped,
+    recurring_errors: recurringResult.errors,
     delivery_poller: pollerResult,
     duration_ms: durationMs,
   });

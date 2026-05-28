@@ -385,6 +385,76 @@ export async function loadHubCampaignDetail(
   };
 }
 
+/* ─── Recorrências (Etapa 4.5) ──────────────────────────────────── */
+export interface HubRecurringRow {
+  id: string;
+  label: string;
+  agent_id: string;
+  agent_name: string;
+  cron_expression: string;
+  timezone: string;
+  enabled: boolean;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  tag: string | null;
+  per_run_cap: number;
+  delivery_channel: string;
+}
+
+export async function loadHubRecurringCampaigns(locationId: string): Promise<HubRecurringRow[]> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("recurring_campaigns")
+    .select(
+      "id, label, agent_id, cron_expression, timezone, enabled, last_run_at, next_run_at, filter_config, per_run_cap, delivery_channel",
+    )
+    .eq("location_id", locationId)
+    .order("enabled", { ascending: false })
+    .order("next_run_at", { ascending: true })
+    .limit(50);
+  const rows = (data || []) as Array<{
+    id: string;
+    label: string;
+    agent_id: string;
+    cron_expression: string;
+    timezone: string;
+    enabled: boolean;
+    last_run_at: string | null;
+    next_run_at: string | null;
+    filter_config: { tag?: string } | null;
+    per_run_cap: number;
+    delivery_channel: string;
+  }>;
+
+  // Hidrata agent_name em batch
+  const agentIds = Array.from(new Set(rows.map((r) => r.agent_id).filter(Boolean)));
+  const agentMap = new Map<string, string>();
+  if (agentIds.length > 0) {
+    const { data: agents } = await supabase
+      .from("agents")
+      .select("id, name")
+      .in("id", agentIds);
+    for (const a of (agents || []) as Array<{ id: string; name: string }>) {
+      agentMap.set(a.id, a.name || "Agente");
+    }
+  }
+
+  return rows.map((r) => ({
+    id: r.id,
+    label: r.label,
+    agent_id: r.agent_id,
+    agent_name: agentMap.get(r.agent_id) || "Agente",
+    cron_expression: r.cron_expression,
+    timezone: r.timezone,
+    enabled: r.enabled,
+    last_run_at: r.last_run_at,
+    next_run_at: r.next_run_at,
+    tag: r.filter_config?.tag || null,
+    per_run_cap: r.per_run_cap,
+    delivery_channel: r.delivery_channel,
+  }));
+}
+
 export async function loadHubActivity(locationId: string, limit = 40): Promise<HubActivityItem[]> {
   const supabase = createAdminClient();
   // Pedro 2026-05-28: include agent_id pra resolver agent_name real (antes era

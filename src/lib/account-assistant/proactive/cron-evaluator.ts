@@ -76,6 +76,57 @@ function parseLocalParts(date: Date, timezone: string): {
   }
 }
 
+/**
+ * Computa o próximo disparo de uma cron expression a partir de `from`.
+ * Etapa 4.5 (Pedro 2026-05-28): usado pelo recurring-runner pra setar
+ * next_run_at de recurring_campaigns após criação ou após cada disparo.
+ *
+ * Implementação: itera minuto-a-minuto até MAX_LOOKAHEAD_MINUTES (default
+ * 100 dias). Retorna null se não achar match (cron inválido ou impossível).
+ *
+ * Performance: 100 dias × 24h × 60min = 144k iterações no pior caso —
+ * irrelevante pra cron tick (~50ms numa máquina fraca).
+ */
+const MAX_LOOKAHEAD_MINUTES = 100 * 24 * 60;
+
+export function computeNextRunAt(
+  cron: string,
+  timezone: string,
+  from: Date = new Date(),
+): Date | null {
+  // Avança 1 minuto pra evitar dar match no minuto atual (queremos PRÓXIMO).
+  const start = new Date(from.getTime() + 60_000);
+  // Zera segundos/ms pra alinhar com tick minute-precision.
+  start.setUTCSeconds(0, 0);
+  for (let i = 0; i < MAX_LOOKAHEAD_MINUTES; i++) {
+    const candidate = new Date(start.getTime() + i * 60_000);
+    if (shouldFireCron(cron, timezone, candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/**
+ * Conveniência: gera próximas N execuções (pra preview na UI do wizard).
+ */
+export function previewNextRuns(
+  cron: string,
+  timezone: string,
+  count: number = 5,
+  from: Date = new Date(),
+): Date[] {
+  const runs: Date[] = [];
+  let cursor = from;
+  for (let i = 0; i < count; i++) {
+    const next = computeNextRunAt(cron, timezone, cursor);
+    if (!next) break;
+    runs.push(next);
+    cursor = next;
+  }
+  return runs;
+}
+
 function matchField(field: string, value: number, _min: number, _max: number): boolean {
   if (field === "*") return true;
   // Lista: "1,3,5"
