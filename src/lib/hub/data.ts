@@ -169,7 +169,75 @@ export const HUB_LIST_LIMITS = {
   paused: 200, // cap dentro da janela
   billing_activity: 15,
   entitlements: 2000,
+  campaigns: 50, // últimas 50 campanhas
 } as const;
+
+/* ─── Campanhas (Etapa 4.1 — Prospecção 2.0) ─────────────────────── */
+export interface HubCampaignRow {
+  id: string;
+  label: string;
+  status: "running" | "paused" | "completed" | "cancelled" | "failed";
+  agent_name: string;
+  agent_id: string | null;
+  sent_count: number;
+  total_contacts: number;
+  failed_count: number;
+  skipped_count: number;
+  delivery_channel: string;
+  start_at: string; // ISO
+  completed_at: string | null; // ISO
+  estimated_completion_at: string | null; // ISO
+  priority: number;
+  message_preview: string; // primeiros 200 chars do template
+}
+
+/**
+ * Lista campanhas de bulk-messages do location. Ordenada por start_at DESC.
+ * Etapa 4.1.2 do plano de gaps — UI Campanhas no /hub.
+ *
+ * Resolve agent_name via batch query (igual loadHubActivity). Sem JOIN nativo
+ * pra ficar consistente com o padrão dos outros loaders.
+ */
+export async function loadHubCampaigns(
+  locationId: string,
+  limit = HUB_LIST_LIMITS.campaigns,
+): Promise<HubCampaignRow[]> {
+  const supabase = createAdminClient();
+  const { data: jobs } = await supabase
+    .from("bulk_message_jobs")
+    .select(
+      "id, label, status, agent_id, sent_count, total_contacts, failed_count, skipped_count, delivery_channel, start_at, completed_at, estimated_completion_at, priority, message_template",
+    )
+    .eq("location_id", locationId)
+    .order("start_at", { ascending: false })
+    .limit(limit);
+
+  const rows = jobs || [];
+  const agentIds = Array.from(new Set(rows.map((r) => r.agent_id).filter((id): id is string => !!id)));
+  let agentName: Record<string, string> = {};
+  if (agentIds.length) {
+    const { data: agents } = await supabase.from("agents").select("id, name").in("id", agentIds);
+    agentName = Object.fromEntries((agents || []).map((a) => [a.id as string, (a.name as string) || "Agente"]));
+  }
+
+  return rows.map((r): HubCampaignRow => ({
+    id: r.id as string,
+    label: (r.label as string) || "Sem rótulo",
+    status: r.status as HubCampaignRow["status"],
+    agent_id: (r.agent_id as string) || null,
+    agent_name: (r.agent_id && agentName[r.agent_id as string]) || "Agente",
+    sent_count: Number(r.sent_count) || 0,
+    total_contacts: Number(r.total_contacts) || 0,
+    failed_count: Number(r.failed_count) || 0,
+    skipped_count: Number(r.skipped_count) || 0,
+    delivery_channel: (r.delivery_channel as string) || "whatsapp_web_sms",
+    start_at: r.start_at as string,
+    completed_at: (r.completed_at as string) || null,
+    estimated_completion_at: (r.estimated_completion_at as string) || null,
+    priority: Number(r.priority) || 0,
+    message_preview: ((r.message_template as string) || "").slice(0, 200),
+  }));
+}
 
 export async function loadHubActivity(locationId: string, limit = 40): Promise<HubActivityItem[]> {
   const supabase = createAdminClient();

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Layers, Mail, CreditCard, Settings, Shield, Zap, type LucideIcon } from "lucide-react";
+import { Home, Layers, Mail, CreditCard, Settings, Shield, Zap, Megaphone, type LucideIcon } from "lucide-react";
 import { useHubSession } from "./hub-session";
 
 type NavItem = { id: string; label: string; href: string; icon: LucideIcon };
@@ -10,6 +10,7 @@ type NavItem = { id: string; label: string; href: string; icon: LucideIcon };
 const PRIMARY: NavItem[] = [
   { id: "home", label: "Início", href: "/hub", icon: Home },
   { id: "agents", label: "Agentes", href: "/hub/agents", icon: Layers },
+  { id: "campaigns", label: "Campanhas", href: "/hub/campaigns", icon: Megaphone },
   { id: "messages", label: "Mensagens", href: "/hub/messages", icon: Mail },
   { id: "billing", label: "Faturamento", href: "/hub/billing", icon: CreditCard },
   { id: "settings", label: "Conta", href: "/hub/settings", icon: Settings },
