@@ -442,3 +442,10 @@
 @media (prefers-reduced-motion: reduce) {
   .hub-root .page { animation: none; }
 }
+
+/* F21 (Pedro 2026-05-28): spinner pra Lucide Loader2 girar no botão "Quantos?". */
+@keyframes hub-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spin { animation: hub-spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+}

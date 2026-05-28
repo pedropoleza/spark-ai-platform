@@ -12,7 +12,7 @@
 import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Repeat, AlertCircle } from "lucide-react";
+import { ChevronLeft, ChevronRight, Repeat, AlertCircle, Users, Loader2 } from "lucide-react";
 
 export interface AgentChoice {
   id: string;
@@ -57,6 +57,38 @@ export function RecurringWizard({ agents }: { agents: AgentChoice[] }) {
   // hoje runtime ignora false e segue refresh (documentado como follow-up).
   const [refreshSegmentOnRun, setRefreshSegmentOnRun] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+
+  // F22 (Pedro 2026-05-28): preview count, mesmo pattern do wizard one-shot.
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [preview, setPreview] = useState<{ count: number; capped: boolean; sample_names: string[] } | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  function resetPreview() {
+    setPreview(null);
+    setPreviewError(null);
+  }
+  async function loadPreview() {
+    if (!agentId || tag.trim().length === 0) return;
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const res = await fetch("/api/hub/campaigns/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ agent_id: agentId, tag: tag.trim() }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) throw new Error(json.error || "falha");
+      setPreview({
+        count: json.count || 0,
+        capped: !!json.capped,
+        sample_names: json.sample_names || [],
+      });
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : "falha desconhecida");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
 
   const selectedAgent = agents.find((a) => a.id === agentId);
   const effectiveCron = useCustom ? customCron.trim() : cron;
@@ -251,17 +283,60 @@ export function RecurringWizard({ agents }: { agents: AgentChoice[] }) {
 
             <div>
               <label style={{ fontSize: 13, fontWeight: 500 }}>Tag dos contatos</label>
-              <input
-                className="input"
-                value={tag}
-                onChange={(e) => setTag(e.target.value)}
-                maxLength={80}
-                placeholder="ex: leads_frios"
-                style={{ marginTop: 6 }}
-              />
+              <div className="row" style={{ gap: 6, marginTop: 6 }}>
+                <input
+                  className="input"
+                  value={tag}
+                  onChange={(e) => { setTag(e.target.value); resetPreview(); }}
+                  maxLength={80}
+                  placeholder="ex: leads_frios"
+                  style={{ flex: 1 }}
+                />
+                <button
+                  type="button"
+                  className="btn btn--quiet btn--sm"
+                  onClick={loadPreview}
+                  disabled={previewLoading || tag.trim().length === 0 || !agentId}
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {previewLoading ? <Loader2 size={14} className="spin" /> : <Users size={14} />}
+                  {previewLoading ? " Buscando…" : " Quantos?"}
+                </button>
+              </div>
               <div className="muted" style={{ fontSize: 11.5, marginTop: 4 }}>
                 A lista é re-pesquisada no Spark Leads a cada disparo (não usa snapshot antigo).
               </div>
+              {preview && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: "8px 12px",
+                    background: preview.count === 0 ? "#fef3c7" : preview.count >= 5000 ? "#fee2e2" : "var(--primary-soft)",
+                    borderRadius: 4,
+                    fontSize: 12.5,
+                  }}
+                >
+                  {preview.count === 0 ? (
+                    <span style={{ color: "#92400e" }}>⚠️ Nenhum contato com a tag <strong>&quot;{tag.trim()}&quot;</strong> agora. Confirme a grafia.</span>
+                  ) : preview.count >= 5000 ? (
+                    <span style={{ color: "#7f1d1d" }}>⚠️ <strong>{preview.count.toLocaleString("pt-BR")}+</strong> — cap atingido. Cada execução vai disparar até esse limite.</span>
+                  ) : (
+                    <span style={{ color: "var(--primary-ink)" }}>
+                      ✅ <strong>{preview.count.toLocaleString("pt-BR")}</strong> contato{preview.count > 1 ? "s" : ""} hoje
+                      {preview.sample_names.length > 0 && (
+                        <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
+                          (ex: {preview.sample_names.slice(0, 3).join(", ")}{preview.sample_names.length > 3 ? "…" : ""})
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </div>
+              )}
+              {previewError && (
+                <div style={{ marginTop: 8, padding: "8px 12px", background: "#fee2e2", borderRadius: 4, fontSize: 12, color: "#7f1d1d" }}>
+                  Não consegui buscar: {previewError}
+                </div>
+              )}
             </div>
 
             <div>
