@@ -63,6 +63,9 @@ const IntakeSchema = z
     pipeline_stage_id: z.string().max(120).default(""),
     opening_message: z.string().max(2000).default(""),
     advanced_rules: z.array(AdvancedTargetingRuleSchema).max(15).default([]),
+    // Etapa 2 do plano (Pedro 2026-05-28): cap customizável de outreach pelo
+    // wizard. Vazio/undefined = default 100 no specToConfig (retrocompat).
+    daily_cap: z.number().int().min(1).max(5000).optional(),
   })
   .default({ mode: "inbound", tags: [], keyword: "", pipeline_id: "", pipeline_stage_id: "", opening_message: "", advanced_rules: [] });
 
@@ -290,7 +293,8 @@ export function specToConfig(spec: AgentSpec, allowedModuleKeys: string[]): {
       enabled: true,
       tag_filter: { tags: (intake.tags || []).filter((t) => t.trim()), match: "any" },
       rate_per_hour: 20,
-      daily_cap: 100,
+      // Pedro 2026-05-28: usa o cap customizável do wizard quando vier; senão 100.
+      daily_cap: intake.daily_cap || 100,
       respect_working_hours: true,
       opening_message: intake.opening_message || "",
     };

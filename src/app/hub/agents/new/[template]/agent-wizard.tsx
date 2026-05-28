@@ -36,6 +36,10 @@ interface Answers {
   // adicionar pipeline_stage, custom_field ou mais tags compostas. Vazio = sem
   // filtros extras. Tudo somado vira targeting_rules no agent_configs (AND).
   advancedRules?: TargetingRule[];
+  // Etapa 2 do plano de gaps (Pedro 2026-05-28): KB + outreach params paridade
+  // com detail-view. Vazio em ambos = pula com defaults sensatos do builder-spec.
+  knowledgeInstructions?: string;
+  outreachDailyCap?: string;
 }
 
 interface Composed {
@@ -82,7 +86,8 @@ const META: Record<WizardTemplate, {
 };
 
 type NodeKey =
-  | "purpose" | "intake" | "intake_detail" | "outreach_opening" | "advanced_targeting" | "channel"
+  | "purpose" | "intake" | "intake_detail" | "outreach_opening" | "outreach_params"
+  | "advanced_targeting" | "knowledge" | "channel"
   | "identity" | "identity_name" | "objective" | "qualification"
   | "specialist" | "postbooking" | "followup" | "hours";
 
@@ -137,6 +142,25 @@ function buildNodes(template: WizardTemplate): Record<NodeKey, NodeDef> {
       type: "free",
       skippable: true,
       q: "Quer filtros extras de ativação? (etapa do funil, campo personalizado, mais tags). Pode pular se a regra principal já dá conta — dá pra ajustar depois.",
+    },
+    // Etapa 2 do plano (Pedro 2026-05-28): só visível em outreach. Antes
+    // rate/cap/respect_hours eram hardcoded (20/100/true) — agora dá pra
+    // ajustar o cap no wizard. Os outros 2 ficam com default sensato; edita
+    // no detail-view depois se precisar.
+    outreach_params: {
+      type: "free",
+      skippable: true,
+      q: `Quantas pessoas por dia o agente pode abordar? (padrão 100, vazio = padrão)`,
+      placeholder: "Ex: 50",
+    },
+    // Etapa 2 do plano (Pedro 2026-05-28): conhecimento opcional. Free textarea
+    // — vazio pula. enabled_kbs (NLG/Brazillionaires) fica pro detail-view.
+    knowledge: {
+      type: "free",
+      audio: true,
+      skippable: true,
+      q: `Tem alguma informação importante que o agente precisa lembrar? (preços, processo, FAQ, política). Vazio = sem instruções extras.`,
+      placeholder: "Ex: comissão padrão 15%; só ofereça reunião se o lead tiver +25 anos…",
     },
     channel: {
       type: "multi",
@@ -208,7 +232,8 @@ function buildNodes(template: WizardTemplate): Record<NodeKey, NodeDef> {
 }
 
 const ORDER: NodeKey[] = [
-  "purpose", "intake", "intake_detail", "outreach_opening", "advanced_targeting", "channel",
+  "purpose", "intake", "intake_detail", "outreach_opening", "outreach_params",
+  "advanced_targeting", "knowledge", "channel",
   "identity", "identity_name", "objective", "qualification",
   "specialist", "postbooking", "followup", "hours",
 ];
@@ -216,6 +241,8 @@ const isBooking = (a: Answers) => a.objective === "qualification_and_booking" ||
 function nodeVisible(key: NodeKey, a: Answers): boolean {
   if (key === "intake_detail") return a.intakeMode === "keyword" || a.intakeMode === "tag" || a.intakeMode === "outreach";
   if (key === "outreach_opening") return a.intakeMode === "outreach";
+  // Pedro 2026-05-28: outreach_params só faz sentido em outreach.
+  if (key === "outreach_params") return a.intakeMode === "outreach";
   if (key === "specialist" || key === "postbooking") return isBooking(a);
   return true;
 }
@@ -281,6 +308,16 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
     if (node === "identity_name") return answer({ identityName: text }, skip ? "Definir depois" : display);
     if (node === "qualification") return answer({ qualification: text }, skip ? "A IA sugere" : display);
     if (node === "specialist") return answer({ specialist: text }, skip ? "Sem responsável fixo" : display);
+    // Etapa 2 do plano (Pedro 2026-05-28)
+    if (node === "outreach_params") {
+      const n = Number(text);
+      const valid = !skip && text && Number.isFinite(n) && n > 0 && n <= 5000;
+      return answer(
+        { outreachDailyCap: valid ? String(n) : "" },
+        valid ? `${n} pessoas/dia` : "Padrão (100/dia)",
+      );
+    }
+    if (node === "knowledge") return answer({ knowledgeInstructions: skip ? "" : text }, skip ? "Sem instruções extras" : display);
   }
   function submitChoice(c: Chip) {
     if (node === "intake") return answer({ intakeMode: c.value as IntakeMode }, c.label);
@@ -351,7 +388,18 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
         opening_message: a.outreachOpening || "",
         // Filtros extras (Pedro 2026-05-28): mescla com tag/stage derivado do mode no builder-spec.
         advanced_rules: a.advancedRules || [],
+        // Etapa 2 do plano (Pedro 2026-05-28): cap customizável pra outreach.
+        // Vazio/0/inválido → builder-spec aplica default (100).
+        ...(a.intakeMode === "outreach" && a.outreachDailyCap?.trim()
+          ? { daily_cap: Number(a.outreachDailyCap) || undefined }
+          : {}),
       },
+      // Etapa 2 (Pedro 2026-05-28): KB do wizard (enabled_kbs continua no
+      // detail-view; aqui só captura instructions free-form). Vazio → spec.knowledge
+      // não setado → specToConfig usa default vazio.
+      ...(a.knowledgeInstructions?.trim()
+        ? { knowledge: { enabled_kbs: [], instructions: a.knowledgeInstructions.trim() } }
+        : {}),
       behavior: {
         tone: composed.tone,
         custom_instructions: composed.custom_instructions,

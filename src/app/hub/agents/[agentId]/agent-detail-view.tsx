@@ -1012,6 +1012,35 @@ function CatOutreach({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) 
           Depois de iniciar, o agente <strong>conduz</strong> a conversa normalmente (qualifica, agenda…). O disparo real é liberado pela agência (supervisionado) antes de ligar em produção.
         </span>
       </div>
+      {/* Pedro 2026-05-28 — footgun da prospecção: tags vazias OU respect_hours+hours
+          desligado = nunca dispara silenciosamente. Espelha o aviso de CatChannel/CatHours. */}
+      {(() => {
+        const noTags = o.tag_filter.tags.length === 0;
+        const noHours = o.respect_working_hours && !e.working_hours.enabled;
+        if (!noTags && !noHours) return null;
+        return (
+          <div
+            role="alert"
+            style={{
+              marginTop: 10,
+              padding: 10,
+              border: "1px solid #DC2626",
+              background: "#FEF2F2",
+              borderRadius: "var(--r-sm)",
+            }}
+          >
+            <strong style={{ fontSize: 13, color: "#991B1B" }}>⚠️ A prospecção não vai disparar</strong>
+            <ul style={{ fontSize: 12.5, margin: "4px 0 0 14px", padding: 0, color: "#991B1B", lineHeight: 1.5 }}>
+              {noTags && <li>Sem tags definidas — adicione pelo menos uma acima.</li>}
+              {noHours && (
+                <li>
+                  &quot;Só dentro do horário&quot; está ligado, mas a aba <strong>Atendimento</strong> está desligada — o agente nunca encontra janela. Desligue um dos dois.
+                </li>
+              )}
+            </ul>
+          </div>
+        );
+      })()}
     </>
   );
 }
@@ -1227,8 +1256,19 @@ function CatLimits({ e, patch, isRep }: { e: Editable; patch: (p: Partial<Editab
       {isRep && (
         <Field label="Quando pedir confirmação" hint="Antes de agir no Spark Leads.">
           <div className="col" style={{ gap: 8 }}>
-            {([["always", "Sempre — antes de qualquer ação"], ["medium_and_high", "Em ações importantes (recomendado)"], ["high_only", "Só nas mais sensíveis"]] as [ConfMode, string][]).map(([v, l]) => (
-              <label key={v} className="row" style={{ gap: 10, fontSize: 13.5, cursor: "pointer" }}><input type="radio" name="conf" checked={e.confirmation_mode === v} onChange={() => patch({ confirmation_mode: v })} /> <span>{l}</span></label>
+            {/* Pedro 2026-05-28 — hint sobre footgun do "sempre". */}
+            {([
+              ["always", "Sempre — antes de qualquer ação", "Cada send/note/task pede ok do rep. Pode deixar o agente lento e passivo."],
+              ["medium_and_high", "Em ações importantes (recomendado)", "Pede só nas ações de risco médio/alto (delete, send em massa)."],
+              ["high_only", "Só nas mais sensíveis", "Só nas ações de risco alto."],
+            ] as [ConfMode, string, string][]).map(([v, l, h]) => (
+              <label key={v} className="row" style={{ gap: 10, fontSize: 13.5, cursor: "pointer", alignItems: "flex-start" }}>
+                <input type="radio" name="conf" checked={e.confirmation_mode === v} onChange={() => patch({ confirmation_mode: v })} style={{ marginTop: 3 }} />
+                <span>
+                  {l}
+                  <span className="muted" style={{ fontSize: 12, display: "block", marginTop: 2 }}>{h}</span>
+                </span>
+              </label>
             ))}
           </div>
         </Field>

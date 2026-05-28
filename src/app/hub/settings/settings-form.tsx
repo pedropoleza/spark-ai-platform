@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Check } from "lucide-react";
 
@@ -50,6 +50,19 @@ export function SettingsForm({
     timezone !== initial.timezone ||
     dailyLimit !== (initial.dailyLimit?.toString() ?? "") ||
     costAlert !== (initial.costAlert?.toString() ?? "");
+
+  // Pedro 2026-05-28: warn antes de sair com mudanças não-salvas. Antes user
+  // alterava tz, esquecia de salvar, voltava — tz original persistia, achava
+  // que tinha mudado. Browser limita a mensagem custom (mostra default do SO).
+  useEffect(() => {
+    if (!dirty || saving) return;
+    const handler = (ev: BeforeUnloadEvent) => {
+      ev.preventDefault();
+      ev.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty, saving]);
 
   async function save() {
     setSaving(true);

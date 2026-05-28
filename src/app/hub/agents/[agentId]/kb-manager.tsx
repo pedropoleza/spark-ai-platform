@@ -66,7 +66,17 @@ export function KbManager({ agentId }: { agentId: string }) {
     }
   }
 
+  // Pedro 2026-05-28: cap igual ao backend (knowledge-base route = 15 MB). Sem
+  // este check client-side, user esperava o upload terminar pra receber um erro
+  // genérico "Arquivo muito grande" — descoberta por erro em vez de prevenção.
+  const KB_MAX_BYTES = 15 * 1024 * 1024;
+
   async function upload(file: File) {
+    if (file.size > KB_MAX_BYTES) {
+      toast.error(`Arquivo grande demais (${(file.size / 1024 / 1024).toFixed(1)} MB). Máximo: 15 MB.`);
+      if (fileRef.current) fileRef.current.value = "";
+      return;
+    }
     setUploading(true);
     try {
       const fd = new FormData();
