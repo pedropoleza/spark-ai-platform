@@ -9,7 +9,8 @@
 // CRM — não queremos vazar telefone/nome de rep ou lead pro Sentry. Sem isso o SDK
 // anexaria IP, cookies, headers e corpo da request nos eventos.
 import * as Sentry from "@sentry/nextjs";
-import { recordSignalAsync } from "@/lib/admin-signals/recorder";
+import { recordSignal } from "@/lib/admin-signals/recorder";
+import { waitUntil } from "@vercel/functions";
 
 // Ponte Sentry → Signals (Pedro 2026-05-27): espelha crashes server-side no painel
 // admin_signals do hub (type 'error', source 'system') pra ter UMA janela de erro.
@@ -38,23 +39,34 @@ Sentry.init({
     // evento no Sentry). Título sem PII (tipo do erro + rota) pra o dedup do
     // recorder agrupar crashes iguais. A message (pode ter PII) vai só na
     // description, que fica no painel interno admin-only.
+    //
+    // waitUntil (smoke test 2026-05-28): no smoke test descobrimos que 2 hits
+    // viraram 1 row porque o lambda encerrava antes da promise async resolver
+    // (fire-and-forget é frágil em serverless). waitUntil estende o lifetime do
+    // invocation até o INSERT/UPDATE no admin_signals completar — count agora
+    // bate com o do Sentry.
     if (signalsBridgeEnabled) {
       try {
         const err = hint?.originalException;
         const errorName =
           err instanceof Error ? err.name : event.exception?.values?.[0]?.type || "Error";
         const route = event.transaction || "rota desconhecida";
-        recordSignalAsync({
-          type: "error",
-          source: "system",
-          severity: "high",
-          title: `${errorName} em ${route}`,
-          description: err instanceof Error ? err.message?.slice(0, 500) : undefined,
-          metadata: {
-            sentry_event_id: event.event_id,
-            environment: event.environment,
-          },
-        });
+        waitUntil(
+          recordSignal({
+            type: "error",
+            source: "system",
+            severity: "high",
+            title: `${errorName} em ${route}`,
+            description: err instanceof Error ? err.message?.slice(0, 500) : undefined,
+            metadata: {
+              sentry_event_id: event.event_id,
+              environment: event.environment,
+            },
+          }).catch((bridgeErr) => {
+            // Falha de escrita no Signals não pode quebrar nada. Só loga.
+            console.warn("[sentry-signals-bridge] recordSignal falhou:", bridgeErr);
+          }),
+        );
       } catch {
         // no-op proposital: a ponte nunca pode atrapalhar o envio pro Sentry.
       }
