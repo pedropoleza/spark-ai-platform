@@ -20,6 +20,7 @@ import {
   Repeat,
   Ban,
 } from "lucide-react";
+import { HealthAutoRefresh } from "./auto-refresh";
 
 export const dynamic = "force-dynamic";
 
@@ -231,6 +232,8 @@ export default async function HealthPage() {
           <Stat label="Critical" value={String(h.signals.critical_24h)} danger={h.signals.critical_24h > 0} />
         </div>
       </div>
+
+      <HealthAutoRefresh />
     </div>
   );
 }

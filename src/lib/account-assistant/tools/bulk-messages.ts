@@ -490,6 +490,10 @@ export interface ActiveBulkJob {
   total_contacts: number;
   sent_count: number;
   pending_count: number;
+  /** Etapa 4.7 final (Pedro 2026-05-28): contagem de replies pra esse job. */
+  reply_count: number;
+  /** Etapa 4.7 final: reply_count / sent_count em %, 1 casa decimal. */
+  reply_rate_pct: number;
   segments_labels: string[];
   delivery_strategy_type: string;
   next_scheduled_at: string | null;
@@ -519,18 +523,30 @@ export async function getActiveBulkJobs(
   if (!jobs || jobs.length === 0) return [];
 
   // Pra cada job ativo, pega next_scheduled_at do recipient pending mais próximo
+  // E reply_count (Etapa 4.7 final — Pedro 2026-05-28).
   const jobIds = jobs.map((j) => j.id);
-  const { data: nextScheduled } = await supabase
-    .from("bulk_message_recipients")
-    .select("job_id, scheduled_at")
-    .in("job_id", jobIds)
-    .eq("status", "pending")
-    .order("scheduled_at", { ascending: true });
+  const [{ data: nextScheduled }, { data: repliedRecips }] = await Promise.all([
+    supabase
+      .from("bulk_message_recipients")
+      .select("job_id, scheduled_at")
+      .in("job_id", jobIds)
+      .eq("status", "pending")
+      .order("scheduled_at", { ascending: true }),
+    supabase
+      .from("bulk_message_recipients")
+      .select("job_id")
+      .in("job_id", jobIds)
+      .not("replied_at", "is", null),
+  ]);
   const nextByJob = new Map<string, string>();
   for (const r of nextScheduled || []) {
     if (!nextByJob.has(r.job_id)) {
       nextByJob.set(r.job_id, r.scheduled_at);
     }
+  }
+  const repliedByJob = new Map<string, number>();
+  for (const r of repliedRecips || []) {
+    repliedByJob.set(r.job_id, (repliedByJob.get(r.job_id) || 0) + 1);
   }
 
   return jobs.map((j) => {
@@ -545,12 +561,16 @@ export async function getActiveBulkJobs(
       ? (fc.delivery_strategy as Record<string, unknown> | undefined)
       : undefined;
     const pending = j.total_contacts - (j.sent_count || 0);
+    const sent = j.sent_count || 0;
+    const replies = repliedByJob.get(j.id) || 0;
     return {
       job_id: j.id,
       status: j.status as "running" | "paused",
       total_contacts: j.total_contacts,
-      sent_count: j.sent_count || 0,
+      sent_count: sent,
       pending_count: pending,
+      reply_count: replies,
+      reply_rate_pct: sent > 0 ? Math.round((replies / sent) * 1000) / 10 : 0,
       segments_labels: segments,
       delivery_strategy_type: (strategy?.type as string) || "today",
       next_scheduled_at: nextByJob.get(j.id) || null,
