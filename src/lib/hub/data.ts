@@ -160,6 +160,17 @@ const ACTION_MAP: Record<string, { type: HubActivityItem["type"]; label: string 
   qualify_lead: { type: "qualified", label: "Lead qualificado" },
 };
 
+// Limites das listas read do /hub (Pedro 2026-05-28). Exportados pras UIs
+// mostrarem label honesto "Últimas N" quando a lista atinge o cap — antes era
+// truncagem silenciosa (admin não sabia se tinha mais embaixo).
+export const HUB_LIST_LIMITS = {
+  activity: 40,
+  paused_days: 30, // filtro de janela: últimos 30 dias
+  paused: 200, // cap dentro da janela
+  billing_activity: 15,
+  entitlements: 2000,
+} as const;
+
 export async function loadHubActivity(locationId: string, limit = 40): Promise<HubActivityItem[]> {
   const supabase = createAdminClient();
   const { data } = await supabase
@@ -223,13 +234,19 @@ function humanizePauseReason(raw?: string | null): string {
  */
 export async function loadPausedConversations(locationId: string): Promise<PausedConversationRow[]> {
   const supabase = createAdminClient();
+  // Pedro 2026-05-28: janela de 30 dias + cap 200. Antes era só top-200 sem
+  // filtro de tempo, e pausadas de 6 meses atrás tampavam as recentes —
+  // admin não conseguia investigar o que importa.
+  const since = new Date();
+  since.setDate(since.getDate() - HUB_LIST_LIMITS.paused_days);
   const { data: convs } = await supabase
     .from("conversation_state")
     .select("agent_id, contact_id, status, ai_paused_at, ai_paused_reason")
     .eq("location_id", locationId)
     .not("ai_paused_at", "is", null)
+    .gte("ai_paused_at", since.toISOString())
     .order("ai_paused_at", { ascending: false })
-    .limit(200);
+    .limit(HUB_LIST_LIMITS.paused);
   const rows = (convs || []) as { agent_id: string; contact_id: string; status: string | null; ai_paused_at: string | null; ai_paused_reason: string | null }[];
   if (rows.length === 0) return [];
 
@@ -354,7 +371,15 @@ export interface EntitlementGridRow {
   since: string | null;
 }
 
-export async function loadEntitlementsGrid(companyId: string): Promise<EntitlementGridRow[]> {
+// Pedro 2026-05-28: statusFilter opcional ("active" | "revoked" | "none" | "all"
+// default). Antes loadava todas as locations (até 2000), UI filtrava client-side
+// — pra company com 500 sub-accounts, cargapesada e impossível paginar.
+export type EntitlementsStatusFilter = "all" | "active" | "revoked" | "none";
+
+export async function loadEntitlementsGrid(
+  companyId: string,
+  statusFilter: EntitlementsStatusFilter = "all",
+): Promise<EntitlementGridRow[]> {
   const supabase = createAdminClient();
   const { data: locations } = await supabase
     .from("locations")
@@ -400,7 +425,19 @@ export async function loadEntitlementsGrid(companyId: string): Promise<Entitleme
       r.since = e.granted_at;
     }
   }
-  return Array.from(rows.values());
+  const all = Array.from(rows.values());
+  // Pedro 2026-05-28: filtro server-side. "active" = pelo menos 1 capability
+  // ativa; "revoked" = pelo menos 1 capability revoked + nenhuma ativa;
+  // "none" = sem nenhuma entitlement (sales/recruitment/custom todos null);
+  // "all" = retorna tudo (default, retrocompat).
+  if (statusFilter === "all") return all;
+  return all.filter((r) => {
+    const anyActive = r.sales === "active" || r.recruitment === "active" || r.custom === "active";
+    const anyRevoked = r.sales === "revoked" || r.recruitment === "revoked" || r.custom === "revoked";
+    if (statusFilter === "active") return anyActive;
+    if (statusFilter === "revoked") return anyRevoked && !anyActive;
+    /* statusFilter === "none" */ return !anyActive && !anyRevoked;
+  });
 }
 
 /* ─── Faturamento (per-location) ─────────────────────────────────── */

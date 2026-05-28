@@ -97,10 +97,10 @@ export default async function HubHome() {
         </div>
       </div>
 
-      {/* Atividade recente */}
+      {/* Atividade recente (Pedro 2026-05-28: label honesto de truncagem). */}
       <div className="card">
         <div className="card-hd">
-          <h3>Atividade recente</h3>
+          <h3>Atividade recente <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>· últimas {activity.length}</span></h3>
           <Link href="/hub/messages" className="btn btn--ghost btn--sm">
             Ver todas <ChevronRight />
           </Link>

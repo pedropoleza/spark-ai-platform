@@ -57,7 +57,13 @@ export function MessagesView({ activity, paused }: { activity: HubActivityItem[]
         activity.length === 0 ? (
           <div className="empty">Nenhuma atividade dos seus agentes ainda.</div>
         ) : (
-          <div>{activity.map((it, i) => <ActRow key={i} item={it} />)}</div>
+          <>
+            {/* Pedro 2026-05-28: label honesto. loadHubActivity tem cap 100. */}
+            <div className="muted" style={{ fontSize: 12, padding: "6px 12px 0" }}>
+              Mostrando últimas {activity.length} atividades{activity.length >= 100 ? " — recarregue pra ver as mais novas" : ""}.
+            </div>
+            <div>{activity.map((it, i) => <ActRow key={i} item={it} />)}</div>
+          </>
         )
       ) : paused.length === 0 ? (
         <div className="empty">
@@ -69,6 +75,11 @@ export function MessagesView({ activity, paused }: { activity: HubActivityItem[]
         </div>
       ) : (
         <div>
+          {/* Pedro 2026-05-28: label honesto. loadPausedConversations agora
+              janela = 30 dias + cap 200 (antes era top-200 sem filtro de tempo). */}
+          <div className="muted" style={{ fontSize: 12, padding: "6px 12px 0" }}>
+            Pausadas dos últimos 30 dias · {paused.length}{paused.length >= 200 ? " (cap — pode haver mais; pausadas mais antigas ficam ocultas)" : ""}.
+          </div>
           {paused.map((row) => {
             const key = row.agent_id + ":" + row.contact_id;
             return (
