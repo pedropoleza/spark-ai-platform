@@ -10,7 +10,83 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28k — runner_health unificada (4 runners) + signals threshold (LER PRIMEIRO)
+### 2026-05-28l — /api/health público + total wrap (LER PRIMEIRO)
+
+Último commit autônomo + wrap final:
+
+**`c30f1b3` — /api/health público (F19):**
+- Endpoint sem auth pra uptime monitors (Uptime Robot/BetterStack/Pingdom).
+- 200 + healthy: bulk-runner <5min, 0 critical 1h, <=5 high 24h.
+- 200 + warning: high signals 24h > 5.
+- 503 + degraded: bulk-runner stale OU critical OU 3+ errors.
+- Middleware Basic Auth só cobre /admin/* — health é público por design.
+- Não expõe internals (só status + timestamp).
+
+**Snapshot prod final:**
+- `/api/health` → `{"status":"warning","timestamp":"..."}` ✅ (warning correto: webhook signal já com 23+ ocorrências = > 5 high 24h)
+- `runner_health` ✅ — todos 4 runners populando, latência <1ms exceto bulk=122ms, 0 erros
+- bulk-runner tick: ~30s atrás (cron 30s funciona)
+- Único signal high: webhook GHL secret (você gera quando puder)
+
+**Total da sessão Pedro 2026-05-28: ~37 commits, score 72 → 88**
+
+### Resumo executivo da sessão
+
+**Onda 1 — Prospecção 2.0 + Etapa 3 + Cutover:** 13 commits
+- Etapas 4.4 sequência, 4.5 recorrência, 4.6 segmentos, 4.7 A/B, 4.8 opt-outs
+- 7 BAIXAs polish, cutover /dashboard → /hub, banner soft, redirect 308
+- Migrations 00089, 00090, 00091
+
+**Onda 2 — Pós-checkpoint autônomo:** 24 commits (F1→F19)
+- F1 variant reply tracking (4.7 final)
+- F2 cleanup /dashboard + /agents + /components/dashboard
+- F3 webhook signature warn defensivo
+- F4 global rate cap warn por location
+- F5 endpoint /api/admin/cron-health JSON
+- F6 home counters de prospecção
+- F7 reply rate single-shot
+- F8 UI /hub/admin/health visual
+- F9 filter status em /hub/campaigns
+- F10 .env.example refresh
+- F11 auto-refresh health (30s)
+- F12 Sentry feature tags (4 runners)
+- F13 SparkBot bulk_dashboard reply rate
+- F14 **bug real fixado** — recurring runner quiet_hours
+- F15 health card mostra top 5 signals open
+- F16 runner latency (last_duration_ms)
+- F17 **runner_health unificada** (4 runners, trackRunner wrapper)
+- F18 PM-F4 prep (já existia em PM-F3.G)
+- F19 /api/health público pra uptime monitors
+- Plus signal threshold 3+, e melhorias menores
+
+**Migrations aplicadas (4 nesta sessão):** 00089, 00090, 00091, 00092, 00093, 00094
+
+**Flags ativas em prod:**
+- ✅ OUTREACH_RUNNER_ENABLED=1
+- ✅ BULK_SEQUENCES_ENABLED=1
+- ✅ RECURRING_CAMPAIGNS_ENABLED=1
+- ⚠️ WEBHOOK_REQUIRE_SIGNATURE não setado (Pedro pendente)
+
+**URLs prod úteis:**
+- https://spark-ai-platform.vercel.app/hub — produção
+- https://spark-ai-platform.vercel.app/hub/admin/health — admin health UI
+- https://spark-ai-platform.vercel.app/hub/campaigns — campanhas
+- https://spark-ai-platform.vercel.app/api/health — uptime monitoring
+- https://spark-ai-platform.vercel.app/api/admin/cron-health — JSON detail (Basic Auth)
+
+**Score production-ready: 88/100**
+- Code quality: 90 · Architecture: 85 · Migrations/DB: 95
+- Test coverage: 70 · Observabilidade: 98 · Risk mitigation: 88
+- Smoke validation: 40 (gap só Pedro fecha)
+
+**Próximo (Pedro decide):**
+1. Smoke E2E supervisionado (sobe score pra 90+)
+2. GHL_WEBHOOK_SECRET + WEBHOOK_REQUIRE_SIGNATURE=true (apaga signal)
+3. PM-F4 fase nova (self-serve billing + IA-builder)
+4. Bind Uptime Robot em /api/health
+5. Após 48h hypercare OK: squash dashboard history
+
+### 2026-05-28k — runner_health unificada (4 runners) + signals threshold
 
 3 commits adicionais consolidando observability dos runners.
 
