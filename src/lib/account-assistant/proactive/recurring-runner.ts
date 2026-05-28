@@ -26,6 +26,7 @@ import type {
   FilterExecutionContext,
 } from "@/lib/account-assistant/filter-engine";
 import { computeNextRunAt } from "./cron-evaluator";
+import { evalQuietHours, type QuietHoursConfig } from "./quiet-hours";
 
 const INSERT_BATCH = 500;
 const MAX_PER_TICK = 5; // ≤5 campaigns por tick pra não estourar maxDuration
@@ -146,7 +147,11 @@ async function fireRecurringCampaign(row: RecurringRow): Promise<FireOutcome> {
   // Helper pra atualizar last_run_at + computar próximo next_run_at.
   // Se cron-evaluator não achar próximo (cron impossível), desabilita pra
   // não ficar batendo SELECT toda vez.
-  const writeAfterRun = async (outcome: FireOutcome, jobId: string | null) => {
+  const writeAfterRun = async (
+    outcome: FireOutcome,
+    jobId: string | null,
+    auditStatus?: "created" | "skipped_no_contacts" | "skipped_outside_hours" | "failed",
+  ) => {
     const next = computeNextRunAt(row.cron_expression, row.timezone, new Date());
     const update: Record<string, unknown> = {
       last_run_at: nowIso,
@@ -164,15 +169,37 @@ async function fireRecurringCampaign(row: RecurringRow): Promise<FireOutcome> {
 
     // Audit em outreach_runs (mesma tabela reusada — recurring é "outreach
     // programado"). Útil pra UI de histórico.
+    const finalStatus = auditStatus
+      ? auditStatus
+      : outcome === "fired"
+      ? "created"
+      : outcome === "skipped"
+      ? "skipped_no_contacts"
+      : "failed";
     await supabase.from("outreach_runs").insert({
       agent_id: row.agent_id,
       location_id: row.location_id,
       bulk_job_id: jobId,
       contacts_targeted: 0, // populator atualiza job.total_contacts depois
       contacts_enqueued: 0,
-      status: outcome === "fired" ? "created" : outcome === "skipped" ? "skipped_no_contacts" : "failed",
+      status: finalStatus,
     });
   };
+
+  // F14 (Pedro 2026-05-28): respeita quiet_hours do agente. Se cron caiu
+  // durante janela noturna (ex: rep configurou 22-7 e cron é "0 23 * * *"),
+  // skip esse tick — next_run_at avança via cron-evaluator pro próximo
+  // disparo válido. Não loga 'failed' (não é erro, é design).
+  const { data: cfg } = await supabase
+    .from("agent_configs")
+    .select("quiet_hours")
+    .eq("agent_id", row.agent_id)
+    .maybeSingle();
+  const qh = (cfg?.quiet_hours as QuietHoursConfig | null) || null;
+  if (qh?.enabled && evalQuietHours(qh)) {
+    await writeAfterRun("skipped", null, "skipped_outside_hours");
+    return "skipped";
+  }
 
   // 1. Resolve location pro company_id (GHL client). Sem isso não roda.
   const { data: location } = await supabase

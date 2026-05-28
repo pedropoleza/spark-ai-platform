@@ -25,6 +25,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { generateVariation } from "./bulk-message-variator";
+import { isInQuietHours as sharedIsInQuietHours } from "./quiet-hours";
 
 const MAX_PER_TICK = 5;
 
@@ -417,61 +418,12 @@ async function markRecipientSkipped(
 }
 
 /**
- * Checa se estamos dentro do quiet_hours configurado no agent.
- * Lógica idêntica à do dispatcher.ts (mas standalone aqui pra evitar
- * import circular). Se agent_id null ou config faltando → false (sem quiet).
+ * Wrapper local — delega pra lib compartilhada `quiet-hours.ts` (Pedro F14
+ * 2026-05-28). Antes a lógica vivia duplicada inline; agora bulk-runner e
+ * recurring-runner usam o mesmo helper.
  */
 async function isInQuietHours(agentId: string | null): Promise<boolean> {
-  if (!agentId) return false;
-  const supabase = createAdminClient();
-  const { data: config } = await supabase
-    .from("agent_configs")
-    .select("quiet_hours")
-    .eq("agent_id", agentId)
-    .maybeSingle();
-  type QuietHours = {
-    enabled?: boolean;
-    timezone?: string;
-    start?: string;
-    end?: string;
-    days?: number[];
-  };
-  const qh = (config?.quiet_hours || null) as QuietHours | null;
-  if (!qh || !qh.enabled) return false;
-
-  const tz = qh.timezone || "America/New_York";
-  const start = qh.start || "22:00";
-  const end = qh.end || "07:00";
-  const days = qh.days || [0, 1, 2, 3, 4, 5, 6];
-
-  try {
-    const now = new Date();
-    const fmt = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      hour12: false,
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    const parts = fmt.formatToParts(now);
-    const get = (t: string) => parts.find((p) => p.type === t)?.value || "";
-    const weekdayMap: Record<string, number> = {
-      Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
-    };
-    const weekday = weekdayMap[get("weekday")] ?? 0;
-    if (!days.includes(weekday)) return false;
-    const hour = parseInt(get("hour")) || 0;
-    const minute = parseInt(get("minute")) || 0;
-    const nowMin = hour * 60 + minute;
-    const [sH, sM] = start.split(":").map(Number);
-    const [eH, eM] = end.split(":").map(Number);
-    const startMin = sH * 60 + sM;
-    const endMin = eH * 60 + eM;
-    if (startMin > endMin) return nowMin >= startMin || nowMin <= endMin;
-    return nowMin >= startMin && nowMin <= endMin;
-  } catch {
-    return false;
-  }
+  return sharedIsInQuietHours(agentId);
 }
 
 /**
