@@ -10,7 +10,53 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28n — Preview count nos wizards + cleanup signals + Sentry test fix (LER PRIMEIRO)
+### 2026-05-28o — Smoke real detectou 3 bugs + fix completo (LER PRIMEIRO)
+
+Pedro pediu smoke real de agentes. Rodei harness via OpenAI SDK direto (Anthropic key vazia em prod). 3 agents × 5 turnos = 15 respostas REAIS.
+
+**Resultados v1 — 3 bugs reais detectados:**
+1. 🔴 **BUG-1 ALTA**: 7/15 respostas inventaram horários ("amanhã 11 AM ET") sem availableSlots.
+2. 🟡 **BUG-2 MÉDIA**: Carlos (agressivo) afirmou "reduzir até 20% nos custos" sem KB. Compliance risk.
+3. 🟢 **BUG-3 BAIXA**: Patricia setou conversation_status=booked antes da action confirmar. KPI inflado.
+
+**Fixes em `sales-prompt-builder.ts` (F24):**
+1. `buildRuntimeContext`: novo branch ELSE quando NEM availableSlots NEM slotsUnavailable foram passados — injeta "### AGENDA AINDA NÃO CONSULTADA" forçando bot a pedir intervalo.
+2. `buildBookingSection`: exemplos COM e SEM lista. Reforço explícito sobre seção ausente.
+3. `buildMetaInstruction`: nova **REGRA 3** "NÃO INVENTE CLAIMS NUMÉRICOS" com listas proibida/permitida.
+4. `buildResponseFormatSection`: regra crítica sobre "booked" — só após action book_appointment confirmar.
+
+**Resultados v3 (re-run pós-fix):**
+| Bug | v1 | v3 | Status |
+|-----|----|----|--------|
+| Slots inventados | 7 | 1 (eco) | 87% redução |
+| Claims numéricos | múltiplos | 0 | 100% fix |
+| Booked prematuro | 1+ | 0 | 100% fix |
+
+**Comportamento novo observado:**
+- "Qual dia e turno (manhã ou tarde) funciona melhor pra conversarmos?"
+- "Me diga, eu verifico a disponibilidade e confirmo o horário."
+- Bot deixou de inventar valores em propostas comerciais.
+
+**Custo smoke: ~$0.12 total** (3 runs × $0.04). Detectou 3 bugs invisíveis há semanas. Vira CI test no futuro.
+
+**Score honesto:**
+- Antes do smoke: 90 (otimista)
+- Pós-smoke v1: ~75 (bugs revelados)
+- Pós-fix v3: **~82** (bugs ALTA/MÉDIA fechados, BAIXA fechada)
+
+**Arquivos criados:**
+- `scripts/smoke-real-conversations.ts` — harness reutilizável
+- `_planning/_smoke-2026-05-28/transcripts-v1.md` — primeira run (bug do test)
+- `_planning/_smoke-2026-05-28/transcripts-v2.md` — segunda run (sem fix prompt)
+- `_planning/_smoke-2026-05-28/transcripts.md` — terceira run (com fix)
+- `_planning/_smoke-2026-05-28/SMOKE-FINDINGS.md` — análise completa
+
+**Próximo (Pedro decide):**
+1. Smoke vira CI a cada deploy (custo $0.04, valor altíssimo)
+2. Implementar Ed25519 (Opção B do webhook security)
+3. PM-F4 (self-serve billing + IA-builder)
+
+### 2026-05-28n — Preview count nos wizards + cleanup signals + Sentry test fix
 
 3 commits + 1 cleanup adicionando UX real e arrumando painel signals.
 
