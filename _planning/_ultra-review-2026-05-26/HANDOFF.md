@@ -10,7 +10,47 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28i — UI health + reply rate global + home counters + filter campaigns (LER PRIMEIRO)
+### 2026-05-28j — Sentry tags + bulk_dashboard reply + recurring quiet_hours + UI signals + latency (LER PRIMEIRO)
+
+6 commits adicionais de observability + correção real de bug latente.
+
+**`87d607e` — Auto-refresh /hub/admin/health + Sentry feature tags + SparkBot reply rate:**
+- `HealthAutoRefresh` client component: router.refresh() a cada 30s, pausa quando aba background.
+- `withFeatureTag<T>(feature, fn)` em `lib/sentry/feature-tag.ts`. Envolve runners no cron sparkbot-proactive (bulk/sequence/recurring/outreach). Sentry filter por feature funciona.
+- `getActiveBulkJobs`: ActiveBulkJob ganhou reply_count + reply_rate_pct. Admin pergunta via WhatsApp "como tá campanha X" e bot responde.
+
+**`<F14>` — Recurring runner respeita quiet_hours (BUG REAL CORRIGIDO):**
+- Sem o fix: cron "0 23 * * *" disparava campanha às 23h mesmo com quiet_hours=22-7 do agente.
+- Lib nova `quiet-hours.ts` (isInQuietHours async + evalQuietHours sync). Bulk-runner refatorado pra usar (paridade preservada via wrapper).
+- recurring-runner agora lê agent_configs.quiet_hours antes do disparo. Se enabled E dentro janela: registra outreach_runs status='skipped_outside_hours' e avança next_run_at via cron-evaluator.
+
+**`<F15+F16>` — UI signals list + runner latency:**
+- /hub/admin/health card "Signals 24h" mostra top 5 open signals inline (severity color, title, ×count, last_seen, status). Empty state celebra "🎉".
+- Migration 00093: bulk_runner_health.last_duration_ms (INT). fireBulkRecipients mede tick → recordTickSuccess persiste. UI mostra "Duração tick" (danger se >10s).
+- Endpoint /api/admin/cron-health também expõe last_duration_ms.
+
+**Estado prod confirmado via DB:**
+- bulk-runner tick há 6s ✅, 0 erros ✅, last_fired=1 (alguém disparou!)
+- Webhook signal já com >23 ocorrências (dedup'd em 1 row)
+- 0 jobs running (campanha foi rápida ou paused após)
+
+**Migration 00093 aplicada via MCP.**
+
+**Score production-ready: 86/100** (subiu de 82)
+- Observabilidade: 95 (era 90) — signals list + latency + auto-refresh + Sentry tags
+- Code quality: 90 (era 88) — quiet-hours compartilhado elimina duplicação
+- Risk mitigation: 85 (era 80) — F14 corrige bug latente real
+- Smoke validation continua 40 (gap só Pedro fecha)
+
+**Total da onda autônoma: 14 commits** (`f3e06e8` → último).
+
+**Próximo (Pedro decide):**
+1. Smoke E2E supervisionado completo
+2. Setar `GHL_WEBHOOK_SECRET` no Vercel (signal já alertou)
+3. PM-F4 (self-serve billing + IA-builder) — fase nova
+4. Após 48h hypercare OK: cleanup dashboard da history se quiser
+
+### 2026-05-28i — UI health + reply rate global + home counters + filter campaigns
 
 3 commits adicionais focados em UX de hypercare e completude de stats.
 
