@@ -68,6 +68,8 @@ interface BulkJobRow {
 export async function fireBulkRecipients(): Promise<BulkRunResult> {
   const supabase = createAdminClient();
   const nowIso = new Date().toISOString();
+  // F16 (Pedro 2026-05-28): timer pro last_duration_ms.
+  const tickStartedAt = Date.now();
 
   // F1.5 Pedro 2026-05-16 (caso Gustavo): heartbeat upfront — registra que
   // runner está vivo MESMO QUE não ache recipients pendentes. Antes, sem
@@ -321,33 +323,42 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
 
   // F1.5 Pedro 2026-05-16: registra resultado completo no heartbeat.
   // Útil pro painel admin ver throughput em tempo real.
-  await recordTickSuccess({
-    fired,
-    failed,
-    skipped,
-    jobs_completed: jobsCompleted,
-  });
+  // F16 (Pedro 2026-05-28): inclui last_duration_ms.
+  await recordTickSuccess(
+    {
+      fired,
+      failed,
+      skipped,
+      jobs_completed: jobsCompleted,
+    },
+    Date.now() - tickStartedAt,
+  );
 
   return { fired, failed, skipped, jobs_completed: jobsCompleted };
 }
 
 /**
  * F1.5: registra tick bem-sucedido + reseta error streak.
+ * F16 (Pedro 2026-05-28): durationMs opcional pra last_duration_ms.
  */
-async function recordTickSuccess(result: BulkRunResult): Promise<void> {
+async function recordTickSuccess(result: BulkRunResult, durationMs?: number): Promise<void> {
   const supabase = createAdminClient();
   try {
+    const update: Record<string, unknown> = {
+      last_tick_at: new Date().toISOString(),
+      last_jobs_processed: result.jobs_completed,
+      last_fired: result.fired,
+      last_failed: result.failed,
+      last_skipped: result.skipped,
+      consecutive_errors: 0,
+      updated_at: new Date().toISOString(),
+    };
+    if (typeof durationMs === "number" && durationMs >= 0) {
+      update.last_duration_ms = Math.round(durationMs);
+    }
     await supabase
       .from("bulk_runner_health")
-      .update({
-        last_tick_at: new Date().toISOString(),
-        last_jobs_processed: result.jobs_completed,
-        last_fired: result.fired,
-        last_failed: result.failed,
-        last_skipped: result.skipped,
-        consecutive_errors: 0,
-        updated_at: new Date().toISOString(),
-      })
+      .update(update)
       .eq("id", 1);
   } catch (err) {
     console.warn("[bulk-runner] recordTickSuccess falhou:", err);

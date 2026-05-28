@@ -47,6 +47,7 @@ async function loadHealth() {
     outreachRuns24h,
     signalsHigh24h,
     signalsCritical24h,
+    topSignals,
   ] = await Promise.all([
     supabase.from("bulk_runner_health").select("*").eq("id", 1).maybeSingle(),
     supabase.from("bulk_message_jobs").select("id", { count: "exact", head: true }).eq("status", "running"),
@@ -66,6 +67,14 @@ async function loadHealth() {
     supabase.from("admin_signals").select("id", { count: "exact", head: true })
       .eq("severity", "critical")
       .gte("last_seen_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+    // F15: top 5 signals high/critical pra mostrar diretamente.
+    supabase.from("admin_signals")
+      .select("id, type, severity, title, occurrence_count, last_seen_at, status")
+      .in("severity", ["high", "critical"])
+      .neq("status", "done")
+      .neq("status", "wontfix")
+      .order("last_seen_at", { ascending: false })
+      .limit(5),
   ]);
 
   const lastTickAt = bulkHealth.data?.last_tick_at as string | null;
@@ -86,6 +95,7 @@ async function loadHealth() {
       last_fired: (bulkHealth.data?.last_fired as number) ?? 0,
       last_failed: (bulkHealth.data?.last_failed as number) ?? 0,
       last_skipped: (bulkHealth.data?.last_skipped as number) ?? 0,
+      last_duration_ms: (bulkHealth.data?.last_duration_ms as number | null) ?? null,
       last_error: bulkHealth.data?.last_error as string | null,
     },
     campaigns: {
@@ -101,6 +111,16 @@ async function loadHealth() {
     signals: {
       high_24h: signalsHigh24h.count ?? 0,
       critical_24h: signalsCritical24h.count ?? 0,
+      // F15: lista direta dos top open.
+      top: (topSignals.data || []) as Array<{
+        id: string;
+        type: string;
+        severity: string;
+        title: string;
+        occurrence_count: number;
+        last_seen_at: string;
+        status: string;
+      }>,
     },
   };
 }
@@ -188,6 +208,12 @@ export default async function HealthPage() {
             value={fmtAgo(h.bulk.tick_age_seconds)}
             danger={h.bulk.tick_age_seconds > 300 || h.bulk.tick_age_seconds < 0}
           />
+          {/* F16: latência do último tick — flag warning se > 10s */}
+          <Stat
+            label="Duração tick"
+            value={h.bulk.last_duration_ms !== null ? `${h.bulk.last_duration_ms}ms` : "—"}
+            danger={h.bulk.last_duration_ms !== null && h.bulk.last_duration_ms > 10_000}
+          />
           <Stat label="Erros consecutivos" value={String(h.bulk.consecutive_errors)} danger={h.bulk.consecutive_errors >= 3} />
           <Stat label="Último envio (fired)" value={String(h.bulk.last_fired)} />
           <Stat label="Falhas" value={String(h.bulk.last_failed)} danger={h.bulk.last_failed > 0} />
@@ -227,9 +253,47 @@ export default async function HealthPage() {
             </a>
           </span>
         </div>
-        <div className="card-body" style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <Stat label="High severity" value={String(h.signals.high_24h)} danger={h.signals.high_24h > 5} />
-          <Stat label="Critical" value={String(h.signals.critical_24h)} danger={h.signals.critical_24h > 0} />
+        <div className="card-body" style={{ padding: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: h.signals.top.length > 0 ? 16 : 0 }}>
+            <Stat label="High severity" value={String(h.signals.high_24h)} danger={h.signals.high_24h > 5} />
+            <Stat label="Critical" value={String(h.signals.critical_24h)} danger={h.signals.critical_24h > 0} />
+          </div>
+          {h.signals.top.length > 0 && (
+            <div className="col" style={{ gap: 8 }}>
+              <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: ".05em" }}>
+                Últimos open
+              </div>
+              {h.signals.top.map((s) => (
+                <div
+                  key={s.id}
+                  style={{
+                    padding: "8px 12px",
+                    background: s.severity === "critical" ? "#fee2e2" : "#fef3c7",
+                    borderLeft: `3px solid ${s.severity === "critical" ? "#ef4444" : "#f59e0b"}`,
+                    borderRadius: 4,
+                    fontSize: 12.5,
+                  }}
+                >
+                  <div className="row between" style={{ alignItems: "flex-start", gap: 8 }}>
+                    <span style={{ fontWeight: 500, wordBreak: "break-word", flex: 1, minWidth: 0 }}>
+                      {s.title}
+                    </span>
+                    <span className="muted tnum" style={{ fontSize: 11, flexShrink: 0 }}>
+                      ×{s.occurrence_count}
+                    </span>
+                  </div>
+                  <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+                    {s.severity} · {new Date(s.last_seen_at).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} · {s.status}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {h.signals.top.length === 0 && h.signals.high_24h === 0 && h.signals.critical_24h === 0 && (
+            <div className="muted" style={{ fontSize: 12, fontStyle: "italic", textAlign: "center", marginTop: 8 }}>
+              Nenhum signal open. 🎉
+            </div>
+          )}
         </div>
       </div>
 

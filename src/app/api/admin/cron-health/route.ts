@@ -102,6 +102,7 @@ export async function GET() {
         last_fired: bulkHealth.data?.last_fired ?? 0,
         last_failed: bulkHealth.data?.last_failed ?? 0,
         last_skipped: bulkHealth.data?.last_skipped ?? 0,
+        last_duration_ms: bulkHealth.data?.last_duration_ms ?? null,
         last_error: bulkHealth.data?.last_error ?? null,
         last_error_at: bulkHealth.data?.last_error_at ?? null,
       },
