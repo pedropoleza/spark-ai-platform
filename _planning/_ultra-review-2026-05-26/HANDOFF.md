@@ -10,6 +10,72 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
+### 2026-05-28d — Etapas 1+2+4.1+4.3 fechadas; Prospecção 2.0 infra completa (LER PRIMEIRO)
+
+Continuação do bloco "c" abaixo. Sessão fechou 14 commits totais.
+
+**Etapa 4.1 INTEIRA (campanhas, ciclo completo):**
+- `afa01d3` (A): listagem `/hub/campaigns` (Megaphone na sidebar, cards
+  com status pill colorida, progress bar, preview, batch lookup de
+  agent_name, HUB_LIST_LIMITS.campaigns=50).
+- `0156bf9` (B): wizard 3-step (agente · filtro+mensagem · revisar) +
+  `POST /api/hub/campaigns` (zod-validated, anti-IDOR via scope check
+  location_id, resolve rep_id via identifyRepByGhlUser, INSERT bulk_message_
+  jobs em status='paused'). Decisão pragmática documentada: filtro só por
+  tag no MVP. CTA "Nova campanha" funcional.
+- `828ef29` (C): detail page `/hub/campaigns/[id]` com pause/resume/cancel
+  (PATCH /api/hub/campaigns/[id] com transições válidas + cancellation
+  confirm dialog) + scope check anti-IDOR. Banner azul quando paused
+  explicando next step. Linhas da listagem viraram <Link> pro detail.
+
+**Etapa 4.2 (UI outreach config no detail-view):** essencialmente já
+estava feita pelo trabalho da Etapa 2.3 (CatOutreach + footgun warning).
+Sem commit dedicado.
+
+**Etapa 4.3 (Runner outreach — gap CRÍTICO) + Infra 4.4-4.8:**
+- `0ef94d5`: migration `00089_prospeccao_v2_infra` aplicada via MCP com
+  4 tabelas novas (outreach_runs, bulk_message_sequences, bulk_message_
+  sequence_state, recurring_campaigns, outreach_optouts) + 2 colunas
+  novas (bulk_message_jobs.ab_variants JSONB, bulk_message_recipients.
+  variant_id INT). RLS deny-anon, indexes cron-friendly.
+- outreach-runner.ts com 3 funções: `runOutreachForAgent(agentId)`
+  (cooldown 24h, cria bulk job em paused), `listAgentsWithOutreachEnabled()`
+  (cap 200/tick), `processOutreachTick()` (entry pro cron, flag-gated em
+  OUTREACH_RUNNER_ENABLED=1; sem flag = no-op imediato).
+- Cron sparkbot-proactive ganhou chamada `processOutreachTick` com 3
+  fields no response (outreach_scanned/created/errors).
+- `.env.example` documenta a flag.
+
+**Pendente do PLANO (status REAL pós-sessão):**
+- **Etapa 3 (7 BAIXAs):** pulada nesta sessão — polish puro, follow-up
+  rastreado. Lista no PLANO §5 (wizard quiet hours, KPI period clarity,
+  billing period customizável, agents list filtro template, embed polling
+  silent fail, scheduling prefs duration órfã, test chat / error.tsx
+  context).
+- **4.4-4.8 (UI/runner específicos):** infraestrutura de DB COMPLETA;
+  falta runner pra sequência + recorrência + segmentos dinâmicos +
+  apply variantes na população + hook keyword opt-out. Cada um vai precisar
+  de seu próprio runtime + wire no cron + UI no wizard de campanhas.
+- **Etapa 5 (cutover PM-F3.I):** pendente. Antes de cutover: ligar runners
+  conscientemente (smoke supervisionado), validar acessos, decidir
+  redirect de /dashboard.
+
+**ATIVAÇÃO DO OUTREACH RUNNER (👤 Pedro, quando quiser):**
+1. Adicionar `OUTREACH_RUNNER_ENABLED=1` no Vercel (production env).
+2. Criar 1 agente sales/recruitment/custom de teste em location de
+   teste com outreach_config preenchido (tag, opening_message).
+3. Esperar 5 min (próximo tick do cron sparkbot-proactive).
+4. Conferir `outreach_runs` table — deve aparecer 1 row com status='created'
+   + bulk_job_id setado.
+5. Conferir `/hub/campaigns` — bulk_message_job aparece em status='paused'.
+6. Ativar via UI (Iniciar) ou SparkBot ("iniciar campanha &lt;label&gt;").
+7. Monitorar 24h. Se OK, ligar pra todas as locations.
+
+**Decisões pendentes do PLANO (👤 Pedro):** ai_model editável já aplicado
+(D1=A). D2-D5 (tz recorrente, keywords opt-out custom, ratio A/B, bulk
+pra rep) ainda em aberto; aplicáveis quando a UI/runner correspondente
+chegar — defaults documentados no PLANO §8.
+
 ### 2026-05-28c — Etapas 1+2 do plano FECHADAS, Etapa 4 (Prospecção 2.0) em curso (LER PRIMEIRO)
 
 Continuação direta da auditoria/plano (2026-05-28b abaixo). Executou Etapas 0,
