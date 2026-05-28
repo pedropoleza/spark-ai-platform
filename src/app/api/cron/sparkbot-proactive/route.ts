@@ -7,6 +7,7 @@ import { processOutreachTick } from "@/lib/account-assistant/proactive/outreach-
 import { processSequenceSteps } from "@/lib/account-assistant/proactive/sequence-runner";
 import { processRecurringTick } from "@/lib/account-assistant/proactive/recurring-runner";
 import { withFeatureTag } from "@/lib/sentry/feature-tag";
+import { trackRunner } from "@/lib/account-assistant/proactive/runner-health";
 import { dispatchRule } from "@/lib/account-assistant/proactive/dispatcher";
 import { pollDeliveryStatuses } from "@/lib/account-assistant/proactive/delivery-status-poller";
 import { GHLClient } from "@/lib/ghl/client";
@@ -192,7 +193,9 @@ export async function GET(request: NextRequest) {
   // pro step current+1 (com message_template_override do step). Bulk-runner
   // do tick seguinte dispara. Flag-gated (BULK_SEQUENCES_ENABLED=1, default
   // OFF) — sem flag = no-op imediato.
-  const sequenceResult = await withFeatureTag("sequence-runner", () => processSequenceSteps()).catch((err) => {
+  const sequenceResult = await withFeatureTag("sequence-runner", () =>
+    trackRunner("sequence-runner", () => processSequenceSteps()),
+  ).catch((err) => {
     console.warn("[cron] sequence runner failed:", err instanceof Error ? err.message : err);
     return { advanced: 0, completed: 0, failed: 1, skipped_paused_job: 0 };
   });
@@ -200,7 +203,9 @@ export async function GET(request: NextRequest) {
   // Processa fila de disparo em massa (bulk_message_recipients pending).
   // MAX_PER_TICK=5 dentro do runner — pra job de 100 contatos a 90s drip,
   // praticamente sempre processa 0-1 por tick exceto após pausa/quiet_hours.
-  const bulkResult = await withFeatureTag("bulk-runner", () => fireBulkRecipients());
+  const bulkResult = await withFeatureTag("bulk-runner", () =>
+    trackRunner("bulk-runner", () => fireBulkRecipients()),
+  );
 
   // F1.5 Pedro 2026-05-16 (caso Gustavo): checa se há jobs RUNNING com
   // recipients pending mas runner NÃO está enviando há > 5min. Antes,
@@ -236,7 +241,9 @@ export async function GET(request: NextRequest) {
   // (OUTREACH_RUNNER_ENABLED=1). Sem a flag = no-op imediato. Quando ativo,
   // varre agents lead-facing com outreach_config.enabled, respeita cooldown 24h,
   // cria bulk_message_jobs em status='paused' (admin ativa via UI ou SparkBot).
-  const outreachResult = await withFeatureTag("outreach-runner", () => processOutreachTick()).catch((err) => {
+  const outreachResult = await withFeatureTag("outreach-runner", () =>
+    trackRunner("outreach-runner", () => processOutreachTick()),
+  ).catch((err) => {
     console.warn("[cron] outreach failed:", err instanceof Error ? err.message : err);
     return { scanned: 0, created: 0, errors: 1 };
   });
@@ -245,7 +252,9 @@ export async function GET(request: NextRequest) {
   // (RECURRING_CAMPAIGNS_ENABLED=1). Pra cada recurring_campaigns enabled
   // com next_run_at <= now, cria bulk_message_job filho (já running) +
   // popula recipients + computa próximo next_run_at no timezone do agente.
-  const recurringResult = await withFeatureTag("recurring-runner", () => processRecurringTick()).catch((err) => {
+  const recurringResult = await withFeatureTag("recurring-runner", () =>
+    trackRunner("recurring-runner", () => processRecurringTick()),
+  ).catch((err) => {
     console.warn("[cron] recurring failed:", err instanceof Error ? err.message : err);
     return { scanned: 0, fired: 0, skipped: 0, errors: 1 };
   });

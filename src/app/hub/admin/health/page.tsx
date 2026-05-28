@@ -48,6 +48,7 @@ async function loadHealth() {
     signalsHigh24h,
     signalsCritical24h,
     topSignals,
+    runnersHealth,
   ] = await Promise.all([
     supabase.from("bulk_runner_health").select("*").eq("id", 1).maybeSingle(),
     supabase.from("bulk_message_jobs").select("id", { count: "exact", head: true }).eq("status", "running"),
@@ -75,6 +76,10 @@ async function loadHealth() {
       .neq("status", "wontfix")
       .order("last_seen_at", { ascending: false })
       .limit(5),
+    // F17: health unificada por runner.
+    supabase.from("runner_health")
+      .select("runner_name, last_tick_at, last_duration_ms, last_status, consecutive_errors, last_error, last_payload")
+      .order("runner_name", { ascending: true }),
   ]);
 
   const lastTickAt = bulkHealth.data?.last_tick_at as string | null;
@@ -122,6 +127,15 @@ async function loadHealth() {
         status: string;
       }>,
     },
+    runners: (runnersHealth.data || []) as Array<{
+      runner_name: string;
+      last_tick_at: string | null;
+      last_duration_ms: number | null;
+      last_status: string;
+      consecutive_errors: number;
+      last_error: string | null;
+      last_payload: Record<string, unknown> | null;
+    }>,
   };
 }
 
@@ -194,12 +208,76 @@ export default async function HealthPage() {
         )}
       </div>
 
-      {/* Bulk runner */}
+      {/* F17: Runners unificados (todos os 4) */}
+      {h.runners.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-hd">
+            <h3>Runners</h3>
+            <span className="muted" style={{ fontSize: 12 }}>
+              Tick a cada 30s — sparkbot-proactive
+            </span>
+          </div>
+          <div className="card-body" style={{ padding: 0 }}>
+            <table style={{ width: "100%", fontSize: 12.5, borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "var(--surface-2)" }}>
+                  <th style={{ textAlign: "left", padding: "8px 12px", fontWeight: 500 }}>Runner</th>
+                  <th style={{ textAlign: "left", padding: "8px 12px", fontWeight: 500 }}>Status</th>
+                  <th style={{ textAlign: "right", padding: "8px 12px", fontWeight: 500 }}>Tick</th>
+                  <th style={{ textAlign: "right", padding: "8px 12px", fontWeight: 500 }}>Duração</th>
+                  <th style={{ textAlign: "right", padding: "8px 12px", fontWeight: 500 }}>Errs</th>
+                  <th style={{ textAlign: "left", padding: "8px 12px", fontWeight: 500 }}>Último payload</th>
+                </tr>
+              </thead>
+              <tbody>
+                {h.runners.map((r) => {
+                  const tickAge = r.last_tick_at
+                    ? Math.round((Date.now() - new Date(r.last_tick_at).getTime()) / 1000)
+                    : -1;
+                  const statusColor =
+                    r.last_status === "error" ? "#ef4444" :
+                    r.last_status === "partial" ? "#f59e0b" :
+                    r.last_status === "no_op" ? "#94a3b8" :
+                    "#10b981";
+                  const payloadSummary = r.last_payload
+                    ? Object.entries(r.last_payload as Record<string, unknown>)
+                        .filter(([, v]) => typeof v === "number" && v > 0)
+                        .map(([k, v]) => `${k}=${v}`)
+                        .join(", ") || "—"
+                    : "—";
+                  return (
+                    <tr key={r.runner_name} style={{ borderTop: "1px solid var(--line)" }}>
+                      <td style={{ padding: "10px 12px", fontFamily: "monospace", fontSize: 12 }}>{r.runner_name}</td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <span style={{ color: statusColor, fontWeight: 500 }}>● {r.last_status}</span>
+                      </td>
+                      <td className="tnum" style={{ padding: "10px 12px", textAlign: "right" }}>
+                        {tickAge < 0 ? "nunca" : tickAge < 60 ? `${tickAge}s` : `${Math.round(tickAge / 60)}min`}
+                      </td>
+                      <td className="tnum" style={{ padding: "10px 12px", textAlign: "right" }}>
+                        {r.last_duration_ms !== null ? `${r.last_duration_ms}ms` : "—"}
+                      </td>
+                      <td className="tnum" style={{ padding: "10px 12px", textAlign: "right", color: r.consecutive_errors >= 3 ? "#ef4444" : undefined }}>
+                        {r.consecutive_errors}
+                      </td>
+                      <td className="muted" style={{ padding: "10px 12px", fontSize: 11, fontFamily: "monospace", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {payloadSummary}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk runner (legacy) */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card-hd">
-          <h3>Bulk-runner</h3>
+          <h3>Bulk-runner (heartbeat)</h3>
           <span className="muted" style={{ fontSize: 12 }}>
-            Tick a cada 30s — sparkbot-proactive
+            Singleton legado — last_tick_at, fired/failed/skipped
           </span>
         </div>
         <div className="card-body" style={{ padding: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 16 }}>
