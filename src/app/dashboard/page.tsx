@@ -166,6 +166,42 @@ export default function DashboardPage() {
       title="Hub de Agentes"
       subtitle="Configure e gerencie seus agentes de IA"
     >
+      {/* Etapa 5 prep (Pedro 2026-05-28): banner soft pra avisar do novo hub.
+          Não bloqueia — só sinaliza. Cutover hard (rewrite /dashboard → /hub)
+          fica como follow-up até smoke supervisionado das flags ativadas. */}
+      <div
+        style={{
+          marginBottom: 16,
+          padding: "10px 14px",
+          background: "var(--primary-soft, #DBEAFE)",
+          border: "1px solid var(--primary, #1675F2)",
+          borderRadius: 6,
+          display: "flex",
+          gap: 10,
+          alignItems: "center",
+          flexWrap: "wrap",
+        }}
+      >
+        <span style={{ fontSize: 13, color: "var(--primary-ink, #1E3A8A)" }}>
+          ✨ <strong>Novo hub disponível!</strong> A nova experiência tem campanhas (sequência, recorrência, A/B), opt-outs automáticos, filtros avançados de agente e billing por período.
+        </span>
+        <a
+          href="/hub"
+          style={{
+            marginLeft: "auto",
+            padding: "4px 12px",
+            background: "var(--primary, #1675F2)",
+            color: "#fff",
+            borderRadius: 4,
+            fontSize: 12.5,
+            fontWeight: 500,
+            textDecoration: "none",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Abrir novo hub →
+        </a>
+      </div>
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           <Skeleton className="h-48" />
