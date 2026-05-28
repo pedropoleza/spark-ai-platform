@@ -105,6 +105,28 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
         );
       }
     })();
+
+    // Etapa 4.8 (Pedro 2026-05-28): detector de opt-out (STOP/PARAR/etc).
+    // Match estrito por palavra inteira. Insere em outreach_optouts. Runner
+    // do bulk-message-runner depois pula recipients com opt-out ativo.
+    if (rawBody && rawBody.trim().length > 0 && rawBody.length < 200) {
+      (async () => {
+        try {
+          const { processInboundForOptOut } = await import("./proactive/optout-detector");
+          const r = await processInboundForOptOut(hubLocationId, contactId, rawBody);
+          if (r.detected) {
+            console.log(
+              `[Sparkbot] opt-out detectado: keyword='${r.matched_keyword}' source=${r.source} contato=${contactId} recorded=${r.recorded}`,
+            );
+          }
+        } catch (err) {
+          console.warn(
+            "[Sparkbot] opt-out detector falhou:",
+            err instanceof Error ? err.message.slice(0, 150) : err,
+          );
+        }
+      })();
+    }
   }
 
   // Idempotency (fix audit C3 + concurrent retry):

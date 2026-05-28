@@ -185,6 +185,31 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
   let skipped = 0;
   const touchedJobIds = new Set<string>();
 
+  // Etapa 4.8: pre-check opt-outs em batch antes do loop. Reduz N queries
+  // pra 1 LEFT-JOIN-like via filterOutOptOutContacts (1 query per location).
+  // Agrupa por location_id pra minimizar round-trips.
+  const optedOutByLocation = new Map<string, Set<string>>();
+  try {
+    const { filterOutOptOutContacts } = await import("./optout-detector");
+    const byLoc = new Map<string, string[]>(); // location_id → contact_ids
+    for (const r of claimed) {
+      const job = jobsById.get(r.job_id);
+      if (!job) continue;
+      const arr = byLoc.get(job.location_id) || [];
+      arr.push(r.contact_id);
+      byLoc.set(job.location_id, arr);
+    }
+    for (const [loc, ids] of byLoc.entries()) {
+      const optedSet = await filterOutOptOutContacts(loc, ids);
+      optedOutByLocation.set(loc, optedSet);
+    }
+  } catch (err) {
+    console.warn(
+      "[bulk-runner] opt-out pre-check falhou (não-fatal, segue sem skip):",
+      err instanceof Error ? err.message.slice(0, 150) : err,
+    );
+  }
+
   for (const recipient of claimed) {
     const job = jobsById.get(recipient.job_id);
     if (!job) {
@@ -194,6 +219,14 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
       continue;
     }
     touchedJobIds.add(job.id);
+
+    // Etapa 4.8: skip opt-outs (set pre-computado acima).
+    const optedSet = optedOutByLocation.get(job.location_id);
+    if (optedSet?.has(recipient.contact_id)) {
+      await markRecipientSkipped(recipient.id, "contact_opted_out");
+      skipped++;
+      continue;
+    }
 
     // Fix C4 (review 2026-05-16): priority queue claim (F4.1) já filtra
     // paused/cancelled/completed/failed no pre-select via inner JOIN com

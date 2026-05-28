@@ -16,7 +16,7 @@ import {
   loadHubRecurringCampaigns,
   type HubCampaignRow,
 } from "@/lib/hub/data";
-import { Megaphone, Plus, Repeat } from "lucide-react";
+import { Megaphone, Plus, Repeat, Ban } from "lucide-react";
 import { RecurringCampaignRow } from "./recurring-row";
 
 export const dynamic = "force-dynamic";
@@ -79,6 +79,9 @@ export default async function CampaignsPage() {
             status='paused'; admin ativa via SparkBot chat até Commit C trazer
             botões pause/resume/cancel direto no detail. */}
         <div className="row" style={{ gap: 8 }}>
+          <Link href="/hub/campaigns/opt-outs" className="btn btn--quiet btn--sm" title="Contatos opt-out">
+            <Ban size={14} /> Opt-outs
+          </Link>
           <Link href="/hub/campaigns/recurring/new" className="btn btn--ghost btn--sm">
             <Repeat size={14} /> Recorrente
           </Link>
