@@ -41,6 +41,7 @@ export async function GET() {
     outreachRuns24h,
     signalsHigh24h,
     signalsCritical24h,
+    runnersHealth,
   ] = await Promise.all([
     supabase.from("bulk_runner_health").select("*").eq("id", 1).maybeSingle(),
     supabase.from("bulk_message_jobs").select("id", { count: "exact", head: true }).eq("status", "running"),
@@ -69,6 +70,10 @@ export async function GET() {
       .select("id", { count: "exact", head: true })
       .eq("severity", "critical")
       .gte("last_seen_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+    // F17: runner_health unificada.
+    supabase
+      .from("runner_health")
+      .select("runner_name, last_tick_at, last_duration_ms, last_status, consecutive_errors, last_payload"),
   ]);
 
   // Status de saúde global
@@ -121,6 +126,7 @@ export async function GET() {
         high_24h: signalsHigh24h.count ?? 0,
         critical_24h: signalsCritical24h.count ?? 0,
       },
+      runners: runnersHealth.data || [],
       hints: {
         webhook_security: flags.has_ghl_webhook_secret && flags.WEBHOOK_REQUIRE_SIGNATURE
           ? "✅ GHL signature obrigatória"

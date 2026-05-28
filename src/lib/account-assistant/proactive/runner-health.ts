@@ -100,6 +100,23 @@ export async function trackRunner<T>(
         },
         { onConflict: "runner_name" },
       );
+    // 3+ erros seguidos = admin_signal. Fingerprint dedup colapsa em 1 row
+    // por runner. Pedro vê no /hub/admin/health card de signals.
+    if (streak >= 3) {
+      try {
+        const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+        recordSignalAsync({
+          type: "error",
+          source: "bot_auto",
+          severity: "high",
+          title: `${runnerName}: ${streak} erros consecutivos`,
+          description: errMsg.slice(0, 500),
+          metadata: { runner: runnerName, consecutive_errors: streak },
+        });
+      } catch {
+        /* não-fatal */
+      }
+    }
     // Re-lança pra fluxo do cron tratar (catch upstream)
     throw err;
   }
