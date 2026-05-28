@@ -180,5 +180,37 @@ export async function processOutreachTick(): Promise<{ scanned: number; created:
     else if (res.status === "created") created++;
     else if (res.status === "failed") errors++;
   }
+
+  // Pedro 2026-05-28 (footgun de capacidade): alerta admin se uma location
+  // tem >5 agentes lead-facing com outreach simultâneo. Cada um dispara
+  // ~100 msgs/dia por default → 5+ agentes = 500+ msgs/dia/location sem
+  // governance global. Fingerprint dedup em admin_signals colapsa em 1 row
+  // por location (não inunda).
+  if (agents.length > 0) {
+    const byLocation = new Map<string, number>();
+    for (const a of agents) {
+      byLocation.set(a.location_id, (byLocation.get(a.location_id) || 0) + 1);
+    }
+    for (const [locId, count] of byLocation.entries()) {
+      if (count > 5) {
+        try {
+          const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+          recordSignalAsync({
+            type: "idea",
+            source: "system",
+            severity: "medium",
+            title: `Location ${locId.slice(0, 8)} tem ${count} agentes outreach ativos`,
+            description:
+              `Cada agente tem cap próprio (default 100/dia). Total potencial: ${count * 100} msgs/dia. ` +
+              `Considere consolidar ou setar caps menores em agent_configs.outreach_config.daily_cap.`,
+            metadata: { location_id: locId, agents_count: count, gap: "global_rate_governance" },
+          });
+        } catch {
+          /* não-fatal */
+        }
+      }
+    }
+  }
+
   return { scanned: agents.length, created, errors };
 }
