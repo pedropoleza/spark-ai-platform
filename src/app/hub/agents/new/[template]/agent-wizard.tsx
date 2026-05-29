@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { ChevronLeft, Send, Sparkles, Check, Mic, Square, Pencil, SkipForward } from "lucide-react";
 import { AMark, ChannelChip } from "@/components/hub/primitives";
 import { MODULE_LABEL } from "@/components/hub/module-labels";
+// F35 (Pedro 2026-05-28): pickers dinâmicos pra tag/pipeline/custom_field
+import { TagPicker, PipelineStagePicker, CustomFieldPicker } from "@/components/hub/pickers";
 import type { ChannelKey } from "@/components/hub/types";
 import { CHANNEL_LABEL } from "@/components/hub/types";
 import type { TargetingRule } from "@/types/agent";
@@ -582,13 +584,17 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
   }
 
   const isTagNode = node === "intake_detail" && (a.intakeMode === "tag" || a.intakeMode === "outreach");
+  // F35 (Pedro 2026-05-28): intake_detail em modo "stage" usa PipelineStagePicker
+  // (puxa funis do Spark Leads em vez de pedir o ID na unha).
+  const isStageNode = node === "intake_detail" && a.intakeMode === "stage";
   // Pedro 2026-05-28: node "advanced_targeting" usa componente custom (não composer/chips).
   const isAdvancedTargeting = node === "advanced_targeting";
   const showChips = phase === "wizard" && def.type === "choice" && !pendingAudio;
   const showMulti = phase === "wizard" && def.type === "multi" && !pendingAudio;
   const showTags = phase === "wizard" && def.type === "free" && isTagNode && !pendingAudio;
+  const showStagePicker = phase === "wizard" && isStageNode && !pendingAudio;
   const showAdvancedTargeting = phase === "wizard" && isAdvancedTargeting && !pendingAudio;
-  const showComposer = phase === "wizard" && def.type === "free" && !isTagNode && !isAdvancedTargeting;
+  const showComposer = phase === "wizard" && def.type === "free" && !isTagNode && !isStageNode && !isAdvancedTargeting;
   const audioAllowed = showComposer && !!def.audio;
 
   return (
@@ -662,6 +668,10 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
           )}
 
           {showTags && <TagInput onSubmit={(tags) => submitFree(tags.join(", "))} />}
+
+          {/* F35: stage step usa PipelineStagePicker. submitFree recebe stage_id
+              (intakeDetail é só string; o buildSpec re-lê e seta pipeline_stage_id). */}
+          {showStagePicker && <StagePickerStep onSubmit={(stageId) => submitFree(stageId)} />}
 
           {showAdvancedTargeting && (
             <AdvancedTargetingEditor
@@ -749,6 +759,35 @@ function TagInput({ onSubmit }: { onSubmit: (tags: string[]) => void }) {
   );
 }
 
+/* F35 (Pedro 2026-05-28): pequeno componente que renderiza o PipelineStagePicker
+ * com botão "Continuar" pro fluxo do wizard, quando intake mode = stage. */
+function StagePickerStep({ onSubmit }: { onSubmit: (stageId: string) => void }) {
+  const [pipelineId, setPipelineId] = useState("");
+  const [stageId, setStageId] = useState("");
+  return (
+    <div style={{ padding: 12, borderTop: "1px solid var(--line)", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+        <PipelineStagePicker
+          pipelineId={pipelineId}
+          stageId={stageId}
+          onChange={(next) => {
+            setPipelineId(next.pipeline_id);
+            setStageId(next.pipeline_stage_id);
+          }}
+        />
+      </div>
+      <div className="muted" style={{ fontSize: 12, lineHeight: 1.4 }}>
+        Quando o contato estiver nessa etapa do funil, o agente é ativado.
+      </div>
+      <div className="row" style={{ gap: 8 }}>
+        <button className="btn btn--primary btn--sm" disabled={!stageId} onClick={() => onSubmit(stageId)}>
+          Continuar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // Editor de filtros avançados de ativação (Pedro 2026-05-28). Espelha a UI do
 // detail-view (CatQualification em agent-detail-view.tsx, linhas 768-792) —
 // mesma estrutura TargetingRule[], mesmos 3 tipos (tag/custom_field/
@@ -784,23 +823,36 @@ function AdvancedTargetingEditor({ onSubmit, onSkip }: { onSubmit: (rules: Targe
             <option value="custom_field">Campo personalizado</option>
             <option value="pipeline_stage">Etapa do funil</option>
           </select>
+          {/* F35 (Pedro 2026-05-28): pickers dinâmicos puxam do Spark Leads. */}
           {r.type === "tag" && (
-            <input className="input" value={r.tag || ""} onChange={(ev) => upd(i, { tag: ev.target.value })} placeholder="nome da tag" style={{ flex: 1, minWidth: 140 }} />
+            <div style={{ display: "flex", flex: 1, minWidth: 140 }}>
+              <TagPicker value={r.tag || ""} onChange={(v) => upd(i, { tag: v })} placeholder="escolha a tag" />
+            </div>
           )}
-          {r.type === "custom_field" && (<>
-            <input className="input" value={r.custom_field_key || ""} onChange={(ev) => upd(i, { custom_field_key: ev.target.value })} placeholder="chave do campo" style={{ width: 140 }} />
-            <input className="input" value={r.custom_field_value || ""} onChange={(ev) => upd(i, { custom_field_value: ev.target.value })} placeholder="valor esperado" style={{ flex: 1, minWidth: 120 }} />
-          </>)}
-          {r.type === "pipeline_stage" && (<>
-            <input className="input" value={r.pipeline_id || ""} onChange={(ev) => upd(i, { pipeline_id: ev.target.value })} placeholder="ID do funil (opcional)" style={{ width: 170 }} />
-            <input className="input" value={r.pipeline_stage_id || ""} onChange={(ev) => upd(i, { pipeline_stage_id: ev.target.value })} placeholder="ID da etapa" style={{ flex: 1, minWidth: 140 }} />
-          </>)}
+          {r.type === "custom_field" && (
+            <div className="row" style={{ flex: 1, gap: 6, minWidth: 0 }}>
+              <CustomFieldPicker
+                fieldKey={r.custom_field_key || ""}
+                fieldValue={r.custom_field_value || ""}
+                onChange={(next) => upd(i, { custom_field_key: next.custom_field_key, custom_field_value: next.custom_field_value })}
+              />
+            </div>
+          )}
+          {r.type === "pipeline_stage" && (
+            <div className="row" style={{ flex: 1, gap: 6, minWidth: 0 }}>
+              <PipelineStagePicker
+                pipelineId={r.pipeline_id || ""}
+                stageId={r.pipeline_stage_id || ""}
+                onChange={(next) => upd(i, { pipeline_id: next.pipeline_id, pipeline_stage_id: next.pipeline_stage_id })}
+              />
+            </div>
+          )}
           <button className="btn btn--quiet btn--icon btn--sm" onClick={() => rem(i)} aria-label="Remover filtro">×</button>
         </div>
       ))}
       <button className="btn btn--ghost btn--sm" style={{ alignSelf: "flex-start" }} onClick={add}>+ Adicionar filtro</button>
       <div className="muted" style={{ fontSize: 12, lineHeight: 1.4 }}>
-        Filtros somam com a regra principal (AND). IDs de funil/etapa vêm do GHL — se ainda não tem em mãos, pode pular e configurar depois nas configurações do agente.
+        Filtros somam com a regra principal (AND). As listas aparecem do seu Spark Leads — se não tiver conexão, pode digitar manual ou pular e configurar depois.
       </div>
       <div className="row" style={{ gap: 8 }}>
         <button className="btn btn--quiet btn--sm" onClick={onSkip}>

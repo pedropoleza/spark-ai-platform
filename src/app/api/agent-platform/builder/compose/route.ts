@@ -47,6 +47,13 @@ export async function POST(request: NextRequest) {
   const qualHint = String(b.qualification_hint || "").trim();
   const channels = Array.isArray(b.channels) ? (b.channels as string[]).join(", ") : "";
 
+  // F36 (Pedro 2026-05-28): contexto adicional do canal pra adaptar style.
+  const channelHint = channels.toLowerCase().includes("instagram")
+    ? "Como inclui Instagram, prefira mensagens curtas (≤280 chars), emojis com moderação, tom casual."
+    : channels.toLowerCase().includes("whatsapp")
+      ? "WhatsApp aceita blocos maiores, mas evite markdown (não renderiza)."
+      : "";
+
   const briefText = [
     `PROPÓSITO/CAMPANHA: ${purpose}`,
     `COMO OS LEADS CHEGAM: ${INTAKE_LABEL[intakeMode] || intakeMode}` +
@@ -55,29 +62,43 @@ export async function POST(request: NextRequest) {
     `SE APRESENTA COMO: ${identity.mode === "human" ? "uma pessoa do time" : "uma assistente virtual"}` +
       (identity.name ? ` chamada ${String(identity.name)}` : ""),
     `OBJETIVO: ${objective}`,
-    channels ? `CANAIS: ${channels}` : "",
-    qualHint ? `O QUE DESCOBRIR DO LEAD: ${qualHint}` : "",
+    channels ? `CANAIS: ${channels}${channelHint ? " — " + channelHint : ""}` : "",
+    qualHint ? `O QUE DESCOBRIR DO LEAD: ${qualHint} (INCORPORE nas instruções com 'por que' cada um importa pra qualificação)` : "",
   ]
     .filter(Boolean)
     .join("\n");
 
+  // F36 (Pedro 2026-05-28): system prompt reforçado pra obrigar discernimento.
+  // Antes o LLM caía em saída genérica/cópia do purpose. Agora:
+  //  - exemplos explícitos do que é "bom" vs "ruim" (incorporar contexto)
+  //  - guia de tone por tipo de propósito (urgente/consultivo/criativo)
+  //  - intake mode tem que reverberar nas instruções (não só ser citado)
+  //  - identity_name obrigatório se brief tem nome
+  //  - language hint pra adaptar style do canal
   const system =
     `Você monta a 'mente' de um agente de IA que conversa com ${audienceNoun} de uma agência de seguros no WhatsApp/Instagram, em português do Brasil. ` +
     (isRec ? "É um agente de RECRUTAMENTO: tria e atrai candidatos pra virarem corretores, agenda entrevistas. " : "") +
-    "A partir do brief, escreva a configuração final. Regras: " +
-    "(1) custom_instructions: 1-3 parágrafos ricos e específicos, na 2ª pessoa ('Você é...'), dizendo quem o agente é, o que oferece, como conduzir a conversa e incorporando o contexto de como o lead chegou. " +
-    "(2) qualification_fields: extraia do brief o que faz sentido o agente descobrir (3-6 campos). type: text/date/boolean/select. " +
-    "(3) tone: 4 eixos 0-100 (creativity, formality, naturalness, assertiveness) coerentes com o propósito. " +
-    "(4) name: nome curto do agente (aparece no Spark Leads). purpose_summary: 1 frase. " +
+    "A partir do brief, escreva a configuração final. Regras: \n" +
+    "(1) custom_instructions: 2-4 parágrafos ricos e ESPECÍFICOS, na 2ª pessoa ('Você é...'), incorporando:\n" +
+    "    a) COMO O LEAD CHEGA (intake mode + tags/keyword/stage) — reconheça esse padrão na conversa, não só cite.\n" +
+    "    b) O QUE VOCÊ OFERECE (propósito) — elabore, não copie literalmente o brief.\n" +
+    "    c) O QUE DESCOBRIR — explique POR QUE cada info importa pra qualificação.\n" +
+    "    Exemplo RUIM: 'Você qualifica contatos. Descubra idade, cidade.'\n" +
+    "    Exemplo BOM: 'Você atende contatos vindos do feirão 2026 — eles já demonstraram interesse em seguro de vida. Comece reconhecendo isso, sem vender frio. Qualifique idade (define faixa de risco), cidade (cobertura local) e se já tem outro seguro (entender concorrência).' \n" +
+    "(2) qualification_fields: 3-6 campos. type: text/date/boolean/select. \n" +
+    "(3) tone: 4 eixos 0-100 (creativity, formality, naturalness, assertiveness) ESPECÍFICOS ao propósito. \n" +
+    "    - Cobrança/urgência → assertiveness ≥70.\n" +
+    "    - Consultivo/explicativo → naturalness ≥85, formality 40-60.\n" +
+    "    - Criativo/viral → creativity ≥75.\n" +
+    "    - Default morno (50-60 em tudo) só se realmente não há sinal — EVITE. \n" +
+    "(4) name: nome curto do agente (aparece no Spark Leads). purpose_summary: 1 frase. \n" +
     "(5) identity_name: APENAS o primeiro nome que o agente usa pra se apresentar, extraído do brief. " +
-    "Se a pessoa escreveu algo como 'eu mesmo, Pedro' ou 'me chama de Bia', extraia só 'Pedro'/'Bia'. Se não houver nome, deixe vazio. " +
-    // Pedro 2026-05-28: 4 campos a mais pra paridade com o detail-view (antes ficavam
-    // sempre vazios → persona caía no purpose_summary, greeting/farewell em branco).
-    "(6) persona_description: 1-2 frases sobre a personalidade/jeito do agente (ex: 'Consultora experiente, paciente mas direta — não enrola'). " +
-    "(7) greeting_style: 1 frase descrevendo como cumprimenta (ex: 'Sempre puxa o nome do contato e mostra entusiasmo de cara'). " +
-    "(8) farewell_style: 1 frase descrevendo como se despede (ex: 'Despede de forma calorosa e reforça o próximo passo combinado'). " +
-    "(9) conversation_examples: 2 trocas curtas exemplo no estilo do agente, formato 'Lead: ...\\nAgente: ...' separadas por linha em branco. Use placeholders {first_name} se fizer sentido. " +
-    "NUNCA escreva 'GHL' nem 'GoHighLevel' — o CRM se chama 'Spark Leads'. Não invente fatos que não estão no brief. " +
+    "Se a pessoa escreveu algo como 'eu mesmo, Pedro' ou 'me chama de Bia', extraia só 'Pedro'/'Bia'. Se não houver nome, deixe vazio. \n" +
+    "(6) persona_description: 1-2 frases sobre personalidade ESPECÍFICA ao propósito (ex: 'Consultora experiente, paciente mas direta'). NUNCA genérico tipo 'agente prestativo'. \n" +
+    "(7) greeting_style: 1 frase descrevendo como cumprimenta (ex: 'Puxa o nome do contato e mostra entusiasmo pela demanda específica que ele tem'). \n" +
+    "(8) farewell_style: 1 frase descrevendo como se despede (ex: 'Reforça o próximo passo combinado e deixa link/contato'). \n" +
+    "(9) conversation_examples: 2 trocas curtas no estilo do agente, formato 'Lead: ...\\nAgente: ...' separadas por linha em branco. Use placeholders {first_name} se fizer sentido. \n" +
+    "NUNCA escreva 'GHL' nem 'GoHighLevel' — o CRM se chama 'Spark Leads'. NÃO invente fatos que não estão no brief. NÃO devolva campos vazios. NÃO copie o purpose como custom_instructions — ELABORE. " +
     'Responda SÓ um JSON: {"name":string,"identity_name":string,"purpose_summary":string,"custom_instructions":string,"qualification_fields":[{"label":string,"type":string,"required":boolean}],"tone":{"creativity":number,"formality":number,"naturalness":number,"assertiveness":number},"persona_description":string,"greeting_style":string,"farewell_style":string,"conversation_examples":string}';
 
   try {
@@ -111,11 +132,35 @@ export async function POST(request: NextRequest) {
       }))
       .filter((f: { label: string }) => f.label);
 
+    // F36 (Pedro 2026-05-28): validação anti-cópia. Se LLM devolveu instruções
+    // ≤ purpose ou cópia literal, enriquece com contexto do brief. Antes
+    // saída xerox passava direto e agent nascia sem personalidade.
+    const rawInstructions = String(parsed.custom_instructions || "").trim();
+    const isXeroxOfPurpose =
+      !rawInstructions ||
+      rawInstructions === purpose ||
+      rawInstructions.length < Math.max(80, purpose.length);
+    const enrichedInstructions = isXeroxOfPurpose
+      ? `Você é ${identity.mode === "human" ? "uma pessoa do time" : "uma assistente virtual"}${identity.name ? ` chamada ${identity.name}` : ""} dedicada a ${purpose}. ` +
+        `${INTAKE_LABEL[intakeMode] ? `${INTAKE_LABEL[intakeMode].charAt(0).toUpperCase()}${INTAKE_LABEL[intakeMode].slice(1)}. ` : ""}` +
+        `${qualHint ? `Pra qualificar bem, descubra: ${qualHint}. Explique pro lead por que cada info importa antes de pedir. ` : ""}` +
+        `Seja natural, consultivo, e revele valor antes de pedir dados. NUNCA mencione 'Spark Leads' nem GHL pro lead.`
+      : rawInstructions;
+
+    // F36: fallback smart pra os 4 campos de personality quando LLM omite.
+    const safeName = identity.name ? `chamada ${String(identity.name)}` : "";
+    const persona = String(parsed.persona_description || "").trim() ||
+      `Agente ${isRec ? "de recrutamento" : "consultivo"} ${safeName}, ${purpose.length > 100 ? purpose.slice(0, 100) + "…" : purpose}.`;
+    const greeting = String(parsed.greeting_style || "").trim() ||
+      `Cumprimenta com entusiasmo e puxa o nome do contato quando disponível.`;
+    const farewell = String(parsed.farewell_style || "").trim() ||
+      `Despede confirmando o próximo passo combinado.`;
+
     return NextResponse.json({
       name: String(parsed.name || "").slice(0, 120) || "Agente personalizado",
-      identity_name: String(parsed.identity_name || "").slice(0, 80),
-      purpose_summary: String(parsed.purpose_summary || "").slice(0, 600),
-      custom_instructions: String(parsed.custom_instructions || purpose).slice(0, 8000),
+      identity_name: String(parsed.identity_name || identity.name || "").slice(0, 80),
+      purpose_summary: String(parsed.purpose_summary || "").slice(0, 600) || purpose.slice(0, 200),
+      custom_instructions: enrichedInstructions.slice(0, 8000),
       qualification_fields,
       tone: {
         creativity: clampN(tone.creativity, 60),
@@ -123,12 +168,11 @@ export async function POST(request: NextRequest) {
         naturalness: clampN(tone.naturalness, 80),
         assertiveness: clampN(tone.assertiveness, 50),
       },
-      // Pedro 2026-05-28: 4 campos a mais (paridade vs detail-view). Antes não vinham
-      // do composer → persona caía no purpose_summary, greeting/farewell em branco.
-      persona_description: String(parsed.persona_description || "").slice(0, 2000),
-      greeting_style: String(parsed.greeting_style || "").slice(0, 2000),
-      farewell_style: String(parsed.farewell_style || "").slice(0, 2000),
+      persona_description: persona.slice(0, 2000),
+      greeting_style: greeting.slice(0, 2000),
+      farewell_style: farewell.slice(0, 2000),
       conversation_examples: String(parsed.conversation_examples || "").slice(0, 8000),
+      degraded_anti_xerox: isXeroxOfPurpose, // sinal pra debug — composer "morno"
     });
   } catch (err) {
     console.warn("[builder/compose] fallback:", err instanceof Error ? err.message : err);

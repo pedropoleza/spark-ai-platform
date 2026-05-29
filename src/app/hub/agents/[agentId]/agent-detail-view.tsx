@@ -11,6 +11,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { AMark, StatusBadge, ChannelChip, PriceBadge } from "@/components/hub/primitives";
+// F35 (Pedro 2026-05-28): pickers dinâmicos pra targeting (tag/pipeline/cf).
+import { TagPicker, TagsMultiPicker, PipelineStagePicker, CustomFieldPicker } from "@/components/hub/pickers";
 import { useHubSession } from "@/components/hub/hub-session";
 import { TestChat } from "./test-chat";
 import { KbManager } from "./kb-manager";
@@ -1001,20 +1003,27 @@ function CatActivation({
             {tr.map((r, i) =>
               r.type !== type ? null : (
                 <div key={r.id} className="row" style={{ gap: 8, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8, flexWrap: "wrap" }}>
+                  {/* F35: pickers dinâmicos puxam de /api/ghl/{tags,pipelines,custom-fields}. Fallback pra input se API offline. */}
                   {type === "tag" && (
-                    <input className="input grow" value={r.tag || ""} onChange={(ev) => updT(i, { tag: ev.target.value })} placeholder="nome da tag" />
+                    <TagPicker
+                      value={r.tag || ""}
+                      onChange={(v) => updT(i, { tag: v })}
+                      placeholder="escolha a tag"
+                    />
                   )}
                   {type === "custom_field" && (
-                    <>
-                      <input className="input" value={r.custom_field_key || ""} onChange={(ev) => updT(i, { custom_field_key: ev.target.value })} placeholder="chave do campo" style={{ width: 180 }} />
-                      <input className="input grow" value={r.custom_field_value || ""} onChange={(ev) => updT(i, { custom_field_value: ev.target.value })} placeholder="valor (vazio = qualquer)" />
-                    </>
+                    <CustomFieldPicker
+                      fieldKey={r.custom_field_key || ""}
+                      fieldValue={r.custom_field_value || ""}
+                      onChange={(next) => updT(i, { custom_field_key: next.custom_field_key, custom_field_value: next.custom_field_value })}
+                    />
                   )}
                   {type === "pipeline_stage" && (
-                    <>
-                      <input className="input" value={r.pipeline_id || ""} onChange={(ev) => updT(i, { pipeline_id: ev.target.value })} placeholder="ID do funil" style={{ width: 180 }} />
-                      <input className="input grow" value={r.pipeline_stage_id || ""} onChange={(ev) => updT(i, { pipeline_stage_id: ev.target.value })} placeholder="ID da etapa" />
-                    </>
+                    <PipelineStagePicker
+                      pipelineId={r.pipeline_id || ""}
+                      stageId={r.pipeline_stage_id || ""}
+                      onChange={(next) => updT(i, { pipeline_id: next.pipeline_id, pipeline_stage_id: next.pipeline_stage_id })}
+                    />
                   )}
                   <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remT(i)} aria-label="Remover"><Trash2 size={13} /></button>
                 </div>
@@ -1033,12 +1042,11 @@ function CatActivation({
 
       {type === "bulk" && (
         <>
-          <Field label="Quem o agente aborda" hint="Contatos com estas tags (separe por vírgula).">
-            <input
-              className="input"
-              value={e.outreach.tag_filter.tags.join(", ")}
-              onChange={(ev) => setOutreach({ tag_filter: { ...e.outreach.tag_filter, tags: ev.target.value.split(",").map((t) => t.trim()).filter(Boolean) } })}
-              placeholder="ex: feirao_2026, sem_contato"
+          <Field label="Quem o agente aborda" hint="Contatos com estas tags (escolha do Spark Leads).">
+            {/* F35: TagsMultiPicker em vez de input comma-separated. */}
+            <TagsMultiPicker
+              values={e.outreach.tag_filter.tags}
+              onChange={(next) => setOutreach({ tag_filter: { ...e.outreach.tag_filter, tags: next } })}
             />
             <div style={{ marginTop: 8 }}>
               <Seg
