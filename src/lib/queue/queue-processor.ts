@@ -13,10 +13,11 @@ import { scheduleFollowUps } from "@/lib/queue/follow-up-scheduler";
 import { generateSummaryNote } from "@/lib/queue/summary-note-generator";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
+import { checkContactMatchesTargeting } from "@/lib/queue/targeting";
 import { notifyCriticalError } from "@/lib/utils/notify";
 import { withRetry } from "@/lib/utils/retry";
 import type { GHLMessage } from "@/types/ghl";
-import type { AutomationRule } from "@/types/agent";
+import type { AutomationRule, TargetingRule } from "@/types/agent";
 
 interface QueuedMessage {
   id: string;
@@ -281,6 +282,43 @@ async function processGroup(
     .select("company_id, location_id")
     .eq("location_id", group.locationId)
     .single();
+
+  // F27 (Pedro 2026-05-28): targeting_rules enforcement.
+  // ANTES: regras salvas no wizard/detail-view (tag/custom_field/pipeline_stage)
+  // eram IGNORADAS — agente respondia a TODOS os contatos da location.
+  // AGORA: se config.targeting_rules tiver regras, contato precisa bater TODAS
+  // (AND) pro agente responder. Fail-OPEN em erro de fetch (ver targeting.ts).
+  const targetingRules = (config as { targeting_rules?: TargetingRule[] | null })
+    .targeting_rules;
+  if (
+    Array.isArray(targetingRules) &&
+    targetingRules.length > 0 &&
+    locationForBilling?.company_id
+  ) {
+    const match = await checkContactMatchesTargeting(
+      group.contactId,
+      targetingRules,
+      locationForBilling.company_id,
+      group.locationId,
+    );
+    if (!match.ok) {
+      log("log", `SKIP outside_targeting (${match.reason || "no match"})`);
+      // Audit pra dono ver no execution_log que houve skip por targeting.
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "targeting_skip",
+        action_payload: {
+          reason: match.reason,
+          rules_count: targetingRules.length,
+        },
+        success: true,
+      });
+      return;
+    }
+  }
 
   // Custom key check (BYO key skipa cobrança)
   let usesCustomKeyForAudio = false;

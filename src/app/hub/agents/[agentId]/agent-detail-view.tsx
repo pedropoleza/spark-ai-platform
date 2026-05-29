@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import {
   ChevronLeft, Play, Pause, Check, Plus, Trash2,
   Sparkles, Clock, Calendar, MessageCircle, Users, Send, FileText, Shield, Zap,
-  Wand2, Workflow, PauseCircle, Bell,
+  Wand2, Workflow, PauseCircle, Bell, Crosshair,
   type LucideIcon,
 } from "lucide-react";
 import { AMark, StatusBadge, ChannelChip, PriceBadge } from "@/components/hub/primitives";
@@ -28,6 +28,10 @@ type ConfMode = "always" | "medium_and_high" | "high_only";
 type Objective = "qualification_only" | "qualification_and_booking" | "booking_only";
 type Cat =
   | "identity" | "tone"
+  // F27 (Pedro 2026-05-28): nova Cat "activation" — quando o agente atende
+  // (targeting_rules). Antes ficava enterrado embaixo de "Qualificação" como
+  // "Filtros de público". Pedro reclamou que não achava — agora é Cat própria.
+  | "activation"
   | "channel" | "qualification" | "scheduling" | "followup" | "outreach" | "knowledge"
   | "hours" | "automations" | "pause" | "limits"
   | "proactivity";
@@ -175,7 +179,9 @@ const CAT_MODULE: Partial<Record<Cat, string>> = {
 // Categorias com toggle mestre (ligar/desligar a capacidade). As demais são sempre-on.
 const TOGGLE_CATS = new Set<Cat>(["qualification", "scheduling", "followup", "outreach", "knowledge", "hours"]);
 // Só fazem sentido para agentes que falam com LEADS (não pro SparkBot do rep).
-const LEAD_ONLY = new Set<Cat>(["channel", "qualification", "scheduling", "followup", "outreach", "automations"]);
+// F27 (Pedro 2026-05-28): "activation" é lead-only — SparkBot fala com 1 rep só,
+// não tem targeting_rules. Adicionado pra esconder da Cat-rail no SparkBot.
+const LEAD_ONLY = new Set<Cat>(["activation", "channel", "qualification", "scheduling", "followup", "outreach", "automations"]);
 
 const GROUPS: { id: string; label: string }[] = [
   { id: "comportamento", label: "Comportamento" },
@@ -185,6 +191,9 @@ const GROUPS: { id: string; label: string }[] = [
 const CATS: { id: Cat; label: string; icon: LucideIcon; group: string }[] = [
   { id: "identity", label: "Identidade", icon: Sparkles, group: "comportamento" },
   { id: "tone", label: "Tom & estilo", icon: Wand2, group: "comportamento" },
+  // F27 (Pedro 2026-05-28): Cat "Ativação" no grupo comportamento (define quando
+  // o agente ENTRA em ação — fundamental, fica perto da identidade).
+  { id: "activation", label: "Ativação", icon: Crosshair, group: "comportamento" },
   { id: "channel", label: "Canais", icon: MessageCircle, group: "capacidades" },
   { id: "qualification", label: "Qualificação", icon: Users, group: "capacidades" },
   { id: "scheduling", label: "Agendamento", icon: Calendar, group: "capacidades" },
@@ -200,8 +209,10 @@ const CATS: { id: Cat; label: string; icon: LucideIcon; group: string }[] = [
 const CAT_META: Record<Cat, { title: string; sub: string }> = {
   identity: { title: "Identidade", sub: "Quem é o agente, como se apresenta e o que sabe da agência." },
   tone: { title: "Tom & estilo", sub: "O jeito de conversar e exemplos de resposta." },
+  // F27 (Pedro 2026-05-28): Cat "Ativação" — quando/em quem o agente é ativado.
+  activation: { title: "Ativação", sub: "Quais contatos o agente atende — por tag, etapa do funil ou campo personalizado." },
   channel: { title: "Canais", sub: "Por onde o agente conversa (conectado pela agência)." },
-  qualification: { title: "Qualificação de leads", sub: "O que perguntar e quais contatos atender." },
+  qualification: { title: "Qualificação de leads", sub: "O que perguntar pra identificar um bom lead." },
   scheduling: { title: "Agendamento", sub: "Como o agente marca e o que faz depois." },
   followup: { title: "Follow-up", sub: "Retomada automática de quem não respondeu." },
   outreach: { title: "Prospecção", sub: "O agente inicia conversas com uma lista (por tag), no ritmo certo." },
@@ -424,6 +435,8 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
               <>
                 {cat === "identity" && <CatIdentity e={e} patch={patch} isLead={isLead} />}
                 {cat === "tone" && <CatTone e={e} patch={patch} />}
+                {/* F27 (Pedro 2026-05-28): Cat "Ativação" — targeting_rules promovido pra rail. */}
+                {cat === "activation" && <CatActivation e={e} patch={patch} />}
                 {cat === "channel" && <CatChannel e={e} patch={patch} />}
                 {cat === "qualification" && <CatQualification e={e} patch={patch} />}
                 {cat === "scheduling" && <CatScheduling e={e} patch={patch} isRecruitment={isRecruitment} />}
@@ -804,31 +817,77 @@ function CatQualification({ e, patch }: { e: Editable; patch: (p: Partial<Editab
   const add = () => patch({ data_fields: [...fields, { key: `campo_${fields.length + 1}`, label: "Nova pergunta", required: false, type: "text" }] });
   const remove = (i: number) => patch({ data_fields: fields.filter((_, idx) => idx !== i) });
 
+  // F27 (Pedro 2026-05-28): targeting_rules MIGROU pra Cat "Ativação" (CatActivation
+  // abaixo). CatQualification fica focado só em PERGUNTAS — o que o agente coleta.
+  // "Quem o agente atende" virou Cat própria na rail (Crosshair).
+  return (
+    <Field label="Perguntas de qualificação" hint="O que o agente coleta para identificar um bom lead.">
+      <div className="col" style={{ gap: 8 }}>
+        {fields.length === 0 && <div className="muted" style={{ fontSize: 13 }}>Nenhuma pergunta configurada.</div>}
+        {fields.map((f, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 130px auto auto", gap: 10, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8 }}>
+            <input className="input" value={f.label} onChange={(ev) => update(i, { label: ev.target.value })} />
+            <select className="select" aria-label="Tipo do campo" value={f.type} onChange={(ev) => update(i, { type: ev.target.value as DataField["type"] })}><option value="text">Texto</option><option value="date">Data</option><option value="boolean">Sim/Não</option><option value="select">Opções</option></select>
+            <label className="row" style={{ gap: 6, fontSize: 12, color: "var(--ink-3)" }}><button type="button" className="switch" role="switch" aria-checked={f.required} aria-label="Campo obrigatório" onClick={() => update(i, { required: !f.required })} /> obrig.</label>
+            <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remove(i)} aria-label="Remover"><Trash2 size={13} /></button>
+          </div>
+        ))}
+        <button className="btn btn--ghost btn--sm" style={{ alignSelf: "flex-start", marginTop: 2 }} onClick={add}><Plus /> Nova pergunta</button>
+      </div>
+    </Field>
+  );
+}
+
+/* ─── Ativação (F27, Pedro 2026-05-28) ─────────────────────────────
+ * Filtros que decidem QUAIS contatos o agente atende. Vazio = sem
+ * restrição (responde a todos da location).
+ *
+ * 3 tipos de regra (combinam com AND — todas precisam passar):
+ *  - Tem a tag: contato precisa ter A tag exata.
+ *  - Campo personalizado: campo precisa ter valor (exato ou qualquer).
+ *  - Etapa do funil: contato tem opp na pipeline+stage.
+ *
+ * Runtime: `src/lib/queue/targeting.ts` lê esse array em cada msg e
+ * pula resposta se não bater. Antes do F27, esse array era IGNORADO. */
+function CatActivation({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
   const tr = e.targeting_rules;
-  const addT = () => patch({ targeting_rules: [...tr, { id: rid(), type: "tag", tag: "" }] });
-  const updT = (i: number, p: Partial<TargetingRule>) => patch({ targeting_rules: tr.map((r, idx) => (idx === i ? { ...r, ...p } : r)) });
+  const addT = (type: TargetingRule["type"] = "tag") => {
+    const base: TargetingRule = { id: rid(), type };
+    patch({ targeting_rules: [...tr, base] });
+  };
+  const updT = (i: number, p: Partial<TargetingRule>) =>
+    patch({ targeting_rules: tr.map((r, idx) => (idx === i ? { ...r, ...p } : r)) });
   const remT = (i: number) => patch({ targeting_rules: tr.filter((_, idx) => idx !== i) });
 
   return (
     <>
-      <Field label="Perguntas de qualificação" hint="O que o agente coleta para identificar um bom lead.">
-        <div className="col" style={{ gap: 8 }}>
-          {fields.length === 0 && <div className="muted" style={{ fontSize: 13 }}>Nenhuma pergunta configurada.</div>}
-          {fields.map((f, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 130px auto auto", gap: 10, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8 }}>
-              <input className="input" value={f.label} onChange={(ev) => update(i, { label: ev.target.value })} />
-              <select className="select" aria-label="Tipo do campo" value={f.type} onChange={(ev) => update(i, { type: ev.target.value as DataField["type"] })}><option value="text">Texto</option><option value="date">Data</option><option value="boolean">Sim/Não</option><option value="select">Opções</option></select>
-              <label className="row" style={{ gap: 6, fontSize: 12, color: "var(--ink-3)" }}><button type="button" className="switch" role="switch" aria-checked={f.required} aria-label="Campo obrigatório" onClick={() => update(i, { required: !f.required })} /> obrig.</label>
-              <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remove(i)} aria-label="Remover"><Trash2 size={13} /></button>
-            </div>
-          ))}
-          <button className="btn btn--ghost btn--sm" style={{ alignSelf: "flex-start", marginTop: 2 }} onClick={add}><Plus /> Nova pergunta</button>
-        </div>
-      </Field>
+      <div
+        style={{
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-md)",
+          padding: 12,
+          marginBottom: 14,
+          fontSize: 13,
+          color: "var(--ink-3)",
+          lineHeight: 1.5,
+        }}
+      >
+        <strong style={{ color: "var(--ink)" }}>Como funciona:</strong> o agente
+        só responde a contatos que batem em <em>todos</em> os filtros abaixo.
+        Sem filtros = responde a todos os contatos da sub-conta.
+      </div>
 
-      <SubHd>Quem o agente atende</SubHd>
-      <Field label="Filtros de público" hint="Restringe a quais contatos o agente responde. Vazio = sem restrição.">
+      <Field
+        label="Filtros de ativação"
+        hint="Combinação AND — o contato precisa bater em TODAS as regras pro agente atender."
+      >
         <div className="col" style={{ gap: 8 }}>
+          {tr.length === 0 && (
+            <div className="muted" style={{ fontSize: 13 }}>
+              Nenhum filtro configurado — agente responde a todos os contatos.
+            </div>
+          )}
           {tr.map((r, i) => (
             <div key={r.id} className="row" style={{ gap: 8, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8, flexWrap: "wrap" }}>
               <select className="select" aria-label="Tipo de regra de segmentação" value={r.type} onChange={(ev) => updT(i, { type: ev.target.value as TargetingRule["type"] })} style={{ width: 170 }}>
@@ -839,7 +898,7 @@ function CatQualification({ e, patch }: { e: Editable; patch: (p: Partial<Editab
               {r.type === "tag" && <input className="input grow" value={r.tag || ""} onChange={(ev) => updT(i, { tag: ev.target.value })} placeholder="nome da tag" />}
               {r.type === "custom_field" && (<>
                 <input className="input" value={r.custom_field_key || ""} onChange={(ev) => updT(i, { custom_field_key: ev.target.value })} placeholder="chave do campo" style={{ width: 160 }} />
-                <input className="input grow" value={r.custom_field_value || ""} onChange={(ev) => updT(i, { custom_field_value: ev.target.value })} placeholder="valor" />
+                <input className="input grow" value={r.custom_field_value || ""} onChange={(ev) => updT(i, { custom_field_value: ev.target.value })} placeholder="valor (vazio = qualquer)" />
               </>)}
               {r.type === "pipeline_stage" && (<>
                 <input className="input" value={r.pipeline_id || ""} onChange={(ev) => updT(i, { pipeline_id: ev.target.value })} placeholder="ID do funil" style={{ width: 160 }} />
@@ -848,7 +907,11 @@ function CatQualification({ e, patch }: { e: Editable; patch: (p: Partial<Editab
               <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remT(i)} aria-label="Remover"><Trash2 size={13} /></button>
             </div>
           ))}
-          <button className="btn btn--ghost btn--sm" style={{ alignSelf: "flex-start" }} onClick={addT}><Plus /> Novo filtro</button>
+          <div className="row" style={{ gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+            <button className="btn btn--ghost btn--sm" onClick={() => addT("tag")}><Plus /> Tag</button>
+            <button className="btn btn--ghost btn--sm" onClick={() => addT("custom_field")}><Plus /> Campo personalizado</button>
+            <button className="btn btn--ghost btn--sm" onClick={() => addT("pipeline_stage")}><Plus /> Etapa do funil</button>
+          </div>
         </div>
       </Field>
     </>

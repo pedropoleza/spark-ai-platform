@@ -14,7 +14,10 @@ import type { TargetingRule } from "@/types/agent";
 export type WizardTemplate = "sales" | "recruitment" | "custom";
 
 type Msg = { role: "user" | "assistant"; content: string };
-type IntakeMode = "inbound" | "keyword" | "tag" | "outreach";
+// F27 (Pedro 2026-05-28): "stage" exposto no wizard (já existia no schema/runtime via
+// targeting_rules.type=pipeline_stage, mas não havia opção no chip do intake). Mantém
+// retrocompat: agentes existentes com mode∈{inbound,keyword,tag,outreach} continuam.
+type IntakeMode = "inbound" | "keyword" | "tag" | "stage" | "outreach";
 type Objective = "qualification_only" | "qualification_and_booking" | "booking_only";
 
 interface Answers {
@@ -116,12 +119,16 @@ function buildNodes(template: WizardTemplate): Record<NodeKey, NodeDef> {
     purpose: { type: "free", audio: true, q: m.purposeQ, placeholder: m.purposePlaceholder },
     intake: {
       type: "choice",
-      q: `Como os ${noun} vão chegar até esse agente?`,
+      // F27 (Pedro 2026-05-28): renomeado pra deixar claro que isto é a regra de ATIVAÇÃO
+      // do agente (quando ele atende). Antes "Como os leads vão chegar" misturava
+      // intake (lado do lead) com ativação (lado do agente). Agora explícito.
+      q: `🎯 Quando esse agente deve atender ${noun}?`,
       chips: [
-        { label: "Eles me mandam mensagem", value: "inbound" },
-        { label: "Campanha com palavra-chave", value: "keyword" },
-        { label: "Só quem eu marco com uma tag", value: "tag" },
-        { label: "O agente vai atrás (prospecção)", value: "outreach" },
+        { label: "Quando me mandam mensagem", value: "inbound" },
+        { label: "Quando entram via palavra-chave da campanha", value: "keyword" },
+        { label: "Quando o contato tem uma tag específica", value: "tag" },
+        { label: "Quando o contato está numa etapa do funil", value: "stage" },
+        { label: "Sempre — o agente vai atrás (prospecção)", value: "outreach" },
       ],
     },
     intake_detail: {
@@ -131,8 +138,14 @@ function buildNodes(template: WizardTemplate): Record<NodeKey, NodeDef> {
           ? "Qual é a palavra-chave que a pessoa manda pra ativar? (ex: SEGURO, VAGA)"
           : a.intakeMode === "outreach"
           ? "Qual lista o agente vai abordar? Use a tag dos contatos (uma ou mais, separadas por vírgula)."
+          : a.intakeMode === "stage"
+          // F27: stage pede ID. Não temos picker GHL no wizard ainda — fica no
+          // advanced_targeting (próximo step) que tem editor estruturado.
+          ? "Qual é o ID da ETAPA do funil que ativa? (cole o pipeline_stage_id do Spark Leads — ou pula pro próximo passo que tem editor estruturado)"
           : `Qual tag marca esses ${noun}? (uma ou mais, separadas por vírgula)`,
       placeholder: "ex: feirao_2026, lead_quente",
+      // F27: stage é opcional pelo intake_detail (pode pular e usar editor estruturado).
+      skippable: false,
     },
     outreach_opening: {
       type: "free",
@@ -146,9 +159,10 @@ function buildNodes(template: WizardTemplate): Record<NodeKey, NodeDef> {
       // mesmo padrão que TagInput. Skippable: a regra principal já vem do
       // intakeMode/intakeDetail; isto é só pra quem precisa de stage/custom_field
       // ou múltiplas tags compostas.
+      // F27 (Pedro 2026-05-28): copy reforçado — "filtros adicionais DE ATIVAÇÃO".
       type: "free",
       skippable: true,
-      q: "Quer filtros extras de ativação? (etapa do funil, campo personalizado, mais tags). Pode pular se a regra principal já dá conta — dá pra ajustar depois.",
+      q: "🎯 Filtros adicionais de ativação? Pode combinar **etapa do funil + campo personalizado + tags**. Cada filtro vira regra extra (AND) pro agente atender só quem bate em TUDO. Pula se a regra principal já dá conta.",
     },
     // Etapa 2 do plano (Pedro 2026-05-28): só visível em outreach. Antes
     // rate/cap/respect_hours eram hardcoded (20/100/true) — agora dá pra
@@ -258,7 +272,14 @@ const ORDER: NodeKey[] = [
 ];
 const isBooking = (a: Answers) => a.objective === "qualification_and_booking" || a.objective === "booking_only";
 function nodeVisible(key: NodeKey, a: Answers): boolean {
-  if (key === "intake_detail") return a.intakeMode === "keyword" || a.intakeMode === "tag" || a.intakeMode === "outreach";
+  // F27 (Pedro 2026-05-28): "stage" também precisa de detail (pipeline_stage_id).
+  if (key === "intake_detail")
+    return (
+      a.intakeMode === "keyword" ||
+      a.intakeMode === "tag" ||
+      a.intakeMode === "stage" ||
+      a.intakeMode === "outreach"
+    );
   if (key === "outreach_opening") return a.intakeMode === "outreach";
   // Pedro 2026-05-28: outreach_params só faz sentido em outreach.
   if (key === "outreach_params") return a.intakeMode === "outreach";
@@ -376,7 +397,14 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
             template,
             purpose: ans.purpose || "",
             qualification_hint: ans.qualification || "",
-            intake: { mode: ans.intakeMode || "inbound", keyword: ans.intakeMode === "keyword" ? ans.intakeDetail : "", tags: ans.intakeMode === "tag" || ans.intakeMode === "outreach" ? splitTags(ans.intakeDetail) : [], advanced_rules: ans.advancedRules || [] },
+            intake: {
+            mode: ans.intakeMode || "inbound",
+            keyword: ans.intakeMode === "keyword" ? ans.intakeDetail : "",
+            tags: ans.intakeMode === "tag" || ans.intakeMode === "outreach" ? splitTags(ans.intakeDetail) : [],
+            // F27 (Pedro 2026-05-28): stage → pipeline_stage_id pro composer.
+            pipeline_stage_id: ans.intakeMode === "stage" ? (ans.intakeDetail || "") : "",
+            advanced_rules: ans.advancedRules || [],
+          },
             identity: { mode: ans.identityMode || "assistant", name: ans.identityName || "" },
             objective: ans.objective || "qualification_and_booking",
             channels: ans.channels.map((c) => CHANNEL_LABEL[c]),
@@ -416,6 +444,11 @@ export function AgentWizard({ template }: { template: WizardTemplate }) {
         mode: a.intakeMode || "inbound",
         tags: a.intakeMode === "tag" || a.intakeMode === "outreach" ? splitTags(a.intakeDetail) : [],
         keyword: a.intakeMode === "keyword" ? (a.intakeDetail || "") : "",
+        // F27 (Pedro 2026-05-28): modo "stage" → intakeDetail vira pipeline_stage_id.
+        // Wizard não tem picker GHL ainda; aceita o ID direto OU o rep pula esse
+        // step e configura no advanced_targeting (editor estruturado). Se vier
+        // vazio o specToConfig ignora (sem regra → sem filtro = responde a todos).
+        pipeline_stage_id: a.intakeMode === "stage" ? (a.intakeDetail || "") : "",
         opening_message: a.outreachOpening || "",
         // Filtros extras (Pedro 2026-05-28): mescla com tag/stage derivado do mode no builder-spec.
         advanced_rules: a.advancedRules || [],
@@ -779,7 +812,11 @@ function AdvancedTargetingEditor({ onSubmit, onSkip }: { onSubmit: (rules: Targe
 }
 
 const INTAKE_TXT: Record<IntakeMode, string> = {
-  inbound: "Mandam mensagem", keyword: "Campanha (palavra-chave)", tag: "Por tag", outreach: "Prospecção (agente inicia)",
+  inbound: "Quando mandam mensagem",
+  keyword: "Por palavra-chave da campanha",
+  tag: "Quando tem a tag",
+  stage: "Quando entra na etapa do funil",
+  outreach: "Prospecção (agente inicia)",
 };
 const OBJ_TXT: Record<Objective, string> = {
   qualification_only: "Qualificar", qualification_and_booking: "Qualificar + agendar", booking_only: "Agendar",
