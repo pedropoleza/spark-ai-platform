@@ -1573,18 +1573,17 @@ function CatLimits({ e, patch, isRep }: { e: Editable; patch: (p: Partial<Editab
         </>
       )}
 
-      <SubHd>Avisos por email (em breve)</SubHd>
-      {/* C2-3 (ultra-review 2026-05-26): os avisos por email ainda NÃO são
-          enviados (não há infra de email ligada). A config salva, mas nada
-          consome. Nota honesta pra não prometer o que não acontece; quando o
-          envio for ligado, é só remover este aviso. */}
-      <p className="muted" style={{ fontSize: 12.5, margin: "0 0 10px" }}>
-        Ainda não enviamos esses avisos por email — por enquanto acompanhe os leads na aba Mensagens. Em breve.
+      {/* F29 (Pedro 2026-05-28): toggles dead removidos.
+          C2-3 do ultra-review marcou on_qualified/on_booked/on_handed_off/
+          notification_email como dead-write (UI gravava, runtime nunca enviava
+          email). Agora removidos da UI. on_error fica — esse funciona via
+          notify.ts pra erros críticos. Re-introduzir só quando ligarmos
+          infra de email (Resend/SMTP). Zod tolera campos antigos no PUT
+          (silenciosamente preserva, sem usar). */}
+      <SubHd>Avisos por email</SubHd>
+      <p className="muted" style={{ fontSize: 12.5, margin: "0 0 6px" }}>
+        Por enquanto só enviamos avisos de erros críticos pra equipe técnica. Para acompanhar leads, use a aba Mensagens.
       </p>
-      <Toggle label="Lead qualificado" checked={nt.on_qualified} onChange={() => setN({ on_qualified: !nt.on_qualified })} />
-      <Toggle label="Reunião agendada" checked={nt.on_booked} onChange={() => setN({ on_booked: !nt.on_booked })} />
-      <Toggle label="Passou pra humano" checked={nt.on_handed_off} onChange={() => setN({ on_handed_off: !nt.on_handed_off })} />
-      <Field label="Email para avisos"><input className="input" type="email" value={nt.notification_email} onChange={(ev) => setN({ notification_email: ev.target.value })} placeholder="voce@agencia.com" style={{ maxWidth: 360 }} /></Field>
 
       {!isRep && (
         <>
