@@ -148,6 +148,15 @@ Reestruturação grande: SparkBot incluso/grátis; venda/recrut/custom = upsell 
 - **Lead-facing no motor (Fase 2 base)**: `assembleSystemPrompt` trata `sales`/`recruitment` delegando pro `buildSystemPrompt` do `sales-prompt-builder.ts` (paridade — `test-sales-parity.ts` 5/5). `queue-processor.ts` roteia pelo assembler quando `AGENT_MOTOR_UNIFIED` ON (default OFF = legado idêntico). `templateKeyForAgentType()` mapeia agent.type→template. Módulo de catálogo `bulk` adicionado (migration 00076). O sales builder JÁ é modular por dentro (section functions) → decompor lead-facing é mapear, não mover texto.
 - **Status**: Fase 0 + Fase 1 (motor/4 módulos/registry/resolver) + Fase 2 base (lead-facing seam) PRONTAS e deployadas, **zero mudança de comportamento** (flags OFF). Próximo (precisa do Pedro): compor prompt A PARTIR do registry (habilita custom agents) + multicanal (IG DM) + wizard de onboarding (Fase 3). **NÃO** ligar `AGENT_ENTITLEMENTS_ENFORCED` (até UI de liberação) nem `AGENT_MOTOR_UNIFIED` em prod sem validar 1 conversa real primeiro.
 
+### Ativação de agente lead-facing (F27, Pedro 2026-05-28)
+Regras de targeting enforced em `src/lib/queue/targeting.ts` (`checkContactMatchesTargeting`). Antes do F27, `agent_configs.targeting_rules` era salvo mas IGNORADO no runtime — agente respondia a todos os contatos da location. Agora:
+- **Gate inserido no `queue-processor.ts`** após `ai_paused_at`, antes do processamento de áudio. Skip + audit em `execution_log.action_type='targeting_skip'`.
+- **3 tipos de regra** (AND lógico): `tag` (match exato), `custom_field` (valor exato OU qualquer-valor se vazio), `pipeline_stage` (contato tem opp na pipeline+stage).
+- **Fail-OPEN**: erro de fetch GHL = assume match (pior cenário responder pra 1 contato que não devia, vs. agente mudo silencioso).
+- **UI**: detail-view tem Cat própria "Ativação" no rail (`CatActivation`, ícone Crosshair, grupo Comportamento). Wizard custom step `intake` renomeado pra "Quando esse agente deve atender?" com chip novo "Quando entra na etapa do funil" (modo `stage`).
+- **F27.D pendente**: trigger reativo "lead entrou em estágio Y" → dispara agente proativo. Requer setup webhook GHL externo + schema `activation_triggers` + listener PRE-LLM. Diferente do `reaction-engine.ts` (POST-LLM).
+- **SparkBot rep-facing não usa**: `LEAD_ONLY` inclui `activation`; targeting só faz sentido pra lead-facing.
+
 ### SparkBot Cron Guards (Pedro 2026-05-05)
 - pg_cron `sparkbot-proactive` agendado a cada 30s com:
   - `pg_try_advisory_xact_lock(8675309)` — anti double-execution sob backlog

@@ -10,7 +10,37 @@
 
 ## 0. UPDATE — sessão de continuação 2026-05-27 (LER PRIMEIRO)
 
-### 2026-05-28q — F26 fix do próprio detector (anomaly threshold 5→20) (LER PRIMEIRO)
+### 2026-05-28r — F27 targeting_rules enforced + UI "Ativação" (LER PRIMEIRO)
+
+Pedro reclamou que no wizard de criação de agente custom não achava onde define "qual tag ativa o agente" ou "se ativa quando entra num funil". Investigação revelou **bug crítico**: wizard e detail-view permitiam configurar `targeting_rules` (tag/custom_field/pipeline_stage), salvavam no DB, mas o `queue-processor.ts` **NUNCA avaliava** — agente respondia a TODOS os contatos da location.
+
+**3 fixes em 1 commit (`962df64`):**
+
+1. **F27.A — Runtime** (`src/lib/queue/targeting.ts` NOVO + `queue-processor.ts`):
+   - `checkContactMatchesTargeting()`: combina regras com AND lógico. Fail-OPEN em erro de fetch GHL.
+   - Gate inserido após `ai_paused_at`, antes do processamento de áudio.
+   - Skip + audit em `execution_log` com `action_type='targeting_skip'` e reason.
+
+2. **F27.B — Wizard custom** (`agent-wizard.tsx`):
+   - Renomeado q do step intake: "Como os leads vão chegar" → "🎯 Quando esse agente deve atender?" (linguagem clara de ATIVAÇÃO).
+   - Adicionada opção **"Quando entra na etapa do funil"** (modo `stage` — já existia no schema/runtime, faltava apenas no chip).
+   - `intake_detail` cobre `stage`: pede `pipeline_stage_id` direto OU pula pro `advanced_targeting` (editor estruturado).
+   - Copy do `advanced_targeting` reforçado: "Filtros adicionais DE ATIVAÇÃO".
+
+3. **F27.C — Detail-view** (`agent-detail-view.tsx`):
+   - **Cat nova "Ativação"** no rail (grupo Comportamento, ícone Crosshair), promovendo "Filtros de público" que estava enterrado embaixo de Qualificação. Pedro reclamou que não achava — agora é Cat própria, primeira após Identidade.
+   - `CatActivation`: editor com 3 botões (Tag / Campo / Etapa) + banner "Sem filtros = responde a todos os contatos".
+   - `CatQualification` fica focado só em perguntas (`data_fields`).
+   - `LEAD_ONLY` inclui `activation` — SparkBot rep-facing não exibe.
+
+**Bug histórico relacionado:** o gap "wizard perdeu targeting" foi parcialmente fechado em `0d43bf8` → `adb42e8`, mas só a parte da UI. A parte runtime continuou quebrada. F27 fecha o ciclo.
+
+**Validação pós-deploy:** `/api/health` `"healthy"` ✅ — gate funcional, sem regressão.
+
+### F27.D (deferred) — Trigger reativo "entrou em estágio Y" → dispara agente proativo
+Requer 3 coisas que não temos: (1) webhook GHL configurado pra mandar `ContactTagUpdate`/`OpportunityStageChanged`, (2) schema novo `activation_triggers` JSONB em `agent_configs`, (3) listener no `/api/webhooks/ghl-events`. Diferente do `reaction-engine.ts` atual (POST-LLM) — esse é PRE-LLM. Adiado: F27.A+B+C já fecha 80% do gap (filtro passivo). Trigger reativo é expansão (escalar pra "agente sempre ouvindo eventos").
+
+### 2026-05-28q — F26 fix do próprio detector (anomaly threshold 5→20)
 
 Após F20 (2026-05-28m) deployar, vi 3 signals novos "Webhook GHL: location com 5/6/7 IPs únicos em 1min" — eram **falsos positivos do meu próprio detector**. Investigação: GHL usa **pool de IPs legitimamente** (data center), 5-7 IPs/min em location ativa não é spoofing.
 
