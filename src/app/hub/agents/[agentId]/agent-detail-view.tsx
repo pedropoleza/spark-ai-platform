@@ -198,7 +198,10 @@ const CATS: { id: Cat; label: string; icon: LucideIcon; group: string }[] = [
   { id: "qualification", label: "Qualificação", icon: Users, group: "capacidades" },
   { id: "scheduling", label: "Agendamento", icon: Calendar, group: "capacidades" },
   { id: "followup", label: "Follow-up", icon: Send, group: "capacidades" },
-  { id: "outreach", label: "Prospecção", icon: Zap, group: "capacidades" },
+  // F34 (Pedro 2026-05-28): Cat "Prospecção" removida do rail — virou
+  // sub-modo "Disparo em massa" dentro de Cat Ativação. Editor + estado
+  // (e.outreach + módulo outreach enabled) preservados. Toggle do módulo
+  // continua disponível indiretamente via switch de tipo na Ativação.
   { id: "knowledge", label: "Conhecimento", icon: FileText, group: "capacidades" },
   { id: "hours", label: "Atendimento", icon: Clock, group: "operacao" },
   { id: "automations", label: "Automações", icon: Workflow, group: "operacao" },
@@ -436,7 +439,19 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
                 {cat === "identity" && <CatIdentity e={e} patch={patch} isLead={isLead} />}
                 {cat === "tone" && <CatTone e={e} patch={patch} />}
                 {/* F27 (Pedro 2026-05-28): Cat "Ativação" — targeting_rules promovido pra rail. */}
-                {cat === "activation" && <CatActivation e={e} patch={patch} />}
+                {cat === "activation" && (
+                  <CatActivation
+                    e={e}
+                    patch={patch}
+                    outreachEnabled={enabled.has("outreach")}
+                    setOutreachEnabled={(on) => {
+                      const next = new Set(enabled);
+                      if (on) next.add("outreach");
+                      else next.delete("outreach");
+                      setEnabled(next);
+                    }}
+                  />
+                )}
                 {cat === "channel" && <CatChannel e={e} patch={patch} />}
                 {cat === "qualification" && <CatQualification e={e} patch={patch} />}
                 {cat === "scheduling" && <CatScheduling e={e} patch={patch} isRecruitment={isRecruitment} />}
@@ -838,82 +853,235 @@ function CatQualification({ e, patch }: { e: Editable; patch: (p: Partial<Editab
   );
 }
 
-/* ─── Ativação (F27, Pedro 2026-05-28) ─────────────────────────────
- * Filtros que decidem QUAIS contatos o agente atende. Vazio = sem
- * restrição (responde a todos da location).
+/* ─── Ativação (F27 + F34, Pedro 2026-05-28) ───────────────────────
+ * Cat unificada: tipo de ativação no topo + editor condicional.
  *
- * 3 tipos de regra (combinam com AND — todas precisam passar):
- *  - Tem a tag: contato precisa ter A tag exata.
- *  - Campo personalizado: campo precisa ter valor (exato ou qualquer).
- *  - Etapa do funil: contato tem opp na pipeline+stage.
+ * 5 tipos:
+ *  - inbound: agente responde quando lead manda msg (sem filtro extra)
+ *  - tag: targeting_rules.tag
+ *  - custom_field: targeting_rules.custom_field
+ *  - pipeline_stage: targeting_rules.pipeline_stage
+ *  - bulk: módulo outreach ON + outreach_config (tag_filter, rate, cap, etc)
  *
- * Runtime: `src/lib/queue/targeting.ts` lê esse array em cada msg e
- * pula resposta se não bater. Antes do F27, esse array era IGNORADO. */
-function CatActivation({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
+ * Detecção do tipo atual baseada em dados (sem migration):
+ *  - outreach module enabled → "bulk"
+ *  - targeting_rules tem entrada → tipo da 1ª regra
+ *  - senão → "inbound"
+ *
+ * Trocar de tipo limpa o "outro lado" (rules ↔ outreach) pra evitar
+ * config fantasma. Agente só pode estar em UM modo de ativação por vez. */
+
+type ActivationType = "inbound" | "tag" | "custom_field" | "pipeline_stage" | "bulk";
+
+function detectActivationType(
+  rules: TargetingRule[],
+  outreachEnabled: boolean,
+): ActivationType {
+  if (outreachEnabled) return "bulk";
+  if (rules.length === 0) return "inbound";
+  return rules[0].type;
+}
+
+const ACTIVATION_CHIPS: { value: ActivationType; label: string; hint: string }[] = [
+  { value: "inbound", label: "Por mensagem", hint: "Agente responde quando o lead manda uma mensagem." },
+  { value: "tag", label: "Por tag", hint: "Agente atende só contatos com tag específica." },
+  { value: "custom_field", label: "Por campo personalizado", hint: "Filtra por valor de custom field do Spark Leads." },
+  { value: "pipeline_stage", label: "Por oportunidade (funil)", hint: "Atende quem está em estágio específico do funil." },
+  { value: "bulk", label: "Por disparo em massa", hint: "Agente INICIA a conversa com uma lista. Você define ritmo e mensagem." },
+];
+
+function CatActivation({
+  e,
+  patch,
+  outreachEnabled,
+  setOutreachEnabled,
+}: {
+  e: Editable;
+  patch: (p: Partial<Editable>) => void;
+  outreachEnabled: boolean;
+  setOutreachEnabled: (on: boolean) => void;
+}) {
   const tr = e.targeting_rules;
-  const addT = (type: TargetingRule["type"] = "tag") => {
-    const base: TargetingRule = { id: rid(), type };
-    patch({ targeting_rules: [...tr, base] });
+  const type = detectActivationType(tr, outreachEnabled);
+
+  const switchType = (next: ActivationType) => {
+    if (next === type) return;
+    if (next === "bulk") {
+      // Bulk = ativação por disparo; limpa targeting_rules (incompatível)
+      // e liga módulo outreach. Conserva e.outreach.* atuais (config).
+      patch({ targeting_rules: [] });
+      setOutreachEnabled(true);
+    } else if (next === "inbound") {
+      patch({ targeting_rules: [] });
+      setOutreachEnabled(false);
+    } else {
+      // tag / custom_field / pipeline_stage: limpa outreach, semeia 1 regra
+      // do tipo escolhido se ainda não tem nenhuma daquele tipo.
+      const hasOfType = tr.some((r) => r.type === next);
+      const newRules = hasOfType
+        ? tr.filter((r) => r.type === next) // só mantém as do tipo escolhido
+        : [{ id: rid(), type: next } as TargetingRule];
+      patch({ targeting_rules: newRules });
+      setOutreachEnabled(false);
+    }
   };
+
+  const addT = (forType: TargetingRule["type"]) =>
+    patch({ targeting_rules: [...tr, { id: rid(), type: forType }] });
   const updT = (i: number, p: Partial<TargetingRule>) =>
     patch({ targeting_rules: tr.map((r, idx) => (idx === i ? { ...r, ...p } : r)) });
   const remT = (i: number) => patch({ targeting_rules: tr.filter((_, idx) => idx !== i) });
 
+  const setOutreach = (p: Partial<Outreach>) =>
+    patch({ outreach: { ...e.outreach, ...p } });
+
   return (
     <>
-      <div
-        style={{
-          background: "var(--surface-2)",
-          border: "1px solid var(--border)",
-          borderRadius: "var(--r-md)",
-          padding: 12,
-          marginBottom: 14,
-          fontSize: 13,
-          color: "var(--ink-3)",
-          lineHeight: 1.5,
-        }}
-      >
-        <strong style={{ color: "var(--ink)" }}>Como funciona:</strong> o agente
-        só responde a contatos que batem em <em>todos</em> os filtros abaixo.
-        Sem filtros = responde a todos os contatos da sub-conta.
-      </div>
-
       <Field
-        label="Filtros de ativação"
-        hint="Combinação AND — o contato precisa bater em TODAS as regras pro agente atender."
+        label="Tipo de ativação"
+        hint="Define COMO o agente é acionado. Só um tipo por vez."
       >
         <div className="col" style={{ gap: 8 }}>
-          {tr.length === 0 && (
-            <div className="muted" style={{ fontSize: 13 }}>
-              Nenhum filtro configurado — agente responde a todos os contatos.
-            </div>
-          )}
-          {tr.map((r, i) => (
-            <div key={r.id} className="row" style={{ gap: 8, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8, flexWrap: "wrap" }}>
-              <select className="select" aria-label="Tipo de regra de segmentação" value={r.type} onChange={(ev) => updT(i, { type: ev.target.value as TargetingRule["type"] })} style={{ width: 170 }}>
-                <option value="tag">Tem a tag</option>
-                <option value="custom_field">Campo personalizado</option>
-                <option value="pipeline_stage">Etapa do funil</option>
-              </select>
-              {r.type === "tag" && <input className="input grow" value={r.tag || ""} onChange={(ev) => updT(i, { tag: ev.target.value })} placeholder="nome da tag" />}
-              {r.type === "custom_field" && (<>
-                <input className="input" value={r.custom_field_key || ""} onChange={(ev) => updT(i, { custom_field_key: ev.target.value })} placeholder="chave do campo" style={{ width: 160 }} />
-                <input className="input grow" value={r.custom_field_value || ""} onChange={(ev) => updT(i, { custom_field_value: ev.target.value })} placeholder="valor (vazio = qualquer)" />
-              </>)}
-              {r.type === "pipeline_stage" && (<>
-                <input className="input" value={r.pipeline_id || ""} onChange={(ev) => updT(i, { pipeline_id: ev.target.value })} placeholder="ID do funil" style={{ width: 160 }} />
-                <input className="input grow" value={r.pipeline_stage_id || ""} onChange={(ev) => updT(i, { pipeline_stage_id: ev.target.value })} placeholder="ID da etapa" />
-              </>)}
-              <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remT(i)} aria-label="Remover"><Trash2 size={13} /></button>
-            </div>
-          ))}
-          <div className="row" style={{ gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-            <button className="btn btn--ghost btn--sm" onClick={() => addT("tag")}><Plus /> Tag</button>
-            <button className="btn btn--ghost btn--sm" onClick={() => addT("custom_field")}><Plus /> Campo personalizado</button>
-            <button className="btn btn--ghost btn--sm" onClick={() => addT("pipeline_stage")}><Plus /> Etapa do funil</button>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            {ACTIVATION_CHIPS.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                onClick={() => switchType(c.value)}
+                aria-pressed={type === c.value}
+                className={type === c.value ? "btn btn--primary btn--sm" : "btn btn--ghost btn--sm"}
+                style={{ minWidth: 100 }}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+          <div className="muted" style={{ fontSize: 12.5 }}>
+            {ACTIVATION_CHIPS.find((c) => c.value === type)?.hint}
           </div>
         </div>
       </Field>
+
+      {/* Sub-editor por tipo */}
+      {type === "inbound" && (
+        <div
+          style={{
+            background: "var(--surface-2)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-md)",
+            padding: 12,
+            fontSize: 13,
+            color: "var(--ink-3)",
+            lineHeight: 1.5,
+          }}
+        >
+          Esse agente responde a <strong>qualquer mensagem</strong> que chegar
+          na sub-conta (sem filtro extra). Se quiser restringir, troca o tipo
+          acima.
+        </div>
+      )}
+
+      {(type === "tag" || type === "custom_field" || type === "pipeline_stage") && (
+        <Field
+          label={
+            type === "tag"
+              ? "Tags que ativam"
+              : type === "custom_field"
+                ? "Campos personalizados que ativam"
+                : "Etapas do funil que ativam"
+          }
+          hint="Combinação AND — o contato precisa bater em TODAS as regras pro agente atender."
+        >
+          <div className="col" style={{ gap: 8 }}>
+            {tr.length === 0 && (
+              <div className="muted" style={{ fontSize: 13 }}>
+                Sem filtros — adicione pelo menos 1.
+              </div>
+            )}
+            {tr.map((r, i) =>
+              r.type !== type ? null : (
+                <div key={r.id} className="row" style={{ gap: 8, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8, flexWrap: "wrap" }}>
+                  {type === "tag" && (
+                    <input className="input grow" value={r.tag || ""} onChange={(ev) => updT(i, { tag: ev.target.value })} placeholder="nome da tag" />
+                  )}
+                  {type === "custom_field" && (
+                    <>
+                      <input className="input" value={r.custom_field_key || ""} onChange={(ev) => updT(i, { custom_field_key: ev.target.value })} placeholder="chave do campo" style={{ width: 180 }} />
+                      <input className="input grow" value={r.custom_field_value || ""} onChange={(ev) => updT(i, { custom_field_value: ev.target.value })} placeholder="valor (vazio = qualquer)" />
+                    </>
+                  )}
+                  {type === "pipeline_stage" && (
+                    <>
+                      <input className="input" value={r.pipeline_id || ""} onChange={(ev) => updT(i, { pipeline_id: ev.target.value })} placeholder="ID do funil" style={{ width: 180 }} />
+                      <input className="input grow" value={r.pipeline_stage_id || ""} onChange={(ev) => updT(i, { pipeline_stage_id: ev.target.value })} placeholder="ID da etapa" />
+                    </>
+                  )}
+                  <button className="btn btn--quiet btn--icon btn--sm" onClick={() => remT(i)} aria-label="Remover"><Trash2 size={13} /></button>
+                </div>
+              ),
+            )}
+            <button
+              className="btn btn--ghost btn--sm"
+              style={{ alignSelf: "flex-start", marginTop: 2 }}
+              onClick={() => addT(type)}
+            >
+              <Plus /> Adicionar {type === "tag" ? "tag" : type === "custom_field" ? "campo" : "etapa"}
+            </button>
+          </div>
+        </Field>
+      )}
+
+      {type === "bulk" && (
+        <>
+          <Field label="Quem o agente aborda" hint="Contatos com estas tags (separe por vírgula).">
+            <input
+              className="input"
+              value={e.outreach.tag_filter.tags.join(", ")}
+              onChange={(ev) => setOutreach({ tag_filter: { ...e.outreach.tag_filter, tags: ev.target.value.split(",").map((t) => t.trim()).filter(Boolean) } })}
+              placeholder="ex: feirao_2026, sem_contato"
+            />
+            <div style={{ marginTop: 8 }}>
+              <Seg
+                value={e.outreach.tag_filter.match}
+                options={[{ v: "any" as const, l: "Qualquer uma das tags" }, { v: "all" as const, l: "Todas as tags" }]}
+                onChange={(v) => setOutreach({ tag_filter: { ...e.outreach.tag_filter, match: v } })}
+              />
+            </div>
+          </Field>
+          <SubHd>Ritmo de envio</SubHd>
+          <div className="fgrid">
+            <Field label="Quantas pessoas por dia" hint="Cap diário — o agente não aborda mais que isso.">
+              <input className="input" type="number" min={1} max={5000} value={e.outreach.daily_cap} onChange={(ev) => setOutreach({ daily_cap: Number(ev.target.value) })} />
+            </Field>
+            <Field label="Velocidade (por hora)" hint="Espalha no tempo, sem rajada.">
+              <input className="input" type="number" min={1} max={500} value={e.outreach.rate_per_hour} onChange={(ev) => setOutreach({ rate_per_hour: Number(ev.target.value) })} />
+            </Field>
+          </div>
+          <Field label="Horário" hint="Quando ligado, respeita horário de atendimento + quiet hours (F32).">
+            <Toggle label="Só dentro do horário de atendimento" checked={e.outreach.respect_working_hours} onChange={() => setOutreach({ respect_working_hours: !e.outreach.respect_working_hours })} />
+          </Field>
+          <div className="card card--flat" style={{ padding: 12, background: "var(--primary-soft)", margin: "4px 0 4px" }}>
+            <span style={{ fontSize: 12.5, color: "var(--primary-ink)" }}>
+              📋 Aborda até <strong>{e.outreach.daily_cap} pessoas/dia</strong>, no ritmo de ~{e.outreach.rate_per_hour}/hora,{" "}
+              {e.outreach.respect_working_hours ? "dentro do horário de atendimento" : "a qualquer hora do dia"}.
+            </span>
+          </div>
+          <Field label="Mensagem de abertura" hint="A 1ª mensagem que o agente manda. Vazio = a IA cria com base no propósito.">
+            <textarea
+              className="textarea"
+              rows={3}
+              value={e.outreach.opening_message}
+              onChange={(ev) => setOutreach({ opening_message: ev.target.value })}
+              placeholder="Ex: Oi {first_name}! Vi que você passou no nosso feirão — posso te ajudar?"
+            />
+          </Field>
+          <div className="card card--flat" style={{ padding: 12, background: "var(--surface-2)", marginTop: 4 }}>
+            <span style={{ fontSize: 12.5, color: "var(--ink-2)" }}>
+              Depois de iniciar, o agente <strong>conduz</strong> a conversa normalmente (qualifica, agenda…). O disparo real é liberado pela agência (supervisionado) antes de ligar em produção.
+            </span>
+          </div>
+        </>
+      )}
     </>
   );
 }

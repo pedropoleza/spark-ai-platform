@@ -128,7 +128,10 @@ function buildNodes(template: WizardTemplate): Record<NodeKey, NodeDef> {
         { label: "Quando entram via palavra-chave da campanha", value: "keyword" },
         { label: "Quando o contato tem uma tag específica", value: "tag" },
         { label: "Quando o contato está numa etapa do funil", value: "stage" },
-        { label: "Sempre — o agente vai atrás (prospecção)", value: "outreach" },
+        // F34 (Pedro 2026-05-28): "Prospecção" → "Disparo em massa" (alinha
+        // com Cat Ativação do detail-view, que unificou outreach como um
+        // tipo de ativação).
+        { label: "Por disparo em massa (agente vai atrás)", value: "outreach" },
       ],
     },
     intake_detail: {
@@ -816,7 +819,7 @@ const INTAKE_TXT: Record<IntakeMode, string> = {
   keyword: "Por palavra-chave da campanha",
   tag: "Quando tem a tag",
   stage: "Quando entra na etapa do funil",
-  outreach: "Prospecção (agente inicia)",
+  outreach: "Disparo em massa (agente inicia)",
 };
 const OBJ_TXT: Record<Objective, string> = {
   qualification_only: "Qualificar", qualification_and_booking: "Qualificar + agendar", booking_only: "Agendar",
