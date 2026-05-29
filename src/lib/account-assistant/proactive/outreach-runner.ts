@@ -108,6 +108,12 @@ export async function runOutreachForAgent(agentId: string): Promise<RunOutreachR
       interval_seconds: intervalSeconds,
       jitter_seconds: 30,
       delivery_channel: "whatsapp_web_sms",
+      // F32 (Pedro 2026-05-28): flag `respect_quiet_hours` é nome legado da
+      // tabela bulk_message_jobs mas agora é interpretado como "respeitar
+      // horários do agente" = quiet_hours + working_hours combinados
+      // (ver isInBlockedHours em quiet-hours.ts). Antes só quiet → outreach
+      // disparava sábado 8h porque tava fora de quiet (22-7) e working_hours
+      // (seg-sex 9-18) era ignorado.
       respect_quiet_hours: !!oc.respect_working_hours,
       status: "paused",
       label: `Outreach automático (${new Date().toISOString().slice(0, 10)})`,

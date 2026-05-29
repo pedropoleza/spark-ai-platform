@@ -98,8 +98,12 @@ export const updateAgentConfigSchema = z.object({
   objective: z.enum(["qualification_only", "qualification_and_booking", "booking_only"]).nullable().optional(),
   data_fields: z.array(dataFieldSchema).nullable().optional(),
   ai_model: z.string().min(1).max(100).nullable().optional(),
-  custom_instructions: z.string().max(10000).nullable().optional(),
-  conversation_examples: z.string().max(20000).nullable().optional(),
+  // F31 (Pedro 2026-05-28): caps alinhados com sales-prompt-builder (8000 chars
+  // = ~2000 tokens). Antes zod permitia 10k/20k mas builder truncava em 3k/2k
+  // — silent data loss. Agora UI/zod/runtime concordam em 8000. Se rep precisar
+  // mais, é sinal de mover knowledge_base_instructions ou KB upload.
+  custom_instructions: z.string().max(8000).nullable().optional(),
+  conversation_examples: z.string().max(8000).nullable().optional(),
   knowledge_base_instructions: z.string().max(10000).nullable().optional(),
   system_prompt_override: z.string().max(20000).nullable().optional(),
   debounce_seconds: z.number().min(5).max(60).nullable().optional(),
@@ -116,6 +120,9 @@ export const updateAgentConfigSchema = z.object({
   timezone_config: z.object({
     use_location_default: z.boolean().optional(),
     custom_timezone: z.string().optional(),
+    // F33 (Pedro 2026-05-28): `confirm_before_booking` mantido tolerável no
+    // zod (ignora se vier de config antigo) mas runtime NÃO usa. UI removida.
+    // Se for re-introduzir, plumbar em sales-prompt-builder.buildBookingSection.
     confirm_before_booking: z.boolean().optional(),
     auto_detect_from_state: z.boolean().optional(),
   }).nullable().optional(),

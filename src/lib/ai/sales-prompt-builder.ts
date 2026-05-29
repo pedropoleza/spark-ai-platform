@@ -900,9 +900,22 @@ Use estas informações como referência. Se o lead perguntar algo coberto aqui,
 ${generalBlock}${itemsBlock}`;
 }
 
+// F31 (Pedro 2026-05-28): caps alinhados com builder-spec.ts (max 8000) e
+// validation.ts (idem 8000). Antes: zod permitia 10k mas builder cortava
+// em 3k — silent loss. Subi pra 8000 (~2k tokens) tolerável no contexto
+// total do prompt (~10-15k tokens).
+const CUSTOM_INSTRUCTIONS_CAP = 8000;
+const CONVERSATION_EXAMPLES_CAP = 8000;
+
 function buildCustomInstructionsSection(ctx: PromptContext): string {
   if (!ctx.config.custom_instructions) return "";
-  let instructions = ctx.config.custom_instructions.substring(0, 3000);
+  const raw = ctx.config.custom_instructions;
+  if (raw.length > CUSTOM_INSTRUCTIONS_CAP) {
+    console.warn(
+      `[prompt] custom_instructions truncado de ${raw.length} → ${CUSTOM_INSTRUCTIONS_CAP} chars`,
+    );
+  }
+  let instructions = raw.substring(0, CUSTOM_INSTRUCTIONS_CAP);
   // Se contactName estiver vazio, substitui {contact.name} por "o lead" em
   // vez de deixar "Olá , vamos conversar?" (vírgula solta) ou pior, o placeholder
   // literal "{contact.name}" aparecer no output.
@@ -918,10 +931,16 @@ ${instructions}`;
 
 function buildExamplesSection(ctx: PromptContext): string {
   if (!ctx.config.conversation_examples) return "";
+  const raw = ctx.config.conversation_examples;
+  if (raw.length > CONVERSATION_EXAMPLES_CAP) {
+    console.warn(
+      `[prompt] conversation_examples truncado de ${raw.length} → ${CONVERSATION_EXAMPLES_CAP} chars`,
+    );
+  }
   return `## EXEMPLOS DE CONVERSA IDEAL
 Os exemplos abaixo mostram o tom e fluxo desejado pelo administrador:
 
-${ctx.config.conversation_examples.substring(0, 2000)}`;
+${raw.substring(0, CONVERSATION_EXAMPLES_CAP)}`;
 }
 
 function buildResponseFormatSection(ctx: PromptContext): string {

@@ -81,20 +81,9 @@ export function TimezoneConfigEditor({ config, locationTimezone, onChange }: Tim
         </div>
       </div>
 
-      {/* Confirmar antes de agendar */}
-      <div className="flex items-center gap-3">
-        <Switch
-          checked={config.confirm_before_booking}
-          onCheckedChange={(v) => update("confirm_before_booking", v)}
-          id="tz-confirm"
-        />
-        <div>
-          <Label htmlFor="tz-confirm">Confirmar timezone antes de agendar</Label>
-          <p className="text-xs text-gray-500">
-            A IA pergunta ao lead se o timezone esta correto antes de marcar o agendamento
-          </p>
-        </div>
-      </div>
+      {/* F33 (Pedro 2026-05-28): `confirm_before_booking` removido — toggle
+          era dead-write (zod aceita mas runtime nunca lia). Se quisermos
+          re-introduzir, precisa wirear no sales-prompt-builder (buildBookingSection). */}
     </div>
   );
 }

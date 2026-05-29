@@ -25,7 +25,11 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { generateVariation } from "./bulk-message-variator";
-import { isInQuietHours as sharedIsInQuietHours } from "./quiet-hours";
+// F32 (Pedro 2026-05-28): trocado isInQuietHours → isInBlockedHours pra
+// respeitar TAMBÉM working_hours (semantica "respeitar horário de
+// atendimento" da UI). Antes outreach às 8h sábado disparava (fora de
+// quiet_hours mas fora de working_hours seg-sex 9-18).
+import { isInBlockedHours as sharedIsInBlockedHours } from "./quiet-hours";
 
 const MAX_PER_TICK = 5;
 
@@ -245,11 +249,15 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
       continue;
     }
 
-    // Quiet hours check (snapshot do agent_configs no momento de cada tick)
+    // F32 (Pedro 2026-05-28): respeita quiet_hours + working_hours.
+    // O flag `respect_quiet_hours` no job é setado pelo outreach-runner
+    // a partir de `oc.respect_working_hours` (nome legado no schema do
+    // outreach_config). Semanticamente o usuário pede "respeitar
+    // horários" — qualquer um dos 2 configs do agente vale.
     if (job.respect_quiet_hours) {
-      const inQuiet = await isInQuietHours(job.agent_id);
-      if (inQuiet) {
-        // Volta pra pending, próximo tick re-tenta. Loop até sair do quiet.
+      const blocked = await isInBlockedHours(job.agent_id);
+      if (blocked.blocked) {
+        // Volta pra pending, próximo tick re-tenta. Loop até sair do bloqueio.
         await supabase
           .from("bulk_message_recipients")
           .update({ status: "pending" })
@@ -432,9 +440,14 @@ async function markRecipientSkipped(
  * Wrapper local — delega pra lib compartilhada `quiet-hours.ts` (Pedro F14
  * 2026-05-28). Antes a lógica vivia duplicada inline; agora bulk-runner e
  * recurring-runner usam o mesmo helper.
+ *
+ * F32 (Pedro 2026-05-28): nome mantido mas agora respeita quiet_hours +
+ * working_hours combinados via isInBlockedHours.
  */
-async function isInQuietHours(agentId: string | null): Promise<boolean> {
-  return sharedIsInQuietHours(agentId);
+async function isInBlockedHours(
+  agentId: string | null,
+): Promise<{ blocked: boolean; reason?: "quiet_hours" | "working_hours" }> {
+  return sharedIsInBlockedHours(agentId);
 }
 
 /**

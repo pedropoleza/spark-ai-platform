@@ -268,6 +268,47 @@ async function processGroup(
     return;
   }
 
+  // F28 (Pedro 2026-05-28): max_messages_per_conversation enforcement.
+  // Antes: salvo no agent_configs (validation.ts:106) e UI permitia editar
+  // (detail-view CatLimits), mas runtime NUNCA contava nem pausava — rep
+  // setava "máx 30" e bot ia até 300. Agora:
+  //  - message_count é incrementado em action-executor.ts:402 após cada resposta IA.
+  //  - Aqui comparamos antes de chamar IA; se ≥ cap, pausa automática.
+  //  - Auto-pausa via ai_paused_at evita re-check em cada msg seguinte (próximo
+  //    gate de pause filtra).
+  const maxMsgs = (config as { max_messages_per_conversation?: number | null })
+    .max_messages_per_conversation;
+  if (
+    typeof maxMsgs === "number" &&
+    maxMsgs > 0 &&
+    (convState?.message_count ?? 0) >= maxMsgs
+  ) {
+    const count = convState?.message_count ?? 0;
+    log("log", `SKIP max_messages cap atingido (${count}/${maxMsgs})`);
+    if (convState && !convState.ai_paused_at) {
+      const nowIso = new Date().toISOString();
+      await supabase
+        .from("conversation_state")
+        .update({
+          ai_paused_at: nowIso,
+          ai_paused_reason: `max_messages_per_conversation:${count}/${maxMsgs}`,
+          updated_at: nowIso,
+        })
+        .eq("agent_id", agent.id)
+        .eq("contact_id", group.contactId);
+    }
+    await supabase.from("execution_log").insert({
+      agent_id: agent.id,
+      location_id: group.locationId,
+      contact_id: group.contactId,
+      conversation_id: group.conversationId,
+      action_type: "max_messages_skip",
+      action_payload: { count, cap: maxMsgs },
+      success: true,
+    });
+    return;
+  }
+
   // 1b. Processar audio e midia conforme toggles habilitados
   const enableAudio = config.enable_audio_transcription === true;
   const enableImage = config.enable_image_analysis === true;

@@ -71,31 +71,11 @@ export async function PUT(request: NextRequest) {
     }
   }
 
-  if ("daily_message_limit" in body) {
-    const v = body.daily_message_limit;
-    if (v === null) {
-      updateData.daily_message_limit = null;
-    } else {
-      const n = Number(v);
-      if (!Number.isInteger(n) || n < 0) {
-        return NextResponse.json({ error: "Limite diário deve ser inteiro >= 0" }, { status: 400 });
-      }
-      updateData.daily_message_limit = n;
-    }
-  }
-
-  if ("cost_alert_threshold" in body) {
-    const v = body.cost_alert_threshold;
-    if (v === null) {
-      updateData.cost_alert_threshold = null;
-    } else {
-      const n = Number(v);
-      if (!Number.isFinite(n) || n < 0) {
-        return NextResponse.json({ error: "Limite de alerta de custo deve ser número >= 0" }, { status: 400 });
-      }
-      updateData.cost_alert_threshold = n;
-    }
-  }
+  // F30 (Pedro 2026-05-28): daily_message_limit / cost_alert_threshold
+  // removidos do PUT — eram dead-write (UI gravava, runtime nunca aplicava).
+  // Hard cap real fica em agent_configs.monthly_spend_cap_usd via charge.ts.
+  // Colunas DB preservadas pra retrocompat; PUT silenciosamente ignora se
+  // vier no body.
 
   const { data, error } = await supabase
     .from("location_settings")

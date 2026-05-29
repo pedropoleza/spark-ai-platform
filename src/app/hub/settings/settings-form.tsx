@@ -40,16 +40,14 @@ export function SettingsForm({
   initial,
 }: {
   locationName: string;
-  initial: { timezone: string; dailyLimit: number | null; costAlert: number | null };
+  // F30 (Pedro 2026-05-28): dailyLimit/costAlert removidos — eram dead-write
+  // (UI gravava, runtime nunca aplicava). Hard cap mensal por sub-account já
+  // protege contra runaway de custo. Re-introduzir só se ligarmos runtime.
+  initial: { timezone: string };
 }) {
   const [timezone, setTimezone] = useState(initial.timezone);
-  const [dailyLimit, setDailyLimit] = useState(initial.dailyLimit?.toString() ?? "");
-  const [costAlert, setCostAlert] = useState(initial.costAlert?.toString() ?? "");
   const [saving, setSaving] = useState(false);
-  const dirty =
-    timezone !== initial.timezone ||
-    dailyLimit !== (initial.dailyLimit?.toString() ?? "") ||
-    costAlert !== (initial.costAlert?.toString() ?? "");
+  const dirty = timezone !== initial.timezone;
 
   // Pedro 2026-05-28: warn antes de sair com mudanças não-salvas. Antes user
   // alterava tz, esquecia de salvar, voltava — tz original persistia, achava
@@ -68,8 +66,6 @@ export function SettingsForm({
     setSaving(true);
     try {
       const body: Record<string, unknown> = { default_timezone: timezone };
-      if (dailyLimit.trim()) body.daily_message_limit = Number(dailyLimit);
-      if (costAlert.trim()) body.cost_alert_threshold = Number(costAlert);
       const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -128,24 +124,11 @@ export function SettingsForm({
         </div>
       </div>
 
-      <div className="card" style={{ marginTop: 14 }}>
-        <div className="card-hd"><h3>Limites (em breve)</h3></div>
-        <div className="card-body">
-          {/* C3-7 (ultra-review 2026-05-26): estes 2 ainda NÃO são aplicados pelo
-              runtime (dead-write). Nota honesta + o hard cap mensal real (por
-              sub-account) já protege contra runaway. Remover o "em breve" quando
-              ligar o enforcement. */}
-          <p className="muted" style={{ fontSize: 12.5, margin: "0 0 10px" }}>
-            Ainda não aplicamos estes limites automaticamente — em breve. O teto mensal de gasto por sub-account já está ativo e protege contra disparada de custo.
-          </p>
-          <Field label="Limite de mensagens por dia" hint="Em breve — ainda não aplicado.">
-            <input className="input" type="number" min={0} value={dailyLimit} onChange={(e) => setDailyLimit(e.target.value)} style={{ width: 140 }} />
-          </Field>
-          <Field label="Alerta de custo (USD)" hint="Em breve — ainda não enviamos esse alerta.">
-            <input className="input" type="number" min={0} value={costAlert} onChange={(e) => setCostAlert(e.target.value)} style={{ width: 140 }} />
-          </Field>
-        </div>
-      </div>
+      {/* F30 (Pedro 2026-05-28): card "Limites (em breve)" removido — 2 toggles
+          eram dead-write (UI gravava daily_message_limit + cost_alert_threshold,
+          runtime nunca aplicava). Proteção real contra runaway = hard cap mensal
+          em agent_configs.monthly_spend_cap_usd, já enforced via charge.ts.
+          Re-introduzir só se ligarmos enforcement (cron diário lê usage_records). */}
     </div>
   );
 }
