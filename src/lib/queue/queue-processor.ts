@@ -14,6 +14,9 @@ import { generateSummaryNote } from "@/lib/queue/summary-note-generator";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
 import { checkContactMatchesTargeting } from "@/lib/queue/targeting";
+// F27.D (Pedro 2026-05-29): detecção de trigger reativo (msg sintética
+// enfileirada pelo reactive-trigger.ts quando tag/stage muda no GHL).
+import { isReactiveTriggerBody, parseTriggerBody } from "@/lib/account-assistant/proactive/reactive-trigger";
 import { notifyCriticalError } from "@/lib/utils/notify";
 import { withRetry } from "@/lib/utils/retry";
 import type { GHLMessage } from "@/types/ghl";
@@ -41,6 +44,10 @@ interface MessageGroup {
   messages: QueuedMessage[];
   aggregatedBody: string;
   processedMedia: ProcessedMedia[];
+  // F27.D (Pedro 2026-05-29): se a entrada veio do reactive-trigger
+  // (CONTACTTAGUPDATE / OPPORTUNITYSTAGEUPDATE), processamos como 1ª msg
+  // proativa — sem histórico, sem audio, com instrução clara pro LLM.
+  syntheticTrigger?: { kind: string; key: string; pipelineId?: string };
 }
 
 /**
@@ -121,9 +128,18 @@ export async function processMessageQueue(): Promise<{
   // sao processados em processGroup onde temos acesso a config/toggles.
   for (const group of Array.from(groups.values())) {
     const parts: string[] = [];
+    // F27.D: detecção de trigger reativo. Se QUALQUER msg do grupo é sintética,
+    // tratamos o grupo todo como trigger (idempotência garante 1 por evento).
     for (const msg of group.messages) {
       const body = msg.message_body.trim();
       if (!body) continue;
+      if (isReactiveTriggerBody(body)) {
+        const parsed = parseTriggerBody(body);
+        if (parsed) {
+          group.syntheticTrigger = parsed;
+        }
+        continue;
+      }
       if (body.startsWith("[audio")) {
         parts.push("[O contato enviou um audio]");
       } else if (body === "[media]") {
@@ -132,7 +148,24 @@ export async function processMessageQueue(): Promise<{
         parts.push(body);
       }
     }
-    group.aggregatedBody = parts.join("\n");
+    if (group.syntheticTrigger) {
+      // Substitui aggregatedBody por instrução clara que o LLM lê como "primeira
+      // mensagem proativa". O sales-prompt-builder usa isso como user input.
+      const t = group.syntheticTrigger;
+      const eventDesc =
+        t.kind === "tag_added"
+          ? `O contato acabou de receber a tag "${t.key}" no Spark Leads`
+          : t.kind === "stage_changed"
+            ? `O contato acabou de entrar na etapa "${t.key}" do funil${t.pipelineId ? ` (pipeline ${t.pipelineId})` : ""}`
+            : `Evento ${t.kind}: ${t.key}`;
+      group.aggregatedBody =
+        `[GATILHO REATIVO — sem mensagem do contato. ${eventDesc}. ` +
+        `Inicie uma conversa proativa coerente com o propósito do agente. ` +
+        `Cumprimente, mencione o motivo do contato (sem citar "tag" ou "funil" diretamente — fale natural), ` +
+        `e conduza pra próxima etapa do seu objetivo (qualificar/agendar/etc).]`;
+    } else {
+      group.aggregatedBody = parts.join("\n");
+    }
   }
 
   // 4. Processar cada grupo
