@@ -74,6 +74,13 @@ export interface PromptContext {
    * mensagem" via texto no prompt é fraco; turnCount é inequívoco.
    */
   priorTurnCount?: number;
+  /**
+   * F37 (Pedro 2026-05-29): histórico completo do contato no Spark Leads
+   * (msgs anteriores, notas, opp stage, tags). Opt-in via
+   * `config.lead_history_config.enabled`. Quando presente, vira seção
+   * "HISTÓRICO ANTERIOR DESSE LEAD" no system prompt.
+   */
+  leadHistory?: import("@/types/agent").LeadContext;
 }
 
 /**
@@ -112,6 +119,9 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     buildMetaInstruction(),
     buildTypeFramingSection(ctx),
     buildIdentitySection(ctx),
+    // F37: histórico do lead vem ANTES das instruções do admin pra LLM
+    // contextualizar antes de receber regras.
+    buildLeadHistorySection(ctx),
     buildCustomInstructionsSection(ctx),
     buildExamplesSection(ctx),
     buildKnowledgeBaseSection(ctx),
@@ -927,6 +937,54 @@ function buildCustomInstructionsSection(ctx: PromptContext): string {
     .replace(/\{agent\.specialist\}/g, ctx.config.specialist_name || "especialista");
   return `## INSTRUÇÕES DO ADMINISTRADOR (seguir com PRIORIDADE)
 ${instructions}`;
+}
+
+/**
+ * F37 (Pedro 2026-05-29): seção de histórico do lead carregado do Spark Leads.
+ * Se `ctx.leadHistory` veio (config.lead_history_config.enabled=true), monta
+ * resumo compacto: tags + funil/stage + últimas msgs + notas. Vazio se
+ * não veio ou se histórico está vazio (lead totalmente novo).
+ */
+function buildLeadHistorySection(ctx: PromptContext): string {
+  const h = ctx.leadHistory;
+  if (!h || (h.recent_messages.length === 0 && h.opportunities.length === 0 && h.notes.length === 0 && h.contact.tags.length === 0)) {
+    return "";
+  }
+  const lines: string[] = ["## HISTÓRICO ANTERIOR DESSE LEAD (do Spark Leads)"];
+  lines.push("");
+  lines.push("USE este contexto pra responder coerente. NÃO pergunte coisas já respondidas. Reconheça continuidade — esse contato pode já ter conversado com humanos ou ter histórico.");
+  lines.push("");
+
+  if (h.contact.tags.length > 0) {
+    lines.push(`**Tags do contato**: ${h.contact.tags.join(", ")}`);
+  }
+  if (h.opportunities.length > 0) {
+    lines.push("**Oportunidades**:");
+    for (const o of h.opportunities) {
+      const stage = o.pipelineName && o.stageName ? `${o.pipelineName} → ${o.stageName}` : o.stageName || "(stage desconhecido)";
+      const value = o.monetaryValue ? ` ($${o.monetaryValue})` : "";
+      const status = o.status ? ` [${o.status}]` : "";
+      lines.push(`  - ${o.name || "(sem nome)"} — ${stage}${status}${value}`);
+    }
+  }
+  if (h.recent_messages.length > 0) {
+    lines.push("");
+    lines.push(`**Últimas ${Math.min(h.recent_messages.length, 10)} mensagens** (mais recente em cima):`);
+    for (const m of h.recent_messages.slice(0, 10)) {
+      const who = m.direction === "inbound" ? "Lead" : (m.source && m.source !== "api" ? "Humano (rep)" : "Bot/sistema");
+      const date = m.dateAdded ? new Date(m.dateAdded).toISOString().slice(0, 16) : "";
+      lines.push(`  [${date}] ${who}: "${m.body}"`);
+    }
+  }
+  if (h.notes.length > 0) {
+    lines.push("");
+    lines.push("**Notas internas** (não compartilhar literalmente com o lead):");
+    for (const n of h.notes.slice(0, 5)) {
+      const date = n.dateAdded ? new Date(n.dateAdded).toISOString().slice(0, 10) : "";
+      lines.push(`  - [${date}] ${n.body.slice(0, 300)}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function buildExamplesSection(ctx: PromptContext): string {

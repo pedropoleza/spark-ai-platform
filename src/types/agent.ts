@@ -116,9 +116,111 @@ export interface AgentConfig {
   specialist_role?: string;        // Descrição do papel ("especialista", "consultor")
   check_legal_docs?: boolean;      // Pergunta sobre Social Security e permissão de trabalho (EUA)
   preferred_time_slot?: string;    // "afternoon_evening" | "any"
+  // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
+  // Migration 00096 adiciona as colunas com default JSONB. Código sempre
+  // lê via getLeadHistoryConfig/getHandoffPolicy que aplica defaults se
+  // null (retrocompat antes do deploy da migration).
+  lead_history_config?: LeadHistoryConfig | null;
+  handoff_policy?: HandoffPolicy | null;
   created_at: string;
   updated_at: string;
 }
+
+/* ─── F37 Lead Awareness + Handoff (Pedro 2026-05-29) ─────────────── */
+
+export interface LeadHistoryConfig {
+  enabled: boolean;
+  /** Quantas msgs do histórico GHL trazer (10-50). */
+  messages_count: number;
+  /** Incluir notas/observações do contato no prompt. */
+  include_notes: boolean;
+  /** Incluir opportunities + stage atual. */
+  include_opportunities: boolean;
+  /** Incluir tags do contato. */
+  include_tags: boolean;
+}
+
+export interface HandoffPolicy {
+  enabled: boolean;
+  /** Se rep humano respondeu nesse intervalo, bot silencia. */
+  skip_if_human_replied_within_minutes: number;
+  /** Lead pediu "falar com humano" → bot silencia + notifica. */
+  skip_if_lead_requested_human: boolean;
+  /** Quando skip, manda msg pro rep dono via SparkBot. */
+  notify_rep_via_sparkbot: boolean;
+  /** Opp em estágio fechado (won/lost) → bot silencia. */
+  notify_on_opp_stage_closed: boolean;
+  /** Keywords adicionais que disparam handoff (PT-BR + EN). */
+  custom_keywords_handoff: string[];
+}
+
+export const DEFAULT_LEAD_HISTORY_CONFIG: LeadHistoryConfig = {
+  enabled: false,
+  messages_count: 20,
+  include_notes: true,
+  include_opportunities: true,
+  include_tags: true,
+};
+
+export const DEFAULT_HANDOFF_POLICY: HandoffPolicy = {
+  enabled: false,
+  skip_if_human_replied_within_minutes: 60,
+  skip_if_lead_requested_human: true,
+  notify_rep_via_sparkbot: true,
+  notify_on_opp_stage_closed: true,
+  custom_keywords_handoff: ["humano", "atendente", "pessoa", "falar com alguem", "falar com alguém", "real person", "agent please"],
+};
+
+export function getLeadHistoryConfig(c: { lead_history_config?: LeadHistoryConfig | null }): LeadHistoryConfig {
+  return { ...DEFAULT_LEAD_HISTORY_CONFIG, ...(c.lead_history_config || {}) };
+}
+
+export function getHandoffPolicy(c: { handoff_policy?: HandoffPolicy | null }): HandoffPolicy {
+  return { ...DEFAULT_HANDOFF_POLICY, ...(c.handoff_policy || {}) };
+}
+
+/** Snapshot do contexto histórico do lead carregado do Spark Leads. */
+export interface LeadContext {
+  contact: {
+    id: string;
+    name: string;
+    phone?: string;
+    email?: string;
+    tags: string[];
+    customFields: Array<{ key: string; value: string }>;
+    assignedUserId?: string;
+  };
+  recent_messages: Array<{
+    direction: "inbound" | "outbound";
+    body: string;
+    dateAdded: string;
+    source?: string; // "api" | "workflow" | "app" | null
+    messageType?: string;
+  }>;
+  notes: Array<{ body: string; dateAdded: string; userId?: string }>;
+  opportunities: Array<{
+    id: string;
+    name?: string;
+    pipelineId?: string;
+    pipelineStageId?: string;
+    pipelineName?: string;
+    stageName?: string;
+    status?: string; // "open" | "won" | "lost" | "abandoned"
+    monetaryValue?: number;
+  }>;
+  /** ISO da última msg outbound NÃO-bot (source != 'api'). */
+  last_human_outbound_at: string | null;
+  /** ISO da última msg inbound. */
+  last_inbound_at: string | null;
+  /** Tem opp em status 'won'/'lost'/'abandoned'? */
+  has_closed_opp: boolean;
+  /** Quanto tempo levou pra carregar (debug). */
+  fetch_ms: number;
+}
+
+export type ShouldRespondDecision =
+  | { decision: "respond"; reason?: string }
+  | { decision: "skip"; reason: string; notify_rep: boolean; suggested_action?: string };
 
 export interface AutomationAction {
   type:

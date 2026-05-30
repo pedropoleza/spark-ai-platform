@@ -157,6 +157,21 @@ Regras de targeting enforced em `src/lib/queue/targeting.ts` (`checkContactMatch
 - **F27.D pendente**: trigger reativo "lead entrou em estágio Y" → dispara agente proativo. Requer setup webhook GHL externo + schema `activation_triggers` + listener PRE-LLM. Diferente do `reaction-engine.ts` (POST-LLM).
 - **SparkBot rep-facing não usa**: `LEAD_ONLY` inclui `activation`; targeting só faz sentido pra lead-facing.
 
+### Lead Awareness + Handoff Inteligente (F37, Pedro 2026-05-29)
+Agentes lead-facing (sales/recruitment/custom) podem:
+1. **Carregar histórico do contato** do Spark Leads antes de responder — msgs anteriores, notas, opp stage, tags. Bot entende em que ponto a conversa parou (caso humano já tenha conversado). Implementado em `src/lib/queue/lead-history.ts` (cache 5min, fail-soft).
+2. **Decidir não responder** baseado em heurísticas (`src/lib/queue/should-respond.ts`):
+   - Humano respondeu nas últimas N min → SKIP (não atropela)
+   - Lead pediu "humano/atendente/falar com alguém" → SKIP + NOTIFY
+   - Opp em status fechado (won/lost) → SKIP silently
+3. **Notificar rep humano via SparkBot** quando decide SKIP (`src/lib/queue/handoff-notify.ts`). Reusa `deliverProactiveMessage`. Idempotência: cooldown 4h por (contact, reason). Resolve rep via `contact.assignedTo` → fallback rep_identities da location não-internal.
+
+Toggles em `agent_configs.lead_history_config` e `handoff_policy` JSONB. **Defaults OFF** — opt-in por agente via UI Cat "Memória do lead" (ícone BookOpen, grupo Comportamento). Migration `00096_lead_awareness_handoff.sql` adiciona colunas + tabela `handoff_notifications`. Plano: `_planning/F37-lead-awareness/PLAN.md`.
+
+Wire em `queue-processor.ts` após targeting check, antes do prompt build. Prompt section `buildLeadHistorySection` em `sales-prompt-builder.ts` injeta resumo do histórico antes das instruções do admin. Audit em `execution_log` action_types `lead_history_loaded`, `should_respond_skip`, `handoff_notification`.
+
+Tests: `scripts/test-lead-awareness.ts` (12 cenários cobrindo decisões should-respond, defaults, edge cases).
+
 ### SparkBot Cron Guards (Pedro 2026-05-05)
 - pg_cron `sparkbot-proactive` agendado a cada 30s com:
   - `pg_try_advisory_xact_lock(8675309)` — anti double-execution sob backlog

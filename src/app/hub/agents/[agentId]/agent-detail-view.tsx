@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import {
   ChevronLeft, Play, Pause, Check, Plus, Trash2,
   Sparkles, Clock, Calendar, MessageCircle, Users, Send, FileText, Shield, Zap,
-  Wand2, Workflow, PauseCircle, Bell, Crosshair,
+  Wand2, Workflow, PauseCircle, Bell, Crosshair, BookOpen,
   type LucideIcon,
 } from "lucide-react";
 import { AMark, StatusBadge, ChannelChip, PriceBadge } from "@/components/hub/primitives";
@@ -34,6 +34,9 @@ type Cat =
   // (targeting_rules). Antes ficava enterrado embaixo de "Qualificação" como
   // "Filtros de público". Pedro reclamou que não achava — agora é Cat própria.
   | "activation"
+  // F37 (Pedro 2026-05-29): memória do lead (carrega histórico GHL) + handoff
+  // inteligente (decide responder vs notificar rep via SparkBot).
+  | "memory"
   | "channel" | "qualification" | "scheduling" | "followup" | "outreach" | "knowledge"
   | "hours" | "automations" | "pause" | "limits"
   | "proactivity";
@@ -98,6 +101,9 @@ interface Editable {
   fallback_model: string;
   disabled_tools: string[];
   system_prompt_override: string;
+  // F37 (Pedro 2026-05-29): memória do lead + handoff inteligente.
+  lead_history_config: import("@/types/agent").LeadHistoryConfig;
+  handoff_policy: import("@/types/agent").HandoffPolicy;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -170,6 +176,25 @@ function makeSeed(c: Record<string, any>): Editable {
     fallback_model: str(c.fallback_model),
     disabled_tools: Array.isArray(c.disabled_tools) ? (c.disabled_tools as string[]) : [],
     system_prompt_override: str(c.system_prompt_override),
+    // F37 (Pedro 2026-05-29): defaults vêm do schema (00096); se config legado
+    // não tem, usa defaults aplicados via getLeadHistoryConfig/getHandoffPolicy.
+    lead_history_config: {
+      enabled: bool((c.lead_history_config as Record<string, unknown> | null)?.enabled, false),
+      messages_count: num((c.lead_history_config as Record<string, unknown> | null)?.messages_count, 20),
+      include_notes: bool((c.lead_history_config as Record<string, unknown> | null)?.include_notes, true),
+      include_opportunities: bool((c.lead_history_config as Record<string, unknown> | null)?.include_opportunities, true),
+      include_tags: bool((c.lead_history_config as Record<string, unknown> | null)?.include_tags, true),
+    },
+    handoff_policy: {
+      enabled: bool((c.handoff_policy as Record<string, unknown> | null)?.enabled, false),
+      skip_if_human_replied_within_minutes: num((c.handoff_policy as Record<string, unknown> | null)?.skip_if_human_replied_within_minutes, 60),
+      skip_if_lead_requested_human: bool((c.handoff_policy as Record<string, unknown> | null)?.skip_if_lead_requested_human, true),
+      notify_rep_via_sparkbot: bool((c.handoff_policy as Record<string, unknown> | null)?.notify_rep_via_sparkbot, true),
+      notify_on_opp_stage_closed: bool((c.handoff_policy as Record<string, unknown> | null)?.notify_on_opp_stage_closed, true),
+      custom_keywords_handoff: Array.isArray((c.handoff_policy as Record<string, unknown> | null)?.custom_keywords_handoff)
+        ? ((c.handoff_policy as { custom_keywords_handoff: string[] }).custom_keywords_handoff)
+        : ["humano", "atendente", "pessoa", "falar com alguem"],
+    },
   };
 }
 
@@ -183,7 +208,9 @@ const TOGGLE_CATS = new Set<Cat>(["qualification", "scheduling", "followup", "ou
 // Só fazem sentido para agentes que falam com LEADS (não pro SparkBot do rep).
 // F27 (Pedro 2026-05-28): "activation" é lead-only — SparkBot fala com 1 rep só,
 // não tem targeting_rules. Adicionado pra esconder da Cat-rail no SparkBot.
-const LEAD_ONLY = new Set<Cat>(["activation", "channel", "qualification", "scheduling", "followup", "outreach", "automations"]);
+// F37 (Pedro 2026-05-29): "memory" lead-only — carrega histórico do contato
+// do GHL e regras de handoff inteligente; SparkBot rep-facing tem outro pipeline.
+const LEAD_ONLY = new Set<Cat>(["activation", "memory", "channel", "qualification", "scheduling", "followup", "outreach", "automations"]);
 
 const GROUPS: { id: string; label: string }[] = [
   { id: "comportamento", label: "Comportamento" },
@@ -196,6 +223,11 @@ const CATS: { id: Cat; label: string; icon: LucideIcon; group: string }[] = [
   // F27 (Pedro 2026-05-28): Cat "Ativação" no grupo comportamento (define quando
   // o agente ENTRA em ação — fundamental, fica perto da identidade).
   { id: "activation", label: "Ativação", icon: Crosshair, group: "comportamento" },
+  // F37 (Pedro 2026-05-29): Cat "Memória do lead" — toggle pra puxar histórico
+  // do contato do Spark Leads + handoff inteligente (decide responder vs
+  // notificar rep humano). Fica em comportamento pois define COMO o agente
+  // entende o contexto antes de agir.
+  { id: "memory", label: "Memória do lead", icon: BookOpen, group: "comportamento" },
   { id: "channel", label: "Canais", icon: MessageCircle, group: "capacidades" },
   { id: "qualification", label: "Qualificação", icon: Users, group: "capacidades" },
   { id: "scheduling", label: "Agendamento", icon: Calendar, group: "capacidades" },
@@ -216,6 +248,7 @@ const CAT_META: Record<Cat, { title: string; sub: string }> = {
   tone: { title: "Tom & estilo", sub: "O jeito de conversar e exemplos de resposta." },
   // F27 (Pedro 2026-05-28): Cat "Ativação" — quando/em quem o agente é ativado.
   activation: { title: "Ativação", sub: "Quais contatos o agente atende — por tag, etapa do funil ou campo personalizado." },
+  memory: { title: "Memória do lead", sub: "Carregar histórico do contato no Spark Leads e decidir quando notificar você em vez de responder." },
   channel: { title: "Canais", sub: "Por onde o agente conversa (conectado pela agência)." },
   qualification: { title: "Qualificação de leads", sub: "O que perguntar pra identificar um bom lead." },
   scheduling: { title: "Agendamento", sub: "Como o agente marca e o que faz depois." },
@@ -311,6 +344,9 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
           fallback_model: e.fallback_model || null,
           disabled_tools: e.disabled_tools.length ? e.disabled_tools : null,
           system_prompt_override: e.system_prompt_override.trim() || null,
+          // F37 (Pedro 2026-05-29): memória do lead + handoff.
+          lead_history_config: e.lead_history_config,
+          handoff_policy: e.handoff_policy,
         }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "falhou");
@@ -462,6 +498,8 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
                 {cat === "knowledge" && <CatKnowledge e={e} patch={patch} agentId={detail.id} />}
                 {cat === "hours" && <CatHours e={e} patch={patch} />}
                 {cat === "automations" && <CatAutomations e={e} patch={patch} />}
+                {/* F37 (Pedro 2026-05-29): nova Cat memória do lead + handoff. */}
+                {cat === "memory" && <CatMemory e={e} patch={patch} />}
                 {cat === "pause" && <CatPause e={e} patch={patch} />}
                 {cat === "limits" && <CatLimits e={e} patch={patch} isRep={!isLead} />}
                 {cat === "proactivity" && <CatProactivity />}
@@ -1214,6 +1252,139 @@ function CatScheduling({ e, patch, isRecruitment }: { e: Editable; patch: (p: Pa
       <Toggle label="Permitir reagendamento" checked={pb.allow_reschedule} onChange={() => set({ allow_reschedule: !pb.allow_reschedule })} />
       {isRecruitment && <Toggle label="Perguntar documentação (EUA)" hint="Confirma Social Security e permissão de trabalho." checked={e.check_legal_docs} onChange={() => patch({ check_legal_docs: !e.check_legal_docs })} />}
       <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>Como o bot para e devolve a conversa pra uma pessoa fica na aba <strong>Pausa do bot</strong>.</p>
+    </>
+  );
+}
+
+/* ─── Memória do lead + Handoff (F37, Pedro 2026-05-29) ─────────────
+ * Toggle pra carregar histórico do contato no Spark Leads (msgs antigas,
+ * notas, opp stage, tags) antes de responder + regras de handoff
+ * (quando o bot deve SILENCIAR em vez de responder e notificar o rep
+ * humano via SparkBot). Default tudo OFF — opt-in por agente.
+ */
+function CatMemory({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
+  const lh = e.lead_history_config;
+  const hp = e.handoff_policy;
+  const setLH = (p: Partial<typeof lh>) => patch({ lead_history_config: { ...lh, ...p } });
+  const setHP = (p: Partial<typeof hp>) => patch({ handoff_policy: { ...hp, ...p } });
+
+  return (
+    <>
+      <div
+        style={{
+          background: "var(--surface-2)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-md)",
+          padding: 12,
+          marginBottom: 14,
+          fontSize: 13,
+          color: "var(--ink-3)",
+          lineHeight: 1.5,
+        }}
+      >
+        <strong style={{ color: "var(--ink)" }}>Como funciona:</strong> quando ligado, o agente
+        consulta o histórico do contato no Spark Leads antes de responder — assim ele sabe
+        em que ponto a conversa parou e não pergunta coisas já respondidas. Também pode
+        decidir <em>não responder</em> em certas situações e te avisar via SparkBot.
+      </div>
+
+      <SubHd>Carregar histórico do Spark Leads</SubHd>
+      <Field
+        label="Ler conversas e dados antigos do contato"
+        hint="Bot consulta msgs anteriores, notas, oportunidades e tags do contato antes de gerar a resposta. Adiciona ~1s de latência por turno e ~2k tokens de prompt."
+      >
+        <Toggle
+          label="Ligado"
+          checked={lh.enabled}
+          onChange={() => setLH({ enabled: !lh.enabled })}
+        />
+      </Field>
+
+      {lh.enabled && (
+        <>
+          <div className="fgrid">
+            <Field label="Quantas mensagens trazer" hint="Entre 10 e 50. Padrão 20.">
+              <input
+                className="input"
+                type="number"
+                min={10}
+                max={50}
+                value={lh.messages_count}
+                onChange={(ev) => setLH({ messages_count: Math.max(10, Math.min(50, Number(ev.target.value) || 20)) })}
+              />
+            </Field>
+          </div>
+          <Field label="O que mais incluir" hint="Quanto mais contexto, mais tokens.">
+            <div className="col" style={{ gap: 8 }}>
+              <Toggle label="Notas do contato (5 mais recentes)" checked={lh.include_notes} onChange={() => setLH({ include_notes: !lh.include_notes })} />
+              <Toggle label="Oportunidades + estágio do funil" checked={lh.include_opportunities} onChange={() => setLH({ include_opportunities: !lh.include_opportunities })} />
+              <Toggle label="Tags do contato" checked={lh.include_tags} onChange={() => setLH({ include_tags: !lh.include_tags })} />
+            </div>
+          </Field>
+        </>
+      )}
+
+      <SubHd>Handoff inteligente</SubHd>
+      <Field
+        label="Decidir quando NÃO responder e notificar você"
+        hint="Quando ligado, o bot avalia regras e pode silenciar (em vez de responder), te mandando uma notificação via SparkBot."
+      >
+        <Toggle
+          label="Ligado"
+          checked={hp.enabled}
+          onChange={() => setHP({ enabled: !hp.enabled })}
+        />
+      </Field>
+
+      {hp.enabled && (
+        <>
+          <Field label="Não responder se rep respondeu recentemente">
+            <div className="row" style={{ gap: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 13, color: "var(--ink-2)" }}>Se você respondeu nos últimos</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={1440}
+                value={hp.skip_if_human_replied_within_minutes}
+                onChange={(ev) => setHP({ skip_if_human_replied_within_minutes: Math.max(0, Math.min(1440, Number(ev.target.value) || 0)) })}
+                style={{ width: 84 }}
+              />
+              <span style={{ fontSize: 13, color: "var(--ink-2)" }}>minutos, bot silencia</span>
+            </div>
+          </Field>
+          <Field label="Lead pediu humano">
+            <Toggle
+              label="Bot detecta e silencia + notifica"
+              checked={hp.skip_if_lead_requested_human}
+              onChange={() => setHP({ skip_if_lead_requested_human: !hp.skip_if_lead_requested_human })}
+            />
+          </Field>
+          <Field label="Palavras-chave que disparam handoff" hint="Separe por vírgula. Match em qualquer parte da msg, sem acento.">
+            <textarea
+              className="textarea"
+              rows={2}
+              value={hp.custom_keywords_handoff.join(", ")}
+              onChange={(ev) => setHP({ custom_keywords_handoff: ev.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+              placeholder="humano, atendente, pessoa, falar com alguem"
+            />
+          </Field>
+          <Field label="Oportunidade fechada (won/lost)">
+            <Toggle
+              label="Bot silencia se contato tem opp fechada"
+              checked={hp.notify_on_opp_stage_closed}
+              onChange={() => setHP({ notify_on_opp_stage_closed: !hp.notify_on_opp_stage_closed })}
+            />
+          </Field>
+          <Field label="Avisar você via SparkBot quando silenciar" hint="Você recebe msg no WhatsApp com contexto do que o lead falou.">
+            <Toggle
+              label="Ligado"
+              checked={hp.notify_rep_via_sparkbot}
+              onChange={() => setHP({ notify_rep_via_sparkbot: !hp.notify_rep_via_sparkbot })}
+            />
+          </Field>
+        </>
+      )}
     </>
   );
 }

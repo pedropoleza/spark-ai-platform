@@ -17,6 +17,11 @@ import { checkContactMatchesTargeting } from "@/lib/queue/targeting";
 // F27.D (Pedro 2026-05-29): detecção de trigger reativo (msg sintética
 // enfileirada pelo reactive-trigger.ts quando tag/stage muda no GHL).
 import { isReactiveTriggerBody, parseTriggerBody } from "@/lib/account-assistant/proactive/reactive-trigger";
+// F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
+import { loadLeadHistory } from "@/lib/queue/lead-history";
+import { evaluateShouldRespond } from "@/lib/queue/should-respond";
+import { notifyRepViaSparkbot } from "@/lib/queue/handoff-notify";
+import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
 import { notifyCriticalError } from "@/lib/utils/notify";
 import { withRetry } from "@/lib/utils/retry";
 import type { GHLMessage } from "@/types/ghl";
@@ -692,6 +697,71 @@ async function processGroup(
     }
   }
 
+  // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
+  // Antes de chamar LLM, carrega histórico do Spark Leads (msgs antigas, notas,
+  // opp stage, tags) e avalia se bot deve responder OU silenciar+notificar rep.
+  // Tudo gated por config — agentes sem flags ON têm comportamento idêntico.
+  let leadHistory: import("@/types/agent").LeadContext | undefined;
+  const leadHistoryCfg = getLeadHistoryConfig(config as { lead_history_config?: import("@/types/agent").LeadHistoryConfig | null });
+  const handoffPol = getHandoffPolicy(config as { handoff_policy?: import("@/types/agent").HandoffPolicy | null });
+  if (leadHistoryCfg.enabled && locationForBilling?.company_id) {
+    leadHistory = await loadLeadHistory(
+      group.contactId,
+      locationForBilling.company_id,
+      group.locationId,
+      leadHistoryCfg,
+    );
+    log("log", `lead_history loaded: msgs=${leadHistory.recent_messages.length} notes=${leadHistory.notes.length} opps=${leadHistory.opportunities.length} (${leadHistory.fetch_ms}ms)`);
+    await supabase.from("execution_log").insert({
+      agent_id: agent.id,
+      location_id: group.locationId,
+      contact_id: group.contactId,
+      conversation_id: group.conversationId,
+      action_type: "lead_history_loaded",
+      action_payload: {
+        messages: leadHistory.recent_messages.length,
+        notes: leadHistory.notes.length,
+        opportunities: leadHistory.opportunities.length,
+        fetch_ms: leadHistory.fetch_ms,
+      },
+      success: true,
+    });
+  }
+
+  // Handoff gate: avalia DEPOIS de carregar histórico (precisa contexto).
+  if (handoffPol.enabled && leadHistory) {
+    const decision = evaluateShouldRespond(leadHistory, group.aggregatedBody, handoffPol);
+    if (decision.decision === "skip") {
+      log("log", `SKIP por handoff policy: ${decision.reason}`);
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "should_respond_skip",
+        action_payload: { reason: decision.reason, notify_rep: decision.notify_rep },
+        success: true,
+      });
+      // Se policy pede pra avisar rep, dispara handoff notification.
+      if (decision.notify_rep) {
+        try {
+          const result = await notifyRepViaSparkbot({
+            agentId: agent.id,
+            locationId: group.locationId,
+            contactId: group.contactId,
+            decision,
+            leadContext: leadHistory,
+            currentInboundBody: group.aggregatedBody,
+          });
+          log("log", `handoff notify: notified=${result.notified} rep=${result.rep_id || "—"} skipped=${result.skipped_reason || "—"}`);
+        } catch (err) {
+          console.warn("[handoff] notify falhou (não-bloqueante):", err instanceof Error ? err.message : err);
+        }
+      }
+      return;
+    }
+  }
+
   const promptCtx = {
     config,
     // custom_agent (Plataforma Modular) roda no runtime de lead provado, mas com
@@ -714,6 +784,8 @@ async function processGroup(
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     priorTurnCount: conversationTurns.length,
+    // F37: passa lead history pro prompt-builder injetar buildLeadHistorySection.
+    leadHistory,
   };
   // Plataforma Modular (Fase 2): roteia a montagem do prompt pelo motor unificado
   // quando AGENT_MOTOR_UNIFIED tá ON. Como o assembler delega pro mesmo

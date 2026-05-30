@@ -126,6 +126,28 @@ export const updateAgentConfigSchema = z.object({
     confirm_before_booking: z.boolean().optional(),
     auto_detect_from_state: z.boolean().optional(),
   }).nullable().optional(),
+  // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
+  lead_history_config: z
+    .object({
+      enabled: z.boolean(),
+      messages_count: z.number().int().min(5).max(50),
+      include_notes: z.boolean(),
+      include_opportunities: z.boolean(),
+      include_tags: z.boolean(),
+    })
+    .nullable()
+    .optional(),
+  handoff_policy: z
+    .object({
+      enabled: z.boolean(),
+      skip_if_human_replied_within_minutes: z.number().int().min(0).max(1440),
+      skip_if_lead_requested_human: z.boolean(),
+      notify_rep_via_sparkbot: z.boolean(),
+      notify_on_opp_stage_closed: z.boolean(),
+      custom_keywords_handoff: z.array(z.string().max(80)).max(30),
+    })
+    .nullable()
+    .optional(),
   automations: z.array(z.object({
     id: z.string(),
     event: z.string().optional(),
