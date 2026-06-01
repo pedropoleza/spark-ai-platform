@@ -18,10 +18,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const RATE_LIMIT_WINDOW_SEC = 60;
 const RATE_LIMIT_MAX_HITS = 50;
-// F25 fix (Pedro 2026-05-28): threshold 5 era muito baixo — GHL usa pool de
-// IPs legitimamente (já vimos 7 IPs/min em prod sem ataque). Subindo pra 20
-// que é claramente suspeito (DDoS coordenado ou spoofing real).
-const ANOMALY_UNIQUE_IPS_THRESHOLD = 20;
+// F38 fix (Pedro 2026-06-01): pool GHL em location ativa pode chegar a 79 IPs
+// em 1min (visto em prod após disparo bulk). 20 era falso-positivo. Subindo
+// pra 100 — claramente suspeito (DDoS coordenado real). Antes: F26 raised 5→20
+// que ainda era baixo demais.
+const ANOMALY_UNIQUE_IPS_THRESHOLD = 100;
 
 export interface RateLimitCheck {
   allowed: boolean;
@@ -85,13 +86,17 @@ export async function checkWebhookRateLimit(
       if (uniqueIps.size >= ANOMALY_UNIQUE_IPS_THRESHOLD) {
         // Não bloqueia, só sinaliza. Pode ser legitimate (GHL usa pool de IPs)
         // mas em escala suspeita, signal alerta.
+        // F38 fix (Pedro 2026-06-01): title ESTÁVEL por location (sem count
+        // dinâmico). Fingerprint = sha256(type + title) → cada count diferente
+        // criava signal NOVO → ~60 signals duplicados pra 1 evento. Agora
+        // 1 signal por location, e ele se atualiza com last_seen + occurrence_count++.
         try {
           const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
           recordSignalAsync({
             type: "error",
             source: "system",
             severity: "high",
-            title: `Webhook GHL: location com ${uniqueIps.size} IPs únicos em 1min`,
+            title: `Webhook GHL: location ${locationId.slice(0, 8)} com muitos IPs únicos`,
             description:
               `Location ${locationId.slice(0, 8)} recebeu inbound de ${uniqueIps.size} IPs distintos no último minuto. ` +
               `Pode ser legítimo (pool GHL) mas se persistir, investigar spoofing.`,
