@@ -1034,8 +1034,20 @@ function CatActivation({
         >
           <div className="col" style={{ gap: 8 }}>
             {tr.length === 0 && (
-              <div className="muted" style={{ fontSize: 13 }}>
-                Sem filtros — adicione pelo menos 1.
+              <div
+                style={{
+                  background: "#fef3c7",
+                  border: "1px solid #f59e0b",
+                  borderRadius: 8,
+                  padding: 12,
+                  fontSize: 13,
+                  color: "#78350f",
+                  lineHeight: 1.5,
+                }}
+              >
+                ⚠️ <strong>Sem filtros configurados.</strong> Sem nenhuma regra, esse modo
+                fica equivalente a &ldquo;Por mensagem&rdquo; — agente responde QUALQUER contato.
+                Adicione pelo menos 1 regra abaixo OU troca pra &ldquo;Por mensagem&rdquo; no topo.
               </div>
             )}
             {tr.map((r, i) =>
