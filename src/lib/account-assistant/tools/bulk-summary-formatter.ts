@@ -187,10 +187,21 @@ export function formatScheduleSummary(input: ScheduleSummaryInput): string {
       }
       lines.push(`   Por dia: ETA ${input.eta_minutes} min`);
       break;
-    case "custom_window":
-      lines.push(`   Janela customizada: ${formatDateTime(strategy.start_at)} → ${formatDateTime(strategy.end_at)}`);
-      lines.push(`   Interval ${strategy.interval_seconds || 90}s ± ${strategy.jitter_seconds || 30}s`);
+    case "custom_window": {
+      // F41 (Pedro 2026-06-02): mostra detalhes do pacing com unidade humana.
+      // Ex: "12 contatos a cada 3min = 36min total, das 14:00 às 14:36"
+      const interval = strategy.interval_seconds || 90;
+      const intervalLabel = interval >= 60
+        ? `${interval % 60 === 0 ? interval / 60 : (interval / 60).toFixed(1)}min`
+        : `${interval}s`;
+      const startMs = new Date(strategy.start_at).getTime();
+      const endMs = new Date(strategy.end_at).getTime();
+      const windowMin = Math.round((endMs - startMs) / 60000);
+      lines.push(`   ⏱️  ${input.total_enqueued} contatos · *${intervalLabel}* entre cada · ${windowMin}min total`);
+      lines.push(`   📅 ${formatDateTime(strategy.start_at)} → ${formatDateTime(strategy.end_at)}`);
+      lines.push(`   ℹ️  Pacing salvo como tua preferência. Próxima campanha usa o mesmo se nada mudar — me avisa pra ajustar.`);
       break;
+    }
   }
 
   lines.push("");

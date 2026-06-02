@@ -289,3 +289,164 @@ function formatDate(d: Date): string {
     month: "2-digit",
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// F41 (Pedro 2026-06-02) — Smart window por volume + pref do rep
+// ─────────────────────────────────────────────────────────────────────
+// Algoritmo: janela = N × interval (natural). Sem max_window_hours
+// rígido. Só ajusta se cruzar 21h local — comprime intervalo até floor
+// 60s; se ainda não couber, sugere spread_days.
+//
+// Substitui F40.B (greeting check, removida — heurística fraca).
+
+export interface BulkPacingPrefs {
+  /** Segundos entre msgs. Default 180 (3min). Range 60-900. */
+  interval_seconds: number;
+}
+
+export const DEFAULT_PACING_PREFS: BulkPacingPrefs = {
+  interval_seconds: 180,
+};
+
+export const FLOOR_INTERVAL_S = 60; // 1 msg/min — abaixo disso WhatsApp flag spam
+export const BUSINESS_END_HOUR = 21; // F40 cap
+
+export interface SmartWindowInput {
+  N: number;
+  prefs: BulkPacingPrefs;
+  /** Default = now */
+  base_start?: Date;
+  /** Fuso pra interpretar BUSINESS_END_HOUR (default Intl resolved). Vê CLAUDE.md location.timezone. */
+  timezone?: string;
+}
+
+export interface SmartWindowResult {
+  /** Estratégia recomendada. */
+  strategy: DeliveryStrategy;
+  /** Intervalo de fato usado (pode ter sido comprimido). */
+  interval_seconds: number;
+  /** Janela útil em minutos (pra exibir no preview). */
+  total_minutes: number;
+  /** Se sim, o intervalo foi reduzido pra caber até 21h. */
+  compressed: boolean;
+  /** Se sim, foi pra spread_days porque não cabia mesmo comprimindo. */
+  spread_to_days?: number;
+  /** Mensagem pro rep: "12 contatos × 3min entre = 36min. Hoje 14:00-14:36." */
+  human_summary: string;
+}
+
+/**
+ * Calcula a janela ideal pra um disparo de N contatos.
+ *
+ * Regras:
+ *  - Default interval = prefs.interval_seconds (3min)
+ *  - Janela natural = N × interval
+ *  - Se janela natural ULTRAPASSA 21h local do start_at → comprime
+ *    intervalo até caber (floor 60s)
+ *  - Se mesmo comprimido não caber → spread_days
+ *  - Se start_at já é > 21h → joga pro próximo dia 9h
+ */
+export function pickSmartWindow(input: SmartWindowInput): SmartWindowResult {
+  const N = Math.max(1, Math.floor(input.N));
+  const interval = Math.max(FLOOR_INTERVAL_S, input.prefs.interval_seconds || DEFAULT_PACING_PREFS.interval_seconds);
+  const now = input.base_start || new Date();
+
+  // 1. Resolve start_at (próxima janela "civilizada" se now já é noite)
+  const start = new Date(now);
+  const startHour = start.getHours();
+  if (startHour >= BUSINESS_END_HOUR) {
+    // Já passou de 21h → começa amanhã 9h
+    start.setDate(start.getDate() + 1);
+    start.setHours(9, 0, 0, 0);
+  } else if (startHour < 9) {
+    // Antes das 9h → começa às 9h
+    start.setHours(9, 0, 0, 0);
+  }
+
+  // 2. Janela natural
+  const naturalWindowS = N * interval;
+  const end = new Date(start.getTime() + naturalWindowS * 1000);
+
+  // 3. Cap 21h
+  const endLimit = new Date(start);
+  endLimit.setHours(BUSINESS_END_HOUR, 0, 0, 0);
+  if (endLimit.getTime() <= start.getTime()) {
+    // start já passou de 21h (não deveria, mas defensivo) → joga pro próximo dia
+    endLimit.setDate(endLimit.getDate() + 1);
+  }
+
+  if (end.getTime() <= endLimit.getTime()) {
+    // Cabe natural — usa janela = N × interval
+    return {
+      strategy: {
+        type: "custom_window",
+        start_at: start.toISOString(),
+        end_at: end.toISOString(),
+        interval_seconds: interval,
+        jitter_seconds: 30,
+      },
+      interval_seconds: interval,
+      total_minutes: Math.ceil(naturalWindowS / 60),
+      compressed: false,
+      human_summary:
+        `${N} contatos · ${formatInterval(interval)} entre cada · ` +
+        `${Math.ceil(naturalWindowS / 60)}min total · ` +
+        `${formatTime(start)}–${formatTime(end)}`,
+    };
+  }
+
+  // 4. Não cabe — tenta comprimir intervalo
+  const availableS = (endLimit.getTime() - start.getTime()) / 1000;
+  const compressedInterval = Math.floor(availableS / N);
+  if (compressedInterval >= FLOOR_INTERVAL_S) {
+    return {
+      strategy: {
+        type: "custom_window",
+        start_at: start.toISOString(),
+        end_at: endLimit.toISOString(),
+        interval_seconds: compressedInterval,
+        jitter_seconds: 30,
+      },
+      interval_seconds: compressedInterval,
+      total_minutes: Math.ceil(availableS / 60),
+      compressed: true,
+      human_summary:
+        `${N} contatos · ${formatInterval(compressedInterval)} entre cada (comprimido p/ caber até 21h) · ` +
+        `${Math.ceil(availableS / 60)}min total · ` +
+        `${formatTime(start)}–${formatTime(endLimit)}`,
+    };
+  }
+
+  // 5. Nem comprimido cabe — spread em N dias úteis
+  // Cada dia útil = ~12h disponíveis (9h-21h). Quantos cabem num dia
+  // com FLOOR_INTERVAL: 12*3600/60 = 720 contatos/dia. Realista: usar
+  // janela natural * dias.
+  const perDay = Math.floor((12 * 3600) / interval); // contatos máximos por dia c/ pref
+  const daysNeeded = Math.max(2, Math.min(7, Math.ceil(N / perDay)));
+  return {
+    strategy: {
+      type: "spread_days",
+      days_count: daysNeeded,
+      interval_seconds: interval,
+      jitter_seconds: 30,
+    },
+    interval_seconds: interval,
+    total_minutes: Math.ceil((N * interval) / 60),
+    compressed: false,
+    spread_to_days: daysNeeded,
+    human_summary:
+      `${N} contatos não cabem num dia respeitando ${formatInterval(interval)} entre cada — ` +
+      `espalhando em ${daysNeeded} dias úteis (~${Math.ceil(N / daysNeeded)} por dia).`,
+  };
+}
+
+function formatInterval(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = seconds / 60;
+  if (m % 1 === 0) return `${m}min`;
+  return `${m.toFixed(1)}min`;
+}
+
+function formatTime(d: Date): string {
+  return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", hour12: false });
+}

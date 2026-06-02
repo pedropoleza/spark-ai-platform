@@ -25,15 +25,11 @@ import type { ToolEntry, ToolContext } from "./types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { FilterExpression } from "../filter-engine";
 
-/* ─── F40 (Pedro 2026-06-01) — guard rails de janela de disparo ─────
- * Caso Gustavo "M1 hoje 12h": bot setou end_at=23:59 e distribuiu 14
- * contatos entre 12h-23h59 → "Bom dia" caiu na noite, cliente reclamou.
- * Regras agora:
- *   1. end_at NUNCA passa de 21:00 local. Se passar, clamp silencioso.
- *      Pra mandar de noite, usar spread_days (dias diferentes).
- *   2. Se template tem "Bom dia"/"Boa tarde"/"Boa noite", janela tem
- *      que caber no período. Mismatch → rejeita com sugestão clara.
- *      Override possível via confirmed_greeting_mismatch=true.
+/* ─── F40 (Pedro 2026-06-01) — cap 21h ──────────────────────────────
+ * end_at NUNCA passa de 21:00 local. Se passar, clamp silencioso.
+ * Pra mandar de noite, usar spread_days (dias diferentes).
+ * (F40.B "greeting check" removido em F41 — heurística fraca; F41
+ * agora calcula janela ideal por volume.)
  */
 
 interface ClampResult { adjusted: string; wasClamped: boolean; originalHour: number; }
@@ -44,51 +40,11 @@ function clampEndAtTo9PM(endAtIso: string): ClampResult {
   const [, date, hh, mm, ss, tz = ""] = m;
   const hourLocal = parseInt(hh, 10);
   const minLocal = parseInt(mm, 10);
-  // Cap: 21:00 local (não vai pra hora 21:01+ ou pra hora >21).
   if (hourLocal > 21 || (hourLocal === 21 && minLocal > 0)) {
     return { adjusted: `${date}T21:00:00${tz}`, wasClamped: true, originalHour: hourLocal };
   }
-  // Ignora ss não-usado
   void ss;
   return { adjusted: endAtIso, wasClamped: false, originalHour: hourLocal };
-}
-
-interface GreetingCheck { mismatch: boolean; reason?: string; }
-function detectGreetingMismatch(template: string, startAtIso: string, endAtIso: string): GreetingCheck {
-  const norm = (template || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
-  const hasBomDia = /\bbom dia\b/.test(norm);
-  const hasBoaTarde = /\bboa tarde\b/.test(norm);
-  const hasBoaNoite = /\bboa noite\b/.test(norm);
-  if (!hasBomDia && !hasBoaTarde && !hasBoaNoite) return { mismatch: false };
-
-  const startHour = parseInt(startAtIso.match(/T(\d{2}):/)?.[1] || "0", 10);
-  const endHour = parseInt(endAtIso.match(/T(\d{2}):/)?.[1] || "0", 10);
-
-  // "Bom dia": razoável até 12h. Janela termina depois das 12h = mismatch.
-  if (hasBomDia && endHour >= 12) {
-    return {
-      mismatch: true,
-      reason: `Template tem "Bom dia" mas janela termina ${endHour}h. Quem receber depois das 12h vai estranhar. Encurte a janela pra terminar até 11h, ou troque "Bom dia" por algo neutro tipo "Oi" / "E aí".`,
-    };
-  }
-  // "Boa tarde": razoável 12-18h. Fora disso = mismatch.
-  if (hasBoaTarde && (startHour < 12 || endHour > 18)) {
-    return {
-      mismatch: true,
-      reason: `Template tem "Boa tarde" mas janela é ${startHour}h-${endHour}h. Só faz sentido entre 12h-18h. Encurte a janela ou troque o cumprimento.`,
-    };
-  }
-  // "Boa noite": razoável após 18h (mas com cap a 21h vai ser 18-21).
-  if (hasBoaNoite && startHour < 18) {
-    return {
-      mismatch: true,
-      reason: `Template tem "Boa noite" mas janela começa ${startHour}h. Só faz sentido após 18h. Ajuste start_at pra ≥18h ou troque o cumprimento.`,
-    };
-  }
-  return { mismatch: false };
 }
 import {
   executeContactsFilter,
@@ -675,14 +631,17 @@ const scheduleBulkMessageV2: ToolEntry = {
         delivery_strategy: {
           type: "object",
           description:
-            "Como distribuir o disparo no tempo. Vem das delivery_options do preview. " +
-            "type='today' (tudo hoje), 'spread_days' (N dias úteis), 'custom_window' (start_at+end_at). " +
-            "Se omitido, usa default 'today' com interval 90s. " +
-            "REGRA F40 (Pedro 2026-06-01): end_at NUNCA passa de 21:00 local — bot capa pra 21h. " +
+            "Como distribuir o disparo no tempo. Tipos:\n" +
+            " - 'auto' (RECOMENDADO): bot calcula janela ideal baseado em N contatos + preferência salva do rep. " +
+            "Default 3min entre msgs; comprime se passar de 21h; spread_days se não caber. F41.\n" +
+            " - 'today': tudo hoje, intervalo fixo (legado).\n" +
+            " - 'spread_days': N dias úteis (2-7).\n" +
+            " - 'custom_window': rep dá start_at + end_at explícitos (ISO 8601).\n" +
+            "REGRA F40: end_at NUNCA passa de 21:00 local (cap automático). " +
             "Pra disparar fora do horário comercial, use spread_days. " +
-            "Se o template tem 'Bom dia' / 'Boa tarde' / 'Boa noite', a janela TEM que caber no período correspondente — senão tool rejeita.",
+            "DEFAULT recomendado: 'auto' — bot escolhe inteligente.",
           properties: {
-            type: { type: "string", enum: ["today", "spread_days", "custom_window"] },
+            type: { type: "string", enum: ["today", "spread_days", "custom_window", "auto"] },
             days_count: { type: "number", description: "Só pra spread_days. Min 2, max 7." },
             start_at: { type: "string", description: "Só pra custom_window. ISO 8601 com timezone." },
             end_at: {
@@ -693,13 +652,6 @@ const scheduleBulkMessageV2: ToolEntry = {
             interval_seconds: { type: "number" },
             jitter_seconds: { type: "number" },
           },
-        },
-        // F40 (Pedro 2026-06-01): override do mismatch greeting/window.
-        confirmed_greeting_mismatch: {
-          type: "boolean",
-          description:
-            "Confirma que o rep QUER disparar mesmo com cumprimento incompatível com a janela " +
-            "(ex: 'Bom dia' indo até 21h). Só passe true se o rep aceitou explicitamente após o aviso.",
         },
         // Disclaimer aceites — bot preenche após coletar confirmações
         confirmed_warm_list: { type: "boolean" },
@@ -978,7 +930,32 @@ const scheduleBulkMessageV2: ToolEntry = {
       interval_seconds: stratInterval,
       jitter_seconds: stratJitter,
     };
-    if (rawDeliveryStrategy?.type === "spread_days") {
+    let smartWindowSummary: string | null = null;
+    if (rawDeliveryStrategy?.type === "auto") {
+      // F41 (Pedro 2026-06-02): bot calcula janela ideal por volume.
+      // Lê pref do rep (rep_identities.profile.bulk_pacing) e chama pickSmartWindow.
+      const { pickSmartWindow, DEFAULT_PACING_PREFS } = await import("./bulk-delivery-strategy");
+      const supabaseRep = createAdminClient();
+      const { data: repRow } = await supabaseRep
+        .from("rep_identities")
+        .select("profile")
+        .eq("id", ctx.rep.id)
+        .maybeSingle();
+      const savedPrefs = (repRow?.profile as Record<string, unknown> | null)?.bulk_pacing as
+        | { interval_seconds?: number }
+        | undefined;
+      const prefs = {
+        interval_seconds: savedPrefs?.interval_seconds || DEFAULT_PACING_PREFS.interval_seconds,
+      };
+      const totalContacts = resolveRes.segments.reduce((a, s) => a + s.contacts.length, 0);
+      const smart = pickSmartWindow({ N: totalContacts, prefs });
+      deliveryStrategy = smart.strategy;
+      smartWindowSummary = smart.human_summary;
+      console.log(
+        `[bulk-v2 F41] auto window: N=${totalContacts} interval=${smart.interval_seconds}s ` +
+          `total=${smart.total_minutes}min compressed=${smart.compressed} spread=${smart.spread_to_days || "—"}`,
+      );
+    } else if (rawDeliveryStrategy?.type === "spread_days") {
       const days = Math.min(Math.max(Number(rawDeliveryStrategy.days_count) || 2, 2), 7);
       deliveryStrategy = {
         type: "spread_days",
@@ -997,32 +974,10 @@ const scheduleBulkMessageV2: ToolEntry = {
         };
       }
 
-      // F40 (Pedro 2026-06-01): cap hard a 21h local.
-      // Caso Gustavo "M1 hoje 12h" — bot setou end_at=23:59 e bot distribuiu
-      // 14 contatos entre 12h e 23h59. "Bom dia" caiu na noite → cliente
-      // reclamou. Regra: end_at NUNCA passa de 21:00 no fuso local; se
-      // passar, clamp silentemente. Pra disparar de madrugada, usar
-      // spread_days (dias diferentes) — não estende janela do mesmo dia.
+      // F40 (Pedro 2026-06-01): cap hard a 21h local. Pra disparar fora
+      // de horário comercial, rep tem que usar spread_days (dias diferentes),
+      // não estender janela do mesmo dia.
       const eaClamped = clampEndAtTo9PM(ea);
-
-      // F40: detecta mismatch "Bom dia/Boa tarde/Boa noite" vs janela.
-      // Se template tem cumprimento de horário específico mas janela
-      // cruza fora do período → rejeita (bot precisa avisar rep).
-      const firstSegmentTemplate = resolveRes.segments[0]?.message_template || "";
-      const greetingMismatch = detectGreetingMismatch(firstSegmentTemplate, sa, eaClamped.adjusted);
-      const ignoreGreeting = args.confirmed_greeting_mismatch === true;
-      if (greetingMismatch.mismatch && !ignoreGreeting) {
-        return {
-          status: "error",
-          message:
-            `⚠️ Cumprimento incompatível com a janela:\n${greetingMismatch.reason}\n\n` +
-            `Opções: (a) encurte a janela pra caber no período do cumprimento, ` +
-            `(b) troque o cumprimento, ou (c) confirme que quer mandar assim mesmo ` +
-            `(passe confirmed_greeting_mismatch=true).`,
-          retryable: false,
-        };
-      }
-
       deliveryStrategy = {
         type: "custom_window",
         start_at: sa,
@@ -1215,6 +1170,40 @@ const scheduleBulkMessageV2: ToolEntry = {
       daily_breakdown: dailyBreakdown,
     });
 
+    // F41 (Pedro 2026-06-02): persiste pref de pacing no rep.profile.
+    // Aprende silencioso — próxima campanha usa esse interval automaticamente.
+    // Tool wrapper expõe schedule_summary com detalhes pra rep confirmar
+    // ou ajustar no próximo disparo.
+    try {
+      const finalInterval =
+        (deliveryStrategy.interval_seconds as number | undefined) || intervalSeconds;
+      if (finalInterval && finalInterval >= 60 && finalInterval <= 900) {
+        const supabaseUpd = createAdminClient();
+        const { data: repCurrent } = await supabaseUpd
+          .from("rep_identities")
+          .select("profile")
+          .eq("id", ctx.rep.id)
+          .maybeSingle();
+        const currentProfile = (repCurrent?.profile || {}) as Record<string, unknown>;
+        const newProfile = {
+          ...currentProfile,
+          bulk_pacing: {
+            interval_seconds: finalInterval,
+            last_applied_at: new Date().toISOString(),
+            last_n_contacts: recipientRows.length,
+          },
+        };
+        await supabaseUpd
+          .from("rep_identities")
+          .update({ profile: newProfile })
+          .eq("id", ctx.rep.id);
+      }
+    } catch (err) {
+      console.warn(
+        `[bulk-v2 F41] save pacing pref falhou (não-bloqueante): ${err instanceof Error ? err.message : err}`,
+      );
+    }
+
     return {
       status: "ok",
       data: {
@@ -1226,6 +1215,8 @@ const scheduleBulkMessageV2: ToolEntry = {
         delivery_channel: deliveryChannel,
         delivery_strategy: deliveryStrategy,
         daily_breakdown: dailyBreakdown,
+        // F41: resumo natural que o bot deve repetir na confirmação ao rep.
+        smart_window_summary: smartWindowSummary,
         // F1.6 Pedro 2026-05-16: warning de coexistência (não-bloqueante).
         // Bot menciona em prosa quando útil ("vou criar paralelo aos 3 ativos").
         coexistence_warning: coexistenceWarning,
