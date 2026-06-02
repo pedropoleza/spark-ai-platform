@@ -182,13 +182,24 @@ export async function POST(request: NextRequest) {
 
   const [slotsSettled, contactSettled, convStateResult, ghlMessagesCountSettled] = await Promise.allSettled([
     shouldFetchSlots
-      ? withRetry(
-          () => ghlClient.get<SlotsResp>(
-            `/calendars/${config.calendar_id}/free-slots`,
-            { startDate: slotsStartDate, endDate: slotsEndDate },
+      ? // F43 (Pedro 2026-06-02): deadline duro de 10s na busca de slots. O
+        // test chat é SÍNCRONO (rep encara "digitando…") — não pode travar 2min
+        // se o free-slots do GHL pendurar. Se estourar, vira rejected → cai no
+        // slotsFetchFailed=true (prompt degrada com slotsUnavailable). Em prod
+        // (queue-processor) o caminho é async, então lá não tem esse race —
+        // mas o teto de 20s do GHLClient (F43) já evita hang infinito.
+        Promise.race([
+          withRetry(
+            () => ghlClient.get<SlotsResp>(
+              `/calendars/${config.calendar_id}/free-slots`,
+              { startDate: slotsStartDate, endDate: slotsEndDate },
+            ),
+            { maxRetries: 1, baseDelayMs: 200, label: "test:free-slots" },
           ),
-          { maxRetries: 2, baseDelayMs: 200, label: "test:free-slots" },
-        )
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("free-slots deadline 10s (test chat)")), 10_000),
+          ),
+        ])
       : Promise.resolve<SlotsResp | null>(null),
     sessionContactId
       ? ghlClient.get<ContactResp>(`/contacts/${sessionContactId}`)

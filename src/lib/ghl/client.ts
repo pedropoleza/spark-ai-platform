@@ -1,6 +1,11 @@
 import { getLocationToken, invalidateTokenCache } from "./auth";
 import { GHL_API_BASE, GHL_API_VERSION } from "@/lib/utils/constants";
 
+// F43 (Pedro 2026-06-02): teto duro por tentativa de fetch ao GHL. Backstop
+// contra conexões penduradas (free-slots já travou 60s+ sem isso). Generoso
+// o bastante pra não cortar call legítima — nenhuma REST do GHL leva 20s.
+const GHL_FETCH_TIMEOUT_MS = 20_000;
+
 export class GHLClient {
   private companyId: string;
   private locationId: string;
@@ -98,6 +103,30 @@ export class GHLClient {
     return response.json();
   }
 
+  /**
+   * fetch com timeout duro via AbortController (Pedro 2026-06-02, F43).
+   *
+   * Bug observado em prod: free-slots (e outras calls GHL) podem PENDURAR
+   * ~60s sem timeout. Combinado com retryOnAuth (3×) + withRetry no caller
+   * (3×), o test chat travou 130s no "digitando..." (a IA levou 2,7s; o resto
+   * foi a chamada de slots pendurada). Nenhuma call REST do GHL deve passar
+   * de ~20s — o AbortController garante que uma conexão presa vire AbortError
+   * (tratado como erro de rede pelo retryOnAuth) em vez de bloquear pra sempre.
+   */
+  private async fetchWithTimeout(
+    input: string,
+    init: RequestInit = {},
+    timeoutMs = GHL_FETCH_TIMEOUT_MS,
+  ): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async get<T>(path: string, params?: Record<string, string>): Promise<T> {
     const url = new URL(`${GHL_API_BASE}${path}`);
     if (params) {
@@ -108,14 +137,14 @@ export class GHLClient {
 
     return this.retryOnAuth<T>(async () => {
       const headers = await this.getHeaders();
-      return fetch(url.toString(), { headers });
+      return this.fetchWithTimeout(url.toString(), { headers });
     });
   }
 
   async post<T>(path: string, body?: Record<string, unknown>): Promise<T> {
     return this.retryOnAuth<T>(async () => {
       const headers = await this.getHeaders();
-      return fetch(`${GHL_API_BASE}${path}`, {
+      return this.fetchWithTimeout(`${GHL_API_BASE}${path}`, {
         method: "POST",
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -126,7 +155,7 @@ export class GHLClient {
   async put<T>(path: string, body: Record<string, unknown>): Promise<T> {
     return this.retryOnAuth<T>(async () => {
       const headers = await this.getHeaders();
-      return fetch(`${GHL_API_BASE}${path}`, {
+      return this.fetchWithTimeout(`${GHL_API_BASE}${path}`, {
         method: "PUT",
         headers,
         body: JSON.stringify(body),
@@ -137,7 +166,7 @@ export class GHLClient {
   async delete<T>(path: string, body?: Record<string, unknown>): Promise<T> {
     return this.retryOnAuth<T>(async () => {
       const headers = await this.getHeaders();
-      return fetch(`${GHL_API_BASE}${path}`, {
+      return this.fetchWithTimeout(`${GHL_API_BASE}${path}`, {
         method: "DELETE",
         headers,
         body: body ? JSON.stringify(body) : undefined,
