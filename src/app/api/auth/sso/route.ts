@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateGHLUser, upsertLocation, createSession } from "@/lib/auth/sso";
 import { GHLClient } from "@/lib/ghl/client";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { ssoSchema, validateBody } from "@/lib/utils/validation";
 
 export async function POST(request: NextRequest) {
@@ -12,8 +13,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error || "Dados invalidos" }, { status: 400 });
     }
 
+    // F42 (Pedro 2026-06-02): GHL Custom Menu Link só interpola {{user.id}} +
+    // {{location.id}}. Quando company_id vier vazio, descobre via tabela
+    // locations (populada pelo OAuth install). Fail-closed se nem isso achar.
+    let companyId = data.company_id || "";
+    if (!companyId) {
+      const supabase = createAdminClient();
+      const { data: loc } = await supabase
+        .from("locations")
+        .select("company_id")
+        .eq("location_id", data.location_id)
+        .maybeSingle();
+      if (loc?.company_id) {
+        companyId = loc.company_id;
+        console.log("[SSO] company_id descoberto via locations table:", { locationId: data.location_id, companyId });
+      } else {
+        console.warn("[SSO] company_id ausente e location não encontrada:", { locationId: data.location_id });
+        return NextResponse.json(
+          { error: "company_id ausente e location_id não tem registro prévio. Re-instale o app via OAuth pra criar o vínculo." },
+          { status: 400 },
+        );
+      }
+    }
+
     const validationResult = await validateGHLUser(
-      data.company_id,
+      companyId,
       data.location_id,
       data.user_id
     );
@@ -28,7 +52,7 @@ export async function POST(request: NextRequest) {
     let locationTimezone = "America/New_York";
     let locationName = user.name || "Minha Location";
     try {
-      const client = new GHLClient(data.company_id, data.location_id);
+      const client = new GHLClient(companyId, data.location_id);
       const locationData = await client.get<{
         location?: { timezone?: string; name?: string; };
         timezone?: string;
@@ -50,11 +74,11 @@ export async function POST(request: NextRequest) {
       timezone: locationTimezone,
     });
 
-    await upsertLocation(data.location_id, data.company_id, locationName, locationTimezone);
+    await upsertLocation(data.location_id, companyId, locationName, locationTimezone);
 
     await createSession({
       userId: data.user_id,
-      companyId: data.company_id,
+      companyId,
       locationId: data.location_id,
       locationName,
       isAdmin,

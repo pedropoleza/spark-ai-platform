@@ -1,9 +1,13 @@
 import { z } from "zod";
 
 // SSO
+// company_id é OPCIONAL (Pedro 2026-06-02 — fix custom menu link tela branca):
+// GHL Custom Menu Link só interpola {{user.id}} e {{location.id}}, não tem
+// placeholder pra company_id. Quando vazio, o handler descobre via tabela
+// locations (populada pelo install OAuth). Fail-closed se nem isso achar.
 export const ssoSchema = z.object({
   user_id: z.string().min(1),
-  company_id: z.string().min(1),
+  company_id: z.string().min(1).optional().or(z.literal("")),
   location_id: z.string().min(1),
 });
 
