@@ -125,21 +125,34 @@ export function computeDeliveryOptions(input: ComputeDeliveryOptionsInput): Deli
   });
 
   // ===== Opção 3: custom window (placeholder) =====
+  // F40 (Pedro 2026-06-01): defaults sensatos pro placeholder — começa amanhã
+  // 9h, termina amanhã 18h (horário comercial). Bot deve sobrescrever quando
+  // rep pedir janela específica, mas se rep só disser "janela custom" o default
+  // não é mais "semana inteira" nem "23:59" do dia.
+  const tomorrow = addDays(now, 1);
+  tomorrow.setHours(9, 0, 0, 0);
+  const tomorrowEnd = addDays(now, 1);
+  tomorrowEnd.setHours(18, 0, 0, 0);
   options.push({
     id: 3,
     strategy: {
       type: "custom_window",
-      start_at: addDays(now, 1).toISOString(),
-      end_at: addDays(now, 7).toISOString(),
+      start_at: tomorrow.toISOString(),
+      end_at: tomorrowEnd.toISOString(),
       interval_seconds: interval,
       jitter_seconds: jitter,
     },
     label: "Janela customizada (você define)",
     description:
-      "Rep especifica start_at + end_at (ISO 8601). Engine distribui contatos uniformemente respeitando quiet hours. Útil pra começar amanhã, em 3 dias, dentro de horário comercial específico, etc.",
+      "Rep especifica start_at + end_at (ISO 8601). Engine distribui contatos uniformemente respeitando quiet hours. " +
+      "Default placeholder: amanhã 9h-18h. " +
+      "REGRA F40: end_at máx 21h local (bot capa); se template tem cumprimento de horário, a janela tem que caber.",
     estimated_minutes: 0,
     daily_breakdown: [],
-    warnings: ["Bot precisa perguntar exatamente: 'Qual data/hora começar?' e 'Quando deve terminar?'"],
+    warnings: [
+      "Bot precisa perguntar: 'Qual horário começar?' e 'Qual hora terminar?' (max 21h)",
+      "Se o template tem 'Bom dia' / 'Boa tarde' / 'Boa noite', a janela tem que caber no período (bot rejeita mismatch)",
+    ],
   });
 
   return options;

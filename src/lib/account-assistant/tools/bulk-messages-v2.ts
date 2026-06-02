@@ -24,6 +24,72 @@
 import type { ToolEntry, ToolContext } from "./types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { FilterExpression } from "../filter-engine";
+
+/* ─── F40 (Pedro 2026-06-01) — guard rails de janela de disparo ─────
+ * Caso Gustavo "M1 hoje 12h": bot setou end_at=23:59 e distribuiu 14
+ * contatos entre 12h-23h59 → "Bom dia" caiu na noite, cliente reclamou.
+ * Regras agora:
+ *   1. end_at NUNCA passa de 21:00 local. Se passar, clamp silencioso.
+ *      Pra mandar de noite, usar spread_days (dias diferentes).
+ *   2. Se template tem "Bom dia"/"Boa tarde"/"Boa noite", janela tem
+ *      que caber no período. Mismatch → rejeita com sugestão clara.
+ *      Override possível via confirmed_greeting_mismatch=true.
+ */
+
+interface ClampResult { adjusted: string; wasClamped: boolean; originalHour: number; }
+function clampEndAtTo9PM(endAtIso: string): ClampResult {
+  // Match ISO 8601 mantendo offset original. Ex: 2026-06-01T23:59:00-04:00
+  const m = endAtIso.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)([+-]\d{2}:?\d{2}|Z)?$/);
+  if (!m) return { adjusted: endAtIso, wasClamped: false, originalHour: -1 };
+  const [, date, hh, mm, ss, tz = ""] = m;
+  const hourLocal = parseInt(hh, 10);
+  const minLocal = parseInt(mm, 10);
+  // Cap: 21:00 local (não vai pra hora 21:01+ ou pra hora >21).
+  if (hourLocal > 21 || (hourLocal === 21 && minLocal > 0)) {
+    return { adjusted: `${date}T21:00:00${tz}`, wasClamped: true, originalHour: hourLocal };
+  }
+  // Ignora ss não-usado
+  void ss;
+  return { adjusted: endAtIso, wasClamped: false, originalHour: hourLocal };
+}
+
+interface GreetingCheck { mismatch: boolean; reason?: string; }
+function detectGreetingMismatch(template: string, startAtIso: string, endAtIso: string): GreetingCheck {
+  const norm = (template || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+  const hasBomDia = /\bbom dia\b/.test(norm);
+  const hasBoaTarde = /\bboa tarde\b/.test(norm);
+  const hasBoaNoite = /\bboa noite\b/.test(norm);
+  if (!hasBomDia && !hasBoaTarde && !hasBoaNoite) return { mismatch: false };
+
+  const startHour = parseInt(startAtIso.match(/T(\d{2}):/)?.[1] || "0", 10);
+  const endHour = parseInt(endAtIso.match(/T(\d{2}):/)?.[1] || "0", 10);
+
+  // "Bom dia": razoável até 12h. Janela termina depois das 12h = mismatch.
+  if (hasBomDia && endHour >= 12) {
+    return {
+      mismatch: true,
+      reason: `Template tem "Bom dia" mas janela termina ${endHour}h. Quem receber depois das 12h vai estranhar. Encurte a janela pra terminar até 11h, ou troque "Bom dia" por algo neutro tipo "Oi" / "E aí".`,
+    };
+  }
+  // "Boa tarde": razoável 12-18h. Fora disso = mismatch.
+  if (hasBoaTarde && (startHour < 12 || endHour > 18)) {
+    return {
+      mismatch: true,
+      reason: `Template tem "Boa tarde" mas janela é ${startHour}h-${endHour}h. Só faz sentido entre 12h-18h. Encurte a janela ou troque o cumprimento.`,
+    };
+  }
+  // "Boa noite": razoável após 18h (mas com cap a 21h vai ser 18-21).
+  if (hasBoaNoite && startHour < 18) {
+    return {
+      mismatch: true,
+      reason: `Template tem "Boa noite" mas janela começa ${startHour}h. Só faz sentido após 18h. Ajuste start_at pra ≥18h ou troque o cumprimento.`,
+    };
+  }
+  return { mismatch: false };
+}
 import {
   executeContactsFilter,
   computeDisclaimers,
@@ -611,15 +677,29 @@ const scheduleBulkMessageV2: ToolEntry = {
           description:
             "Como distribuir o disparo no tempo. Vem das delivery_options do preview. " +
             "type='today' (tudo hoje), 'spread_days' (N dias úteis), 'custom_window' (start_at+end_at). " +
-            "Se omitido, usa default 'today' com interval 90s.",
+            "Se omitido, usa default 'today' com interval 90s. " +
+            "REGRA F40 (Pedro 2026-06-01): end_at NUNCA passa de 21:00 local — bot capa pra 21h. " +
+            "Pra disparar fora do horário comercial, use spread_days. " +
+            "Se o template tem 'Bom dia' / 'Boa tarde' / 'Boa noite', a janela TEM que caber no período correspondente — senão tool rejeita.",
           properties: {
             type: { type: "string", enum: ["today", "spread_days", "custom_window"] },
             days_count: { type: "number", description: "Só pra spread_days. Min 2, max 7." },
-            start_at: { type: "string", description: "Só pra custom_window. ISO 8601." },
-            end_at: { type: "string", description: "Só pra custom_window. ISO 8601." },
+            start_at: { type: "string", description: "Só pra custom_window. ISO 8601 com timezone." },
+            end_at: {
+              type: "string",
+              description:
+                "Só pra custom_window. ISO 8601 com timezone. NUNCA passe de 21:00 local — bot capa automaticamente.",
+            },
             interval_seconds: { type: "number" },
             jitter_seconds: { type: "number" },
           },
+        },
+        // F40 (Pedro 2026-06-01): override do mismatch greeting/window.
+        confirmed_greeting_mismatch: {
+          type: "boolean",
+          description:
+            "Confirma que o rep QUER disparar mesmo com cumprimento incompatível com a janela " +
+            "(ex: 'Bom dia' indo até 21h). Só passe true se o rep aceitou explicitamente após o aviso.",
         },
         // Disclaimer aceites — bot preenche após coletar confirmações
         confirmed_warm_list: { type: "boolean" },
@@ -916,13 +996,45 @@ const scheduleBulkMessageV2: ToolEntry = {
           retryable: false,
         };
       }
+
+      // F40 (Pedro 2026-06-01): cap hard a 21h local.
+      // Caso Gustavo "M1 hoje 12h" — bot setou end_at=23:59 e bot distribuiu
+      // 14 contatos entre 12h e 23h59. "Bom dia" caiu na noite → cliente
+      // reclamou. Regra: end_at NUNCA passa de 21:00 no fuso local; se
+      // passar, clamp silentemente. Pra disparar de madrugada, usar
+      // spread_days (dias diferentes) — não estende janela do mesmo dia.
+      const eaClamped = clampEndAtTo9PM(ea);
+
+      // F40: detecta mismatch "Bom dia/Boa tarde/Boa noite" vs janela.
+      // Se template tem cumprimento de horário específico mas janela
+      // cruza fora do período → rejeita (bot precisa avisar rep).
+      const firstSegmentTemplate = resolveRes.segments[0]?.message_template || "";
+      const greetingMismatch = detectGreetingMismatch(firstSegmentTemplate, sa, eaClamped.adjusted);
+      const ignoreGreeting = args.confirmed_greeting_mismatch === true;
+      if (greetingMismatch.mismatch && !ignoreGreeting) {
+        return {
+          status: "error",
+          message:
+            `⚠️ Cumprimento incompatível com a janela:\n${greetingMismatch.reason}\n\n` +
+            `Opções: (a) encurte a janela pra caber no período do cumprimento, ` +
+            `(b) troque o cumprimento, ou (c) confirme que quer mandar assim mesmo ` +
+            `(passe confirmed_greeting_mismatch=true).`,
+          retryable: false,
+        };
+      }
+
       deliveryStrategy = {
         type: "custom_window",
         start_at: sa,
-        end_at: ea,
+        end_at: eaClamped.adjusted,
         interval_seconds: stratInterval,
         jitter_seconds: stratJitter,
       };
+      if (eaClamped.wasClamped) {
+        console.warn(
+          `[bulk-v2 F40] end_at clampado de ${ea} (${eaClamped.originalHour}h) → 21:00 local pra não disparar de madrugada.`,
+        );
+      }
     }
 
     // Cria job
