@@ -14,15 +14,13 @@ function SSOHandler() {
   const [devLoading, setDevLoading] = useState(false);
   const authenticatedRef = useRef(false);
 
-  // Preview do /hub (Pedro 2026-05-25): ?next=/hub redireciona pra lá após o SSO;
-  // ?preview=1 seta um cookie soft-gate lido pelo layout do /hub (preview sem
-  // mexer em env). Sem esses params, comportamento idêntico (cai no /dashboard).
+  // Fix bug observado em prod 2026-06-02 (F42): default era "/dashboard" — depois
+  // do cutover PM-F3.I (next.config.mjs 308 → /hub), isso virava um redirect
+  // a mais e às vezes loopava com o gate antigo do /hub. Default agora é /hub
+  // direto. ?next= ainda funciona pra deep-links específicos.
   const computeTarget = useCallback(() => {
-    const next = searchParams.get("next") || "/dashboard";
-    const safe = next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
-    if (searchParams.get("preview") === "1") {
-      document.cookie = "hub_preview=1; path=/; max-age=86400; SameSite=None; Secure";
-    }
+    const next = searchParams.get("next") || "/hub";
+    const safe = next.startsWith("/") && !next.startsWith("//") ? next : "/hub";
     return safe;
   }, [searchParams]);
 
