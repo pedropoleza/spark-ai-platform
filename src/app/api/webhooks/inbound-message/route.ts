@@ -63,6 +63,7 @@ import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { processMessageQueue } from "@/lib/queue/queue-processor";
 import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { reportError } from "@/lib/admin-signals/report-error";
 import type { TargetingRule } from "@/types/agent";
 
 // ===== Cutover Stevo (Pedro 2026-05-20) =====
@@ -292,6 +293,14 @@ export async function POST(request: NextRequest) {
           body,
         }).catch((err) => {
           console.error("[Sparkbot:bg] handler failed:", err instanceof Error ? err.message : err);
+          // F49: falha do handler vira IDENTIFICÁVEL (signal + Sentry), não só log.
+          reportError({
+            title: "SparkBot: handler do inbound falhou (GHL)",
+            error: err,
+            feature: "sparkbot-inbound-ghl",
+            severity: "critical",
+            metadata: { location_id: locationId, contact_id: contactId, message_type: messageType },
+          });
         }),
       );
       return NextResponse.json({ received: true, routed: "sparkbot" });

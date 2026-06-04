@@ -32,6 +32,7 @@ import {
   type InteractivePayload,
 } from "./core/interactive";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
+import { reportError } from "@/lib/admin-signals/report-error";
 // H29/H30/H31 (Pedro 2026-05-15): Conversational UX layer
 // + 4.3 (Pedro 2026-05-16): silence recovery
 import {
@@ -489,6 +490,25 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // seguidas, sinaliza degradado e oferece fallback ao rep em vez de loop.
   const llmFailed =
     result.stopped_reason === "error" || result.stopped_reason === "max_iterations";
+  // F49 (Pedro 2026-06-04): turno REAL com falha de LLM (parse error / max
+  // iterations) vira signal + Sentry IDENTIFICÁVEL. Antes só ficava em
+  // metadata.llm_failed, invisível sem query — é o "problema técnico" calado.
+  // (Test session segue no fluxo abaixo, que dá retry explícito após 2 falhas.)
+  if (llmFailed && !input.testSessionId) {
+    reportError({
+      title: "SparkBot: LLM falhou no turno (parse/max_iterations)",
+      feature: "sparkbot-turn",
+      severity: "high",
+      description: `stopped_reason=${result.stopped_reason}. Resposta pode ter saído via fallback ou ficado incompleta.`,
+      metadata: {
+        rep_id: rep.id,
+        location_id: activeLocationId,
+        stopped_reason: result.stopped_reason,
+        primary_error: result.primary_error ? String(result.primary_error).slice(0, 300) : undefined,
+        secondary_error: result.secondary_error ? String(result.secondary_error).slice(0, 300) : undefined,
+      },
+    });
+  }
   if (llmFailed && input.testSessionId) {
     const supabase2 = createAdminClient();
     const { data: lastAgentMsgs } = await supabase2

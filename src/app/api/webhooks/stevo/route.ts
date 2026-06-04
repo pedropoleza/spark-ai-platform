@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseStevoWebhook } from "@/lib/account-assistant/webhook/stevo-parser";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -87,6 +88,20 @@ export async function POST(req: NextRequest) {
           "[stevo-webhook:bg] handler failed:",
           err instanceof Error ? err.message : err,
         );
+        // F49: torna a falha do handler IDENTIFICÁVEL (signal + Sentry). Antes
+        // só console.error → bot mudo silencioso (caso "Bora começar" do Sieder
+        // 2026-06-04: inbound chegou, handler lançou no waitUntil, ninguém soube).
+        reportError({
+          title: "SparkBot: handler do inbound falhou (Stevo)",
+          error: err,
+          feature: "sparkbot-inbound-stevo",
+          severity: "critical",
+          metadata: {
+            phone: parsed.phone,
+            push_name: parsed.pushName,
+            message_id: parsed.messageId,
+          },
+        });
       }),
     );
     return NextResponse.json({ ok: true, routed: "sparkbot-stevo" });

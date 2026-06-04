@@ -12,6 +12,7 @@ import { dispatchRule } from "@/lib/account-assistant/proactive/dispatcher";
 import { pollDeliveryStatuses } from "@/lib/account-assistant/proactive/delivery-status-poller";
 import { GHLClient } from "@/lib/ghl/client";
 import { isAuthorizedCron } from "@/lib/utils/cron-auth";
+import { reportError } from "@/lib/admin-signals/report-error";
 import type { ProactiveRule, RepIdentity, ScheduledTrigger } from "@/types/account-assistant";
 
 export const maxDuration = 60;
@@ -38,7 +39,28 @@ export const maxDuration = 60;
  *
  * Auth: header `Authorization: Bearer ${CRON_SECRET}` ou Vercel Cron header.
  */
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  // F49 (Pedro 2026-06-04): guarda top-level — qualquer crash não-tratado do
+  // cron proativo vira signal + Sentry (antes 500 silencioso só no log Vercel;
+  // os runners internos já tinham .catch, mas o fetch de rules / loop scheduled
+  // / fireScheduledReminders ficavam descobertos).
+  try {
+    return await runProactiveCron(request);
+  } catch (err) {
+    reportError({
+      title: "Cron sparkbot-proactive crashou",
+      error: err,
+      feature: "cron-sparkbot-proactive",
+      severity: "critical",
+    });
+    return NextResponse.json(
+      { ok: false, error: err instanceof Error ? err.message : "erro" },
+      { status: 500 },
+    );
+  }
+}
+
+async function runProactiveCron(request: NextRequest): Promise<NextResponse> {
   if (!isAuthorizedCron(request)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
@@ -187,6 +209,16 @@ export async function GET(request: NextRequest) {
 
   // Processa lembretes agendados (assistant_scheduled_tasks com next_run_at <= now)
   const reminderResult = await fireScheduledReminders();
+  // F49: lembretes que falharam na entrega viram signal (antes só contados no JSON).
+  if (reminderResult.failed > 0) {
+    reportError({
+      title: "SparkBot: lembrete(s) falharam no envio",
+      feature: "reminder-runner",
+      severity: "high",
+      description: `${reminderResult.failed} lembrete(s) falharam na entrega neste tick.`,
+      metadata: { fired: reminderResult.fired, failed: reminderResult.failed },
+    });
+  }
 
   // Etapa 4.4 (Pedro 2026-05-28): processa sequências multi-toque ANTES do
   // bulk-runner. Pra cada state com next_send_at vencido, cria novo recipient
