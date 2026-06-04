@@ -62,6 +62,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { processMessageQueue } from "@/lib/queue/queue-processor";
+import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
 import type { TargetingRule } from "@/types/agent";
 
 // ===== Cutover Stevo (Pedro 2026-05-20) =====
@@ -408,7 +409,9 @@ export async function POST(request: NextRequest) {
           let isHumanMessage = isFromGhlApp;
 
           if (!isHumanMessage && !isFromApi) {
-            // Fallback anti-eco: checar se o texto bate com msg recente da IA
+            // Fallback anti-eco (lógica compartilhada em human-takeover.ts): o
+            // texto bate com algo que a IA registrou ter enviado nos últimos 90s?
+            // Se NÃO bate → humano. Match tolerante a truncamento/emoji do canal.
             const ninetySecondsAgo = new Date(Date.now() - 90_000).toISOString();
             const { data: aiResponses } = await supabaseAdmin
               .from("execution_log")
@@ -421,38 +424,7 @@ export async function POST(request: NextRequest) {
               .order("created_at", { ascending: false })
               .limit(10);
 
-            const normalize = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
-            const bodyNorm = normalize(messageBody || "");
-            // Match tolerante (fix ultra-review 2026-05-26): só exato gerava
-            // FALSO POSITIVO de "humano" quando o canal alterava o texto da IA em
-            // trânsito (truncamento, emoji, sufixo) → pausa indevida. Agora aceita
-            // prefixo/contém (≥20 chars) pra reconhecer o eco da própria IA.
-            const echoOf = (c: string): boolean => {
-              const cn = normalize(c);
-              if (!cn || !bodyNorm) return false;
-              if (cn === bodyNorm) return true;
-              const a = Math.min(cn.length, bodyNorm.length);
-              if (a < 20) return false;
-              return cn.startsWith(bodyNorm) || bodyNorm.startsWith(cn) || cn.includes(bodyNorm) || bodyNorm.includes(cn);
-            };
-            let matchedAi = false;
-
-            if (aiResponses) {
-              for (const row of aiResponses) {
-                const payload = (row.action_payload || {}) as { message?: unknown };
-                const msg = payload.message;
-                const candidates: string[] = Array.isArray(msg)
-                  ? msg.filter((m): m is string => typeof m === "string")
-                  : typeof msg === "string" ? [msg] : [];
-                if (candidates.some(echoOf)) {
-                  matchedAi = true;
-                  break;
-                }
-              }
-            }
-
-            // Se NÃO bateu com nenhuma msg da IA → é humano
-            isHumanMessage = !matchedAi;
+            isHumanMessage = !isAiEcho(messageBody || "", extractAiSentTexts(aiResponses));
           }
 
           console.log(`[Webhook:outbound] isHuman=${isHumanMessage} | autoPause=${autoPauseEnabled} | agent=${outboundAgent.id}`);

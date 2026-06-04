@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
 import { formatAvailableSlots } from "@/lib/ai/slots-format";
+import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
 import { assembleSystemPrompt, isUnifiedMotorEnabled, templateKeyForAgentType } from "@/lib/agent-platform/assembler";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ImageInput, ConversationTurn } from "@/lib/ai/openai-client";
@@ -562,6 +563,73 @@ async function processGroup(
     }
   } else if (messagesSettled.status === "rejected") {
     console.error("Erro ao buscar historico:", messagesSettled.reason);
+  }
+
+  // F52 (Fix bug observado em prod 2026-06-04): fallback de handoff por histórico.
+  // O auto_pause_on_human_message "oficial" depende do webhook OutboundMessage do
+  // GHL (F51) — que pode não estar assinado. Aqui, ANTES de gastar tokens, a gente
+  // olha a última mensagem OUTBOUND da conversa: se NÃO for da IA (humano assumiu),
+  // pausa e não responde. Resiliente: pega o handoff no próximo inbound do lead
+  // mesmo sem o webhook em tempo real.
+  //   - outbound sem texto (áudio/mídia) → humano (a IA só manda texto).
+  //   - outbound com texto → anti-eco contra o que a IA registrou ter enviado.
+  if (
+    (config as { auto_pause_on_human_message?: boolean }).auto_pause_on_human_message === true &&
+    !convState?.ai_paused_at &&
+    messagesSettled.status === "fulfilled" &&
+    messagesSettled.value
+  ) {
+    const histMsgs = (messagesSettled.value.messages?.messages || [])
+      .slice()
+      .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime());
+    const lastOutbound = [...histMsgs].reverse().find((m) => m.direction === "outbound");
+    if (lastOutbound) {
+      const body = (lastOutbound.body || "").trim();
+      let isHuman = false;
+      if (!body) {
+        // Outbound sem texto = áudio/mídia manual do rep (a IA só manda texto).
+        isHuman = true;
+      } else {
+        const { data: aiSends } = await supabase
+          .from("execution_log")
+          .select("action_payload")
+          .eq("location_id", group.locationId)
+          .eq("contact_id", group.contactId)
+          .eq("action_type", "send_message")
+          .eq("success", true)
+          .order("created_at", { ascending: false })
+          .limit(30);
+        isHuman = !isAiEcho(body, extractAiSentTexts(aiSends));
+      }
+
+      if (isHuman) {
+        log("log", `F52 handoff: última outbound não é da IA — humano assumiu, pausando contato=${group.contactId}`);
+        const nowIso = new Date().toISOString();
+        await supabase.from("conversation_state").upsert(
+          {
+            agent_id: agent.id,
+            location_id: group.locationId,
+            contact_id: group.contactId,
+            conversation_id: group.conversationId || convId || "",
+            status: "handed_off",
+            ai_paused_at: nowIso,
+            ai_paused_reason: "auto_pause:human_message:history",
+            updated_at: nowIso,
+          },
+          { onConflict: "agent_id,contact_id" },
+        );
+        await supabase.from("execution_log").insert({
+          agent_id: agent.id,
+          conversation_id: group.conversationId || convId || "",
+          contact_id: group.contactId,
+          location_id: group.locationId,
+          action_type: "ai_paused",
+          action_payload: { reason: "auto_pause:human_message:history", trigger: "F52_history_fallback" },
+          success: true,
+        });
+        return; // não responde — humano está conduzindo
+      }
+    }
   }
 
   // Processar contato
