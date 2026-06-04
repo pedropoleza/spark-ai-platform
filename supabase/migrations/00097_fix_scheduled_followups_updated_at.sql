@@ -1,0 +1,42 @@
+-- F46 (Pedro 2026-06-04): fix follow-up do agente de vendas/recrutamento que
+-- NUNCA enviou em produção (descoberto no smoke test da Five Star Ricos).
+--
+-- ============================================================================
+-- CAUSA RAIZ
+-- ============================================================================
+-- A tabela `scheduled_followups` tem o trigger `trg_scheduled_followups_updated`
+-- (BEFORE UPDATE → touch_updated_at() → seta NEW.updated_at = now()), MAS a
+-- tabela foi criada SEM a coluna `updated_at`. Resultado: TODO UPDATE na tabela
+-- lança "record new has no field updated_at".
+--
+-- O runner `processScheduledFollowUps` (src/lib/queue/follow-up-scheduler.ts)
+-- reivindica follow-ups com `update({ status: 'processing' })`. O supabase-js
+-- NÃO relança o erro do Postgres — devolve em `{ error }`, que o código não
+-- checa. Então `pending` vira null → `if (!pending) return { sent: 0 }` → o
+-- runner retorna "0 enviados" SILENCIOSAMENTE, a cada tick (10s), desde
+-- 2026-05-12. 86 follow-ups acumulados, 100% em `pending`, zero enviados.
+-- (Anti-pattern conhecido do CLAUDE.md: "Try/catch em supabase-js insert/update
+-- NÃO captura erro, devolve {error}".)
+--
+-- Só a `scheduled_followups` tinha esse trigger sem a coluna — nenhuma outra
+-- tabela afetada (auditado via pg_trigger × information_schema.columns).
+--
+-- ============================================================================
+-- FIX
+-- ============================================================================
+-- Aditivo: adiciona a coluna que o trigger espera. Default now() preenche as
+-- linhas existentes. Zero risco de dados. Com a coluna presente, o trigger
+-- passa a funcionar e os UPDATEs do runner voltam a completar → follow-ups
+-- voltam a enviar.
+--
+-- Backlog stale (follow-ups acumulados durante as 3 semanas quebradas) foi
+-- cancelado manualmente após esta migration pra evitar blast de follow-up
+-- velho — eles nunca enviaram e as conversas já passaram.
+--
+-- Follow-up rastreado: o scheduler cria uma sequência NOVA de N attempts a cada
+-- turno em que a conversa fica quieta, sem cancelar a anterior (observado: 80
+-- follow-ups pra 1 contato após 8 turnos). Deduplicar/substituir no
+-- follow-up-scheduler é tarefa separada.
+
+ALTER TABLE scheduled_followups
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
