@@ -50,6 +50,12 @@ import {
   analyzeCoherence,
   type ToolCallRecord,
 } from "./core/coherence-gate";
+import {
+  findBotEcho,
+  isNearDuplicate,
+  REPEAT_BREAK_DIRECTIVE,
+  REPEAT_HARD_FALLBACK,
+} from "./core/repeat-guard";
 
 export interface ProcessInput {
   rep: RepIdentity;
@@ -720,7 +726,74 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     if (interactive.footer) interactive.footer = stripDashes(interactive.footer);
     if (interactive.buttonText) interactive.buttonText = stripDashes(interactive.buttonText);
   }
-  const finalText = stripDashes(interactive ? interactiveFallbackText(interactive) : result.text);
+  let finalText = stripDashes(interactive ? interactiveFallbackText(interactive) : result.text);
+
+  // ── Anti-repeat guard (F57, Fix bug observado em prod 2026-06-04 — Sieder + Soraia) ──
+  // Independente de coherence: se o texto que VAMOS mandar é eco verbatim de uma das
+  // últimas msgs do PRÓPRIO bot (turno COERENTE → o gate acima nem dispara → o
+  // loop-breaker do F53 nunca alcança), o rep fica preso recebendo a mesma coisa
+  // (caso Sieder: apology echo; caso Soraia: "Confirma?"/"Nota salva" repetidos).
+  // Re-roda 1× SEM tools com diretiva anti-repeat; se ainda repetir, manda fallback
+  // determinístico DIFERENTE. Limpa o interactive — o desvio é texto, não menu.
+  // Roda sobre finalText (depois do interactive) pra pegar o caso present_options.
+  // Nota: como é DEPOIS do billing, os tokens do re-run entram em result.tokens
+  // (uso real reportado) mas não são cobrados — path raro de recuperação, custo
+  // desprezível, alinhado com "adoção > margem".
+  if (finalText && !input.testSessionId) {
+    const echoed = findBotEcho(finalText, history);
+    if (echoed) {
+      console.warn(
+        `[Sparkbot] ANTI-REPEAT rep=${rep.id} — texto ≈ msg anterior do bot; re-run pra quebrar loop`,
+      );
+      let broke = REPEAT_HARD_FALLBACK;
+      try {
+        const rerun = await runWithTools({
+          systemPrompt,
+          messages: [
+            ...history,
+            userMessage,
+            { role: "assistant", content: finalText },
+            { role: "user", content: REPEAT_BREAK_DIRECTIVE },
+          ],
+          tools: [], // SEM tools — quebrar loop é resposta, não ação (confirmation gate já protege escrita)
+          executor: (name, args) => executeTool(name, args, toolCtx),
+          model: input.config.ai_model,
+          fallbackModel: input.config.fallback_model,
+        });
+        result.prompt_tokens += rerun.prompt_tokens;
+        result.completion_tokens += rerun.completion_tokens;
+        result.cached_tokens += rerun.cached_tokens;
+        // Só aceita o re-run se ele REALMENTE saiu do loop (não ecoa de novo).
+        if (rerun.text && !findBotEcho(rerun.text, history) && !isNearDuplicate(rerun.text, finalText)) {
+          broke = stripDashes(rerun.text);
+        }
+      } catch (err) {
+        console.error(
+          "[Sparkbot] anti-repeat re-run falhou (non-fatal):",
+          err instanceof Error ? err.message : err,
+        );
+      }
+      finalText = broke;
+      interactive = null; // o desvio é texto puro; remove o menu repetido
+      interactiveVia = undefined;
+      recordSignalAsync({
+        type: "failure",
+        title: "Anti-repeat guard: loop verbatim quebrado",
+        description:
+          "Bot ia repetir a própria mensagem anterior num turno coerente (o gate não pega). Re-run forçado pra destravar o rep. Investigar por que o LLM ecoou (prompt/contexto/falso-bloqueio).",
+        severity: "medium",
+        source: "bot_auto",
+        metadata: {
+          rep_id: rep.id,
+          rep_phone: rep.phone,
+          location_id: activeLocationId,
+          agent_id: input.agentId,
+          echoed_preview: echoed.slice(0, 160),
+          final_preview: finalText.slice(0, 160),
+        },
+      });
+    }
+  }
 
   return {
     text: finalText || "Não consegui gerar resposta. Tenta de novo?",

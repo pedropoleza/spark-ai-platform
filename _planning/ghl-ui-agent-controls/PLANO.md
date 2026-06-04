@@ -130,14 +130,41 @@ Textarea "como você preferia?" → `POST message-feedback {rating:'negative', s
   destino externo; JWT per-rep.
 
 ## Fases
-- **F1 — Backend**: 3 endpoints (status / pause / feedback) + reuso de
-  conversation_state + agent_feedback + auth-gate. Testes.
-- **F2 — Loader módulo (tela contato)**: detecção de contexto + pill de status +
-  toggle pause. Smoke na tela de contato.
-- **F3 — Feedback por mensagem**: 👍/👎 + sugestão; identificação de msg-do-agente.
-- **F4 — Tela conversations**: paridade + conversationId→contactId.
-- **F5 — Hardening**: fallbacks de seletor, kill-switch, telemetria de injeção,
-  smoke supervisionado ao vivo no browser do Pedro.
+- **F1 (GU-1) — Backend** ✅ FEITO + deployado: 3 endpoints (status / pause /
+  feedback) + `ui-auth` (auth gate "qualquer user da location") + helper
+  `lib/agents/contact-controls.ts`. Reusa conversation_state + agent_feedback.
+  E2E smoke real (`scripts/smoke-gu1-endpoints.ts`) passou com auth GHL real.
+- **F2 (GU-2) — Loader módulo (tela contato)** ✅ FEITO + deployado: 2º IIFE
+  independente em `embed/sparkbot/loader/route.ts` (`AGENT_CONTROLS_SOURCE`).
+  Detecção de contexto (URL `/contacts/detail/{id}`) + pill liga/desliga + toggle
+  pause c/ confirm inline. Auth robusta: extraí `verifyFirebaseIdToken` (RS256/JWKS)
+  pra `lib/auth/ghl-idtoken.ts` e liguei no `ui-auth` → funciona pra agency users
+  (a GHL API não retorna agency users). tsc 0 erros, JS servido valida `node --check`.
+  **Falta**: smoke ao vivo no browser do Pedro (ver "Como testar" abaixo).
+- **F3 (GU-3) — Feedback por mensagem**: 👍/👎 + sugestão; identificação de
+  msg-do-agente (parte difícil — DOM ofuscado, cruza anti-eco F52). Vem depois.
+- **F4 (GU-4) — Tela conversations**: paridade + conversationId→contactId.
+- **F5 (GU-5) — Hardening**: fallbacks de seletor, ÂNCORA INLINE perto do "Call"
+  (hoje o pill é fixed bottom-left — placement refinado ao vivo), kill-switch
+  (já tem `window.__SPARK_AGENT_CONTROLS_OFF`), telemetria de injeção, smoke
+  supervisionado ao vivo no browser do Pedro.
+
+## Como testar GU-2 ao vivo (Pedro)
+O loader é o MESMO snippet que você já colou no GHL (o do botão SparkBot) — o
+módulo novo já vem junto, **não precisa colar nada de novo**. Passos:
+1. Abra um contato que tenha agente de vendas ativo, ex:
+   `/v2/location/jA6uzx6tONyTeocxw4Cj/contacts/detail/1sfbr5EiFJ8jvoGxE2nO`
+   (dê um **hard refresh**: Cmd+Shift+R, pra puxar o loader novo).
+2. Deve aparecer um pill **"🤖 Agente IA: LIGADO"** no canto inferior esquerdo.
+3. Clica → "Desligar agente? Sim/Não" → Sim → vira **"DESLIGADO"** (cinza). Isso
+   seta `conversation_state.ai_paused_at` → o agente para de responder esse contato.
+4. Clica de novo → "Religar agente?" → volta pra LIGADO.
+- **Debug no console**: `__sparkAgentDebug()` mostra contexto detectado, auth,
+  estado do pill. Se algo falhar, me manda o output.
+- **Kill-switch** (se atrapalhar): rode `window.__SPARK_AGENT_CONTROLS_OFF = true`
+  no console — some na hora.
+- Posso entrar no seu browser (Chrome MCP) pra inspecionar ao vivo e ajustar o
+  placement (ex: levar o pill pra perto do "Call" no topo) — isso é o GU-5.
 
 ## Notas
 - A inspeção ao vivo (browser do Pedro via Chrome MCP) é viável e será usada em
