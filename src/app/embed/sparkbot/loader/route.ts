@@ -742,7 +742,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
       #spark-agent-pill .sap-btn-no { background: rgba(15,23,42,0.06); color: #475569; }
       #spark-agent-pill.sap-hidden { display: none !important; }
       /* GU-3: feedback 👍/👎 por mensagem do agente */
-      .sap-fb { display: flex; align-items: center; justify-content: flex-start; gap: 6px; width: 100%; margin: 4px 0 2px 2px; flex-wrap: wrap; font-family: 'Open Sans', system-ui, -apple-system, sans-serif; }
+      .sap-fb { display: flex; align-items: center; justify-content: flex-start; gap: 6px; margin: 3px 0 2px 0; flex-wrap: wrap; font-family: 'Open Sans', system-ui, -apple-system, sans-serif; }
       .sap-fb-suggest { max-width: 420px; }
       .sap-fb-btn { border: 1px solid rgba(15,23,42,0.12); background: #fff; border-radius: 8px; padding: 1px 7px; font-size: 13px; line-height: 1.5; cursor: pointer; }
       .sap-fb-btn:hover { background: rgba(22,117,242,0.08); border-color: #1675F2; }
@@ -1016,9 +1016,13 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     ].join("");
     bar.querySelector(".sap-fb-up").addEventListener("click", function (e) { e.stopPropagation(); acSendFeedback(aiText, "positive", null, bar); });
     bar.querySelector(".sap-fb-down").addEventListener("click", function (e) { e.stopPropagation(); acOpenSuggest(bar, aiText); });
-    // 1a: barra EMBAIXO da mensagem, à ESQUERDA (no message-item, fora da bolha).
-    // 1b: a sugestão do 👎 (appendada na barra) flui naturalmente pra baixo.
-    try { item.appendChild(bar); } catch (e) { if (inner) inner.appendChild(bar); }
+    // 1a (ajuste Pedro 2026-06-04): 👍/👎 logo ABAIXO da BOLHA, alinhados à
+    // esquerda DELA — anexa na coluna que envolve a bolha (o pai do elemento
+    // flex-col w-fit), não na linha inteira (que jogava pro canto esquerdo da
+    // tela). 1b: a sugestão do 👎 flui pra baixo. Fallback: inner / item.
+    var bubble = item.querySelector('div[class*="flex-col"][class*="w-fit"]');
+    var target = (bubble && bubble.parentElement) || inner || item;
+    try { target.appendChild(bar); } catch (e) { item.appendChild(bar); }
   }
 
   function acOpenSuggest(bar, aiText) {
