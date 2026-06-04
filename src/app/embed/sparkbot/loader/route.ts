@@ -710,18 +710,21 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     if (document.getElementById("spark-agent-styles")) return;
     var css = \`
       #spark-agent-pill {
-        position: fixed; left: 20px; bottom: 20px; z-index: 999997;
         display: inline-flex; align-items: center; gap: 9px;
-        padding: 9px 15px; border-radius: 999px;
+        padding: 8px 14px; border-radius: 999px;
         font-family: 'Open Sans', system-ui, -apple-system, sans-serif;
         font-size: 13px; font-weight: 600; line-height: 1;
         background: #ffffff; color: #0f172a;
         border: 1px solid rgba(15,23,42,0.10);
-        box-shadow: 0 4px 18px rgba(15,23,42,0.14);
+        box-shadow: 0 2px 8px rgba(15,23,42,0.10);
         cursor: pointer; user-select: none;
         transition: transform .15s ease, box-shadow .15s ease, opacity .2s ease;
       }
-      #spark-agent-pill:hover { transform: translateY(-1px); box-shadow: 0 7px 22px rgba(15,23,42,0.18); }
+      /* GU-5: inline na toolbar do topo (perto do "Call"). */
+      #spark-agent-pill.sap-inline { position: relative; margin: 0 12px; flex-shrink: 0; }
+      /* Fallback: flutuante no canto, se a toolbar não for achada. */
+      #spark-agent-pill.sap-floating { position: fixed; left: 20px; bottom: 20px; z-index: 999997; box-shadow: 0 4px 18px rgba(15,23,42,0.14); }
+      #spark-agent-pill:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(15,23,42,0.16); }
       #spark-agent-pill .sap-main { display: inline-flex; align-items: center; gap: 9px; }
       #spark-agent-pill .sap-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
       #spark-agent-pill.sap-on .sap-dot { background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,0.18); }
@@ -781,7 +784,52 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     main.addEventListener("click", function () { pill.classList.add("sap-confirming"); });
     pill.querySelector(".sap-btn-yes").addEventListener("click", function (e) { e.stopPropagation(); acToggle(!AC.paused); });
     pill.querySelector(".sap-btn-no").addEventListener("click", function (e) { e.stopPropagation(); acExitConfirm(); });
-    document.body.appendChild(pill);
+    acPlacePill(pill);
+  }
+
+  // GU-5: âncora resiliente — acha o botão "Call"/"Ligar" da toolbar do contato
+  // por TEXTO (o DOM do GHL é ofuscado, sem id/classe estável) e sobe até o pai
+  // flex 'justify-between' (a linha do header: nome à esquerda, ações à direita).
+  // Insere o pill como filho do meio → cai no espaço entre o nome e o Call.
+  function acFindToolbarAnchor() {
+    try {
+      var btns = document.querySelectorAll("button");
+      var call = null;
+      for (var i = 0; i < btns.length; i++) {
+        var t = (btns[i].textContent || "").trim();
+        var r = btns[i].getBoundingClientRect();
+        if ((t === "Call" || t === "Ligar") && r.width > 0 && r.top < 220) { call = btns[i]; break; }
+      }
+      if (!call) return null;
+      var el = call;
+      for (var j = 0; j < 8 && el && el.parentElement; j++) {
+        var pcs = window.getComputedStyle(el.parentElement);
+        if (pcs.display === "flex" && pcs.justifyContent === "space-between") {
+          return { toolbar: el.parentElement, actionsGroup: el };
+        }
+        el = el.parentElement;
+      }
+      return null;
+    } catch (e) { return null; }
+  }
+
+  // Coloca o pill: inline na toolbar (preferido) ou flutuante (fallback se o GHL
+  // mudar o markup). Idempotente — só move se ainda não está no lugar certo
+  // (sem thrash quando o watcher re-chama a cada tick).
+  function acPlacePill(pill) {
+    var a = acFindToolbarAnchor();
+    if (a && a.toolbar && a.actionsGroup) {
+      pill.classList.remove("sap-floating");
+      pill.classList.add("sap-inline");
+      if (pill.parentElement !== a.toolbar || pill.nextElementSibling !== a.actionsGroup) {
+        a.toolbar.insertBefore(pill, a.actionsGroup);
+      }
+      return "inline";
+    }
+    pill.classList.remove("sap-inline");
+    pill.classList.add("sap-floating");
+    if (document.body && pill.parentElement !== document.body) document.body.appendChild(pill);
+    return "floating";
   }
 
   function acExitConfirm() { var p = document.getElementById("spark-agent-pill"); if (p) p.classList.remove("sap-confirming"); }
@@ -864,12 +912,16 @@ const AGENT_CONTROLS_SOURCE = `(function () {
   function acBoot() {
     acTick();
     setInterval(acTick, TICK_MS);
-    // Vue re-render pode matar o pill — re-injeta se sumir estando ativo.
+    // Vue re-render pode MATAR o pill (remove da toolbar) OU re-renderizar a
+    // toolbar deixando o pill órfão/flutuante. A cada tick, se ativo: re-cria
+    // se sumiu, senão RE-POSICIONA (acPlacePill é idempotente — só move se
+    // saiu do lugar; e promove flutuante→inline quando a toolbar aparece).
     setInterval(function () {
       try {
-        if (AC.hasAgent && AC.contactId && acContact() === AC.contactId && !document.getElementById("spark-agent-pill")) {
-          acEnsurePill(); acRenderPill();
-        }
+        if (!(AC.hasAgent && AC.contactId && acContact() === AC.contactId)) return;
+        var pill = document.getElementById("spark-agent-pill");
+        if (!pill) { acEnsurePill(); acRenderPill(); return; }
+        acPlacePill(pill);
       } catch (e) {}
     }, REINJECT_MS);
     console.log("[spark-agent] módulo de controles iniciado");
