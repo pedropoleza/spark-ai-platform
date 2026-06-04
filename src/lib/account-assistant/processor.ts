@@ -556,6 +556,21 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
           .join(",")}] tools=[${toolNames.join(",")}]`,
       );
 
+      // Loop-breaker (Fix bug observado em prod 2026-06-04 — caso Sieder Madrona):
+      // se JÁ mandamos o fallback honesto no turno ANTERIOR, não repete. Sem isso
+      // o gate re-dispara todo turno numa conversa de discovery (onde não há ação
+      // real pra executar) e o rep fica preso recebendo o MESMO texto verbatim,
+      // sem conseguir sair. Detectamos pela "impressão digital" do fallback na
+      // última msg do assistant no histórico.
+      const lastAssistantMsg = [...history].reverse().find(
+        (m) => m.role === "assistant" && typeof m.content === "string",
+      );
+      const alreadyWarnedLastTurn =
+        !!lastAssistantMsg &&
+        (lastAssistantMsg.content as string)
+          .toLowerCase()
+          .includes("ainda não consegui concluir isso aqui");
+
       if (!input.testSessionId) {
         try {
           const directive =
@@ -591,6 +606,26 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
           if (rerun.text && recheck.coherent) {
             result.text = rerun.text;
             result.tool_calls = combined;
+          } else if (alreadyWarnedLastTurn) {
+            // Loop-breaker: o fallback honesto JÁ foi enviado no turno anterior.
+            // Repetir trava o rep num loop verbatim (caso Sieder). Deixa a
+            // resposta do re-run (mais honesta) ou a original passar pra destravar.
+            result.text = rerun.text || result.text;
+            result.tool_calls = combined;
+            recordSignalAsync({
+              type: "failure",
+              title: "Coherence loop-breaker: fallback repetido evitado",
+              description: `Fallback honesto já enviado no turno anterior — deixei a resposta natural passar pra não travar o rep num loop. Investigar falso-positivo do gate (families: ${coherence.violations.map((v) => v.family).join(",")}).`,
+              severity: "high",
+              source: "bot_auto",
+              metadata: {
+                rep_id: rep.id,
+                rep_phone: rep.phone,
+                location_id: activeLocationId,
+                agent_id: input.agentId,
+                families: coherence.violations.map((v) => v.family),
+              },
+            });
           } else {
             result.text = coherence.safeRewrite;
             recordSignalAsync({
@@ -612,7 +647,9 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
             "[Sparkbot] coherence re-run falhou (non-fatal):",
             err instanceof Error ? err.message : err,
           );
-          result.text = coherence.safeRewrite; // não arrisca afirmação falsa
+          // Loop-breaker: se já avisamos no turno anterior, NÃO repete o fallback
+          // (mantém o result.text original em vez de travar o rep).
+          if (!alreadyWarnedLastTurn) result.text = coherence.safeRewrite;
         }
       }
     }
