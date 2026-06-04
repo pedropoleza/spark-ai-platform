@@ -844,7 +844,7 @@ async function processGroup(
   // Antes: hardcoded ["claude-sonnet-4-6", "claude-haiku-4-5", ...] —
   // quando admin selecionava claude-sonnet-4-7 (ou versão futura), caía em
   // OpenAI client + erro modelo desconhecido. Default Sonnet.
-  const aiResult = await processWithAI({
+  let aiResult = await processWithAI({
     systemPrompt,
     runtimeContext,
     conversationMessages: compressed.turns,
@@ -856,6 +856,43 @@ async function processGroup(
     priorTurnCount: conversationTurns.length,
   });
 
+  if (!aiResult.success || !aiResult.response) {
+    throw new Error(aiResult.error || "Falha no processamento AI");
+  }
+
+  // F45 (Fix bug observado em prod 2026-06-04): retry-once ANTES de mandar
+  // "Desculpa, tive um problema técnico" pro lead.
+  // Causa raiz: system_prompt_override de cliente pode instruir o modelo a
+  // emitir tokens NÃO-JSON (#Correto, "should_send_message": false "sem JSON")
+  // que conflitam com o contrato JSON da plataforma → parseAIResponse falha →
+  // lead recebe a genérica. Um único retry com lembrete firme de JSON (anexado
+  // à user message pra preservar o cache do system prefix) recupera o slip na
+  // quase totalidade dos casos. Se o retry TAMBÉM falhar, segue pra trava de
+  // "2 falhas seguidas → pausa" abaixo (lead não recebe genérica em loop).
+  if (aiResult.parse_failed) {
+    log("warn", "parse_failed — retry 1x com lembrete de JSON antes de cair na genérica");
+    const retry = await processWithAI({
+      systemPrompt,
+      runtimeContext,
+      conversationMessages: compressed.turns,
+      conversationHistory: "",
+      newMessages:
+        safeNewMessages +
+        '\n\n[SISTEMA: sua resposta anterior não veio no formato JSON exigido. Responda AGORA SOMENTE com o objeto JSON válido especificado, com o campo "message" preenchido com a resposta ao cliente. NÃO use #Correto nem qualquer texto fora do JSON.]',
+      model: config.ai_model || "claude-sonnet-4-6",
+      images: imageInputs.length > 0 ? imageInputs : undefined,
+      responseSchema,
+      priorTurnCount: conversationTurns.length,
+    });
+    if (retry.success && retry.response && !retry.parse_failed) {
+      log("log", "retry recuperou JSON válido — lead não recebe a genérica");
+      aiResult = retry;
+    } else {
+      log("error", "retry também falhou no parse — segue pra trava de pausa");
+    }
+  }
+
+  // Re-narrow pós-retry (o reassign acima alarga o tipo de aiResult.response).
   if (!aiResult.success || !aiResult.response) {
     throw new Error(aiResult.error || "Falha no processamento AI");
   }
