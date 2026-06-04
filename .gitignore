@@ -41,3 +41,6 @@ next-env.d.ts
 # Claude Code worktrees (não commitar)
 .claude/worktrees/
 
+
+# IDE/Claude local launch config (não compartilhado)
+.claude/launch.json
