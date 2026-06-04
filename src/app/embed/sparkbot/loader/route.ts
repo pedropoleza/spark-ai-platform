@@ -635,11 +635,35 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     contactId: null, statusLoaded: false,
     hasAgent: false, agentId: null, agentName: null, agentType: null, paused: false, reason: null,
     aiTexts: null, aiContactId: null, // GU-3: textos que a IA mandou (anti-eco p/ marcar bolhas)
+    resolvedContactId: null, resolvedForConvId: null, resolvePromise: null, // GU-4: conv→contato
   };
 
   // ---------- Detecção de contexto (resiliente, SPA) ----------
   function acLoc() { var m = location.pathname.match(/\\/v2\\/location\\/([A-Za-z0-9]+)/); return m ? m[1] : null; }
   function acContact() { var m = location.pathname.match(/\\/contacts\\/detail\\/([A-Za-z0-9]+)/); return m ? m[1] : null; }
+  // GU-4: tela de Conversations — a URL tem conversationId, não contactId.
+  function acConvId() { var m = location.pathname.match(/\\/conversations\\/conversations\\/([A-Za-z0-9]+)/); return m ? m[1] : null; }
+  // Contato EFETIVO da tela atual: contact-detail direto OU o resolvido da conversa.
+  function acCurrentContact() {
+    var direct = acContact();
+    if (direct) return direct;
+    var cv = acConvId();
+    if (cv && AC.resolvedForConvId === cv) return AC.resolvedContactId;
+    return null;
+  }
+  // Resolve conversationId → contactId (cache + de-dupe). Re-dispara o tick ao resolver.
+  function acResolveConvContact(cv) {
+    if (!cv || !AC.token || AC.resolvedForConvId === cv || AC.resolvePromise) return;
+    AC.resolvePromise = fetch(APP_URL + "/api/agents/conversation-contact?conversationId=" + encodeURIComponent(cv), {
+      headers: { Authorization: "Bearer " + AC.token },
+    })
+      .then(function (r) { if (r.status === 401) { AC.token = null; return null; } return r.json(); })
+      .then(function (d) {
+        AC.resolvePromise = null;
+        if (d && d.ok && d.contactId) { AC.resolvedContactId = d.contactId; AC.resolvedForConvId = cv; acTick(); }
+      })
+      .catch(function (e) { AC.resolvePromise = null; console.warn("[spark-agent] conv->contato erro:", e && e.message); });
+  }
 
   function acClaims() {
     var keys = ["refreshedToken", "token-id", "ghl_user_token"];
@@ -912,15 +936,25 @@ const AGENT_CONTROLS_SOURCE = `(function () {
   function acTick() {
     try {
       if (window.__SPARK_AGENT_CONTROLS_OFF) { acHidePill(); return; }
-      var cid = acContact();
-      if (!cid) { acHidePill(); AC.contactId = null; AC.statusLoaded = false; return; }
-      if (cid === AC.contactId && AC.statusLoaded) return;
-      AC.contactId = cid; AC.statusLoaded = false;
+      var directCid = acContact();
+      var cv = acConvId();
+      if (!directCid && !cv) { acHidePill(); AC.contactId = null; AC.statusLoaded = false; return; }
+      // Auth primeiro (usa loc/company/user, não o contato) — preciso do token
+      // pra resolver conversationId→contactId na tela de Conversations (GU-4).
       acAuthenticate().then(function (ok) {
         if (!ok) return;
-        if (acContact() !== cid) return;
+        var cid = acContact();
+        if (!cid) {
+          var cvNow = acConvId();
+          if (!cvNow) { acHidePill(); return; }
+          if (AC.resolvedForConvId !== cvNow) { acResolveConvContact(cvNow); acHidePill(); return; }
+          cid = AC.resolvedContactId;
+        }
+        if (!cid) { acHidePill(); return; }
+        if (cid === AC.contactId && AC.statusLoaded) return;
+        AC.contactId = cid; AC.statusLoaded = false;
         acFetchStatus(cid).then(function (st) {
-          if (acContact() !== cid) return;
+          if (acCurrentContact() !== cid) return;
           AC.statusLoaded = true;
           if (st && st.hasActiveLeadAgent) {
             AC.hasAgent = true; AC.agentId = st.agentId; AC.agentName = st.agentName;
@@ -945,7 +979,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
       kill_switch: !!window.__SPARK_AGENT_CONTROLS_OFF,
       ai_texts: AC.aiTexts ? AC.aiTexts.length : 0,
       feedback_bars: document.querySelectorAll(".sap-fb").length,
-      detected: { loc: acLoc(), contact: acContact(), company: acCompany(), user: acUser(), hasIdToken: !!acIdToken() },
+      detected: { loc: acLoc(), contact: acContact(), conv: acConvId(), resolved: AC.resolvedContactId, company: acCompany(), user: acUser(), hasIdToken: !!acIdToken() },
     };
   };
 
@@ -979,7 +1013,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     try {
       if (window.__SPARK_AGENT_CONTROLS_OFF) return;
       if (!AC.hasAgent || !AC.aiTexts || !AC.aiTexts.length) return;
-      if (AC.aiContactId !== acContact()) return;
+      if (AC.aiContactId !== acCurrentContact()) return;
       var items = document.querySelectorAll(".message-item");
       for (var i = 0; i < items.length; i++) {
         var it = items[i];
@@ -1068,7 +1102,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     // saiu do lugar; e promove flutuante→inline quando a toolbar aparece).
     setInterval(function () {
       try {
-        if (!(AC.hasAgent && AC.contactId && acContact() === AC.contactId)) return;
+        if (!(AC.hasAgent && AC.contactId && acCurrentContact() === AC.contactId)) return;
         var pill = document.getElementById("spark-agent-pill");
         if (!pill) { acEnsurePill(); acRenderPill(); return; }
         acPlacePill(pill);
@@ -1079,7 +1113,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     // anti-eco) — 25s. Só quando ativo no mesmo contato.
     setInterval(function () {
       try {
-        if (AC.hasAgent && AC.contactId && acContact() === AC.contactId) acRefreshAiTexts(AC.contactId);
+        if (AC.hasAgent && AC.contactId && acCurrentContact() === AC.contactId) acRefreshAiTexts(AC.contactId);
       } catch (e) {}
     }, 25000);
     console.log("[spark-agent] módulo de controles iniciado");
