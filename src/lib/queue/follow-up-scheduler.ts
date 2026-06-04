@@ -3,6 +3,11 @@ import { GHLClient } from "@/lib/ghl/client";
 import { buildFollowUpPrompt } from "@/lib/ai/sales-prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
 import { trackAndCharge } from "@/lib/billing/charge";
+import { withRetry } from "@/lib/utils/retry";
+// F59 (Fix bug observado em prod 2026-06-04): mesma rede de segurança do
+// queue-processor — se o histórico do Spark Leads falhar, o follow-up não pode
+// virar uma re-apresentação fria. Reconstrói do nosso DB.
+import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
 import type { FollowUpConfig } from "@/types/agent";
 
 /**
@@ -254,6 +259,12 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
 
       const client = new GHLClient(location.company_id, followUp.location_id);
 
+      // GU-3/F52 (Fix bug observado em prod 2026-06-04): captura o texto enviado
+      // pra LOGAR no execution_log depois. Sem esse log o follow-up fica
+      // INVISÍVEL: o loader (👍/👎) e o anti-eco do F52 identificam "mensagem da
+      // IA" por execution_log.send_message — era o "não mostra thumbs no follow-up".
+      let sentText: string | null = null;
+
       // Se tem mensagem customizada, enviar direto
       if (followUp.custom_message) {
         await client.post("/conversations/messages", {
@@ -261,15 +272,20 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           contactId: followUp.contact_id,
           message: followUp.custom_message,
         });
+        sentText = followUp.custom_message;
       } else {
         // Buscar contexto recente (últimas 10 msgs + nome) para personalizar o follow-up.
         // Dois fetches em paralelo para minimizar latência do scheduler.
         const convId = (convState as { conversation_id?: string } | null)?.conversation_id || "";
         const [historyResult, contactResult] = await Promise.allSettled([
           convId
-            ? client.get<{ messages: { messages: { direction: string; body?: string; dateAdded: string; messageType?: string }[] } }>(
-                `/conversations/${convId}/messages`,
-                { locationId: followUp.location_id },
+            ? withRetry(
+                () =>
+                  client.get<{ messages: { messages: { direction: string; body?: string; dateAdded: string; messageType?: string }[] } }>(
+                    `/conversations/${convId}/messages`,
+                    { locationId: followUp.location_id },
+                  ),
+                { maxRetries: 2, baseDelayMs: 200, label: "followup-conv-messages" },
               )
             : Promise.resolve(null),
           client.get<{ contact: { firstName?: string; name?: string } }>(`/contacts/${followUp.contact_id}`),
@@ -287,6 +303,27 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
               return `${dir}: ${(m.body || "").substring(0, 300)}`;
             })
             .join("\n");
+        }
+
+        // F59 (Fix bug observado em prod 2026-06-04): se o histórico do Spark
+        // Leads veio vazio/falhou (mesmo com retry), reconstrói do nosso DB pro
+        // follow-up não sair FRIO ("Oi! Sou Assistente..." numa conversa que já
+        // estava avançada). Mesma rede de segurança do queue-processor.
+        if (!recentHistory.trim()) {
+          const dbTurns = await reconstructHistoryFromDb({
+            supabase,
+            locationId: followUp.location_id,
+            contactId: followUp.contact_id,
+            limit: 10,
+          });
+          if (dbTurns.length > 0) {
+            recentHistory = dbTurns
+              .map((t) => `${t.role === "user" ? "LEAD" : "AGENTE"}: ${t.content.substring(0, 300)}`)
+              .join("\n");
+            console.warn(
+              `[FollowUp] F59 history fallback: ${dbTurns.length} turns do DB pra contact=${followUp.contact_id}`,
+            );
+          }
         }
 
         let contactName: string | undefined;
@@ -359,8 +396,30 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
               contactId: followUp.contact_id,
               message: msgText.trim(),
             });
+            sentText = msgText.trim();
           }
         }
+      }
+
+      // GU-3/F52/F59: registra o envio do follow-up no execution_log com o MESMO
+      // shape do fluxo principal (action_payload.message = string[]). Resolve 3
+      // coisas de uma vez: (1) o loader passa a mostrar 👍/👎 no follow-up,
+      // (2) o anti-eco do F52 reconhece como envio da IA (não pausa falso no
+      // próximo inbound), (3) o histórico reconstruído (F59) inclui o follow-up.
+      if (sentText && sentText.trim()) {
+        await supabase.from("execution_log").insert({
+          agent_id: followUp.agent_id,
+          conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+          contact_id: followUp.contact_id,
+          location_id: followUp.location_id,
+          action_type: "send_message",
+          action_payload: {
+            message: [sentText.trim()],
+            source: "follow_up",
+            attempt_number: followUp.attempt_number,
+          },
+          success: true,
+        });
       }
 
       await supabase.from("scheduled_followups").update({ status: "sent" }).eq("id", followUp.id);

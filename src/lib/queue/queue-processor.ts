@@ -19,6 +19,10 @@ import { checkContactMatchesTargeting } from "@/lib/queue/targeting";
 // F27.D (Pedro 2026-05-29): detecção de trigger reativo (msg sintética
 // enfileirada pelo reactive-trigger.ts quando tag/stage muda no GHL).
 import { isReactiveTriggerBody, parseTriggerBody } from "@/lib/account-assistant/proactive/reactive-trigger";
+// F59 (Fix bug observado em prod 2026-06-04): rede de segurança contra
+// cold-start quando o fetch de histórico do Spark Leads falha/vem vazio.
+import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
+import { reportError } from "@/lib/admin-signals/report-error";
 // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
 import { loadLeadHistory } from "@/lib/queue/lead-history";
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
@@ -527,8 +531,13 @@ async function processGroup(
 
   const ghlStart = Date.now();
   const [messagesSettled, contactSettled, slotsSettled] = await Promise.allSettled([
+    // F59: retry no fetch de histórico (igual aos slots). Antes era single-shot —
+    // uma falha transitória do Spark Leads zerava o contexto e a IA cold-startava.
     convId
-      ? ghlClient.get<MessagesResp>(`/conversations/${convId}/messages`, { locationId: group.locationId })
+      ? withRetry(
+          () => ghlClient.get<MessagesResp>(`/conversations/${convId}/messages`, { locationId: group.locationId }),
+          { maxRetries: 2, baseDelayMs: 200, label: "conv-messages" },
+        )
       : Promise.resolve<MessagesResp | null>(null),
     ghlClient.get<ContactResp>(`/contacts/${group.contactId}`),
     shouldFetchSlots
@@ -872,6 +881,40 @@ async function processGroup(
   const imageInputs: ImageInput[] = group.processedMedia
     .filter((m) => m.type === "image" && !m.error)
     .map((m) => ({ url: m.url, base64DataUri: m.base64DataUri }));
+
+  // F59 (Fix bug observado em prod 2026-06-04): se o histórico do Spark Leads
+  // veio VAZIO (fetch falhou mesmo com retry, ou a API retornou 0 msgs) mas essa
+  // já é uma conversa CONHECIDA, reconstrói do nosso próprio DB pra IA não
+  // cold-startar ("Oi! Sou Assistente... já tenho seus dados aqui"). Roda só aqui,
+  // depois dos gates de skip (F52/targeting/should-respond), pra não gastar query
+  // nem emitir signal à toa. Se o DB também não tiver nada, é conversa nova mesmo
+  // (vazio é correto, sem dano).
+  if (conversationTurns.length === 0) {
+    const dbTurns = await reconstructHistoryFromDb({
+      supabase,
+      locationId: group.locationId,
+      contactId: group.contactId,
+      limit: 30,
+    });
+    if (dbTurns.length > 0) {
+      conversationTurns = dbTurns;
+      const ghlFailed = messagesSettled.status === "rejected";
+      log("warn", `F59 history fallback: ${dbTurns.length} turns reconstruídos do DB (Spark Leads ${ghlFailed ? "falhou" : "vazio"})`);
+      reportError({
+        title: "Lead history vazio do Spark Leads — fallback DB",
+        feature: "queue-processor",
+        severity: "medium",
+        description: `O fetch de histórico do Spark Leads veio vazio (${ghlFailed ? "rejeitado após retry" : "0 msgs"}); reconstruí ${dbTurns.length} turns do nosso DB pra evitar cold-start.`,
+        metadata: {
+          locationId: group.locationId,
+          contactId: group.contactId,
+          convId,
+          ghlFailed,
+          reconstructedTurns: dbTurns.length,
+        },
+      });
+    }
+  }
 
   // Rolling summarization: se histórico passou de threshold, condensar
   // mensagens antigas num resumo reaproveitável (cacheado em conversation_state).
