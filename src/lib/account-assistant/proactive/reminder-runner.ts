@@ -12,6 +12,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { shouldFireCron } from "./cron-evaluator";
+import { normalizeForRepeat } from "../core/repeat-guard";
 import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
 import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import {
@@ -72,7 +73,39 @@ export async function fireScheduledReminders(): Promise<ReminderRunResult> {
   let failed = 0;
   let skipped = 0;
 
+  // F58 (Fix bug observado em prod 2026-06-04 — caso Soraia): dedup do BATCH.
+  // Reminders quase-idênticos pro MESMO rep vencendo no mesmo tick (ex: a bot
+  // criou a mesma task GHL 7× → 7 ghl_task_reminders idênticos; ou 2 recurring
+  // "Pendências diárias") spammavam o rep. Dispara só 1 por (rep + conteúdo
+  // normalizado); os outros marca 'cancelled' (não re-disparam — pro recurring,
+  // mata a duplicata de vez; o sobrevivente segue recorrendo normalmente).
+  // Root upstream (create_task / schedule_reminder duplicando) tratado à parte.
+  const seen = new Set<string>();
+  const toFire: ScheduledTaskRow[] = [];
+  const dupIds: string[] = [];
   for (const task of claimed as ScheduledTaskRow[]) {
+    const content = (task.task_payload?.message || task.task_payload?.title || "").trim();
+    const norm = content ? normalizeForRepeat(content) : "";
+    const key = `${task.rep_id}::${norm}`;
+    if (norm && seen.has(key)) {
+      dupIds.push(task.id);
+      continue;
+    }
+    if (norm) seen.add(key);
+    toFire.push(task);
+  }
+  if (dupIds.length > 0) {
+    await supabase
+      .from("assistant_scheduled_tasks")
+      .update({ status: "cancelled", last_run_at: nowIso })
+      .in("id", dupIds);
+    skipped += dupIds.length;
+    console.warn(
+      `[reminder-runner] F58 dedup: ${dupIds.length} lembrete(s) duplicado(s) cancelado(s) no batch (anti-spam pro rep)`,
+    );
+  }
+
+  for (const task of toFire) {
     try {
       const result = await fireOne(task);
       if (result === "fired") fired++;

@@ -17,6 +17,7 @@
 import type { ToolEntry } from "./types";
 import { validateGhlId, validateIso8601 } from "./types";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { normalizeForRepeat } from "../core/repeat-guard";
 
 const scheduleReminder: ToolEntry = {
   def: {
@@ -113,6 +114,45 @@ const scheduleReminder: ToolEntry = {
         .limit(1);
       const hasWhatsAppOptIn = !!(waMsgs && waMsgs.length > 0);
       deliveryChannel = hasWhatsAppOptIn ? "whatsapp" : "web_ui";
+    }
+
+    // F58 (Fix bug observado em prod 2026-06-04 — caso Soraia): idempotência.
+    // Evita duplicar lembrete (double-call na mesma virada de turno OU re-pedido):
+    // se já existe um PENDING do mesmo rep com título normalizado IGUAL vencendo
+    // perto do mesmo horário (±2h), retorna o existente em vez de criar um 2º.
+    // (O dedup do batch no reminder-runner é a rede final, no momento do envio.)
+    const normTitle = normalizeForRepeat(title);
+    if (normTitle) {
+      const windowMs = 2 * 60 * 60 * 1000;
+      const lo = new Date(new Date(isoRemind).getTime() - windowMs).toISOString();
+      const hi = new Date(new Date(isoRemind).getTime() + windowMs).toISOString();
+      const { data: existing } = await supabase
+        .from("assistant_scheduled_tasks")
+        .select("id, next_run_at, task_payload, delivery_channel")
+        .eq("rep_id", ctx.rep.id)
+        .eq("status", "pending")
+        .in("task_type", ["reminder", "recurring_reminder"])
+        .gte("next_run_at", lo)
+        .lte("next_run_at", hi)
+        .limit(20);
+      const dup = (existing || []).find((t) => {
+        const payload = t.task_payload as { title?: string; message?: string } | null;
+        const tt = String(payload?.title || payload?.message || "");
+        return normalizeForRepeat(tt) === normTitle;
+      });
+      if (dup) {
+        return {
+          status: "ok",
+          data: {
+            reminder_id: dup.id,
+            next_run_at: dup.next_run_at,
+            recurrence: recurrence || null,
+            delivery_channel: dup.delivery_channel,
+            title,
+            deduped: true,
+          },
+        };
+      }
     }
 
     const { data, error } = await supabase
