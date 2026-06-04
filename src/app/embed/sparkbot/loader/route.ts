@@ -634,6 +634,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     locationId: null, companyId: null, userId: null,
     contactId: null, statusLoaded: false,
     hasAgent: false, agentId: null, agentName: null, paused: false,
+    aiTexts: null, aiContactId: null, // GU-3: textos que a IA mandou (anti-eco p/ marcar bolhas)
   };
 
   // ---------- Detecção de contexto (resiliente, SPA) ----------
@@ -740,6 +741,16 @@ const AGENT_CONTROLS_SOURCE = `(function () {
       #spark-agent-pill .sap-btn-yes { background: #1675F2; color: #fff; }
       #spark-agent-pill .sap-btn-no { background: rgba(15,23,42,0.06); color: #475569; }
       #spark-agent-pill.sap-hidden { display: none !important; }
+      /* GU-3: feedback 👍/👎 por mensagem do agente */
+      .sap-fb { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; font-family: 'Open Sans', system-ui, -apple-system, sans-serif; }
+      .sap-fb-btn { border: 1px solid rgba(15,23,42,0.12); background: #fff; border-radius: 8px; padding: 1px 7px; font-size: 13px; line-height: 1.5; cursor: pointer; }
+      .sap-fb-btn:hover { background: rgba(22,117,242,0.08); border-color: #1675F2; }
+      .sap-fb-status { font-size: 11px; color: #16a34a; font-weight: 600; }
+      .sap-fb-suggest { width: 100%; margin-top: 4px; }
+      .sap-fb-ta { width: 100%; box-sizing: border-box; border: 1px solid rgba(15,23,42,0.15); border-radius: 8px; padding: 6px 8px; font-size: 12px; font-family: inherit; resize: vertical; }
+      .sap-fb-row { display: flex; gap: 6px; margin-top: 4px; }
+      .sap-fb-send { background: #1675F2; color: #fff; border: 0; border-radius: 8px; padding: 4px 10px; font-size: 12px; font-weight: 700; cursor: pointer; }
+      .sap-fb-cancel { background: rgba(15,23,42,0.06); color: #475569; border: 0; border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
     \`;
     var style = document.createElement("style");
     style.id = "spark-agent-styles";
@@ -889,6 +900,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
           if (st && st.hasActiveLeadAgent) {
             AC.hasAgent = true; AC.agentId = st.agentId; AC.agentName = st.agentName; AC.paused = !!st.paused;
             acEnsurePill(); acRenderPill();
+            acRefreshAiTexts(cid); // GU-3: puxa textos da IA → marca bolhas do agente
           } else {
             AC.hasAgent = false; acHidePill();
           }
@@ -905,9 +917,111 @@ const AGENT_CONTROLS_SOURCE = `(function () {
       agentName: AC.agentName, paused: AC.paused,
       pill: !!document.getElementById("spark-agent-pill"),
       kill_switch: !!window.__SPARK_AGENT_CONTROLS_OFF,
+      ai_texts: AC.aiTexts ? AC.aiTexts.length : 0,
+      feedback_bars: document.querySelectorAll(".sap-fb").length,
       detected: { loc: acLoc(), contact: acContact(), company: acCompany(), user: acUser(), hasIdToken: !!acIdToken() },
     };
   };
+
+  // ---------- GU-3: feedback 👍/👎 por mensagem do agente ----------
+  // Normaliza pra anti-eco (igual ao server): minúsculas, sem acento, só a-z0-9.
+  function acNormText(s) {
+    return String(s || "").toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").replace(/[^a-z0-9]/g, "");
+  }
+
+  // Busca os textos que a IA mandou pro contato (execution_log) → AC.aiTexts.
+  function acRefreshAiTexts(cid) {
+    if (!AC.token || !cid) return;
+    fetch(APP_URL + "/api/agents/contact-ai-messages?contactId=" + encodeURIComponent(cid), {
+      headers: { Authorization: "Bearer " + AC.token },
+    })
+      .then(function (r) { if (r.status === 401) { AC.token = null; return null; } return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok || !Array.isArray(d.texts)) return;
+        AC.aiTexts = d.texts
+          .map(function (t) { return { raw: t, norm: acNormText(t) }; })
+          .filter(function (x) { return x.norm.length >= 12; });
+        AC.aiContactId = cid;
+        acScanBubbles();
+      })
+      .catch(function (e) { console.warn("[spark-agent] ai-messages erro:", e && e.message); });
+  }
+
+  // Varre as bolhas: outbound (inner margin-left>1) que casa com texto da IA
+  // (anti-eco) → anexa 👍/👎. Idempotente (marca data-spark-fb). Barato.
+  function acScanBubbles() {
+    try {
+      if (window.__SPARK_AGENT_CONTROLS_OFF) return;
+      if (!AC.hasAgent || !AC.aiTexts || !AC.aiTexts.length) return;
+      if (AC.aiContactId !== acContact()) return;
+      var items = document.querySelectorAll(".message-item");
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i];
+        if (it.getAttribute("data-spark-fb")) continue;
+        var inner = it.querySelector('div[class*="message-c"]');
+        if (!inner) continue;
+        var ml = parseFloat(window.getComputedStyle(inner).marginLeft) || 0;
+        if (ml <= 1) { it.setAttribute("data-spark-fb", "in"); continue; } // inbound (lead) — nunca tem feedback
+        var bnorm = acNormText(it.textContent || "");
+        if (!bnorm) continue;
+        var match = null;
+        for (var k = 0; k < AC.aiTexts.length; k++) {
+          if (AC.aiTexts[k].norm && bnorm.indexOf(AC.aiTexts[k].norm) !== -1) { match = AC.aiTexts[k]; break; }
+        }
+        // Só marca DEFINITIVO quando casa (agente). Outbound não-casado fica sem
+        // marca pra re-checar quando aiTexts atualizar (msg do agente nova).
+        if (match) { it.setAttribute("data-spark-fb", "1"); acAttachFeedback(it, inner, match.raw); }
+      }
+    } catch (e) { console.warn("[spark-agent] scan erro:", e && e.message); }
+  }
+
+  function acAttachFeedback(item, inner, aiText) {
+    if (item.querySelector(".sap-fb")) return;
+    var bar = document.createElement("div");
+    bar.className = "sap-fb";
+    bar.innerHTML = [
+      '<button class="sap-fb-btn sap-fb-up" type="button" title="Boa resposta">👍</button>',
+      '<button class="sap-fb-btn sap-fb-down" type="button" title="Podia ser melhor">👎</button>',
+      '<span class="sap-fb-status"></span>',
+    ].join("");
+    bar.querySelector(".sap-fb-up").addEventListener("click", function (e) { e.stopPropagation(); acSendFeedback(aiText, "positive", null, bar); });
+    bar.querySelector(".sap-fb-down").addEventListener("click", function (e) { e.stopPropagation(); acOpenSuggest(bar, aiText); });
+    try { inner.appendChild(bar); } catch (e) { item.appendChild(bar); }
+  }
+
+  function acOpenSuggest(bar, aiText) {
+    if (bar.querySelector(".sap-fb-suggest")) return;
+    var box = document.createElement("div");
+    box.className = "sap-fb-suggest";
+    box.innerHTML = [
+      '<textarea class="sap-fb-ta" rows="2" placeholder="Como você preferia essa resposta?"></textarea>',
+      '<div class="sap-fb-row"><button class="sap-fb-send" type="button">Enviar feedback</button><button class="sap-fb-cancel" type="button">Cancelar</button></div>',
+    ].join("");
+    bar.appendChild(box);
+    var ta = box.querySelector(".sap-fb-ta");
+    try { ta.focus(); } catch (e) {}
+    box.querySelector(".sap-fb-send").addEventListener("click", function (e) { e.stopPropagation(); acSendFeedback(aiText, "negative", ta.value, bar); });
+    box.querySelector(".sap-fb-cancel").addEventListener("click", function (e) { e.stopPropagation(); box.remove(); });
+  }
+
+  function acSendFeedback(aiText, rating, suggestion, bar) {
+    if (!AC.token || !AC.agentId || !AC.contactId) return;
+    var status = bar.querySelector(".sap-fb-status");
+    if (status) status.textContent = "enviando...";
+    fetch(APP_URL + "/api/agents/message-feedback", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + AC.token, "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId: AC.agentId, contactId: AC.contactId, aiMessage: aiText, rating: rating, suggestion: suggestion || undefined }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.ok) {
+          bar.innerHTML = '<span class="sap-fb-status">' + (rating === "positive" ? "👍 Valeu! Anotado." : "👎 Anotado - vou ajustar.") + "</span>";
+          console.log("[spark-agent] feedback " + rating + " enviado");
+        } else if (status) { status.textContent = "falhou, tenta de novo"; }
+      })
+      .catch(function () { if (status) status.textContent = "erro de rede"; });
+  }
 
   function acBoot() {
     acTick();
@@ -922,8 +1036,16 @@ const AGENT_CONTROLS_SOURCE = `(function () {
         var pill = document.getElementById("spark-agent-pill");
         if (!pill) { acEnsurePill(); acRenderPill(); return; }
         acPlacePill(pill);
+        acScanBubbles(); // GU-3: re-anexa 👍/👎 após re-render / msgs novas
       } catch (e) {}
     }, REINJECT_MS);
+    // GU-3: refresca os textos da IA periodicamente (msg do agente nova entra no
+    // anti-eco) — 25s. Só quando ativo no mesmo contato.
+    setInterval(function () {
+      try {
+        if (AC.hasAgent && AC.contactId && acContact() === AC.contactId) acRefreshAiTexts(AC.contactId);
+      } catch (e) {}
+    }, 25000);
     console.log("[spark-agent] módulo de controles iniciado");
   }
 
