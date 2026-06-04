@@ -742,7 +742,8 @@ const AGENT_CONTROLS_SOURCE = `(function () {
       #spark-agent-pill .sap-btn-no { background: rgba(15,23,42,0.06); color: #475569; }
       #spark-agent-pill.sap-hidden { display: none !important; }
       /* GU-3: feedback 👍/👎 por mensagem do agente */
-      .sap-fb { display: flex; align-items: center; gap: 6px; margin-top: 6px; flex-wrap: wrap; font-family: 'Open Sans', system-ui, -apple-system, sans-serif; }
+      .sap-fb { display: flex; align-items: center; justify-content: flex-start; gap: 6px; width: 100%; margin: 4px 0 2px 2px; flex-wrap: wrap; font-family: 'Open Sans', system-ui, -apple-system, sans-serif; }
+      .sap-fb-suggest { max-width: 420px; }
       .sap-fb-btn { border: 1px solid rgba(15,23,42,0.12); background: #fff; border-radius: 8px; padding: 1px 7px; font-size: 13px; line-height: 1.5; cursor: pointer; }
       .sap-fb-btn:hover { background: rgba(22,117,242,0.08); border-color: #1675F2; }
       .sap-fb-status { font-size: 11px; color: #16a34a; font-weight: 600; }
@@ -965,7 +966,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
         if (!d || !d.ok || !Array.isArray(d.texts)) return;
         AC.aiTexts = d.texts
           .map(function (t) { return { raw: t, norm: acNormText(t) }; })
-          .filter(function (x) { return x.norm.length >= 12; });
+          .filter(function (x) { return x.norm.length >= 20; }); // 1c: msgs curtas dão falso-positivo
         AC.aiContactId = cid;
         acScanBubbles();
       })
@@ -988,10 +989,14 @@ const AGENT_CONTROLS_SOURCE = `(function () {
         var ml = parseFloat(window.getComputedStyle(inner).marginLeft) || 0;
         if (ml <= 1) { it.setAttribute("data-spark-fb", "in"); continue; } // inbound (lead) — nunca tem feedback
         var bnorm = acNormText(it.textContent || "");
-        if (!bnorm) continue;
+        if (bnorm.length < 20) continue;
         var match = null;
         for (var k = 0; k < AC.aiTexts.length; k++) {
-          if (AC.aiTexts[k].norm && bnorm.indexOf(AC.aiTexts[k].norm) !== -1) { match = AC.aiTexts[k]; break; }
+          var an = AC.aiTexts[k].norm;
+          // 1c: anti falso-positivo — a bolha CONTÉM o texto da IA E esse texto é
+          // ≥60% do conteúdo da bolha (= a bolha É a msg da IA, não só contém um
+          // trecho coincidente). Bolha real = msg da IA + timestamp → ratio ~0.9.
+          if (an && bnorm.indexOf(an) !== -1 && an.length >= bnorm.length * 0.6) { match = AC.aiTexts[k]; break; }
         }
         // Só marca DEFINITIVO quando casa (agente). Outbound não-casado fica sem
         // marca pra re-checar quando aiTexts atualizar (msg do agente nova).
@@ -1011,7 +1016,9 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     ].join("");
     bar.querySelector(".sap-fb-up").addEventListener("click", function (e) { e.stopPropagation(); acSendFeedback(aiText, "positive", null, bar); });
     bar.querySelector(".sap-fb-down").addEventListener("click", function (e) { e.stopPropagation(); acOpenSuggest(bar, aiText); });
-    try { inner.appendChild(bar); } catch (e) { item.appendChild(bar); }
+    // 1a: barra EMBAIXO da mensagem, à ESQUERDA (no message-item, fora da bolha).
+    // 1b: a sugestão do 👎 (appendada na barra) flui naturalmente pra baixo.
+    try { item.appendChild(bar); } catch (e) { if (inner) inner.appendChild(bar); }
   }
 
   function acOpenSuggest(bar, aiText) {
