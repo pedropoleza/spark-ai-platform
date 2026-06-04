@@ -266,7 +266,10 @@ NÃO invente horários. NÃO inclua action book_appointment neste turno.`);
       const currentTime = getCurrentTimeInTimezone(effectiveTimezone);
       parts.push(`### HORÁRIOS DISPONÍVEIS (use APENAS estes — não invente)
 Agora no timezone do lead: ${currentTime}
-${ctx.availableSlots}`);
+${ctx.availableSlots}
+
+Ao PROPOR, ofereça 2 opções ESPAÇADAS (ex: uma mais cedo e uma mais tarde, ou manhã e tarde) — nunca duas coladas tipo "11:30 ou 12:00".
+Se o lead perguntar "qual o último horário?" ou um horário específico, responda SEMPRE com base na lista acima (ela já mostra o último horário real de cada dia). Nunca diga que um horário não existe sem checar a lista.`);
     } else {
       // F24 BUG-1 fix (Pedro 2026-05-28 smoke): quando NEM slots NEM
       // slotsUnavailable foram passados, prompt antigo deixava vácuo →

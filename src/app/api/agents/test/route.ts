@@ -4,6 +4,7 @@ import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
 import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
+import { formatAvailableSlots } from "@/lib/ai/slots-format";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import { withRetry } from "@/lib/utils/retry";
@@ -242,28 +243,10 @@ export async function POST(request: NextRequest) {
   let slotsFetchFailed = false;
   if (shouldFetchSlots) {
     if (slotsSettled.status === "fulfilled" && slotsSettled.value) {
-      const slotLines: string[] = [];
-      for (const [key, value] of Object.entries(slotsSettled.value)) {
-        if (key === "traceId" || !value) continue;
-        let slots: string[] = [];
-        if (typeof value === "object" && value !== null) {
-          const v = value as Record<string, unknown>;
-          if (Array.isArray(v.slots)) slots = v.slots as string[];
-          else if (Array.isArray(value)) slots = value as string[];
-        }
-        if (slots.length === 0) continue;
-
-        const dateFormatted = new Date(key + "T12:00:00").toLocaleDateString("en-US", {
-          weekday: "long", month: "long", day: "numeric", timeZone: locationTz,
-        });
-        const slotsFormatted = slots.slice(0, 8).map((s: string) =>
-          new Date(s).toLocaleTimeString("en-US", {
-            hour: "numeric", minute: "2-digit", hour12: true, timeZone: locationTz,
-          })
-        );
-        slotLines.push(`${dateFormatted}: ${slotsFormatted.join(", ")}`);
-      }
-      availableSlots = slotLines.join("\n");
+      // F48: mesmo formatter do runtime de prod (paridade) — dia inteiro,
+      // sempre com o último horário real (sem o slice(0,8) que fazia o agente
+      // mentir sobre disponibilidade da noite).
+      availableSlots = formatAvailableSlots(slotsSettled.value as Record<string, unknown>, locationTz);
     } else {
       slotsFetchFailed = true;
       console.error(`[Test FreeSlots] All retries failed:`,
