@@ -5,6 +5,10 @@
  * Plano: _planning/ghl-ui-agent-controls/PLANO.md
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { GHLClient } from "@/lib/ghl/client";
+import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { checkContactMatchesTargeting } from "@/lib/queue/targeting";
+import type { TargetingRule } from "@/types/agent";
 
 export const LEAD_FACING_TYPES = ["sales_agent", "recruitment_agent", "custom_agent"] as const;
 
@@ -88,4 +92,140 @@ export async function getContactPauseState(
     .eq("contact_id", contactId)
     .maybeSingle();
   return { paused: !!data?.ai_paused_at, reason: (data?.ai_paused_reason as string | null) ?? null };
+}
+
+export type DrivingReason =
+  | "active"
+  | "paused_manual"
+  | "human_handling"
+  | "not_targeted"
+  | "max_messages"
+  | "paused_auto";
+
+export interface DrivingState {
+  driving: boolean; // true = IA conduz a conversa (pill LIGADO)
+  reason: DrivingReason;
+}
+
+function classifyPauseReason(reason: string | null): DrivingReason {
+  const r = (reason || "").toLowerCase();
+  if (r.startsWith("manual")) return "paused_manual";
+  if (r.includes("human_message") || r.includes("auto_pause:human")) return "human_handling";
+  if (r.includes("max_messages")) return "max_messages";
+  return "paused_auto";
+}
+
+/**
+ * Estado REAL de "quem dirige a conversa" (GU-6, Pedro 2026-06-04).
+ * OFF se: ai_paused_at (manual/auto), OU humano respondeu por ÚLTIMO (anti-eco
+ * live, mais recente que ai_resumed_at), OU targeting exclui o contato.
+ * ON caso contrário. Fail-open: erro no GHL não trava o pill.
+ */
+export async function computeContactDrivingState(args: {
+  supabase: SupabaseClient;
+  ghlClient: GHLClient;
+  agentId: string;
+  contactId: string;
+  locationId: string;
+  companyId: string;
+}): Promise<DrivingState> {
+  const { supabase, ghlClient, agentId, contactId, locationId, companyId } = args;
+
+  // 1. Pausa (manual ou auto) — fonte da verdade persistida.
+  const { data: cs } = await supabase
+    .from("conversation_state")
+    .select("ai_paused_at, ai_paused_reason, ai_resumed_at, conversation_id")
+    .eq("agent_id", agentId)
+    .eq("contact_id", contactId)
+    .maybeSingle();
+  const convState = cs as
+    | { ai_paused_at: string | null; ai_paused_reason: string | null; ai_resumed_at: string | null; conversation_id: string | null }
+    | null;
+  if (convState?.ai_paused_at) {
+    return { driving: false, reason: classifyPauseReason(convState.ai_paused_reason) };
+  }
+
+  // 2. Config (auto_pause + targeting).
+  const { data: cfg } = await supabase
+    .from("agent_configs")
+    .select("auto_pause_on_human_message, targeting_rules")
+    .eq("agent_id", agentId)
+    .maybeSingle();
+  const autoPause = (cfg as { auto_pause_on_human_message?: boolean } | null)?.auto_pause_on_human_message === true;
+  const targetingRules = (cfg as { targeting_rules?: TargetingRule[] } | null)?.targeting_rules ?? null;
+
+  // 3. Humano assumiu? (última outbound do GHL não é da IA, mais recente que o
+  //    "ligar manual"). Só quando a conta quer auto-pause-on-human. Fail-open.
+  if (autoPause) {
+    try {
+      const human = await lastOutboundIsHuman({
+        supabase,
+        ghlClient,
+        contactId,
+        locationId,
+        conversationId: convState?.conversation_id || null,
+      });
+      if (human?.isHuman) {
+        const resumedAt = convState?.ai_resumed_at ? new Date(convState.ai_resumed_at).getTime() : 0;
+        const outboundAt = human.at ? new Date(human.at).getTime() : 0;
+        if (!resumedAt || outboundAt > resumedAt) {
+          return { driving: false, reason: "human_handling" };
+        }
+      }
+    } catch {
+      /* fail-open */
+    }
+  }
+
+  // 4. Targeting exclui? (checkContactMatchesTargeting é fail-open por dentro)
+  if (targetingRules && targetingRules.length > 0) {
+    const match = await checkContactMatchesTargeting(contactId, targetingRules, companyId, locationId);
+    if (!match.ok) return { driving: false, reason: "not_targeted" };
+  }
+
+  return { driving: true, reason: "active" };
+}
+
+/** Última msg OUTBOUND do GHL é de humano (não da IA)? + quando. Mesma lógica do F52. */
+async function lastOutboundIsHuman(args: {
+  supabase: SupabaseClient;
+  ghlClient: GHLClient;
+  contactId: string;
+  locationId: string;
+  conversationId: string | null;
+}): Promise<{ isHuman: boolean; at: string | null } | null> {
+  const { supabase, ghlClient, contactId, locationId } = args;
+  let convId = args.conversationId;
+  if (!convId) {
+    const search = await ghlClient
+      .get<{ conversations?: Array<{ id: string }> }>("/conversations/search", { locationId, contactId })
+      .catch(() => null);
+    convId = search?.conversations?.[0]?.id || null;
+  }
+  if (!convId) return null;
+  const resp = await ghlClient
+    .get<{ messages?: { messages?: Array<{ direction: string; body?: string; dateAdded: string }> } }>(
+      `/conversations/${convId}/messages`,
+      { locationId },
+    )
+    .catch(() => null);
+  const msgs = resp?.messages?.messages || [];
+  const lastOutbound = [...msgs]
+    .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
+    .reverse()
+    .find((m) => m.direction === "outbound");
+  if (!lastOutbound) return null;
+  const body = (lastOutbound.body || "").trim();
+  if (!body) return { isHuman: true, at: lastOutbound.dateAdded }; // áudio/mídia = humano
+  const { data: aiSends } = await supabase
+    .from("execution_log")
+    .select("action_payload")
+    .eq("location_id", locationId)
+    .eq("contact_id", contactId)
+    .eq("action_type", "send_message")
+    .eq("success", true)
+    .order("created_at", { ascending: false })
+    .limit(30);
+  const isHuman = !isAiEcho(body, extractAiSentTexts(aiSends || []));
+  return { isHuman, at: lastOutbound.dateAdded };
 }

@@ -61,12 +61,16 @@ export async function POST(request: NextRequest) {
           status: "handed_off",
           ai_paused_at: nowIso,
           ai_paused_reason: `manual_ui:user_${token.ghl_user_id}`,
+          ai_resumed_at: null, // pausou → limpa o override
           updated_at: nowIso,
         }
       : {
           status: "active",
           ai_paused_at: null,
           ai_paused_reason: null,
+          // GU-6: "passa a bola pra IA" — marca o instante do ligar manual. O
+          // auto-pause-on-human (F52) só re-pausa se um humano responder DEPOIS disso.
+          ai_resumed_at: nowIso,
           updated_at: nowIso,
         };
 

@@ -633,7 +633,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     authPromise: null,
     locationId: null, companyId: null, userId: null,
     contactId: null, statusLoaded: false,
-    hasAgent: false, agentId: null, agentName: null, paused: false,
+    hasAgent: false, agentId: null, agentName: null, agentType: null, paused: false, reason: null,
     aiTexts: null, aiContactId: null, // GU-3: textos que a IA mandou (anti-eco p/ marcar bolhas)
   };
 
@@ -847,6 +847,26 @@ const AGENT_CONTROLS_SOURCE = `(function () {
   function acSetBusy(b) { var p = document.getElementById("spark-agent-pill"); if (p) p.classList.toggle("sap-busy", b); }
   function acHidePill() { var p = document.getElementById("spark-agent-pill"); if (p) p.classList.add("sap-hidden"); }
 
+  // GU-6 (3a): mostra QUAL agente (vendas/recrut/custom) pra diferenciar.
+  function acAgentLabel() {
+    var t = AC.agentType || "";
+    var n = AC.agentName || "";
+    if (t === "sales_agent") return n || "Agente de Vendas";
+    if (t === "recruitment_agent") return n || "Recrutamento";
+    var label = n || "Agente IA";
+    return label.length > 24 ? label.slice(0, 23) + "…" : label;
+  }
+  function acReasonText() {
+    switch (AC.reason) {
+      case "human_handling": return "humano assumiu a conversa";
+      case "paused_manual": return "desligado manualmente";
+      case "not_targeted": return "fora do alvo (ativação)";
+      case "max_messages": return "limite de mensagens atingido";
+      case "paused_auto": return "pausado automaticamente";
+      default: return "";
+    }
+  }
+
   function acRenderPill() {
     var pill = document.getElementById("spark-agent-pill");
     if (!pill) return;
@@ -854,11 +874,15 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     pill.classList.remove("sap-hidden");
     pill.classList.toggle("sap-on", !AC.paused);
     pill.classList.toggle("sap-off", AC.paused);
+    var name = acAgentLabel();
     var label = pill.querySelector(".sap-label");
-    if (label) label.textContent = AC.paused ? "Agente IA: DESLIGADO" : "Agente IA: LIGADO";
+    if (label) label.textContent = name + ": " + (AC.paused ? "DESLIGADO" : "LIGADO");
     var q = pill.querySelector(".sap-q");
     if (q) q.textContent = AC.paused ? "Religar agente?" : "Desligar agente?";
-    pill.title = AC.agentName ? (AC.agentName + (AC.paused ? " — desligado pra este contato" : " — ativo neste contato")) : "";
+    var why = AC.paused ? acReasonText() : "";
+    pill.title = name + (AC.paused
+      ? (" — desligado" + (why ? " (" + why + ")" : "") + " pra este contato")
+      : " — ativo neste contato");
   }
 
   function acToggle(targetPaused) {
@@ -898,7 +922,8 @@ const AGENT_CONTROLS_SOURCE = `(function () {
           if (acContact() !== cid) return;
           AC.statusLoaded = true;
           if (st && st.hasActiveLeadAgent) {
-            AC.hasAgent = true; AC.agentId = st.agentId; AC.agentName = st.agentName; AC.paused = !!st.paused;
+            AC.hasAgent = true; AC.agentId = st.agentId; AC.agentName = st.agentName;
+            AC.agentType = st.agentType; AC.paused = !!st.paused; AC.reason = st.reason || null;
             acEnsurePill(); acRenderPill();
             acRefreshAiTexts(cid); // GU-3: puxa textos da IA → marca bolhas do agente
           } else {

@@ -15,7 +15,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
-import { resolveAgentForContact, getContactPauseState } from "@/lib/agents/contact-controls";
+import { resolveAgentForContact, computeContactDrivingState } from "@/lib/agents/contact-controls";
+import { GHLClient } from "@/lib/ghl/client";
 
 export const maxDuration = 20;
 
@@ -39,15 +40,25 @@ export async function GET(request: NextRequest) {
     const agent = await resolveAgentForContact(supabase, token.location_id, contactId);
     if (!agent) return json({ ok: true, hasActiveLeadAgent: false });
 
-    const pause = await getContactPauseState(supabase, agent.id, contactId);
+    // GU-6: estado REAL de "quem dirige" (pausa + human-takeover live + targeting),
+    // não só ai_paused_at. company_id vem do token (fronteira de segurança).
+    const ghlClient = new GHLClient(token.company_id, token.location_id);
+    const state = await computeContactDrivingState({
+      supabase,
+      ghlClient,
+      agentId: agent.id,
+      contactId,
+      locationId: token.location_id,
+      companyId: token.company_id,
+    });
     return json({
       ok: true,
       hasActiveLeadAgent: true,
       agentId: agent.id,
       agentName: agent.name,
       agentType: agent.type,
-      paused: pause.paused,
-      pausedReason: pause.reason,
+      paused: !state.driving, // pill OFF quando a IA não dirige
+      reason: state.reason,
     });
   } catch (err) {
     console.error("[contact-status] erro:", err instanceof Error ? err.message : err);

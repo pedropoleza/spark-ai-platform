@@ -371,7 +371,11 @@ async function processGroup(
   // (AND) pro agente responder. Fail-OPEN em erro de fetch (ver targeting.ts).
   const targetingRules = (config as { targeting_rules?: TargetingRule[] | null })
     .targeting_rules;
+  // GU-6 (Pedro 2026-06-04): ativação manual pela UI (ai_resumed_at) é override
+  // explícito do dono da conversa — a IA atende mesmo fora do targeting.
+  const manuallyResumed = !!(convState as { ai_resumed_at?: string | null })?.ai_resumed_at;
   if (
+    !manuallyResumed &&
     Array.isArray(targetingRules) &&
     targetingRules.length > 0 &&
     locationForBilling?.company_id
@@ -602,7 +606,17 @@ async function processGroup(
         isHuman = !isAiEcho(body, extractAiSentTexts(aiSends));
       }
 
-      if (isHuman) {
+      // GU-6 (Pedro 2026-06-04): override "passa a bola pra IA". Se o rep LIGOU
+      // o agente manualmente (pill na UI) DEPOIS dessa resposta humana, a IA
+      // assume mesmo assim — não re-pausa. Só re-pausa se o humano respondeu
+      // MAIS RECENTE que o ai_resumed_at.
+      const resumedAtMs = (convState as { ai_resumed_at?: string | null })?.ai_resumed_at
+        ? new Date((convState as { ai_resumed_at?: string | null }).ai_resumed_at as string).getTime()
+        : 0;
+      const lastOutboundMs = new Date(lastOutbound.dateAdded).getTime();
+      const overriddenByManualResume = resumedAtMs > 0 && lastOutboundMs <= resumedAtMs;
+
+      if (isHuman && !overriddenByManualResume) {
         log("log", `F52 handoff: última outbound não é da IA — humano assumiu, pausando contato=${group.contactId}`);
         const nowIso = new Date().toISOString();
         await supabase.from("conversation_state").upsert(
