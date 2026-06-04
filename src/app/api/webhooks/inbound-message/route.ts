@@ -235,8 +235,16 @@ export async function POST(request: NextRequest) {
     }
 
     // ===== VALIDAÇÃO: Campos obrigatórios =====
-    if (!locationId || !contactId || (!messageBody && !audioUrl && mediaAttachments.length === 0)) {
-      console.log(`[Webhook] Skipped: missing_fields (loc=${locationId}, contact=${contactId}, body=${!!messageBody}, audio=${!!audioUrl})`);
+    // F50 (Fix bug observado em prod 2026-06-04): o requisito de CONTEÚDO
+    // (texto/áudio/mídia) é só pro INBOUND — que precisa de algo pra processar.
+    // Pro OUTBOUND, a detecção de "humano assumiu" (auto_pause_on_human_message)
+    // mora no branch direction==="outbound" mais abaixo e NÃO precisa do conteúdo:
+    // basta saber que um humano mandou ALGO. Antes, um áudio manual do rep (sem
+    // texto, e cujo áudio outbound nem sempre é extraível) caía aqui em
+    // "missing_fields" e NUNCA chegava na lógica de pausa. Agora outbound passa.
+    const needsContent = direction === "inbound";
+    if (!locationId || !contactId || (needsContent && !messageBody && !audioUrl && mediaAttachments.length === 0)) {
+      console.log(`[Webhook] Skipped: missing_fields (loc=${locationId}, contact=${contactId}, dir=${direction}, body=${!!messageBody}, audio=${!!audioUrl})`);
       return NextResponse.json({ received: true, skipped: "missing_fields" });
     }
 
