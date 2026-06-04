@@ -14,6 +14,10 @@
  *
  * CORS: liberado pra qualquer origin GHL (app.gohighlevel.com, app.sparkleads.pro,
  * domínios white-label do agency). Em produção, restringir lista se quisermos.
+ *
+ * NOTA (2026-06-04): a verificação do idToken Firebase (RS256 via JWKS) foi
+ * extraída pra @/lib/auth/ghl-idtoken (reuso no /api/agents/ui-auth dos controles
+ * de UI). Mesma lógica security-reviewed (C3 2026-04-29), só movida.
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -21,157 +25,9 @@ import { validateGHLUser, upsertLocation } from "@/lib/auth/sso";
 import { identifyRepByGhlUser } from "@/lib/account-assistant/identity";
 import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
-import { importJWK, jwtVerify, type JWK } from "jose";
+import { verifyFirebaseIdToken, isAdminClaims } from "@/lib/auth/ghl-idtoken";
 
 export const maxDuration = 30;
-
-// O JWT do GHL/sparkleads é assinado por SERVICE ACCOUNTS custom do GHL.
-// O backend deles rotaciona entre múltiplos service accounts (vimos
-// 'default-crm-marketplace' e 'default-platform' em produção). Cada um
-// tem seu JWKS endpoint próprio em /robot/v1/metadata/jwk/.
-//
-// Estratégia:
-// - Aceita lista de issuers conhecidos do GHL
-// - Pra verify: lê iss do token, busca JWKS correspondente, tenta cada key
-// - Se SIGNATURE_FAILED em todas, force-refresh JWKS e tenta de novo
-// - Tokens não têm `kid`, então iteração manual ao invés de createRemoteJWKSet
-const GHL_KNOWN_ISSUERS = [
-  "default-crm-marketplace@highlevel-backend.iam.gserviceaccount.com",
-  "default-platform@highlevel-backend.iam.gserviceaccount.com",
-];
-const JWKS_CACHE_TTL_MS = 60 * 60 * 1000; // 1h
-
-interface JwksCacheEntry {
-  keys: JWK[];
-  fetchedAt: number;
-}
-const jwksCacheByIssuer = new Map<string, JwksCacheEntry>();
-
-async function fetchJwks(issuer: string, force = false): Promise<JWK[]> {
-  const cached = jwksCacheByIssuer.get(issuer);
-  if (!force && cached && Date.now() - cached.fetchedAt < JWKS_CACHE_TTL_MS) {
-    return cached.keys;
-  }
-  const url = `https://www.googleapis.com/robot/v1/metadata/jwk/${issuer}`;
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`JWKS fetch ${issuer} ${res.status}`);
-  const data = await res.json() as { keys: JWK[] };
-  jwksCacheByIssuer.set(issuer, { keys: data.keys || [], fetchedAt: Date.now() });
-  return data.keys || [];
-}
-
-/** Lê iss do JWT sem verificar assinatura (pra escolher JWKS correto). */
-function peekIssuer(token: string): string | null {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return null;
-    const b = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const padded = b + "=".repeat((4 - b.length % 4) % 4);
-    const payload = JSON.parse(Buffer.from(padded, "base64").toString("utf-8")) as { iss?: string };
-    return payload.iss || null;
-  } catch {
-    return null;
-  }
-}
-
-interface FirebaseClaims {
-  user_id?: string;
-  company_id?: string;
-  role?: string;
-  type?: string;
-  locations?: string[];
-}
-
-/**
- * Verifica idToken do GHL via Firebase JWKS.
- * Retorna claims se válido (assinatura + exp + iss), null caso contrário.
- *
- * Nota: aud claim do GHL aponta pra "https://identitytoolkit.googleapis.com/..."
- * (não pro nosso projeto Firebase). Isso é normal — o JWT é da própria
- * Identity Toolkit do Firebase do GHL. Verificamos só assinatura + exp + iss
- * (=securetoken.google.com).
- */
-interface VerifyResult {
-  claims: FirebaseClaims | null;
-  errorCode?: string;
-  errorMessage?: string;
-}
-
-async function verifyFirebaseIdToken(idToken: string): Promise<VerifyResult> {
-  // Tolerância: localStorage GHL/sparkleads pode ter o JWT JSON-stringified
-  // (com aspas extras). Strip antes de passar pro jose.
-  let token = idToken.trim();
-  if (token.startsWith('"') && token.endsWith('"')) {
-    try { token = JSON.parse(token) as string; } catch { /* deixa como tava */ }
-  }
-
-  // Lê iss do token pra escolher JWKS correto. Se iss for unknown, rejeita.
-  const peekedIssuer = peekIssuer(token);
-  if (!peekedIssuer) {
-    return { claims: null, errorCode: "missing_iss", errorMessage: "JWT sem iss claim" };
-  }
-  if (!GHL_KNOWN_ISSUERS.includes(peekedIssuer)) {
-    return {
-      claims: null,
-      errorCode: "unknown_iss",
-      errorMessage: `iss não é GHL known: ${peekedIssuer}`,
-    };
-  }
-  const issuer: string = peekedIssuer;
-
-  // Helper: tenta cada key do set
-  async function tryKeys(keys: JWK[]): Promise<{ claims: FirebaseClaims | null; lastError: { code?: string; message?: string } | null }> {
-    let lastError: { code?: string; message?: string } | null = null;
-    for (const jwk of keys) {
-      try {
-        const key = await importJWK(jwk, jwk.alg || "RS256");
-        const { payload } = await jwtVerify(token, key, { issuer });
-        const claims = (payload as { claims?: FirebaseClaims }).claims;
-        return { claims: claims || null, lastError: null };
-      } catch (err) {
-        const e = err as { code?: string; message?: string };
-        lastError = { code: e.code, message: e.message };
-      }
-    }
-    return { claims: null, lastError };
-  }
-
-  // 1ª tentativa com cache
-  let keys: JWK[];
-  try {
-    keys = await fetchJwks(issuer);
-  } catch (err) {
-    return { claims: null, errorCode: "jwks_fetch_failed", errorMessage: String(err) };
-  }
-  if (keys.length === 0) {
-    return { claims: null, errorCode: "jwks_empty", errorMessage: `no keys for ${issuer}` };
-  }
-
-  let result = await tryKeys(keys);
-  if (result.claims) return { claims: result.claims };
-
-  // SIGNATURE_FAILED em todas → JWKS pode ter rotacionado. Force-refresh.
-  if (result.lastError?.code === "ERR_JWS_SIGNATURE_VERIFICATION_FAILED") {
-    console.warn(`[check-admin] ${issuer} keys cacheadas falharam — force-refresh`);
-    try {
-      keys = await fetchJwks(issuer, true);
-      result = await tryKeys(keys);
-      if (result.claims) return { claims: result.claims };
-    } catch (err) {
-      console.warn("[check-admin] JWKS force-refresh falhou:", err instanceof Error ? err.message : err);
-    }
-  }
-
-  console.warn(
-    `[check-admin] verify falhou em todas ${keys.length} keys de ${issuer}: `
-    + `code=${result.lastError?.code || "?"} msg=${result.lastError?.message || "?"}`,
-  );
-  return {
-    claims: null,
-    errorCode: result.lastError?.code || "verify_failed",
-    errorMessage: result.lastError?.message || `tried ${keys.length} keys`,
-  };
-}
 
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, {
@@ -210,14 +66,15 @@ export async function POST(request: NextRequest) {
     //      → verificado RS256 contra Firebase JWKS público. Assinatura
     //      válida = JWT emitido pelo Identity Toolkit pra um user REAL do
     //      Firebase Auth do GHL. Claims confiáveis (role, type, etc).
-    //   2. GHL API (/users/?locationId=...) — fallback pra users
+    //   2. Allowlist por env (agency admins).
+    //   3. GHL API (/users/?locationId=...) — fallback pra users
     //      location-level que não estão como agency-admin.
     //
     // Histórico (review 2026-04-29 C3):
     // Versão anterior decodificava idToken sem verify → atacante anônimo
     // forjava JWT com claims arbitrários. Stress test confirmou exploit.
-    // Fix definitivo: jose.jwtVerify contra
-    //   https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com
+    // Fix definitivo: jose.jwtVerify contra o JWKS público do issuer
+    // (agora em @/lib/auth/ghl-idtoken).
     let isAdmin = false;
     let adminSource = "";
     let jwtVerifyError: { code?: string; message?: string } | null = null;
@@ -235,13 +92,9 @@ export async function POST(request: NextRequest) {
         const matchesUser = claims.user_id === userId;
         const matchesCompany = claims.company_id === companyId;
         if (matchesUser && matchesCompany) {
-          const role = (claims.role || "").toLowerCase();
-          const type = (claims.type || "").toLowerCase();
-          const adminRoles = ["admin", "owner", "agency_owner", "agency_user"];
-          const adminTypes = ["admin", "agency", "account"];
-          if (adminRoles.includes(role) || adminTypes.includes(type)) {
+          if (isAdminClaims(claims)) {
             isAdmin = true;
-            adminSource = `firebase_jwt_verified (role=${role}, type=${type})`;
+            adminSource = `firebase_jwt_verified (role=${claims.role || "?"}, type=${claims.type || "?"})`;
           }
         } else {
           jwtClaimsMismatch = { jwtUser: claims.user_id, jwtCompany: claims.company_id };

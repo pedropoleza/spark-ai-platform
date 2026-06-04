@@ -51,7 +51,14 @@ function buildLoaderScript(): string {
   // operadores. A solução foi mudar o snippet do GHL pra usar
   // `fetch + new Function(code)` em vez de `<script src=>` — assim o
   // postscribe não processa o body do loader.
-  return LOADER_SOURCE
+  //
+  // GU-2 (2026-06-04): concatenamos um SEGUNDO IIFE independente
+  // (AGENT_CONTROLS_SOURCE) — os controles do agente lead-facing na tela de
+  // contato (pill liga/desliga). É isolado de propósito: o IIFE do SparkBot
+  // (provado) fica intocado; o de controles tem auth própria (/api/agents/ui-auth,
+  // que aceita qualquer user válido da location, não só admin) e estado próprio.
+  // Um snippet só pro Pedro colar; dois módulos servidos.
+  return (LOADER_SOURCE + "\n;\n" + AGENT_CONTROLS_SOURCE)
     .replaceAll("__APP_URL__", APP_URL)
     .replaceAll("__POLL_INTERVAL_MS__", String(POLL_INTERVAL_MS))
     .replaceAll("__HEARTBEAT_INTERVAL_MS__", String(HEARTBEAT_INTERVAL_MS));
@@ -591,5 +598,286 @@ const LOADER_SOURCE = `(function () {
     boot();
   } else {
     window.addEventListener("DOMContentLoaded", boot);
+  }
+})();`;
+
+/**
+ * MÓDULO agent-controls (GU-2) — IIFE independente, concatenado ao loader.
+ *
+ * Mostra na TELA DE CONTATO do Spark Leads (/contacts/detail/{id}) um pill
+ * "Agente IA: LIGADO/DESLIGADO" quando o contato tem agente lead-facing ativo.
+ * Clica → confirma → liga/desliga o agente pra aquele contato (fonte da verdade
+ * = conversation_state.ai_paused_at, via /api/agents/contact-pause). É o botão
+ * standalone que o Pedro pediu (NÃO depende do campo "AI Status" do GHL).
+ *
+ * Isolamento: estado/auth próprios (não compartilha nada com o IIFE do SparkBot
+ * acima). Auth via /api/agents/ui-auth (qualquer user válido da location). Tudo
+ * em try/catch + namespacing #spark-agent-pill / .sap-* + kill-switch
+ * window.__SPARK_AGENT_CONTROLS_OFF — aditivo, não pode quebrar o GHL do cliente.
+ *
+ * Feedback por mensagem (👍/👎) é GU-3 (tela ofuscada — vem depois). GU-2 só faz
+ * o pill de liga/desliga na tela de contato. Conversations screen = GU-4.
+ *
+ * Plano: _planning/ghl-ui-agent-controls/PLANO.md
+ */
+const AGENT_CONTROLS_SOURCE = `(function () {
+  if (window.__sparkAgentControlsInit) return;
+  window.__sparkAgentControlsInit = true;
+
+  var APP_URL = "__APP_URL__";
+  var TICK_MS = 1500;
+  var REINJECT_MS = 3000;
+  var AC = {
+    token: null,
+    authedLocation: null,
+    authPromise: null,
+    locationId: null, companyId: null, userId: null,
+    contactId: null, statusLoaded: false,
+    hasAgent: false, agentId: null, agentName: null, paused: false,
+  };
+
+  // ---------- Detecção de contexto (resiliente, SPA) ----------
+  function acLoc() { var m = location.pathname.match(/\\/v2\\/location\\/([A-Za-z0-9]+)/); return m ? m[1] : null; }
+  function acContact() { var m = location.pathname.match(/\\/contacts\\/detail\\/([A-Za-z0-9]+)/); return m ? m[1] : null; }
+
+  function acClaims() {
+    var keys = ["refreshedToken", "token-id", "ghl_user_token"];
+    for (var i = 0; i < keys.length; i++) {
+      var raw = localStorage.getItem(keys[i]); if (!raw) continue;
+      try {
+        var p = JSON.parse(raw);
+        if (p && p.refreshedToken && p.refreshedToken.claims) return p.refreshedToken.claims;
+        if (p && p.claims) return p.claims;
+      } catch (e) {}
+      try {
+        var parts = raw.split(".");
+        if (parts.length === 3) {
+          var pl = JSON.parse(atob(parts[1]));
+          if (pl.claims) return pl.claims;
+          if (pl.user_id || pl.userId || pl.sub) return pl;
+        }
+      } catch (e) {}
+    }
+    return null;
+  }
+  function acCompany() { var c = acClaims(); if (c) { if (c.company_id) return c.company_id; if (c.companyId) return c.companyId; } return null; }
+  function acUser() { var c = acClaims(); if (c) { if (c.user_id) return c.user_id; if (c.userId) return c.userId; if (c.uid) return c.uid; if (c.sub) return c.sub; } return null; }
+  function acIdToken() {
+    try {
+      var raw = localStorage.getItem("refreshedToken");
+      if (!raw) return null;
+      if (raw.charAt(0) === '"') { try { return JSON.parse(raw); } catch (e) { return raw; } }
+      return raw;
+    } catch (e) { return null; }
+  }
+
+  // ---------- Auth (token per-location, reusado) ----------
+  function acAuthenticate() {
+    var loc = acLoc();
+    if (AC.token && AC.authedLocation === loc) return Promise.resolve(true);
+    if (AC.authPromise) return AC.authPromise;
+    var co = acCompany(), usr = acUser(), idt = acIdToken();
+    if (!loc || !co || !usr) return Promise.resolve(false);
+    AC.locationId = loc; AC.companyId = co; AC.userId = usr;
+    AC.authPromise = fetch(APP_URL + "/api/agents/ui-auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: usr, locationId: loc, companyId: co, idToken: idt }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        AC.authPromise = null;
+        if (!d || !d.ok) { console.warn("[spark-agent] ui-auth falhou:", d && d.reason); return false; }
+        AC.token = d.token; AC.authedLocation = loc;
+        console.log("[spark-agent] autenticado (admin=" + d.isAdmin + ")");
+        return true;
+      })
+      .catch(function (e) { AC.authPromise = null; console.warn("[spark-agent] ui-auth erro:", e && e.message); return false; });
+    return AC.authPromise;
+  }
+
+  function acFetchStatus(cid) {
+    if (!AC.token) return Promise.resolve(null);
+    return fetch(APP_URL + "/api/agents/contact-status?contactId=" + encodeURIComponent(cid), {
+      headers: { Authorization: "Bearer " + AC.token },
+    })
+      .then(function (r) { if (r.status === 401) { AC.token = null; return null; } return r.json(); })
+      .catch(function (e) { console.warn("[spark-agent] status erro:", e && e.message); return null; });
+  }
+
+  // ---------- UI: pill liga/desliga ----------
+  function acInjectStyles() {
+    if (document.getElementById("spark-agent-styles")) return;
+    var css = \`
+      #spark-agent-pill {
+        position: fixed; left: 20px; bottom: 20px; z-index: 999997;
+        display: inline-flex; align-items: center; gap: 9px;
+        padding: 9px 15px; border-radius: 999px;
+        font-family: 'Open Sans', system-ui, -apple-system, sans-serif;
+        font-size: 13px; font-weight: 600; line-height: 1;
+        background: #ffffff; color: #0f172a;
+        border: 1px solid rgba(15,23,42,0.10);
+        box-shadow: 0 4px 18px rgba(15,23,42,0.14);
+        cursor: pointer; user-select: none;
+        transition: transform .15s ease, box-shadow .15s ease, opacity .2s ease;
+      }
+      #spark-agent-pill:hover { transform: translateY(-1px); box-shadow: 0 7px 22px rgba(15,23,42,0.18); }
+      #spark-agent-pill .sap-main { display: inline-flex; align-items: center; gap: 9px; }
+      #spark-agent-pill .sap-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+      #spark-agent-pill.sap-on .sap-dot { background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,0.18); }
+      #spark-agent-pill.sap-off { color: #64748b; }
+      #spark-agent-pill.sap-off .sap-dot { background: #94a3b8; }
+      #spark-agent-pill .sap-label { white-space: nowrap; }
+      #spark-agent-pill.sap-busy { opacity: .55; pointer-events: none; }
+      #spark-agent-pill .sap-confirm { display: none; align-items: center; gap: 7px; }
+      #spark-agent-pill .sap-q { white-space: nowrap; font-weight: 700; }
+      #spark-agent-pill.sap-confirming .sap-main { display: none; }
+      #spark-agent-pill.sap-confirming .sap-confirm { display: inline-flex; }
+      #spark-agent-pill .sap-btn { border: 0; border-radius: 999px; padding: 5px 11px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; }
+      #spark-agent-pill .sap-btn-yes { background: #1675F2; color: #fff; }
+      #spark-agent-pill .sap-btn-no { background: rgba(15,23,42,0.06); color: #475569; }
+      #spark-agent-pill.sap-hidden { display: none !important; }
+    \`;
+    var style = document.createElement("style");
+    style.id = "spark-agent-styles";
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
+
+  function acRobotSvg() {
+    return [
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">',
+        '<rect x="5" y="6" width="14" height="12" rx="4.5" fill="#1675F2"/>',
+        '<circle cx="10" cy="11.5" r="1.3" fill="#cfe6ff"/>',
+        '<circle cx="14" cy="11.5" r="1.3" fill="#cfe6ff"/>',
+        '<line x1="12" y1="3" x2="12" y2="6" stroke="#1675F2" stroke-width="1.6" stroke-linecap="round"/>',
+        '<circle cx="12" cy="2.5" r="1.1" fill="#1675F2"/>',
+      '</svg>'
+    ].join("");
+  }
+
+  function acEnsurePill() {
+    if (!document.body) return;
+    if (document.getElementById("spark-agent-pill")) return;
+    acInjectStyles();
+    var pill = document.createElement("div");
+    pill.id = "spark-agent-pill";
+    pill.className = "sap-on";
+    pill.setAttribute("role", "button");
+    pill.setAttribute("aria-label", "Liga/desliga o agente de IA pra este contato");
+    pill.innerHTML = [
+      '<span class="sap-main">',
+        acRobotSvg(),
+        '<span class="sap-dot"></span>',
+        '<span class="sap-label">Agente IA: LIGADO</span>',
+      '</span>',
+      '<span class="sap-confirm">',
+        '<span class="sap-q">Desligar agente?</span>',
+        '<button class="sap-btn sap-btn-yes" type="button">Sim</button>',
+        '<button class="sap-btn sap-btn-no" type="button">Não</button>',
+      '</span>',
+    ].join("");
+    var main = pill.querySelector(".sap-main");
+    main.addEventListener("click", function () { pill.classList.add("sap-confirming"); });
+    pill.querySelector(".sap-btn-yes").addEventListener("click", function (e) { e.stopPropagation(); acToggle(!AC.paused); });
+    pill.querySelector(".sap-btn-no").addEventListener("click", function (e) { e.stopPropagation(); acExitConfirm(); });
+    document.body.appendChild(pill);
+  }
+
+  function acExitConfirm() { var p = document.getElementById("spark-agent-pill"); if (p) p.classList.remove("sap-confirming"); }
+  function acSetBusy(b) { var p = document.getElementById("spark-agent-pill"); if (p) p.classList.toggle("sap-busy", b); }
+  function acHidePill() { var p = document.getElementById("spark-agent-pill"); if (p) p.classList.add("sap-hidden"); }
+
+  function acRenderPill() {
+    var pill = document.getElementById("spark-agent-pill");
+    if (!pill) return;
+    if (!AC.hasAgent || !AC.contactId) { pill.classList.add("sap-hidden"); return; }
+    pill.classList.remove("sap-hidden");
+    pill.classList.toggle("sap-on", !AC.paused);
+    pill.classList.toggle("sap-off", AC.paused);
+    var label = pill.querySelector(".sap-label");
+    if (label) label.textContent = AC.paused ? "Agente IA: DESLIGADO" : "Agente IA: LIGADO";
+    var q = pill.querySelector(".sap-q");
+    if (q) q.textContent = AC.paused ? "Religar agente?" : "Desligar agente?";
+    pill.title = AC.agentName ? (AC.agentName + (AC.paused ? " — desligado pra este contato" : " — ativo neste contato")) : "";
+  }
+
+  function acToggle(targetPaused) {
+    if (!AC.token || !AC.contactId) return;
+    acSetBusy(true);
+    fetch(APP_URL + "/api/agents/contact-pause", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + AC.token, "Content-Type": "application/json" },
+      body: JSON.stringify({ contactId: AC.contactId, paused: targetPaused, agentId: AC.agentId }),
+    })
+      .then(function (r) { return r.json().then(function (j) { return { status: r.status, j: j }; }); })
+      .then(function (res) {
+        if (res.status === 401) { AC.token = null; }
+        else if (res.j && res.j.ok) {
+          AC.paused = targetPaused;
+          console.log("[spark-agent] pause=" + targetPaused + " ok p/ contato " + AC.contactId);
+        } else {
+          console.warn("[spark-agent] toggle falhou:", res.j && res.j.reason);
+        }
+        acSetBusy(false); acExitConfirm(); acRenderPill();
+      })
+      .catch(function (e) { console.warn("[spark-agent] toggle erro:", e && e.message); acSetBusy(false); acExitConfirm(); acRenderPill(); });
+  }
+
+  // ---------- Loop ----------
+  function acTick() {
+    try {
+      if (window.__SPARK_AGENT_CONTROLS_OFF) { acHidePill(); return; }
+      var cid = acContact();
+      if (!cid) { acHidePill(); AC.contactId = null; AC.statusLoaded = false; return; }
+      if (cid === AC.contactId && AC.statusLoaded) return;
+      AC.contactId = cid; AC.statusLoaded = false;
+      acAuthenticate().then(function (ok) {
+        if (!ok) return;
+        if (acContact() !== cid) return;
+        acFetchStatus(cid).then(function (st) {
+          if (acContact() !== cid) return;
+          AC.statusLoaded = true;
+          if (st && st.hasActiveLeadAgent) {
+            AC.hasAgent = true; AC.agentId = st.agentId; AC.agentName = st.agentName; AC.paused = !!st.paused;
+            acEnsurePill(); acRenderPill();
+          } else {
+            AC.hasAgent = false; acHidePill();
+          }
+        });
+      });
+    } catch (e) { console.warn("[spark-agent] tick erro:", e && e.message); }
+  }
+
+  // Debug hook pro Pedro: > __sparkAgentDebug()
+  window.__sparkAgentDebug = function () {
+    return {
+      token: !!AC.token, authedLocation: AC.authedLocation,
+      contactId: AC.contactId, hasAgent: AC.hasAgent, agentId: AC.agentId,
+      agentName: AC.agentName, paused: AC.paused,
+      pill: !!document.getElementById("spark-agent-pill"),
+      kill_switch: !!window.__SPARK_AGENT_CONTROLS_OFF,
+      detected: { loc: acLoc(), contact: acContact(), company: acCompany(), user: acUser(), hasIdToken: !!acIdToken() },
+    };
+  };
+
+  function acBoot() {
+    acTick();
+    setInterval(acTick, TICK_MS);
+    // Vue re-render pode matar o pill — re-injeta se sumir estando ativo.
+    setInterval(function () {
+      try {
+        if (AC.hasAgent && AC.contactId && acContact() === AC.contactId && !document.getElementById("spark-agent-pill")) {
+          acEnsurePill(); acRenderPill();
+        }
+      } catch (e) {}
+    }, REINJECT_MS);
+    console.log("[spark-agent] módulo de controles iniciado");
+  }
+
+  if (document.readyState === "complete" || document.readyState === "interactive") {
+    acBoot();
+  } else {
+    window.addEventListener("DOMContentLoaded", acBoot);
   }
 })();`;
