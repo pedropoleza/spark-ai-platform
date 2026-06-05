@@ -22,6 +22,7 @@ import type { ConversationTurn } from "@/lib/ai/openai-client";
 import type { RepInput } from "@/types/account-assistant";
 import { findRepById, updateRepById } from "@/lib/repositories/rep-identities.repo";
 import { getSparkbotHistory, insertSparkbotMessage } from "@/lib/repositories/sparkbot-messages.repo";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { findActiveSparkbotAgent, findAgentConfig } from "@/lib/repositories/agents.repo";
 
 export const maxDuration = 60;
@@ -189,6 +190,9 @@ export async function POST(request: NextRequest) {
     userInsertId = inserted?.id || null;
   } catch (err) {
     console.warn("[Sparkbot:send] sparkbot_messages insert crashed:", err instanceof Error ? err.message : err);
+    // Sweep F49 2026-06-05: persist falhou → gap no histórico (próximo turno
+    // não vê essa msg). Não-bloqueante (resposta segue), mas sinaliza.
+    reportError({ title: "SparkBot send: msg do rep não persistida", feature: "sparkbot-messaging", severity: "medium", error: err });
   }
 
   // 6. Heartbeat + silence reset.
@@ -283,6 +287,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     console.warn("[Sparkbot:send] persist agent msg failed:", err instanceof Error ? err.message : err);
+    // Sweep F49 2026-06-05: resposta entregue ao browser (JSON) mas não salva
+    // no histórico → próximo turno perde contexto. Não-bloqueante.
+    reportError({ title: "SparkBot send: resposta do agente não persistida", feature: "sparkbot-messaging", severity: "medium", error: err });
   }
 
   return json({

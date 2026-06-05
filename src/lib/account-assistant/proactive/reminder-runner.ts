@@ -11,6 +11,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { shouldFireCron } from "./cron-evaluator";
 import { normalizeForRepeat } from "../core/repeat-guard";
 import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
@@ -445,6 +446,9 @@ async function fireOutboundToContact(
     console.warn(
       `[reminder-runner] outbound task ${task.id} POST falhou: ${sendError}`,
     );
+    // Sweep F49 2026-06-05: outbound AGENDADO pelo rep (ex: "lembra a Maria às
+    // 15h") não saiu → rep acha que enviou. Promessa quebrada silenciosa.
+    reportError({ title: "Reminder runner: envio do outbound agendado falhou", feature: "proactive-reminder", severity: "high", error: err, metadata: { taskId: task.id } });
   }
 
   // Audit em sparkbot_messages (mesma table que outros proativos).

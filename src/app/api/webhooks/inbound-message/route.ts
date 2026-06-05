@@ -504,6 +504,9 @@ export async function POST(request: NextRequest) {
         }
       } catch (error) {
         console.error("[Handoff] Erro ao processar outbound:", error);
+        // Sweep F49 2026-06-05: handoff outbound é best-effort (retorna mesmo),
+        // mas a pausa-on-humano pode não ter sido aplicada.
+        reportError({ title: "Inbound webhook: erro ao processar handoff outbound", feature: "sparkbot-handoff", severity: "medium", error });
       }
 
       return NextResponse.json({ received: true, skipped: "outbound" });

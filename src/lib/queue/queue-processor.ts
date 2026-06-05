@@ -1070,6 +1070,17 @@ async function processGroup(
         action_payload: { reason: "ai_parse_failure_loop" },
         success: true,
       });
+      // Sweep F49 2026-06-05: ponto cego real do parse_failed. Reportamos AQUI
+      // (lead travou: 2+ JSONs inválidos seguidos → conversa pausada), NÃO em
+      // openai-client (que dispararia em toda falha transitória recuperada pelo
+      // retry da linha ~1004 = ruído que faz o admin ignorar signals).
+      reportError({
+        title: "Lead travado: 2+ falhas de parse JSON (conversa pausada)",
+        feature: "queue-processor",
+        severity: "high",
+        description: "A IA retornou JSON inválido 2× seguidas pra este lead; pausei a conversa pra não mandar 'problema técnico' em loop. Lead precisa de atenção humana.",
+        metadata: { agentId: agent.id, contactId: group.contactId, locationId: group.locationId },
+      });
       return; // Não envia resposta genérica, não executa ações
     }
   }

@@ -11,6 +11,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { identifyRep } from "./identity";
 import { processIncoming } from "./processor";
 import { trackAndCharge } from "@/lib/billing/charge";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { extractRepInput, type AudioMeta } from "./webhook/input-parser";
 import { sendResponseToRep } from "./webhook/sparkbot-send";
 import {
@@ -277,6 +278,8 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     phone = contactRes.contact?.phone || null;
   } catch (err) {
     console.error("[Sparkbot] failed to fetch hub contact:", err instanceof Error ? err.message : err);
+    // Sweep F49 2026-06-05: sem contato → sem phone → rep não recebe resposta.
+    reportError({ title: "SparkBot webhook: falha ao buscar contato do hub", feature: "sparkbot-webhook", severity: "high", error: err });
     return;
   }
 

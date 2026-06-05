@@ -2,25 +2,27 @@
 
 Total findings: 110 · dedup: 103 · worth_fixing: 52 (high 17, medium 35)
 
-## HIGH (perda de dado/dinheiro/crash) — atacar primeiro
+**STATUS HIGH: 17/17 ✅ FEITO** (5 deployados em `a1d3f7f` + 12 em lote A–D pós-compact 2026-06-05). Severidades recalibradas vs swarm: persistência web_ui/billing pequeno = `medium`; crash rep-facing (sem resposta) = `high`. MEDIUM (35) seguem pendentes pra lote de observabilidade.
 
-- [ ] `src/app/api/sparkbot/send/route.ts:190` — **sparkbot-messaging** — User message insert not persisted silently
-- [ ] `src/app/api/sparkbot/send/route.ts:284` — **sparkbot-messaging** — Agent response message not persisted silently
-- [ ] `src/app/api/sparkbot/transcribe/route.ts:125` — **sparkbot-transcribe** — Billing for transcription silent failure
-- [ ] `src/app/api/agents/process-batch/route.ts:25` — **agent-queue** — catch block only logs, no signal for queue and follow-up processing failure
-- [ ] `src/lib/account-assistant/webhook-handler.ts:278` — **sparkbot-webhook** — Contact fetch error not signaled
-- [ ] `src/app/api/webhooks/inbound-message/route.ts:505` — **sparkbot-handoff** — Outbound handoff processing error not signaled
-- [ ] `src/lib/account-assistant/webhook/stevo-handler.ts:379` — **sparkbot-inbound-stevo** — ProcessIncoming exception not signaled
-- [ ] `src/app/api/cron/billing-retry/route.ts:42` — **cron-billing-retry** — Cron billing-retry crash não sinalizado
-- [ ] `src/app/api/cron/refresh-ghl-token/route.ts:51` — **cron-refresh-ghl-token** — Cron refresh-ghl-token crash não sinalizado
-- [ ] `src/app/api/cron/summary-notes/route.ts:19` — **cron-summary-notes** — Cron summary-notes crash não sinalizado
-- [ ] `src/app/api/admin/dashboard/route.ts:499` — **admin-dashboard** — Admin dashboard crash não sinalizado
-- [ ] `src/app/api/agent-platform/builder/compose/route.ts:177` — **agent-platform-compose** — Agent platform compose: falha da IA não sinalizada (fallback silencioso)
-- [ ] `src/lib/account-assistant/proactive/reminder-runner.ts:443` — **proactive-reminder** — Outbound task send failure persisted to DB but signal skipped in conditional path
-- [ ] `src/lib/billing/charge.ts:123` — **billing-charge** — Wallet charge failure only console.error, no signal - charges may be lost silently
-- [ ] `src/lib/ai/openai-client.ts:333` — **openai-client** — JSON parse failure not reported to admin signals
-- [ ] `src/lib/ai/history-compressor.ts:79` — **history-compressor** — History summarization failure silently falls back without reporting
-- [ ] `src/lib/ai/audio-transcriber.ts:110` — **audio-transcriber** — Audio fetch error logged but not reported to admin
+## HIGH (perda de dado/dinheiro/crash) — ✅ TODOS COBERTOS
+
+- [x] `src/app/api/sparkbot/send/route.ts:190` — **sparkbot-messaging** — msg do rep não persistida → reportError `medium`
+- [x] `src/app/api/sparkbot/send/route.ts:284` — **sparkbot-messaging** — resposta do agente não persistida → reportError `medium`
+- [x] `src/app/api/sparkbot/transcribe/route.ts:125` — **sparkbot-transcribe** — billing Whisper falhou → reportError `medium`
+- [x] `src/app/api/agents/process-batch/route.ts:25` — **agent-queue** — crash pipeline lead-facing → reportError `critical` (a1d3f7f)
+- [x] `src/lib/account-assistant/webhook-handler.ts:278` — **sparkbot-webhook** — falha ao buscar contato do hub → reportError `high`
+- [x] `src/app/api/webhooks/inbound-message/route.ts:505` — **sparkbot-handoff** — erro ao processar handoff outbound → reportError `medium`
+- [x] `src/lib/account-assistant/webhook/stevo-handler.ts:379` — **sparkbot-inbound-stevo** — processIncoming lançou → reportError `high`
+- [x] `src/app/api/cron/billing-retry/route.ts:42` — **cron-billing-retry** — crash → reportError `high` (a1d3f7f)
+- [x] `src/app/api/cron/refresh-ghl-token/route.ts:51` — **cron-refresh-ghl-token** — crash → reportError `critical` (a1d3f7f)
+- [x] `src/app/api/cron/summary-notes/route.ts:19` — **cron-summary-notes** — crash → reportError `high` (a1d3f7f)
+- [x] `src/app/api/admin/dashboard/route.ts:499` — **admin-dashboard** — crash (admin-only) → reportError `medium`
+- [x] `src/app/api/agent-platform/builder/compose/route.ts:177` — **agent-platform-compose** — IA falhou (fallback degradado) → reportError `medium`
+- [x] `src/lib/account-assistant/proactive/reminder-runner.ts:443` — **proactive-reminder** — outbound agendado pro contato não saiu → reportError `high`
+- [x] `src/lib/billing/charge.ts:123` — **billing-charge** — wallet charge falhou → reportError `high` (a1d3f7f)
+- [x] `src/lib/ai/openai-client.ts:333` — **openai-client** — ⚠️ REALOCADO → instrumentado em `queue-processor.ts:~1046` (pausa do loop de 2+ parse fails). Reportar no openai-client dispararia em toda falha transitória recuperada pelo retry = ruído. reportError `high` no ponto "lead travado".
+- [x] `src/lib/ai/history-compressor.ts:79` — **history-compressor** — summarization falhou (fallback truncação) → reportError `medium`
+- [x] `src/lib/ai/audio-transcriber.ts:110` — **audio-transcriber** — fetch do áudio falhou → reportError `medium`
 
 ## MEDIUM (observabilidade) — lote seguinte
 

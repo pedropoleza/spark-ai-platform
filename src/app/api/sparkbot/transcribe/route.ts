@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { trackAndCharge } from "@/lib/billing/charge";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import OpenAI, { toFile } from "openai";
@@ -124,6 +125,9 @@ export async function POST(request: NextRequest) {
       }
     } catch (e) {
       console.warn("[transcribe] billing falhou (não-bloqueante):", e instanceof Error ? e.message : e);
+      // Sweep F49 2026-06-05: billing do Whisper crashou → usage_record pode
+      // não ter sido inserido (sem retry pelo reaper). Receita perdida (pouca).
+      reportError({ title: "SparkBot transcribe: billing falhou", feature: "sparkbot-transcribe", severity: "medium", error: e });
     }
 
     return json({ ok: true, text, audio_seconds: audioSeconds });

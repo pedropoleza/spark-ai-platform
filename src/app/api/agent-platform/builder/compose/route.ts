@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import OpenAI from "openai";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 45;
@@ -176,6 +177,10 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     console.warn("[builder/compose] fallback:", err instanceof Error ? err.message : err);
+    // Sweep F49 2026-06-05: builder de agente custom (pago) degradou — usuário
+    // recebe agente cru (purpose vira instrução). Editável no detail-view, mas
+    // queremos saber a frequência pra não vender experiência morna.
+    reportError({ title: "Builder compose: IA falhou (fallback degradado)", feature: "agent-platform-compose", severity: "medium", error: err });
     // Falha graciosa: usa o purpose cru como instruções; sem campos sugeridos.
     return NextResponse.json({
       name: "Agente personalizado",

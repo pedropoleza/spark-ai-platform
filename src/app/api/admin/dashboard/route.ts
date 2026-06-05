@@ -10,6 +10,7 @@
 
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -499,6 +500,8 @@ export async function GET(req: Request) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[admin/dashboard] FAIL:", msg);
+    // Sweep F49 2026-06-05: admin perde visão do painel (só admin, não user-facing).
+    reportError({ title: "Admin dashboard: crash", feature: "admin-dashboard", severity: "medium", error: err });
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

@@ -1,4 +1,5 @@
 import OpenAI, { toFile } from "openai";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 const SUPPORTED_FORMATS = ["ogg", "mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm", "opus"];
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
@@ -108,6 +109,9 @@ export async function transcribeAudioFromUrlVerbose(
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);
     console.error(`[Audio] Fetch threw: ${m}`);
+    // Sweep F49 2026-06-05: não baixou o áudio (rede/timeout) → áudio do
+    // lead/rep é ignorado, bot responde como se não tivesse vindo nada.
+    reportError({ title: "Audio transcriber: fetch do áudio falhou", feature: "audio-transcriber", severity: "medium", error: err });
     return { ok: false, code: "fetch_failed", message: m };
   }
 

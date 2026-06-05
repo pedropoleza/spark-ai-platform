@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import { trackAndCharge } from "@/lib/billing/charge";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 /**
  * Rolling summarization de histórico longo. Substitui os N turns mais antigos
@@ -77,6 +78,9 @@ export async function compressHistory(input: CompressInput): Promise<CompressedH
     };
   } catch (error) {
     console.error("[compressHistory] summarization failed, falling back to truncation:", error);
+    // Sweep F49 2026-06-05: summarizer caiu → trunca histórico (legado). Bot
+    // perde contexto antigo nessa conversa. Funcional mas degradado.
+    reportError({ title: "History compressor: summarization falhou (fallback truncação)", feature: "history-compressor", severity: "medium", error });
     // Fallback: truncar (comportamento legado)
     return { turns: recentTurns, coveredCount: 0, regenerated: false };
   }

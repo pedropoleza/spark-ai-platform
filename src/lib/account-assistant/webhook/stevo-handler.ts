@@ -28,6 +28,7 @@ import { identifyRep } from "../identity";
 import { processFile } from "../file-processor";
 import { processIncoming } from "../processor";
 import { transcribeAudioFromBuffer } from "@/lib/ai/audio-transcriber";
+import { reportError } from "@/lib/admin-signals/report-error";
 import {
   findByGhlMessageId,
   insertSparkbotMessage,
@@ -381,6 +382,8 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       "[stevo-handler] processIncoming lançou:",
       err instanceof Error ? err.message : err,
     );
+    // Sweep F49 2026-06-05: pipeline lançou → rep não recebe resposta via WhatsApp.
+    reportError({ title: "Stevo: processIncoming lançou (SparkBot não respondeu)", feature: "sparkbot-inbound-stevo", severity: "high", error: err });
     return;
   }
 
