@@ -704,6 +704,11 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
         completionTokens: result.completion_tokens,
         cachedTokens: result.cached_tokens,
         cacheCreationTokens: result.cache_creation_tokens ?? 0,
+        // P1 review 2026-06-05: paridade de telemetria com lead-facing
+        // (queue-processor:1139 "Fix HIGH-2"). O CUSTO da visão já entra via
+        // prompt_tokens do multimodal (imagem vai inline em processor.ts:937);
+        // imageCount é só pra o audit/cross-check de image_count não ficar 0.
+        imageCount: input.input.kind === "image" ? 1 : 0,
         // Internal team usa "custom key" semantics: tracked em usage_records
         // mas NÃO cobrado do wallet. Audit trail mantido pra Pedro ver custo
         // mesmo internal em Supabase queries.
