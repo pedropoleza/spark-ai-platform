@@ -598,21 +598,37 @@ async function processGroup(
     const lastOutbound = [...histMsgs].reverse().find((m) => m.direction === "outbound");
     if (lastOutbound) {
       const body = (lastOutbound.body || "").trim();
-      let isHuman = false;
-      if (!body) {
-        // Outbound sem texto = áudio/mídia manual do rep (a IA só manda texto).
-        isHuman = true;
+      // Fix bug observado em prod 2026-06-05 (caso Marcela Lana): o último
+      // outbound pode ser ANÚNCIO/automação (ex: "AD MESSAGE" do Meta), NÃO um
+      // humano. O F52 lia isso como "humano assumiu" e pausava a IA ANTES dela
+      // responder o lead novo — toda lead de anúncio caía nisso. Discriminadores
+      // em ordem de confiança:
+      //   1. userId no outbound = um USER do GHL (humano) mandou manualmente.
+      //      Anúncio/automação/API/IA NÃO têm userId — é o sinal mais limpo.
+      //   2. Sem NENHUM envio da IA nesta conversa = lead novo; não há "handoff"
+      //      possível (não tem de quem o humano assumir). O outbound é o
+      //      anúncio/automação → NÃO pausa (a menos que tenha userId = humano).
+      //   3. Caso geral (a IA já falou aqui): mantém o anti-eco / mídia manual.
+      const sentByGhlUser = !!(lastOutbound as { userId?: string }).userId;
+      const { data: aiSends } = await supabase
+        .from("execution_log")
+        .select("action_payload")
+        .eq("location_id", group.locationId)
+        .eq("contact_id", group.contactId)
+        .eq("action_type", "send_message")
+        .eq("success", true)
+        .order("created_at", { ascending: false })
+        .limit(30);
+      const aiTexts = extractAiSentTexts(aiSends);
+      let isHuman: boolean;
+      if (sentByGhlUser) {
+        isHuman = true; // humano (user GHL) mandou manualmente → pausa
+      } else if (aiTexts.length === 0) {
+        isHuman = false; // IA nunca falou → outbound é anúncio/automação, não pausa
+      } else if (!body) {
+        isHuman = true; // mídia/áudio DEPOIS da IA já ativa = humano
       } else {
-        const { data: aiSends } = await supabase
-          .from("execution_log")
-          .select("action_payload")
-          .eq("location_id", group.locationId)
-          .eq("contact_id", group.contactId)
-          .eq("action_type", "send_message")
-          .eq("success", true)
-          .order("created_at", { ascending: false })
-          .limit(30);
-        isHuman = !isAiEcho(body, extractAiSentTexts(aiSends));
+        isHuman = !isAiEcho(body, aiTexts);
       }
 
       // GU-6 (Pedro 2026-06-04): override "passa a bola pra IA". Se o rep LIGOU

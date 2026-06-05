@@ -116,8 +116,13 @@ export async function checkContactMatchesTargeting(
     for (const rule of rules) {
       if (rule.type === "tag") {
         if (!rule.tag) continue;
-        const tags = extractTags(contact);
-        if (!tags.includes(rule.tag)) {
+        // Fix 2026-06-05: match case-insensitive + trim. O GHL normaliza tags
+        // pra lowercase; se a regra salva ficou title-case (ex: "AI Qualification
+        // Active") o includes() cru NUNCA casava → agente mudo silencioso.
+        // Espelha o custom_field (que já compara normalizado).
+        const want = rule.tag.trim().toLowerCase();
+        const tags = extractTags(contact).map((t) => t.trim().toLowerCase());
+        if (!tags.includes(want)) {
           return { ok: false, reason: `tag:${rule.tag} ausente` };
         }
       } else if (rule.type === "custom_field") {
