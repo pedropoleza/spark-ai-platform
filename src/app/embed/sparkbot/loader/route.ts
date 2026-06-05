@@ -636,6 +636,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     hasAgent: false, agentId: null, agentName: null, agentType: null, paused: false, reason: null,
     aiTexts: null, aiContactId: null, // GU-3: textos que a IA mandou (anti-eco p/ marcar bolhas)
     resolvedContactId: null, resolvedForConvId: null, resolvePromise: null, // GU-4: conv→contato
+    agents: [], activeAgentId: null, iconState: "idle", // GU-7: seletor único + cor do ícone
   };
 
   // ---------- Detecção de contexto (resiliente, SPA) ----------
@@ -734,37 +735,56 @@ const AGENT_CONTROLS_SOURCE = `(function () {
   function acInjectStyles() {
     if (document.getElementById("spark-agent-styles")) return;
     var css = \`
+      /* GU-7: ícone-robô compacto colorido (verde=on / vermelho=off / cinza=sem agente). */
       #spark-agent-pill {
-        display: inline-flex; align-items: center; gap: 9px;
-        padding: 8px 14px; border-radius: 999px;
-        font-family: 'Open Sans', system-ui, -apple-system, sans-serif;
-        font-size: 13px; font-weight: 600; line-height: 1;
-        background: #ffffff; color: #0f172a;
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 34px; height: 34px; border-radius: 10px;
+        background: #ffffff; color: #94a3b8;
         border: 1px solid rgba(15,23,42,0.10);
         box-shadow: 0 2px 8px rgba(15,23,42,0.10);
-        cursor: pointer; user-select: none;
-        transition: transform .15s ease, box-shadow .15s ease, opacity .2s ease;
+        cursor: pointer; user-select: none; position: relative;
+        transition: transform .15s ease, box-shadow .15s ease, opacity .2s ease, color .2s ease, border-color .2s ease, background .2s ease;
       }
       /* GU-5: inline na toolbar do topo (perto do "Call"). */
-      #spark-agent-pill.sap-inline { position: relative; margin: 0 12px; flex-shrink: 0; }
+      #spark-agent-pill.sap-inline { margin: 0 10px; flex-shrink: 0; }
       /* Fallback: flutuante no canto, se a toolbar não for achada. */
       #spark-agent-pill.sap-floating { position: fixed; left: 20px; bottom: 20px; z-index: 999997; box-shadow: 0 4px 18px rgba(15,23,42,0.14); }
       #spark-agent-pill:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(15,23,42,0.16); }
-      #spark-agent-pill .sap-main { display: inline-flex; align-items: center; gap: 9px; }
-      #spark-agent-pill .sap-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-      #spark-agent-pill.sap-on .sap-dot { background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,0.18); }
-      #spark-agent-pill.sap-off { color: #64748b; }
-      #spark-agent-pill.sap-off .sap-dot { background: #94a3b8; }
-      #spark-agent-pill .sap-label { white-space: nowrap; }
+      #spark-agent-pill .sap-ico { display: inline-flex; width: 20px; height: 20px; }
+      #spark-agent-pill.sap-on   { color: #16a34a; border-color: rgba(22,163,74,0.35); background: rgba(22,163,74,0.08); }
+      #spark-agent-pill.sap-off  { color: #ef4444; border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.07); }
+      #spark-agent-pill.sap-idle { color: #94a3b8; }
+      /* badge de status no canto inferior-direito do ícone */
+      #spark-agent-pill::after {
+        content: ""; position: absolute; right: -3px; bottom: -3px;
+        width: 10px; height: 10px; border-radius: 50%;
+        border: 2px solid #ffffff; background: currentColor;
+      }
       #spark-agent-pill.sap-busy { opacity: .55; pointer-events: none; }
-      #spark-agent-pill .sap-confirm { display: none; align-items: center; gap: 7px; }
-      #spark-agent-pill .sap-q { white-space: nowrap; font-weight: 700; }
-      #spark-agent-pill.sap-confirming .sap-main { display: none; }
-      #spark-agent-pill.sap-confirming .sap-confirm { display: inline-flex; }
-      #spark-agent-pill .sap-btn { border: 0; border-radius: 999px; padding: 5px 11px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; }
-      #spark-agent-pill .sap-btn-yes { background: #1675F2; color: #fff; }
-      #spark-agent-pill .sap-btn-no { background: rgba(15,23,42,0.06); color: #475569; }
       #spark-agent-pill.sap-hidden { display: none !important; }
+      /* GU-7: popup seletor único de agente */
+      #spark-agent-pop {
+        position: fixed; z-index: 999998; min-width: 250px; max-width: 320px;
+        background: #ffffff; border: 1px solid rgba(15,23,42,0.10); border-radius: 14px;
+        box-shadow: 0 14px 44px rgba(15,23,42,0.20);
+        font-family: 'Open Sans', system-ui, -apple-system, sans-serif; padding: 8px;
+      }
+      #spark-agent-pop.sap-hidden { display: none !important; }
+      #spark-agent-pop .sap-pop-head { font-size: 12px; font-weight: 700; color: #0f172a; padding: 6px 8px 9px; }
+      #spark-agent-pop .sap-pop-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+      #spark-agent-pop .sap-pop-item { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; border-radius: 9px; padding: 9px 10px; cursor: pointer; font-family: inherit; text-align: left; color: #0f172a; }
+      #spark-agent-pop .sap-pop-item:hover { background: rgba(22,117,242,0.08); }
+      #spark-agent-pop .sap-pop-item.sap-active { background: rgba(22,163,74,0.10); }
+      #spark-agent-pop .sap-pop-ico { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: rgba(15,23,42,0.05); color: #1675F2; flex-shrink: 0; }
+      #spark-agent-pop .sap-pop-ico svg { width: 16px; height: 16px; }
+      #spark-agent-pop .sap-pop-item.sap-active .sap-pop-ico { background: rgba(22,163,74,0.16); color: #16a34a; }
+      #spark-agent-pop .sap-pop-name { flex: 1; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #spark-agent-pop .sap-pop-chip { font-size: 10px; font-weight: 700; color: #475569; background: rgba(15,23,42,0.06); border-radius: 999px; padding: 2px 7px; flex-shrink: 0; }
+      #spark-agent-pop .sap-pop-check { width: 14px; color: #16a34a; font-weight: 800; opacity: 0; flex-shrink: 0; text-align: center; }
+      #spark-agent-pop .sap-pop-item.sap-active .sap-pop-check { opacity: 1; }
+      #spark-agent-pop .sap-pop-off { border-top: 1px solid rgba(15,23,42,0.07); margin-top: 4px; padding-top: 11px; color: #64748b; }
+      #spark-agent-pop .sap-pop-off .sap-pop-ico { background: rgba(239,68,68,0.10); color: #ef4444; }
+      #spark-agent-pop.sap-busy { opacity: .6; pointer-events: none; }
       /* GU-3: feedback 👍/👎 por mensagem do agente */
       .sap-fb { display: flex; align-items: center; justify-content: flex-start; gap: 6px; margin: 3px 0 2px 0; flex-wrap: wrap; font-family: 'Open Sans', system-ui, -apple-system, sans-serif; }
       .sap-fb-suggest { max-width: 420px; }
@@ -783,14 +803,15 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     document.head.appendChild(style);
   }
 
+  // GU-7: robô tingível (currentColor) — verde/cinza/vermelho via classe de estado.
   function acRobotSvg() {
     return [
-      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">',
-        '<rect x="5" y="6" width="14" height="12" rx="4.5" fill="#1675F2"/>',
-        '<circle cx="10" cy="11.5" r="1.3" fill="#cfe6ff"/>',
-        '<circle cx="14" cy="11.5" r="1.3" fill="#cfe6ff"/>',
-        '<line x1="12" y1="3" x2="12" y2="6" stroke="#1675F2" stroke-width="1.6" stroke-linecap="round"/>',
-        '<circle cx="12" cy="2.5" r="1.1" fill="#1675F2"/>',
+      '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%">',
+        '<rect x="5" y="6" width="14" height="12" rx="4.5" fill="currentColor"/>',
+        '<circle cx="10" cy="11.5" r="1.4" fill="#ffffff" fill-opacity="0.92"/>',
+        '<circle cx="14" cy="11.5" r="1.4" fill="#ffffff" fill-opacity="0.92"/>',
+        '<line x1="12" y1="3" x2="12" y2="6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+        '<circle cx="12" cy="2.5" r="1.2" fill="currentColor"/>',
       '</svg>'
     ].join("");
   }
@@ -801,26 +822,159 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     acInjectStyles();
     var pill = document.createElement("div");
     pill.id = "spark-agent-pill";
-    pill.className = "sap-on";
+    pill.className = "sap-idle";
     pill.setAttribute("role", "button");
-    pill.setAttribute("aria-label", "Liga/desliga o agente de IA pra este contato");
-    pill.innerHTML = [
-      '<span class="sap-main">',
-        acRobotSvg(),
-        '<span class="sap-dot"></span>',
-        '<span class="sap-label">Agente IA: LIGADO</span>',
-      '</span>',
-      '<span class="sap-confirm">',
-        '<span class="sap-q">Desligar agente?</span>',
-        '<button class="sap-btn sap-btn-yes" type="button">Sim</button>',
-        '<button class="sap-btn sap-btn-no" type="button">Não</button>',
-      '</span>',
-    ].join("");
-    var main = pill.querySelector(".sap-main");
-    main.addEventListener("click", function () { pill.classList.add("sap-confirming"); });
-    pill.querySelector(".sap-btn-yes").addEventListener("click", function (e) { e.stopPropagation(); acToggle(!AC.paused); });
-    pill.querySelector(".sap-btn-no").addEventListener("click", function (e) { e.stopPropagation(); acExitConfirm(); });
+    pill.setAttribute("aria-label", "Agente de IA deste contato");
+    pill.innerHTML = '<span class="sap-ico">' + acRobotSvg() + '</span>';
+    pill.addEventListener("click", function (e) { e.stopPropagation(); acTogglePopup(); });
     acPlacePill(pill);
+  }
+
+  // ---------- GU-7: popup seletor único de agente ----------
+  function acEsc(s) {
+    return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function acPowerSvg() {
+    return '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="width:16px;height:16px"><path d="M12 3v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M6.5 7a8 8 0 1 0 11 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  }
+  function acAgentLabelFor(a) {
+    var t = (a && a.type) || "", n = (a && a.name) || "";
+    if (t === "sales_agent") return n || "Agente de Vendas";
+    if (t === "recruitment_agent") return n || "Recrutamento";
+    return n || "Agente IA";
+  }
+  function acAgentChip(a) {
+    var t = (a && a.type) || "";
+    if (t === "sales_agent") return "Vendas";
+    if (t === "recruitment_agent") return "Recrut.";
+    return "Custom";
+  }
+  function acActiveAgent() {
+    for (var i = 0; i < AC.agents.length; i++) { if (AC.agents[i].id === AC.activeAgentId) return AC.agents[i]; }
+    return null;
+  }
+  function acPillTitle() {
+    if (AC.iconState === "on") { var a = acActiveAgent(); return (a ? acAgentLabelFor(a) : "Agente") + " atendendo este contato — clique pra trocar"; }
+    if (AC.iconState === "off") return "Agente desligado neste contato — clique pra ligar";
+    return "Nenhum agente atende este contato — clique pra escolher";
+  }
+  function acRecomputeIconState() {
+    if (AC.activeAgentId) { AC.iconState = "on"; return; }
+    var anyPaused = false;
+    for (var i = 0; i < AC.agents.length; i++) { if (AC.agents[i].state === "paused") { anyPaused = true; break; } }
+    AC.iconState = anyPaused ? "off" : "idle";
+  }
+  function acEnsurePopup() {
+    var ex = document.getElementById("spark-agent-pop");
+    if (ex) return ex;
+    var pop = document.createElement("div");
+    pop.id = "spark-agent-pop";
+    pop.className = "sap-pop sap-hidden";
+    pop.addEventListener("click", function (e) { e.stopPropagation(); });
+    document.body.appendChild(pop);
+    return pop;
+  }
+  function acRenderPopup() {
+    var pop = acEnsurePopup();
+    var rows = ['<div class="sap-pop-head">Quem atende este contato?</div>', '<div class="sap-pop-list">'];
+    for (var i = 0; i < AC.agents.length; i++) {
+      var a = AC.agents[i];
+      var on = a.id === AC.activeAgentId;
+      rows.push(
+        '<button class="sap-pop-item' + (on ? ' sap-active' : '') + '" data-agent="' + acEsc(a.id) + '">' +
+          '<span class="sap-pop-ico">' + acRobotSvg() + '</span>' +
+          '<span class="sap-pop-name">' + acEsc(acAgentLabelFor(a)) + '</span>' +
+          '<span class="sap-pop-chip">' + acEsc(acAgentChip(a)) + '</span>' +
+          '<span class="sap-pop-check">' + "\\u2713" + '</span>' +
+        '</button>'
+      );
+    }
+    var offOn = !AC.activeAgentId;
+    rows.push(
+      '<button class="sap-pop-item sap-pop-off' + (offOn ? ' sap-active' : '') + '" data-agent="">' +
+        '<span class="sap-pop-ico">' + acPowerSvg() + '</span>' +
+        '<span class="sap-pop-name">Desligar (ninguém atende)</span>' +
+        '<span class="sap-pop-check">' + "\\u2713" + '</span>' +
+      '</button>'
+    );
+    rows.push('</div>');
+    pop.innerHTML = rows.join("");
+    var items = pop.querySelectorAll(".sap-pop-item");
+    for (var k = 0; k < items.length; k++) {
+      items[k].addEventListener("click", function (e) {
+        e.stopPropagation();
+        acActivateAgent(this.getAttribute("data-agent") || null);
+      });
+    }
+  }
+  function acPositionPopup() {
+    var pill = document.getElementById("spark-agent-pill");
+    var pop = document.getElementById("spark-agent-pop");
+    if (!pill || !pop) return;
+    var r = pill.getBoundingClientRect();
+    pop.style.visibility = "hidden"; pop.classList.remove("sap-hidden");
+    var pw = pop.offsetWidth || 256, ph = pop.offsetHeight || 200;
+    var left = Math.min(r.left, window.innerWidth - pw - 12);
+    if (left < 12) left = 12;
+    var top = r.bottom + 8;
+    if (top + ph > window.innerHeight - 12) top = Math.max(12, r.top - ph - 8);
+    pop.style.left = left + "px"; pop.style.top = top + "px"; pop.style.visibility = "";
+  }
+  function acTogglePopup() {
+    var pop = document.getElementById("spark-agent-pop");
+    if (pop && !pop.classList.contains("sap-hidden")) { acClosePopup(); return; }
+    if (!AC.hasAgent) return;
+    acRenderPopup();
+    acPositionPopup();
+    var p = document.getElementById("spark-agent-pop");
+    if (p) p.classList.remove("sap-hidden");
+    setTimeout(function () { document.addEventListener("click", acOutsideClose, true); }, 0);
+  }
+  function acClosePopup() {
+    var pop = document.getElementById("spark-agent-pop");
+    if (pop) pop.classList.add("sap-hidden");
+    document.removeEventListener("click", acOutsideClose, true);
+  }
+  function acOutsideClose(e) {
+    var pop = document.getElementById("spark-agent-pop");
+    var pill = document.getElementById("spark-agent-pill");
+    if (!pop) return;
+    if ((pop && pop.contains(e.target)) || (pill && pill.contains(e.target))) return;
+    acClosePopup();
+  }
+  function acActivateAgent(agentId) {
+    if (!AC.token || !AC.contactId) return;
+    var pop = document.getElementById("spark-agent-pop");
+    if (pop) pop.classList.add("sap-busy");
+    fetch(APP_URL + "/api/agents/contact-activate", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + AC.token, "Content-Type": "application/json" },
+      body: JSON.stringify({ contactId: AC.contactId, agentId: agentId || null }),
+    })
+      .then(function (r) { return r.json().then(function (j) { return { status: r.status, j: j }; }); })
+      .then(function (res) {
+        if (res.status === 401) { AC.token = null; }
+        else if (res.j && res.j.ok) {
+          AC.activeAgentId = res.j.activeAgentId || null;
+          for (var i = 0; i < AC.agents.length; i++) {
+            AC.agents[i].state = AC.agents[i].id === AC.activeAgentId ? "driving" : (AC.agents[i].state === "idle" ? "idle" : "paused");
+          }
+          acRecomputeIconState();
+          console.log("[spark-agent] ativado=" + (AC.activeAgentId || "(nenhum)") + " p/ contato " + AC.contactId);
+        } else { console.warn("[spark-agent] activate falhou:", res.j && res.j.reason); }
+        if (pop) pop.classList.remove("sap-busy");
+        acClosePopup(); acRenderPill();
+        if (AC.contactId) acRefreshAiTexts(AC.contactId);
+      })
+      .catch(function (e) { console.warn("[spark-agent] activate erro:", e && e.message); if (pop) pop.classList.remove("sap-busy"); acClosePopup(); });
+  }
+  function acFetchAgents(cid) {
+    if (!AC.token) return Promise.resolve(null);
+    return fetch(APP_URL + "/api/agents/contact-agents?contactId=" + encodeURIComponent(cid), {
+      headers: { Authorization: "Bearer " + AC.token },
+    })
+      .then(function (r) { if (r.status === 401) { AC.token = null; return null; } return r.json(); })
+      .catch(function (e) { console.warn("[spark-agent] agents erro:", e && e.message); return null; });
   }
 
   // GU-5: âncora resiliente — acha o botão "Call"/"Ligar" da toolbar do contato
@@ -895,19 +1049,13 @@ const AGENT_CONTROLS_SOURCE = `(function () {
   function acRenderPill() {
     var pill = document.getElementById("spark-agent-pill");
     if (!pill) return;
-    if (!AC.hasAgent || !AC.contactId) { pill.classList.add("sap-hidden"); return; }
+    if (!AC.hasAgent || !AC.contactId) { pill.classList.add("sap-hidden"); acClosePopup(); return; }
     pill.classList.remove("sap-hidden");
-    pill.classList.toggle("sap-on", !AC.paused);
-    pill.classList.toggle("sap-off", AC.paused);
-    var name = acAgentLabel();
-    var label = pill.querySelector(".sap-label");
-    if (label) label.textContent = name + ": " + (AC.paused ? "DESLIGADO" : "LIGADO");
-    var q = pill.querySelector(".sap-q");
-    if (q) q.textContent = AC.paused ? "Religar agente?" : "Desligar agente?";
-    var why = AC.paused ? acReasonText() : "";
-    pill.title = name + (AC.paused
-      ? (" — desligado" + (why ? " (" + why + ")" : "") + " pra este contato")
-      : " — ativo neste contato");
+    pill.classList.remove("sap-on"); pill.classList.remove("sap-off"); pill.classList.remove("sap-idle");
+    pill.classList.add("sap-" + (AC.iconState || "idle"));
+    pill.title = acPillTitle();
+    var pop = document.getElementById("spark-agent-pop");
+    if (pop && !pop.classList.contains("sap-hidden")) acRenderPopup();
   }
 
   function acToggle(targetPaused) {
@@ -953,16 +1101,18 @@ const AGENT_CONTROLS_SOURCE = `(function () {
         if (!cid) { acHidePill(); return; }
         if (cid === AC.contactId && AC.statusLoaded) return;
         AC.contactId = cid; AC.statusLoaded = false;
-        acFetchStatus(cid).then(function (st) {
+        acFetchAgents(cid).then(function (st) {
           if (acCurrentContact() !== cid) return;
           AC.statusLoaded = true;
-          if (st && st.hasActiveLeadAgent) {
-            AC.hasAgent = true; AC.agentId = st.agentId; AC.agentName = st.agentName;
-            AC.agentType = st.agentType; AC.paused = !!st.paused; AC.reason = st.reason || null;
+          if (st && st.ok && st.hasAnyAgent) {
+            AC.hasAgent = true;
+            AC.agents = st.agents || [];
+            AC.activeAgentId = st.activeAgentId || null;
+            acRecomputeIconState();
             acEnsurePill(); acRenderPill();
             acRefreshAiTexts(cid); // GU-3: puxa textos da IA → marca bolhas do agente
           } else {
-            AC.hasAgent = false; acHidePill();
+            AC.hasAgent = false; AC.agents = []; AC.activeAgentId = null; acHidePill(); acClosePopup();
           }
         });
       });
@@ -973,8 +1123,8 @@ const AGENT_CONTROLS_SOURCE = `(function () {
   window.__sparkAgentDebug = function () {
     return {
       token: !!AC.token, authedLocation: AC.authedLocation,
-      contactId: AC.contactId, hasAgent: AC.hasAgent, agentId: AC.agentId,
-      agentName: AC.agentName, paused: AC.paused,
+      contactId: AC.contactId, hasAgent: AC.hasAgent,
+      agents: AC.agents ? AC.agents.length : 0, activeAgentId: AC.activeAgentId, iconState: AC.iconState,
       pill: !!document.getElementById("spark-agent-pill"),
       kill_switch: !!window.__SPARK_AGENT_CONTROLS_OFF,
       ai_texts: AC.aiTexts ? AC.aiTexts.length : 0,
