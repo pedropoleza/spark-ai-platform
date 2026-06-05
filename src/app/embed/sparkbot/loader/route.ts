@@ -1224,14 +1224,23 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     box.querySelector(".sap-fb-cancel").addEventListener("click", function (e) { e.stopPropagation(); box.remove(); });
   }
 
+  // GU-7 (Fix bug observado em prod 2026-06-04): o feedback usa o agente ATIVO
+  // do contato (quem dirige), com fallback pro 1º agente da location. Antes usava
+  // AC.agentId — que o GU-7 deixou de setar no acTick → 👍/👎 pararam de gravar.
+  function acFeedbackAgentId() {
+    if (AC.activeAgentId) return AC.activeAgentId;
+    if (AC.agents && AC.agents.length) return AC.agents[0].id;
+    return null;
+  }
   function acSendFeedback(aiText, rating, suggestion, bar) {
-    if (!AC.token || !AC.agentId || !AC.contactId) return;
+    var agentId = acFeedbackAgentId();
+    if (!AC.token || !agentId || !AC.contactId) return;
     var status = bar.querySelector(".sap-fb-status");
     if (status) status.textContent = "enviando...";
     fetch(APP_URL + "/api/agents/message-feedback", {
       method: "POST",
       headers: { Authorization: "Bearer " + AC.token, "Content-Type": "application/json" },
-      body: JSON.stringify({ agentId: AC.agentId, contactId: AC.contactId, aiMessage: aiText, rating: rating, suggestion: suggestion || undefined }),
+      body: JSON.stringify({ agentId: agentId, contactId: AC.contactId, aiMessage: aiText, rating: rating, suggestion: suggestion || undefined }),
     })
       .then(function (r) { return r.json(); })
       .then(function (d) {
