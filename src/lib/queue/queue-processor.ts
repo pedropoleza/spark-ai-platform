@@ -619,9 +619,26 @@ async function processGroup(
       // o agente manualmente (pill na UI) DEPOIS dessa resposta humana, a IA
       // assume mesmo assim — não re-pausa. Só re-pausa se o humano respondeu
       // MAIS RECENTE que o ai_resumed_at.
-      const resumedAtMs = (convState as { ai_resumed_at?: string | null })?.ai_resumed_at
-        ? new Date((convState as { ai_resumed_at?: string | null }).ai_resumed_at as string).getTime()
-        : 0;
+      // Race GU-6×F52 (review 2026-06-05): o convState foi lido lá no início
+      // (:303), mas áudio/imagem/LLM levam SEGUNDOS. Se o rep clicou "passa a
+      // bola pra IA" (GU-6) DURANTE o processamento, o convState em memória tá
+      // stale (ai_resumed_at antigo/null) → re-pausaríamos e desfaríamos o
+      // resume manual silenciosamente. Re-lê ai_resumed_at FRESCO agora, no
+      // último instante antes de decidir. Read único indexado, fail-soft.
+      let freshResumedAt: string | null =
+        (convState as { ai_resumed_at?: string | null })?.ai_resumed_at ?? null;
+      try {
+        const { data: freshState } = await supabase
+          .from("conversation_state")
+          .select("ai_resumed_at")
+          .eq("agent_id", agent.id)
+          .eq("contact_id", group.contactId)
+          .maybeSingle();
+        if (freshState) freshResumedAt = (freshState as { ai_resumed_at?: string | null }).ai_resumed_at ?? null;
+      } catch {
+        /* re-read best-effort: cai pro valor do convState inicial */
+      }
+      const resumedAtMs = freshResumedAt ? new Date(freshResumedAt).getTime() : 0;
       const lastOutboundMs = new Date(lastOutbound.dateAdded).getTime();
       const overriddenByManualResume = resumedAtMs > 0 && lastOutboundMs <= resumedAtMs;
 
