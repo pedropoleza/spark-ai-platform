@@ -144,7 +144,10 @@ export async function loadLeadHistory(
   if (!contactId || !companyId || !locationId) {
     return EMPTY_CONTEXT(contactId || "", 0);
   }
-  const cacheKey = `${locationId}:${contactId}:${config.messages_count}:${config.include_notes ? 1 : 0}:${config.include_opportunities ? 1 : 0}`;
+  // include_tags entra na chave (fix review 2026-06-05): sem ele, um load com
+  // tags=true e outro com tags=false colidiam → perda silenciosa de tags (ou
+  // tags fantasma). Agora cada combinação de flags tem cache próprio.
+  const cacheKey = `${locationId}:${contactId}:${config.messages_count}:${config.include_notes ? 1 : 0}:${config.include_opportunities ? 1 : 0}:${config.include_tags ? 1 : 0}`;
   const hit = cache.get(cacheKey);
   if (hit && hit.expiresAt > Date.now()) return hit.value;
 

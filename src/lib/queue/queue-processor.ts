@@ -24,7 +24,7 @@ import { isReactiveTriggerBody, parseTriggerBody } from "@/lib/account-assistant
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
 import { reportError } from "@/lib/admin-signals/report-error";
 // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
-import { loadLeadHistory } from "@/lib/queue/lead-history";
+import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot } from "@/lib/queue/handoff-notify";
 import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
@@ -786,6 +786,11 @@ async function processGroup(
   // disparava — o agente nunca passava a bola pro humano. Pro handoff-only usa um
   // config enxuto (msgs + opps); mas só INJETA no prompt quando a memória do lead
   // está ON de fato (promptCtx.leadHistory abaixo).
+  // P1 (review 2026-06-05): invalida o cache do lead-history no início do turno
+  // (= a cada novo inbound) — senão o cache de 5min servia histórico STALE pra
+  // contatos em conversa ativa (bot perdia o contexto recente). A função
+  // invalidateLeadHistoryCache estava exportada mas NUNCA era chamada.
+  invalidateLeadHistoryCache(group.contactId);
   const loadHistoryCfg = leadHistoryCfg.enabled
     ? leadHistoryCfg
     : handoffPol.enabled

@@ -433,10 +433,15 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // 5. LLM call com tools — prepend histórico da sessão (turns anteriores como
   // user/assistant messages). Alto benefício pra cache hit: turns anteriores
   // são byte-exact estáveis, só o último muda.
-  const history: LLMMessage[] = (input.conversationHistory || []).map((t) => ({
-    role: t.role,
-    content: t.content,
-  }));
+  // Fix review 2026-06-05: filtra turns com content STRING vazio. Claude rejeita
+  // histórico com mensagem de content "" (400 invalid_request) — mantém os de
+  // content não-string (imagem) intactos.
+  const history: LLMMessage[] = (input.conversationHistory || [])
+    .filter((t) => typeof t.content !== "string" || t.content.trim().length > 0)
+    .map((t) => ({
+      role: t.role,
+      content: t.content,
+    }));
 
   // ToolContext explícito pra ser reutilizado pelo coherence gate re-run abaixo.
   const toolCtx: ToolContext = buildToolCtx({

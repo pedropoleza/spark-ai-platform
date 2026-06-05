@@ -100,8 +100,17 @@ export function assembleSystemPrompt(input: AssembleSystemPromptInput): string {
       if (input.audience === "lead" && input.leadArgs && input.moduleKeys) {
         return assembleLeadFromModules(input.moduleKeys, input.leadArgs);
       }
+      // Fix review 2026-06-05: custom agent SEM moduleKeys (a composição via
+      // registry ainda não está wired no runtime — o queue-processor não passa
+      // moduleKeys) NÃO pode CRASHAR o turno quando AGENT_MOTOR_UNIFIED=1. Cai no
+      // builder lead provado (mesmo output do caminho legado, que já usa o
+      // buildSystemPrompt com framing neutro pro custom_agent). Sem isso, ligar a
+      // flag quebraria todo agente custom.
+      if (input.audience === "lead" && input.leadArgs) {
+        return buildLeadSystemPrompt(input.leadArgs);
+      }
       throw new Error(
-        `assembleSystemPrompt: template '${input.templateKey}' exige audience='lead' + leadArgs + moduleKeys (custom) ou ser um seed conhecido.`,
+        `assembleSystemPrompt: template '${input.templateKey}' exige audience='lead' + leadArgs ou ser um seed conhecido.`,
       );
     }
   }
