@@ -226,10 +226,13 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
               .in("status", ["pending", "processing"]);
             continue;
           }
-        } catch {
+        } catch (err) {
           // Se não conseguiu verificar DND, não enviar por segurança
           console.warn("[FollowUp] Could not verify DND, skipping");
           await supabase.from("scheduled_followups").update({ status: "failed" }).eq("id", followUp.id);
+          // Sweep F49 2026-06-05: skip defensivo (não viola DND), mas o follow-up
+          // não saiu. Severidade baixa (fail-safe esperado em hiccup de GHL).
+          reportError({ title: "Follow-up scheduler: verificação de DND falhou", feature: "followup-scheduler", severity: "low", error: err });
           errors++;
           continue;
         }

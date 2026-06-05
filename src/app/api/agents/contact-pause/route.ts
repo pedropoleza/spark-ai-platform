@@ -16,6 +16,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { resolveAgentForContact, agentBelongsToLocation } from "@/lib/agents/contact-controls";
@@ -95,6 +96,9 @@ export async function POST(request: NextRequest) {
     return json({ ok: true, paused, agentId });
   } catch (err) {
     console.error("[contact-pause] erro:", err instanceof Error ? err.message : err);
+    // Sweep F49 2026-06-05: pausa/retomada do bot falhou → rep clica e acha que
+    // pausou, mas o bot continua (ou vice-versa). Estado divergente.
+    reportError({ title: "Contact pause: mudança de estado falhou", feature: "agents-contact-controls", severity: "medium", error: err });
     return json({ ok: false, reason: "internal_error" }, { status: 500 });
   }
 }

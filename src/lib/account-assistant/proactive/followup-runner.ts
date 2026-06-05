@@ -16,6 +16,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { GHLClient } from "@/lib/ghl/client";
 
 const MAX_PER_TICK = 30;
@@ -216,6 +217,8 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
     } catch (err) {
       const m = err instanceof Error ? err.message.slice(0, 500) : String(err);
       console.error(`[followup-runner] msg ${cand.id} fail:`, m);
+      // Sweep F49 2026-06-05: msg de follow-up crashou → lead não recebe.
+      reportError({ title: "Followup runner: msg de follow-up falhou", feature: "proactive-followup", severity: "medium", error: err, metadata: { messageId: cand.id } });
       await supabase
         .from("followup_messages")
         .update({ status: "failed", error_message: m })

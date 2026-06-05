@@ -1,5 +1,6 @@
 import type { MediaAttachment } from "./media-extractor";
 import { isImageMime, isDocMime } from "./media-extractor";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024;
 const MAX_DOC_SIZE = 10 * 1024 * 1024;
@@ -36,6 +37,9 @@ async function downloadBuffer(url: string, maxSize: number): Promise<{ buffer: B
     };
   } catch (err) {
     console.error(`[Media] Download error:`, err instanceof Error ? err.message : err);
+    // Sweep F49 2026-06-05: não baixou a mídia → anexo do lead ignorado (bot
+    // responde como se nada tivesse vindo). Silencioso (retorna null).
+    reportError({ title: "Media processor: download da mídia falhou", feature: "media-processor", severity: "medium", error: err });
     return null;
   }
 }
@@ -99,6 +103,9 @@ async function processPdf(att: MediaAttachment): Promise<ProcessedMedia> {
   } catch (err) {
     console.error("[Media] PDF parse error:", err instanceof Error ? err.message : err);
     result.error = "erro ao ler PDF";
+    // Sweep F49 2026-06-05: extração de PDF falhou (semi-visível — bot avisa que
+    // não leu). Low: pra medir taxa de falha de extração.
+    reportError({ title: "Media processor: leitura de PDF falhou", feature: "media-processor", severity: "low", error: err });
   }
 
   return result;
@@ -134,6 +141,8 @@ async function processDocx(att: MediaAttachment): Promise<ProcessedMedia> {
   } catch (err) {
     console.error("[Media] DOCX parse error:", err instanceof Error ? err.message : err);
     result.error = "erro ao ler documento Word";
+    // Sweep F49 2026-06-05: extração de DOCX falhou (semi-visível). Low.
+    reportError({ title: "Media processor: leitura de DOCX falhou", feature: "media-processor", severity: "low", error: err });
   }
 
   return result;

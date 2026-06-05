@@ -24,6 +24,7 @@
  * conscientemente após smoke. Quando "1", roda no cron.
  */
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 const MAX_PER_TICK = 50;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -105,6 +106,9 @@ export async function processSequenceSteps(): Promise<SequenceRunResult> {
         `[seq-runner] state ${state.id} falhou:`,
         err instanceof Error ? err.message.slice(0, 200) : err,
       );
+      // Sweep F49 2026-06-05: avanço de estado da sequência falhou (estado pode
+      // travar — lead não avança nos passos).
+      reportError({ title: "Sequence runner: avanço de estado falhou", feature: "proactive-sequence", severity: "medium", error: err, metadata: { stateId: state.id } });
     }
   }
 

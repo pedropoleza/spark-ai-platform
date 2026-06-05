@@ -114,6 +114,9 @@ export async function fireScheduledReminders(): Promise<ReminderRunResult> {
       else failed++;
     } catch (err) {
       console.error(`[reminder-runner] task ${task.id} failed:`, err instanceof Error ? err.message : err);
+      // Sweep F49 2026-06-05: fireOne crashou (erro NÃO-send; o send já reporta
+      // no catch interno). Tarefa marcada failed.
+      reportError({ title: "Reminder runner: fireOne crashou", feature: "proactive-reminder", severity: "medium", error: err, metadata: { taskId: task.id } });
       failed++;
       await markTaskFailed(task.id);
     }

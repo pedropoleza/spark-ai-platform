@@ -685,6 +685,8 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
         "[Sparkbot] Whisper billing falhou (não-bloqueante):",
         e instanceof Error ? e.message : e,
       );
+      // Sweep F49 2026-06-05: billing Whisper do SparkBot não cobrado (pouca $).
+      reportError({ title: "SparkBot webhook: Whisper billing falhou", feature: "sparkbot-billing", severity: "medium", error: e });
     }
   }
 
@@ -710,6 +712,9 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     }
   } catch (err) {
     console.warn("[Sparkbot] sparkbot_messages read crashed:", err instanceof Error ? err.message : err);
+    // Sweep F49 2026-06-05: histórico do rep não carregou → SparkBot amnésico
+    // nessa conversa (responde sem contexto). Não-bloqueante.
+    reportError({ title: "SparkBot webhook: leitura de histórico do rep falhou", feature: "sparkbot-history", severity: "medium", error: err });
   }
 
   // Reverte pra ordem cronológica (oldest first) e mapeia pra ConversationTurn.

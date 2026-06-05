@@ -18,6 +18,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { LEAD_FACING_TYPES, agentBelongsToLocation } from "@/lib/agents/contact-controls";
@@ -91,6 +92,9 @@ export async function POST(request: NextRequest) {
     return json({ ok: true, activeAgentId: agentId });
   } catch (err) {
     console.error("[contact-activate] erro:", err instanceof Error ? err.message : err);
+    // Sweep F49 2026-06-05: seleção de qual agente atende o contato falhou →
+    // pode ficar sem agente OU com agente errado dirigindo.
+    reportError({ title: "Contact activate: ativação de agente falhou", feature: "agents-contact-controls", severity: "medium", error: err });
     return json({ ok: false, reason: "internal_error" }, { status: 500 });
   }
 }

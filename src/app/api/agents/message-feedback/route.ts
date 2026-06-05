@@ -13,6 +13,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { agentBelongsToLocation } from "@/lib/agents/contact-controls";
@@ -63,12 +64,16 @@ export async function POST(request: NextRequest) {
     });
     if (error) {
       console.error("[message-feedback] insert error:", error.message);
+      // Sweep F49 2026-06-05: feedback 👍/👎 do rep NÃO registrado → o loop de
+      // aprendizado (agent_feedback → buildFeedbackSection) perde esse sinal.
+      reportError({ title: "Message feedback: registro do feedback falhou", feature: "agents-contact-controls", severity: "medium", description: error.message });
       return json({ ok: false, reason: "insert_failed" }, { status: 500 });
     }
 
     return json({ ok: true });
   } catch (err) {
     console.error("[message-feedback] erro:", err instanceof Error ? err.message : err);
+    reportError({ title: "Message feedback: registro do feedback falhou", feature: "agents-contact-controls", severity: "medium", error: err });
     return json({ ok: false, reason: "internal_error" }, { status: 500 });
   }
 }

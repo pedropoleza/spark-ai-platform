@@ -13,6 +13,7 @@
  * action_type='handoff_notification' + filtro JSONB.
  */
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import type { LeadContext, ShouldRespondDecision } from "@/types/agent";
 
 const COOLDOWN_HOURS = 4;
@@ -245,6 +246,9 @@ export async function notifyRepViaSparkbot(args: NotifyArgs): Promise<NotifyResu
     console.warn(
       `[handoff-notify] delivery falhou (não-bloqueante): ${err instanceof Error ? err.message.slice(0, 200) : err}`,
     );
+    // Sweep F49 2026-06-05: rep humano NÃO foi avisado do handoff → lead que
+    // pediu humano fica sem resposta e o rep nem sabe.
+    reportError({ title: "Handoff notify: entrega da notificação falhou", feature: "lead-awareness-handoff", severity: "medium", error: err, metadata: { repId: rep.id } });
     return { notified: false, reason: decision.reason, rep_id: rep.id, skipped_reason: "deliver_failed" };
   }
 }

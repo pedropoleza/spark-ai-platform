@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { GHLClient } from "@/lib/ghl/client";
 import { trackAndCharge } from "@/lib/billing/charge";
 
@@ -348,8 +349,10 @@ export async function processInactivitySummaries(): Promise<{ generated: number;
         aiModel: (acfg as Record<string, string>)?.ai_model || "gpt-4.1-mini",
       });
       generated++;
-    } catch {
+    } catch (err) {
       errors++;
+      // Sweep F49 2026-06-05: nota-resumo de inatividade não gerada (interno).
+      reportError({ title: "Summary note generator: geração falhou", feature: "summary-note-runner", severity: "low", error: err });
     }
   }
 

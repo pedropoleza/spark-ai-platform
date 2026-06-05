@@ -20,6 +20,7 @@
 import { GHLClient } from "@/lib/ghl/client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
 import type { LLMMessage } from "../llm-client";
@@ -399,6 +400,8 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
   const [carrierOverview, kbItems] = await Promise.all([
     loadCarrierTier1("national_life_group").catch((err) => {
       console.warn("[dispatcher] loadCarrierTier1 falhou (não-fatal):", err);
+      // Sweep F49 2026-06-05: proativo segue SEM contexto de carrier (degradado).
+      reportError({ title: "Dispatcher: contexto de carrier indisponível", feature: "proactive-dispatcher", severity: "low", error: err });
       return "";
     }),
     loadKbItems(),
@@ -591,6 +594,8 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     });
   } catch (err) {
     console.error("[dispatcher] billing failed (non-blocking):", err instanceof Error ? err.message : err);
+    // Sweep F49 2026-06-05: billing do proativo não cobrado (receita perdida).
+    reportError({ title: "Dispatcher: billing do proativo falhou", feature: "proactive-dispatcher", severity: "medium", error: err });
   }
 
   // 10. Finaliza dispatch (atualiza status sent + métricas no slot já reservado)

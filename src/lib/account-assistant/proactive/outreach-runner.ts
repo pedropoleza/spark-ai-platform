@@ -14,6 +14,7 @@
  * do INSERT em bulk_message_recipients.
  */
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 const COOLDOWN_HOURS = 24;
 
@@ -181,7 +182,12 @@ export async function processOutreachTick(): Promise<{ scanned: number; created:
   let created = 0;
   let errors = 0;
   for (const a of agents) {
-    const res = await runOutreachForAgent(a.id).catch(() => null);
+    const res = await runOutreachForAgent(a.id).catch((err) => {
+      // Sweep F49 2026-06-05: outreach de um agente falhou no loop (lead não
+      // prospectado). Antes engolia o erro inteiro (.catch(() => null)).
+      reportError({ title: "Outreach runner: tick de agente falhou", feature: "proactive-outreach", severity: "medium", error: err, metadata: { agentId: a.id } });
+      return null;
+    });
     if (!res) errors++;
     else if (res.status === "created") created++;
     else if (res.status === "failed") errors++;

@@ -24,40 +24,46 @@ Total findings: 110 · dedup: 103 · worth_fixing: 52 (high 17, medium 35)
 - [x] `src/lib/ai/history-compressor.ts:79` — **history-compressor** — summarization falhou (fallback truncação) → reportError `medium`
 - [x] `src/lib/ai/audio-transcriber.ts:110` — **audio-transcriber** — fetch do áudio falhou → reportError `medium`
 
-## MEDIUM (observabilidade) — lote seguinte
+## MEDIUM (observabilidade) — 18 instrumentados · 4 já cobertos · 13 deferidos
 
-- [ ] `src/app/api/sparkbot/scheduling-prefs/route.ts:62` — sparkbot-scheduling — Calendar list fetch not signaled to admin
-- [ ] `src/app/api/sparkbot/scheduling-prefs/route.ts:103` — sparkbot-scheduling — POST calendar validation fetch not reported
-- [ ] `src/app/api/agents/contact-status/route.ts:63` — agents-contact-controls — catch block only logs, no signal for agent state fetch failure
-- [ ] `src/app/api/agents/contact-agents/route.ts:111` — agents-contact-controls — catch block only logs, no signal for multi-agent state fetch failure
-- [ ] `src/app/api/agents/contact-ai-messages/route.ts:73` — agents-contact-controls — catch block only logs, no signal for agent message history fetch failure
-- [ ] `src/app/api/agents/test/route.ts:446` — agent-testing — catch block in background waitUntil only logs, no signal for action execution failure
-- [ ] `src/app/api/agents/message-feedback/route.ts:70` — agents-contact-controls — catch block only logs, no signal for feedback insert failure
-- [ ] `src/app/api/agents/contact-pause/route.ts:96` — agents-contact-controls — catch block only logs, no signal for pause/resume state update failure
-- [ ] `src/app/api/agents/contact-activate/route.ts:92` — agents-contact-controls — catch block only logs, no signal for agent activation/deactivation failure
-- [ ] `src/app/api/agents/conversation-contact/route.ts:46` — agents-contact-controls — catch block only logs, no signal for GHL conversation fetch failure
-- [ ] `src/app/api/agents/test/transcribe/route.ts:48` — agent-testing — catch block only logs, no signal for audio transcription failure
-- [ ] `src/app/api/agents/account-assistant/test/route.ts:58` — sparkbot — catch block only logs, no signal for GHL user phone fetch failure
-- [ ] `src/lib/account-assistant/webhook-handler.ts:680` — sparkbot-billing — Whisper billing error not signaled
-- [ ] `src/lib/account-assistant/webhook-handler.ts:708` — sparkbot-history — Conversation history read error not signaled
-- [ ] `src/app/api/ghl/calendars/route.ts:20` — ghl-integration-calendars — GHL calendars: endpoint falha silenciosamente (fallback interno)
-- [ ] `src/app/api/ghl/pipelines/route.ts:21` — ghl-integration-pipelines — GHL pipelines: endpoint falha silenciosamente (fallback interno)
-- [ ] `src/app/api/ghl/tags/route.ts:21` — ghl-integration-tags — GHL tags: endpoint falha silenciosamente (fallback interno)
-- [ ] `src/app/api/ghl/custom-fields/route.ts:41` — ghl-integration-custom-fields — GHL custom-fields: endpoint falha silenciosamente (fallback interno)
-- [ ] `src/lib/account-assistant/proactive/dispatcher.ts:400` — proactive-dispatcher — loadCarrierTier1 failure swallowed without signal
-- [ ] `src/lib/account-assistant/proactive/dispatcher.ts:592` — proactive-dispatcher — Billing calculation failure not signaled to admin
-- [ ] `src/lib/account-assistant/proactive/outreach-runner.ts:184` — proactive-outreach — runOutreachForAgent failure silently swallowed in batch loop
-- [ ] `src/lib/account-assistant/proactive/bulk-message-runner.ts:371` — proactive-bulk-runner — Tick success recording failure prevents health tracking (silently loses metrics)
-- [ ] `src/lib/account-assistant/proactive/bulk-message-runner.ts:423` — proactive-bulk-runner — Tick error recording failure prevents error signal/streak tracking
-- [ ] `src/lib/account-assistant/proactive/bulk-message-runner.ts:536` — proactive-bulk-runner — Main send failure only returns error without signal, swallowed in receiver logic
-- [ ] `src/lib/account-assistant/proactive/reminder-runner.ts:114` — proactive-reminder — Reminder task execution failure only logs, no signal (user waits indefinitely for reminder)
-- [ ] `src/lib/account-assistant/proactive/reminder-runner.ts:423` — proactive-reminder — Scheduled outbound send failure not signaled (message lost silently)
-- [ ] `src/lib/account-assistant/proactive/followup-runner.ts:216` — proactive-followup — Followup message processing exception only logs error, no signal
-- [ ] `src/lib/account-assistant/proactive/recurring-runner.ts:94` — proactive-recurring — Recurring campaign fire failure in batch loop only logs, no signal
-- [ ] `src/lib/account-assistant/proactive/sequence-runner.ts:102` — proactive-sequence — Sequence state advancement failure only logs, no signal (state corruption risk)
-- [ ] `src/lib/queue/handoff-notify.ts:244` — lead-awareness-handoff — Handoff delivery failure only logged to console, not signaled
-- [ ] `src/lib/queue/summary-note-generator.ts:351` — summary-note-runner — Summary note generation failure silently increments error counter without signal
-- [ ] `src/lib/queue/follow-up-scheduler.ts:229` — followup-scheduler — DND check failure only console.warned, follow-up marked failed without audit signal
-- [ ] `src/lib/ai/media-processor.ts:38` — media-processor — Media download failure only logged, not signaled
-- [ ] `src/lib/ai/media-processor.ts:100` — media-processor — PDF extraction failure only logged to console
-- [ ] `src/lib/ai/media-processor.ts:135` — media-processor — DOCX extraction failure only logged to console
+**STATUS: resolvido pós-compact 2026-06-05** (Lote 1 lost-work + Lote 2 valor). Calibração: lost-work proativo/queue = `medium`; degradado/defensivo/interno = `low`.
+
+### ✅ Instrumentados (18)
+
+- [x] `webhook-handler.ts:680` — sparkbot-billing — Whisper billing → `medium`
+- [x] `webhook-handler.ts:708/711` — sparkbot-history — leitura de histórico do rep (crash) → `medium` (skip o ramo r.error :708 = "migration pendente" esperado)
+- [x] `proactive/dispatcher.ts:400` — contexto de carrier indisponível → `low`
+- [x] `proactive/dispatcher.ts:592` — billing do proativo → `medium`
+- [x] `proactive/outreach-runner.ts:184` — tick de agente (era `.catch(()=>null)`) → `medium`
+- [x] `proactive/reminder-runner.ts:114` — fireOne crashou (erro não-send) → `medium`
+- [x] `proactive/followup-runner.ts:216` — msg de follow-up falhou → `medium`
+- [x] `proactive/recurring-runner.ts:94` — campanha recorrente crashou → `medium`
+- [x] `proactive/sequence-runner.ts:102` — avanço de estado falhou → `medium`
+- [x] `queue/handoff-notify.ts:244` — entrega da notificação de handoff → `medium`
+- [x] `queue/summary-note-generator.ts:351` — geração de nota-resumo (bare catch→err) → `low`
+- [x] `queue/follow-up-scheduler.ts:229` — verificação de DND (bare catch→err) → `low`
+- [x] `agents/contact-pause/route.ts:96` — mudança de estado de pausa → `medium`
+- [x] `agents/contact-activate/route.ts:92` — ativação de agente por contato → `medium`
+- [x] `agents/message-feedback/route.ts:64+70` — registro de feedback 👍/👎 (2 ramos, loop de aprendizado) → `medium`
+- [x] `ai/media-processor.ts:38` — download da mídia (anexo ignorado) → `medium`
+- [x] `ai/media-processor.ts:100` — leitura de PDF (semi-visível) → `low`
+- [x] `ai/media-processor.ts:135` — leitura de DOCX (semi-visível) → `low`
+
+### ⏭️ Já cobertos por signal existente — NÃO instrumentar (evita duplicata) (4)
+
+- `proactive/bulk-message-runner.ts:371` — health-write meta-failure; o runner já emite `recordSignal` "N erros consecutivos" (:416).
+- `proactive/bulk-message-runner.ts:423` — idem (a própria gravação do erro; o streak em :416 cobre).
+- `proactive/bulk-message-runner.ts:536` — falha de send individual ROLA pro streak em :416 (reportar aqui = duplicata por tick).
+- `proactive/reminder-runner.ts:423` — mesmo fluxo de send cujo catch (:443) já virou reportError `high` no lote HIGH.
+
+### ⏸️ Deferidos deliberadamente — baixo valor de observabilidade (13)
+
+Motivo: ou a falha **já é visível ao usuário** (endpoint de leitura cujo erro renderiza estado de erro/empty na UI), ou é **transitória com fallback interno** (picker GHL), ou **não-prod** (test chat). Instrumentar falha-já-visível só adiciona signal redundante (anti-pattern vs. disciplina do health UI). Triviais de ligar depois se quiser trend data — alvos abaixo:
+
+- `sparkbot/scheduling-prefs/route.ts:62` + `:103` — fetch de calendário (tem fallback)
+- `agents/contact-status/route.ts:63` — read UI (falha visível)
+- `agents/contact-agents/route.ts:111` — read UI (falha visível)
+- `agents/contact-ai-messages/route.ts:73` — read UI (falha visível)
+- `agents/conversation-contact/route.ts:46` — read GHL conversa (falha visível)
+- `agents/test/route.ts:446` + `agents/test/transcribe/route.ts:48` + `agents/account-assistant/test/route.ts:58` — test chat (não-prod)
+- `ghl/calendars:20` + `ghl/pipelines:21` + `ghl/tags:21` + `ghl/custom-fields:41` — pickers GHL (transitório, fallback interno, picker vazio é visível)

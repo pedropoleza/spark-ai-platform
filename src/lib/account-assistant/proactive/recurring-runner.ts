@@ -18,6 +18,7 @@
  * Protege contra "filter solto pega 100k contatos".
  */
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { GHLClient } from "@/lib/ghl/client";
 import { executeContactsFilter } from "@/lib/account-assistant/filter-engine";
 import type {
@@ -97,6 +98,8 @@ export async function processRecurringTick(): Promise<RecurringTickResult> {
         `[recurring-runner] campaign ${row.id} crashed:`,
         err instanceof Error ? err.message.slice(0, 200) : err,
       );
+      // Sweep F49 2026-06-05: campanha recorrente não disparou neste tick.
+      reportError({ title: "Recurring runner: campanha crashou", feature: "proactive-recurring", severity: "medium", error: err, metadata: { campaignId: row.id } });
     }
   }
 
