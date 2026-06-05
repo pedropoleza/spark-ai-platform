@@ -780,28 +780,41 @@ async function processGroup(
   let leadHistory: import("@/types/agent").LeadContext | undefined;
   const leadHistoryCfg = getLeadHistoryConfig(config as { lead_history_config?: import("@/types/agent").LeadHistoryConfig | null });
   const handoffPol = getHandoffPolicy(config as { handoff_policy?: import("@/types/agent").HandoffPolicy | null });
-  if (leadHistoryCfg.enabled && locationForBilling?.company_id) {
+  // Carrega o histórico do lead se a MEMÓRIA DO LEAD ou o HANDOFF precisarem.
+  // Fix review 2026-06-05: antes só carregava com lead_history ON; com handoff ON
+  // e lead_history OFF, o gate de handoff (que PRECISA do histórico) nunca
+  // disparava — o agente nunca passava a bola pro humano. Pro handoff-only usa um
+  // config enxuto (msgs + opps); mas só INJETA no prompt quando a memória do lead
+  // está ON de fato (promptCtx.leadHistory abaixo).
+  const loadHistoryCfg = leadHistoryCfg.enabled
+    ? leadHistoryCfg
+    : handoffPol.enabled
+      ? { ...leadHistoryCfg, enabled: true, include_opportunities: true }
+      : null;
+  if (loadHistoryCfg && locationForBilling?.company_id) {
     leadHistory = await loadLeadHistory(
       group.contactId,
       locationForBilling.company_id,
       group.locationId,
-      leadHistoryCfg,
+      loadHistoryCfg,
     );
-    log("log", `lead_history loaded: msgs=${leadHistory.recent_messages.length} notes=${leadHistory.notes.length} opps=${leadHistory.opportunities.length} (${leadHistory.fetch_ms}ms)`);
-    await supabase.from("execution_log").insert({
-      agent_id: agent.id,
-      location_id: group.locationId,
-      contact_id: group.contactId,
-      conversation_id: group.conversationId,
-      action_type: "lead_history_loaded",
-      action_payload: {
-        messages: leadHistory.recent_messages.length,
-        notes: leadHistory.notes.length,
-        opportunities: leadHistory.opportunities.length,
-        fetch_ms: leadHistory.fetch_ms,
-      },
-      success: true,
-    });
+    if (leadHistoryCfg.enabled) {
+      log("log", `lead_history loaded: msgs=${leadHistory.recent_messages.length} notes=${leadHistory.notes.length} opps=${leadHistory.opportunities.length} (${leadHistory.fetch_ms}ms)`);
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "lead_history_loaded",
+        action_payload: {
+          messages: leadHistory.recent_messages.length,
+          notes: leadHistory.notes.length,
+          opportunities: leadHistory.opportunities.length,
+          fetch_ms: leadHistory.fetch_ms,
+        },
+        success: true,
+      });
+    }
   }
 
   // Handoff gate: avalia DEPOIS de carregar histórico (precisa contexto).
@@ -861,7 +874,9 @@ async function processGroup(
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     priorTurnCount: conversationTurns.length,
     // F37: passa lead history pro prompt-builder injetar buildLeadHistorySection.
-    leadHistory,
+    // Só injeta se a memória do lead está ON — o handoff pode ter carregado o
+    // leadHistory só pro gate, e isso não deve poluir o prompt. Review 2026-06-05.
+    leadHistory: leadHistoryCfg.enabled ? leadHistory : undefined,
   };
   // Plataforma Modular (Fase 2): roteia a montagem do prompt pelo motor unificado
   // quando AGENT_MOTOR_UNIFIED tá ON. Como o assembler delega pro mesmo

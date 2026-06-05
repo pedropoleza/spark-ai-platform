@@ -45,18 +45,21 @@ export async function captureInboundWebhookSample(sample: InboundSample): Promis
       is_real_message: sample.isRealMessage ?? null,
       raw: sample.raw ?? null,
     });
-    // Prune best-effort: mantém só os últimos KEEP_LAST.
-    const { data: cutoffRow } = await supabase
-      .from("inbound_webhook_samples")
-      .select("received_at")
+    // Prune best-effort: mantém só os últimos KEEP_LAST POR LOCATION. Antes era
+    // GLOBAL (sem filtro de location) — uma location de alto tráfego evictava os
+    // samples de outra (acoplamento cross-tenant). Fix review 2026-06-05.
+    const loc = sample.locationId ?? null;
+    const cutoffSel = supabase.from("inbound_webhook_samples").select("received_at");
+    const { data: cutoffRow } = await (loc ? cutoffSel.eq("location_id", loc) : cutoffSel)
       .order("received_at", { ascending: false })
       .range(KEEP_LAST, KEEP_LAST)
       .maybeSingle();
     if (cutoffRow?.received_at) {
-      await supabase
+      const del = supabase
         .from("inbound_webhook_samples")
         .delete()
         .lt("received_at", cutoffRow.received_at as string);
+      await (loc ? del.eq("location_id", loc) : del);
     }
   } catch (err) {
     console.warn(

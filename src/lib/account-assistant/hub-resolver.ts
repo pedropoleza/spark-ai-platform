@@ -92,6 +92,22 @@ export async function resolvePrimaryHub(): Promise<HubEntry | null> {
 }
 
 /**
+ * Gate de visibilidade (Pedro 2026-06-05): a location TEM o app SparkBot
+ * instalado? = tem um agente `account_assistant` ATIVO. Usado pelo /check-admin
+ * pra NÃO vazar o widget do SparkBot pra locations sem o app — o loader é
+ * injetado no nível da AGÊNCIA do GHL, então carrega em TODAS as locations da
+ * agência. Reusa a lista cacheada (5min) de hubs ativos.
+ *
+ * Fail-closed via resolveActiveHubAgents: se o DB cair, só o hub da env
+ * (ASSISTANT_HUB_LOCATION_ID) passa — melhor esconder do que vazar.
+ */
+export async function isLocationSparkbotHub(locationId: string): Promise<boolean> {
+  if (!locationId) return false;
+  const hubs = await resolveActiveHubAgents();
+  return hubs.some((h) => h.locationId === locationId);
+}
+
+/**
  * Invalida o cache imediatamente (útil em testes ou após mudança de agent).
  */
 export function invalidateHubCache(): void {

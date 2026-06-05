@@ -8,6 +8,7 @@ import { withRetry } from "@/lib/utils/retry";
 // queue-processor — se o histórico do Spark Leads falhar, o follow-up não pode
 // virar uma re-apresentação fria. Reconstrói do nosso DB.
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
+import { reportError } from "@/lib/admin-signals/report-error";
 import type { FollowUpConfig } from "@/types/agent";
 
 /**
@@ -27,52 +28,84 @@ export async function scheduleFollowUps(params: {
 
   const supabase = createAdminClient();
 
-  // Cancelar follow-ups anteriores pendentes para este contato
-  await supabase
-    .from("scheduled_followups")
-    .update({ status: "cancelled" })
-    .eq("agent_id", agentId)
-    .eq("contact_id", contactId)
-    .eq("status", "pending");
+  try {
+    // Cancela os follow-ups pendentes anteriores deste contato.
+    // F46/F47 (fix review 2026-06-05): supabase-js NÃO lança — devolve {error}.
+    // Se o cancel falhar e a gente recriar mesmo assim, a sequência ACUMULA
+    // (N novos por cima dos N antigos não-cancelados = spam ao lead). Então:
+    // cancel com erro → NÃO recria + sinaliza. Antes o erro era engolido.
+    const { error: cancelErr } = await supabase
+      .from("scheduled_followups")
+      .update({ status: "cancelled" })
+      .eq("agent_id", agentId)
+      .eq("contact_id", contactId)
+      .eq("status", "pending");
+    if (cancelErr) {
+      reportError({
+        title: "Follow-up: falha ao cancelar pendentes (abortado p/ não duplicar)",
+        feature: "followup-scheduler",
+        severity: "high",
+        error: cancelErr,
+        metadata: { agentId, contactId, locationId },
+      });
+      return;
+    }
 
-  if (followUpConfig.mode === "manual") {
-    // Modo manual: agendar cada step definido
-    for (let i = 0; i < followUpConfig.manual_steps.length; i++) {
-      const step = followUpConfig.manual_steps[i];
-      const scheduledAt = new Date(Date.now() + step.delay_minutes * 60 * 1000);
+    // Monta a sequência nova e insere em LOTE (era N inserts separados).
+    const rows: Array<Record<string, unknown>> = [];
+    if (followUpConfig.mode === "manual") {
+      for (let i = 0; i < followUpConfig.manual_steps.length; i++) {
+        const step = followUpConfig.manual_steps[i];
+        rows.push({
+          agent_id: agentId,
+          location_id: locationId,
+          contact_id: contactId,
+          conversation_id: conversationId,
+          attempt_number: i + 1,
+          scheduled_at: new Date(Date.now() + step.delay_minutes * 60 * 1000).toISOString(),
+          custom_message: step.custom_message || null,
+          status: "pending",
+        });
+      }
+    } else {
+      // Modo ai_auto: distribui pela intensidade entre min/max.
+      const maxAttempts = Math.min(followUpConfig.max_attempts, 10);
+      const intensity = followUpConfig.intensity;
+      const minDelay = followUpConfig.min_delay_minutes || 10;
+      const maxDelay = followUpConfig.max_delay_minutes || 10080; // 7 dias
+      for (let i = 0; i < maxAttempts; i++) {
+        const totalDelayMinutes = calculateCumulativeDelay(i + 1, intensity, maxAttempts, minDelay, maxDelay);
+        rows.push({
+          agent_id: agentId,
+          location_id: locationId,
+          contact_id: contactId,
+          conversation_id: conversationId,
+          attempt_number: i + 1,
+          scheduled_at: new Date(Date.now() + totalDelayMinutes * 60 * 1000).toISOString(),
+          status: "pending",
+        });
+      }
+    }
 
-      await supabase.from("scheduled_followups").insert({
-        agent_id: agentId,
-        location_id: locationId,
-        contact_id: contactId,
-        conversation_id: conversationId,
-        attempt_number: i + 1,
-        scheduled_at: scheduledAt.toISOString(),
-        custom_message: step.custom_message || null,
-        status: "pending",
+    if (rows.length === 0) return;
+    const { error: insErr } = await supabase.from("scheduled_followups").insert(rows);
+    if (insErr) {
+      reportError({
+        title: "Follow-up: falha ao agendar sequência",
+        feature: "followup-scheduler",
+        severity: "high",
+        error: insErr,
+        metadata: { agentId, contactId, locationId, attempts: rows.length },
       });
     }
-  } else {
-    // Modo ai_auto: agendar baseado na intensidade + limites min/max
-    const maxAttempts = Math.min(followUpConfig.max_attempts, 10);
-    const intensity = followUpConfig.intensity;
-    const minDelay = followUpConfig.min_delay_minutes || 10;
-    const maxDelay = followUpConfig.max_delay_minutes || 10080; // 7 dias
-
-    for (let i = 0; i < maxAttempts; i++) {
-      const totalDelayMinutes = calculateCumulativeDelay(i + 1, intensity, maxAttempts, minDelay, maxDelay);
-      const scheduledAt = new Date(Date.now() + totalDelayMinutes * 60 * 1000);
-
-      await supabase.from("scheduled_followups").insert({
-        agent_id: agentId,
-        location_id: locationId,
-        contact_id: contactId,
-        conversation_id: conversationId,
-        attempt_number: i + 1,
-        scheduled_at: scheduledAt.toISOString(),
-        status: "pending",
-      });
-    }
+  } catch (err) {
+    reportError({
+      title: "Follow-up: exceção ao agendar",
+      feature: "followup-scheduler",
+      severity: "high",
+      error: err,
+      metadata: { agentId, contactId, locationId },
+    });
   }
 }
 
@@ -426,6 +459,19 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       sent++;
     } catch (error) {
       console.error("Erro no follow-up:", error);
+      // F49 (review 2026-06-05): falha do runner não pode ser silenciosa.
+      reportError({
+        title: "Follow-up runner: falha ao processar/enviar",
+        feature: "followup-runner",
+        severity: "medium",
+        error,
+        metadata: {
+          followUpId: followUp.id,
+          contactId: followUp.contact_id,
+          locationId: followUp.location_id,
+          attempt: followUp.attempt_number,
+        },
+      });
       await supabase.from("scheduled_followups").update({ status: "failed" }).eq("id", followUp.id);
       errors++;
     }

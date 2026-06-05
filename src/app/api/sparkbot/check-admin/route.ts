@@ -26,6 +26,7 @@ import { identifyRepByGhlUser } from "@/lib/account-assistant/identity";
 import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { verifyFirebaseIdToken, isAdminClaims } from "@/lib/auth/ghl-idtoken";
+import { isLocationSparkbotHub } from "@/lib/account-assistant/hub-resolver";
 
 export const maxDuration = 30;
 
@@ -51,6 +52,17 @@ export async function POST(request: NextRequest) {
 
     if (!userId || !locationId || !companyId) {
       return json({ ok: false, reason: "missing_params" }, { status: 400 });
+    }
+
+    // Gate de visibilidade (Pedro 2026-06-05): o widget do SparkBot só aparece
+    // em locations que TÊM o app instalado (= agente account_assistant ATIVO).
+    // O loader é injetado no nível da AGÊNCIA → carrega em TODAS as locations;
+    // sem esse gate o widget vazava pra qualquer location onde o user fosse
+    // admin. Retorna no_app (loader vê !data.ok → não injeta o botão). Checado
+    // ANTES da validação de admin (mais barato: evita as chamadas GHL nas
+    // locations sem o app).
+    if (!(await isLocationSparkbotHub(locationId))) {
+      return json({ ok: false, reason: "no_app" });
     }
 
     // Garante que a location existe (pra Sparkbot poder operar nela)
