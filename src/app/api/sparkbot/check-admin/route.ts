@@ -27,6 +27,7 @@ import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { verifyFirebaseIdToken, isAdminClaims } from "@/lib/auth/ghl-idtoken";
 import { isLocationSparkbotHub } from "@/lib/account-assistant/hub-resolver";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 export const maxDuration = 30;
 
@@ -142,6 +143,7 @@ export async function POST(request: NextRequest) {
     if (!isAdmin) {
       const validation = await validateGHLUser(companyId, locationId, userId);
       if (validation === null) {
+        reportError({ title: "check-admin: validação GHL falhou (502)", feature: "sparkbot-check-admin", severity: "medium", metadata: { userId, locationId } });
         return json({ ok: false, reason: "ghl_validation_failed" }, { status: 502 });
       }
       if (validation.isAdmin) {
@@ -210,6 +212,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     console.error("[check-admin] erro:", err instanceof Error ? err.message : err);
+    reportError({ title: "check-admin: erro interno (loader SparkBot não carrega)", feature: "sparkbot-check-admin", severity: "high", error: err });
     return json({ ok: false, reason: "internal_error" }, { status: 500 });
   }
 }

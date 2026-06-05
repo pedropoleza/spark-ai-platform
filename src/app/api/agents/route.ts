@@ -5,6 +5,7 @@ import { DEFAULT_SALES_DATA_FIELDS, DEFAULT_RECRUITMENT_DATA_FIELDS } from "@/ty
 import { createAgentSchema, validateBody } from "@/lib/utils/validation";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
 import { checkAgentEntitlement } from "@/lib/agent-platform/entitlements";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 // GET /api/agents - Listar agentes da location
 export async function GET() {
@@ -95,6 +96,14 @@ export async function POST(request: Request) {
 
   if (configError) {
     console.error("Erro ao criar config padrao:", configError);
+    // F49 (review 2026-06-05): config insert falhou MAS o agente já foi criado →
+    // agente sem config = quebrado. Surface pro admin (era silencioso).
+    reportError({
+      title: "Agente criado SEM config (insert agent_configs falhou)",
+      feature: "agents-create",
+      severity: "high",
+      error: configError,
+    });
   }
 
   return NextResponse.json({ agent }, { status: 201 });

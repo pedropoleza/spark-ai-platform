@@ -27,6 +27,7 @@ import { identifyRepByGhlUser } from "@/lib/account-assistant/identity";
 import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { verifyFirebaseIdToken, isAdminClaims } from "@/lib/auth/ghl-idtoken";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 export const maxDuration = 30;
 
@@ -139,6 +140,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (err) {
     console.error("[ui-auth] erro:", err instanceof Error ? err.message : err);
+    reportError({ title: "ui-auth: falha na autenticação do loader", feature: "agents-ui-auth", severity: "high", error: err });
     return json({ ok: false, reason: "internal_error" }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@ import { validateGHLUser, upsertLocation, createSession } from "@/lib/auth/sso";
 import { GHLClient } from "@/lib/ghl/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ssoSchema, validateBody } from "@/lib/utils/validation";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 export async function POST(request: NextRequest) {
   try {
@@ -87,6 +88,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Erro no SSO:", error);
+    reportError({ title: "SSO: falha no login", feature: "auth-sso", severity: "high", error });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Erro interno" },
       { status: 500 }
