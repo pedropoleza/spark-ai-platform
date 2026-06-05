@@ -1,5 +1,6 @@
 import { getLocationToken } from "@/lib/ghl/auth";
 import { GHL_API_BASE } from "@/lib/utils/constants";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { calculateCost } from "./pricing";
 import {
   insertUsageRecord,
@@ -123,6 +124,9 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
     } catch (error) {
       console.error("[Billing] Failed to charge wallet:", error);
       // Nao bloqueia o processamento — cron chargeUnbilledRecords retenta.
+      // F49 (review 2026-06-05): mas surface pro admin — se o retry tb falhar,
+      // a cobrança se perde silenciosamente (dinheiro).
+      reportError({ title: "Billing: cobrança no wallet GHL falhou", feature: "billing-charge", severity: "high", error, metadata: { actionType: params.actionType } });
     }
   }
 }

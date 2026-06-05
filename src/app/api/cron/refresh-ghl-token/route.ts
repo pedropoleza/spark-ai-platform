@@ -14,6 +14,7 @@
 
 import { NextResponse } from "next/server";
 import { refreshAllCompanyTokens } from "@/lib/ghl/token-refresher";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -51,6 +52,7 @@ export async function GET(req: Request) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[cron:refresh-ghl-token] FATAL:", msg);
+    reportError({ title: "Cron refresh-ghl-token: crash (tokens GHL podem expirar → tudo quebra)", feature: "cron-refresh-ghl-token", severity: "critical", error: err });
     return NextResponse.json(
       { ok: false, error: msg, duration_ms: Date.now() - startTs },
       { status: 500 },

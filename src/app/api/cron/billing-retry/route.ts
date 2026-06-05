@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { chargeUnbilledRecords } from "@/lib/billing/charge";
 import { isAuthorizedCron } from "@/lib/utils/cron-auth";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -42,6 +43,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Erro desconhecido";
     console.error("[cron:billing-retry] FATAL:", msg);
+    reportError({ title: "Cron billing-retry: crash (cobranças encalham)", feature: "cron-billing-retry", severity: "high", error });
     return NextResponse.json(
       { success: false, error: msg, duration_ms: Date.now() - startTs },
       { status: 500 },
