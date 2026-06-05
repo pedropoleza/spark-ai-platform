@@ -89,6 +89,7 @@ interface GhlOppResp {
     pipelineStageId?: string;
     status?: string;
     monetaryValue?: number;
+    assignedTo?: string;
   }>;
 }
 
@@ -246,6 +247,7 @@ export async function loadLeadHistory(
         stageName,
         status: o.status,
         monetaryValue: o.monetaryValue,
+        assignedTo: o.assignedTo,
       };
     });
 

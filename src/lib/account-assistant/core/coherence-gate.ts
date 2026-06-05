@@ -194,6 +194,13 @@ export interface CoherenceResult {
  * e decide o caminho SEGURO conforme D1 (re-run + reescrever), sem nunca arriscar
  * duplicar uma ação de cliente já executada com sucesso.
  */
+/**
+ * Fingerprint estável do fallback honesto (safeRewrite). O loop-breaker do
+ * processor usa isto pra detectar "já mandei o fallback no turno anterior" sem
+ * string mágica duplicada que pode driftar (review 2026-06-05).
+ */
+export const HONEST_FALLBACK_FINGERPRINT = "ainda não consegui concluir isso aqui";
+
 export function analyzeCoherence(responseText: string, toolCalls: ToolCallRecord[]): CoherenceResult {
   const successfulToolNames = toolCalls.filter((tc) => toolSucceeded(tc.result)).map((tc) => tc.name);
   const hadSuccessfulWrite = toolCalls.some((tc) => isWriteTool(tc.name) && toolSucceeded(tc.result));
@@ -228,7 +235,7 @@ export function analyzeCoherence(responseText: string, toolCalls: ToolCallRecord
     `Se a ação ainda não foi feita, EXECUTE a ferramenta agora. Se você se enganou ou a ação não é possível, responda com a informação correta SEM afirmar que fez algo que não aconteceu.`;
 
   const safeRewrite =
-    "Na real, ainda não consegui concluir isso aqui — não quero te dizer que fiz algo que não foi feito. Pode confirmar pra eu tentar de novo?";
+    `Na real, ${HONEST_FALLBACK_FINGERPRINT} — não quero te dizer que fiz algo que não foi feito. Pode confirmar pra eu tentar de novo?`;
 
   const rewriteDirective =
     "[verificação interna do sistema — não exponha isto ao usuário] Reescreva sua última resposta com total honestidade. " +

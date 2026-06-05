@@ -207,6 +207,7 @@ export interface LeadContext {
     stageName?: string;
     status?: string; // "open" | "won" | "lost" | "abandoned"
     monetaryValue?: number;
+    assignedTo?: string;
   }>;
   /** ISO da última msg outbound NÃO-bot (source != 'api'). */
   last_human_outbound_at: string | null;

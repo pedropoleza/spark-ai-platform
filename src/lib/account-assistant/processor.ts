@@ -49,6 +49,7 @@ import {
 } from "./conversational";
 import {
   analyzeCoherence,
+  HONEST_FALLBACK_FINGERPRINT,
   type ToolCallRecord,
 } from "./core/coherence-gate";
 import {
@@ -600,7 +601,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
         !!lastAssistantMsg &&
         (lastAssistantMsg.content as string)
           .toLowerCase()
-          .includes("ainda não consegui concluir isso aqui");
+          .includes(HONEST_FALLBACK_FINGERPRINT);
 
       if (!input.testSessionId) {
         try {

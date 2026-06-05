@@ -44,7 +44,7 @@ interface RepRow {
  * Tenta achar o rep dono do contato.
  * Cascata:
  *  1. `contact.assignedUserId` (GHL contact.assignedTo) → match em ghl_users.ghl_user_id
- *  2. `opportunities[0].assignedTo` — não temos no LeadContext; fica pra fase 2
+ *  2. `opportunities[].assignedTo` — primeira opp atribuída a um user (review 2026-06-05)
  *  3. Fallback: rep_identities com active_location_id == locationId E terms accepted E não-internal
  *
  * Retorna primeiro match. Se nada, null.
@@ -65,6 +65,22 @@ async function resolveOwnerRep(
       .limit(1);
     if (byOwner && byOwner.length > 0) {
       return byOwner[0] as RepRow;
+    }
+  }
+
+  // 2. opp.assignedTo (review 2026-06-05): se o contato não tem owner direto mas
+  // tem uma opportunity atribuída a um user, usa esse user como dono. Antes ficava
+  // "pra fase 2" e caía direto no fallback (notificava o rep ERRADO em location
+  // multi-rep).
+  const oppOwner = leadCtx.opportunities.find((o) => o.assignedTo)?.assignedTo;
+  if (oppOwner && oppOwner !== assignedTo) {
+    const { data: byOpp } = await supabase
+      .from("rep_identities")
+      .select("id, phone, active_location_id, ghl_users")
+      .contains("ghl_users", [{ ghl_user_id: oppOwner }])
+      .limit(1);
+    if (byOpp && byOpp.length > 0) {
+      return byOpp[0] as RepRow;
     }
   }
 
