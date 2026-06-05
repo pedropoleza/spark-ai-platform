@@ -786,7 +786,11 @@ const AGENT_CONTROLS_SOURCE = `(function () {
       #spark-agent-pop .sap-pop-off .sap-pop-ico { background: rgba(239,68,68,0.10); color: #ef4444; }
       #spark-agent-pop.sap-busy { opacity: .6; pointer-events: none; }
       /* GU-3: feedback 👍/👎 por mensagem do agente */
-      .sap-fb { display: flex; align-items: center; justify-content: flex-start; gap: 6px; margin: 3px 0 2px 0; flex-wrap: wrap; font-family: 'Open Sans', system-ui, -apple-system, sans-serif; }
+      /* Fix alinhamento Pedro 2026-06-05: feedback só existe em msg do agente
+         (outbound, bolha à DIREITA — scan pula inbound). A barra estende pela
+         largura da linha; flex-start jogava os 👍/👎 pro canto-esquerdo, longe
+         da bolha. flex-end alinha embaixo/à direita, junto da bolha+toolbar. */
+      .sap-fb { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin: 3px 0 2px 0; flex-wrap: wrap; font-family: 'Open Sans', system-ui, -apple-system, sans-serif; }
       .sap-fb-suggest { max-width: 420px; }
       .sap-fb-btn { border: 1px solid rgba(15,23,42,0.12); background: #fff; border-radius: 8px; padding: 1px 7px; font-size: 13px; line-height: 1.5; cursor: pointer; }
       .sap-fb-btn:hover { background: rgba(22,117,242,0.08); border-color: #1675F2; }
