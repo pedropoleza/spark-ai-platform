@@ -349,9 +349,20 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
           handoff_policy: e.handoff_policy,
         }),
       });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "falhou");
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || "falhou");
       setDirty(false);
-      toast.success("Configurações salvas");
+      // Fix bug observado em prod 2026-06-08 (Alves Cury): o PUT tolera schema
+      // cache stale (PGRST204) descartando a coluna faltante e devolvendo 200
+      // com warnings.missing_columns. Antes a UI ignorava isso → "salvo" mentia
+      // (memória do lead/handoff sumia em silêncio porque a migration 00096 não
+      // tinha rodado). Agora avisa em vez de fingir sucesso.
+      const missing: string[] = payload?.warnings?.missing_columns ?? [];
+      if (missing.length > 0) {
+        toast.error(`Salvo parcialmente — estes campos não persistiram (migration pendente no banco): ${missing.join(", ")}`);
+      } else {
+        toast.success("Configurações salvas");
+      }
     } catch (err) {
       toast.error("Não consegui salvar. " + (err instanceof Error ? err.message : ""));
     } finally { setSaving(false); }
