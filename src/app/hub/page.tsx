@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Zap, ChevronRight, Plus } from "lucide-react";
+import { Zap, ChevronRight, Plus, Settings } from "lucide-react";
 import { getSession } from "@/lib/auth/sso";
 import { KPI, AMark, StatusBadge, PriceBadge, ActRow } from "@/components/hub/primitives";
 import { WhatsAppIcon } from "@/components/hub/icons";
@@ -138,6 +138,13 @@ export default async function HubHome() {
             <a href="/embed/sparkbot" className="btn btn--primary" style={{ width: "100%", justifyContent: "center" }}>
               <WhatsAppIcon style={{ width: 15, height: 15 }} /> Abrir o SparkBot
             </a>
+            <Link
+              href="/hub/sparkbot"
+              className="btn"
+              style={{ width: "100%", justifyContent: "center", marginTop: 8, background: "rgba(255,255,255,.1)", color: "#fff", border: "1px solid rgba(255,255,255,.2)" }}
+            >
+              <Settings size={14} /> Configurar SparkBot
+            </Link>
           </div>
         </div>
       </div>
