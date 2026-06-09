@@ -496,7 +496,7 @@ function SparkbotPanel() {
         <button
           className="header-gear"
           onClick={() => setShowSettings(true)}
-          title="Preferências de agendamento"
+          title="Preferências"
           aria-label="Preferências"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1210,6 +1210,17 @@ interface SchedCurrent {
   default_duration_min?: number;
 }
 
+// Fusos comuns do público (EUA + BR). Se o salvo não estiver aqui, é mostrado
+// extra no select (não some). "" = bot detecta automático.
+const TZ_OPTIONS = [
+  { id: "America/New_York", label: "Leste dos EUA (ET) — Florida, NY" },
+  { id: "America/Chicago", label: "Centro dos EUA (CT)" },
+  { id: "America/Denver", label: "Montanha dos EUA (MT)" },
+  { id: "America/Los_Angeles", label: "Pacífico dos EUA (PT)" },
+  { id: "America/Sao_Paulo", label: "Brasília (BRT)" },
+  { id: "Europe/Lisbon", label: "Lisboa" },
+];
+
 function SchedulingSettingsModal({ token, onClose }: { token: string | null; onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [calendars, setCalendars] = useState<SchedCalendar[]>([]);
@@ -1218,6 +1229,10 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedOk, setSavedOk] = useState(false);
+  // Prefs gerais per-rep (Pedro 2026-06-09): tamanho das respostas + fuso + resumo matinal.
+  const [verbosity, setVerbosity] = useState<string>("normal");
+  const [timezone, setTimezone] = useState<string>("");
+  const [briefing, setBriefing] = useState<boolean>(true);
 
   useEffect(() => {
     if (!token) return;
@@ -1238,6 +1253,15 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
         const cur: SchedCurrent = data.current || {};
         setSelectedCal(cur.default_calendar_id || "");
         setDuration(cur.default_duration_min ? String(cur.default_duration_min) : "");
+        // Prefs gerais (fuso/verbosity/briefing) — endpoint próprio, não-bloqueante.
+        const pr = await fetch(`/api/sparkbot/preferences`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).then((r) => r.json()).catch(() => null);
+        if (pr?.ok && !cancelled) {
+          setVerbosity(typeof pr.verbosity === "string" ? pr.verbosity : "normal");
+          setTimezone(typeof pr.timezone === "string" ? pr.timezone : "");
+          setBriefing(pr.daily_briefing_enabled !== false);
+        }
       } catch {
         if (!cancelled) setError("Falha de rede ao carregar.");
       } finally {
@@ -1253,6 +1277,23 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
     setError(null);
     setSavedOk(false);
     try {
+      // Prefs gerais primeiro (fuso/verbosity/briefing) — não dependem de GHL,
+      // então salvam mesmo se a lista de calendários estiver fora do ar.
+      const prefRes = await fetch(`/api/sparkbot/preferences`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          verbosity,
+          daily_briefing_enabled: briefing,
+          ...(timezone ? { timezone } : {}),
+        }),
+      });
+      const prefData = await prefRes.json().catch(() => ({}));
+      if (!prefData.ok) {
+        setError("Não consegui salvar as preferências. Tente de novo.");
+        return;
+      }
+
       // Etapa 3.6 (Pedro 2026-05-28): se selectedCal === "" (rep limpou
       // calendário padrão), também limpa duration — duration órfã sem
       // calendário não faz sentido e confunde o agendador.
@@ -1297,8 +1338,8 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
       <div className="sched-modal" onClick={(e) => e.stopPropagation()}>
         <div className="sched-head">
           <div>
-            <div className="sched-title">Agendamento</div>
-            <div className="sched-sub">Calendário que o bot usa por padrão pra marcar</div>
+            <div className="sched-title">Preferências</div>
+            <div className="sched-sub">Como o SparkBot trabalha com você</div>
           </div>
           <button className="sched-x" onClick={onClose} aria-label="Fechar">×</button>
         </div>
@@ -1337,6 +1378,31 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
                 value={duration}
                 onChange={(e) => setDuration(e.target.value)}
               />
+
+              <label className="sched-label" style={{ marginTop: 16 }}>Tamanho das respostas</label>
+              <select className="sched-select" value={verbosity} onChange={(e) => setVerbosity(e.target.value)}>
+                <option value="brief">Curtas e diretas</option>
+                <option value="normal">Equilibradas</option>
+                <option value="detailed">Detalhadas</option>
+              </select>
+
+              <label className="sched-label" style={{ marginTop: 14 }}>Fuso horário</label>
+              <select className="sched-select" value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+                <option value="">— Detectar automático —</option>
+                {timezone && !TZ_OPTIONS.some((t) => t.id === timezone) && (
+                  <option value={timezone}>{timezone}</option>
+                )}
+                {TZ_OPTIONS.map((t) => (
+                  <option key={t.id} value={t.id}>{t.label}</option>
+                ))}
+              </select>
+
+              <label
+                style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16, fontSize: 13, cursor: "pointer" }}
+              >
+                <input type="checkbox" checked={briefing} onChange={(e) => setBriefing(e.target.checked)} />
+                <span>Resumo matinal (8h: agenda do dia + resumo de ontem)</span>
+              </label>
 
               <p className="sched-note">
                 Você também pode dizer isso no chat: o bot pergunta na primeira vez que você marca.
