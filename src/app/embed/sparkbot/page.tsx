@@ -1233,6 +1233,10 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
   const [verbosity, setVerbosity] = useState<string>("normal");
   const [timezone, setTimezone] = useState<string>("");
   const [briefing, setBriefing] = useState<boolean>(true);
+  // Config de AGÊNCIA (admin-only): personalidade + instruções do SparkBot (afeta todos).
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [agencyTone, setAgencyTone] = useState({ creativity: 50, formality: 50, naturalness: 50, aggressiveness: 50 });
+  const [agencyInstr, setAgencyInstr] = useState("");
 
   useEffect(() => {
     if (!token) return;
@@ -1261,6 +1265,22 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
           setVerbosity(typeof pr.verbosity === "string" ? pr.verbosity : "normal");
           setTimezone(typeof pr.timezone === "string" ? pr.timezone : "");
           setBriefing(pr.daily_briefing_enabled !== false);
+        }
+        // Config de agência — só admin/owner recebe o conteúdo (server-side gate).
+        const ag = await fetch(`/api/sparkbot/agency-config`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).then((r) => r.json()).catch(() => null);
+        if (ag?.ok && ag.is_admin && !cancelled) {
+          setIsAdmin(true);
+          if (ag.tone) {
+            setAgencyTone({
+              creativity: ag.tone.creativity ?? 50,
+              formality: ag.tone.formality ?? 50,
+              naturalness: ag.tone.naturalness ?? 50,
+              aggressiveness: ag.tone.aggressiveness ?? 50,
+            });
+          }
+          setAgencyInstr(typeof ag.custom_instructions === "string" ? ag.custom_instructions : "");
         }
       } catch {
         if (!cancelled) setError("Falha de rede ao carregar.");
@@ -1292,6 +1312,20 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
       if (!prefData.ok) {
         setError("Não consegui salvar as preferências. Tente de novo.");
         return;
+      }
+
+      // Config de agência (admin-only) — afeta o SparkBot de todos os reps.
+      if (isAdmin) {
+        const agRes = await fetch(`/api/sparkbot/agency-config`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ tone: agencyTone, custom_instructions: agencyInstr }),
+        });
+        const agData = await agRes.json().catch(() => ({}));
+        if (!agData.ok) {
+          setError("Salvei suas preferências, mas não consegui salvar a config do SparkBot (agência).");
+          return;
+        }
       }
 
       // Etapa 3.6 (Pedro 2026-05-28): se selectedCal === "" (rep limpou
@@ -1404,6 +1438,50 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
                 <span>Resumo matinal (8h: agenda do dia + resumo de ontem)</span>
               </label>
 
+              {isAdmin && (
+                <>
+                  <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid rgba(15,23,42,0.1)" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#155EEF" }}>Config do SparkBot · Agência</div>
+                    <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                      Afeta o SparkBot de TODOS os reps. Só você (admin) vê isto.
+                    </div>
+                  </div>
+
+                  {([
+                    ["creativity", "Criatividade"],
+                    ["formality", "Formalidade"],
+                    ["naturalness", "Naturalidade"],
+                    ["aggressiveness", "Assertividade"],
+                  ] as const).map(([key, label]) => (
+                    <div key={key} style={{ marginTop: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                        <span>{label}</span>
+                        <span style={{ color: "#64748b" }}>{agencyTone[key]}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        step={5}
+                        value={agencyTone[key]}
+                        onChange={(e) => setAgencyTone((t) => ({ ...t, [key]: Number(e.target.value) }))}
+                        style={{ width: "100%" }}
+                      />
+                    </div>
+                  ))}
+
+                  <label className="sched-label" style={{ marginTop: 14 }}>Instruções do SparkBot</label>
+                  <textarea
+                    className="sched-input"
+                    rows={4}
+                    placeholder="Como o SparkBot deve se comportar com a equipe (tom, regras, atalhos da operação)…"
+                    value={agencyInstr}
+                    onChange={(e) => setAgencyInstr(e.target.value)}
+                    style={{ resize: "vertical", minHeight: 70 }}
+                  />
+                </>
+              )}
+
               <p className="sched-note">
                 Você também pode dizer isso no chat: o bot pergunta na primeira vez que você marca.
               </p>
@@ -1433,6 +1511,7 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
         @keyframes schedFade { from { opacity: 0; } to { opacity: 1; } }
         .sched-modal {
           width: 100%; max-width: 380px;
+          max-height: 88vh; display: flex; flex-direction: column;
           background: #fff; border-radius: 18px;
           box-shadow: 0 20px 50px rgba(15,23,42,0.25);
           overflow: hidden;
@@ -1453,7 +1532,7 @@ function SchedulingSettingsModal({ token, onClose }: { token: string | null; onC
           display: inline-flex; align-items: center; justify-content: center;
         }
         .sched-x:hover { background: #fee2e2; color: #dc2626; }
-        .sched-body { padding: 16px 18px; }
+        .sched-body { padding: 16px 18px; overflow-y: auto; flex: 1 1 auto; }
         .sched-loading { color: var(--sb-muted); font-size: 13px; padding: 12px 0; text-align: center; }
         .sched-label {
           display: block; font-size: 12px; font-weight: 600; color: var(--sb-text); margin-bottom: 6px;
