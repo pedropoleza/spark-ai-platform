@@ -240,7 +240,7 @@ const scheduleMessageToContact: ToolEntry = {
   def: {
     name: "schedule_message_to_contact",
     description:
-      "🚨 AÇÃO AVANÇADA — agenda mensagem REAL pra um lead/cliente em horário futuro (one-shot OU recorrente). SEMPRE peça confirmação ANTES (ex: 'Vou agendar a msg \"X\" pra mandar pra [nome] amanhã 10h via SMS. Confirma?').\n\nUse quando rep pede: 'manda pra Maria amanhã 9h', 'todo dia 18h envia X pra cliente Y', 'segunda que vem fala com fulano sobre Z'.\n\nDiferenças de outras tools:\n- `send_message_to_contact` envia AGORA (não tem agendamento)\n- `schedule_reminder` envia pro REP, não pra contato\n- `schedule_bulk_message` envia pra LISTA (filter por tag) com drip — não single contato\n\nNo horário marcado, cron SparkBot dispara `send_message_to_contact` automaticamente (mesma rota POST /conversations/messages). Bot avisa rep se delivery falhou.",
+      "🚨 AÇÃO AVANÇADA — agenda mensagem REAL pra um lead/cliente em horário futuro (one-shot OU recorrente). SEMPRE peça confirmação ANTES (ex: 'Vou agendar a msg \"X\" pra mandar pra [nome] amanhã 10h via SMS. Confirma?').\n\nUse quando rep pede: 'manda pra Maria amanhã 9h', 'todo dia 18h envia X pra cliente Y', 'segunda que vem fala com fulano sobre Z'.\n\nDiferenças de outras tools:\n- `send_message_to_contact` envia AGORA (não tem agendamento)\n- `schedule_reminder` envia pro REP, não pra contato\n- `schedule_bulk_message_v2` envia pra LISTA (filter por tag) com drip — não single contato\n\nNo horário marcado, cron SparkBot dispara `send_message_to_contact` automaticamente (mesma rota POST /conversations/messages). Bot avisa rep se delivery falhou.",
     risk: "high",
     parameters: {
       type: "object",

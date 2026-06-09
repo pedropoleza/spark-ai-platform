@@ -159,7 +159,7 @@ const getContactsFiltered: ToolEntry = {
     if (!result.items || result.items.length === 0) {
       return {
         status: "not_found",
-        message: `Nenhum contato bate o filter. Total reportado pelo GHL: ${result.total_reported_by_ghl ?? 0}.`,
+        message: `Nenhum contato bate o filter. Total reportado pelo Spark Leads: ${result.total_reported_by_ghl ?? 0}.`,
       };
     }
 
@@ -252,7 +252,7 @@ const getOpportunitiesFiltered: ToolEntry = {
     if (!result.items || result.items.length === 0) {
       return {
         status: "not_found",
-        message: `Nenhuma opp bate o filter. Total GHL: ${result.total_reported_by_ghl ?? 0}.`,
+        message: `Nenhuma opp bate o filter. Total no Spark Leads: ${result.total_reported_by_ghl ?? 0}.`,
       };
     }
 
