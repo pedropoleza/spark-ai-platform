@@ -140,8 +140,8 @@ export default async function HubHome() {
             </a>
             <Link
               href="/hub/sparkbot"
-              className="btn"
-              style={{ width: "100%", justifyContent: "center", marginTop: 8, background: "rgba(255,255,255,.1)", color: "#fff", border: "1px solid rgba(255,255,255,.2)" }}
+              className="btn btn--on-dark"
+              style={{ width: "100%", justifyContent: "center", marginTop: 8 }}
             >
               <Settings size={14} /> Configurar SparkBot
             </Link>
