@@ -179,7 +179,8 @@ export interface ComputeBatchedInput {
  *   - Sempre tem espaçamento (interval_seconds + jitter)
  *   - Respeita daily_cap distribuindo entre dias automaticamente
  *   - Pra spread_days, distribui ~equally entre N dias úteis (seg-sex)
- *   - Pra custom_window, distribui uniformemente entre start_at e end_at
+ *   - Pra custom_window, dispara no intervalo configurado a partir de start_at
+ *     (a janela é envelope/limite, não alvo a preencher — fix Gustavo 2026-06-09)
  *   - Janela só começa entre 09:00-18:00 (horário comercial padrão; futuro:
  *     ler quiet_hours da agent_config pra ajustar)
  */
@@ -220,8 +221,23 @@ export function computeBatchedScheduledAts(input: ComputeBatchedInput): Date[] {
       throw new Error(`custom_window inválido: start_at=${input.strategy.start_at} end_at=${input.strategy.end_at}`);
     }
     const windowMs = end.getTime() - start.getTime();
-    // Distribui uniformemente; cada gap = max(interval, windowMs/total)
-    const gap = Math.max(interval, windowMs / total);
+    // Fix bug observado em prod 2026-06-09 (Gustavo Couto): a janela é um
+    // ENVELOPE (limite de quando PODE disparar), não um alvo a PREENCHER. Antes
+    // gap = max(interval, windowMs/total) esparramava poucos contatos pra ocupar
+    // a janela inteira — 23 contatos numa janela de 9h (12h–21h, que o bot gera
+    // sozinho a partir de "começa ao meio-dia") viravam 1 a cada ~23min em vez
+    // dos 90s configurados → disparo levou ~10h. O rep configura o INTERVALO; a
+    // janela só limita. Logo o gap é sempre o intervalo configurado: termina
+    // cedo quando cabe (caso do Gustavo); se não couber, transborda o fim da
+    // janela em vez de comprimir abaixo do interval (anti burst/spam). `end_at`
+    // segue só como âncora/limite — quem clampa pra 21h é o caller (F40).
+    const gap = interval;
+    if (total * interval > windowMs) {
+      console.warn(
+        `[bulk] custom_window: ${total} contatos × ${interval / 1000}s não cabem na janela ` +
+          `de ${Math.round(windowMs / 60000)}min — vai transbordar o end_at. Considera spread_days.`,
+      );
+    }
     for (let i = 0; i < total; i++) {
       const offset = i * gap + (Math.random() * 2 - 1) * jitterMs;
       result.push(new Date(start.getTime() + offset));
