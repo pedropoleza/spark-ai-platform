@@ -31,6 +31,8 @@ export interface HubEntry {
 
 // Cache da lista de hubs ativos (para resolveActiveHubAgents)
 let hubListCache: { entries: HubEntry[]; expiresAt: number } | null = null;
+// Cache das companies (agências) que têm hub ativo (gate company-aware)
+let hubCompanyCache: { companies: Set<string>; expiresAt: number } | null = null;
 
 /**
  * Retorna todos os hubs Sparkbot ativos (location_id + agent_id).
@@ -107,11 +109,69 @@ export async function isLocationSparkbotHub(locationId: string): Promise<boolean
   return hubs.some((h) => h.locationId === locationId);
 }
 
+/** Companies (agências) que têm um hub SparkBot ativo. Cacheado 5min. */
+async function resolveHubCompanies(): Promise<Set<string>> {
+  const now = Date.now();
+  if (hubCompanyCache && hubCompanyCache.expiresAt > now) return hubCompanyCache.companies;
+  const hubs = await resolveActiveHubAgents();
+  const hubLocs = hubs.map((h) => h.locationId).filter(Boolean);
+  if (hubLocs.length === 0) return new Set();
+  try {
+    const supabase = createAdminClient();
+    const { data } = await supabase
+      .from("locations")
+      .select("company_id")
+      .in("location_id", hubLocs);
+    const companies = new Set<string>(
+      (data || []).map((r) => r.company_id as string).filter(Boolean),
+    );
+    hubCompanyCache = { companies, expiresAt: now + HUB_CACHE_TTL_MS };
+    return companies;
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Gate de visibilidade COMPANY-AWARE (Pedro 2026-06-09): a AGÊNCIA (company) da
+ * location tem o SparkBot? O SparkBot é 1 hub por agência que serve TODAS as
+ * sub-accounts dela — então o widget deve aparecer em QUALQUER location da
+ * agência, não só na location exata do hub.
+ *
+ * Fix bug observado em prod 2026-06-09 (Alves Cury): o gate antigo
+ * (isLocationSparkbotHub) só liberava a location do hub → o widget sumia em
+ * todas as outras sub-accounts da MESMA agência (Alves Cury é company igual ao
+ * hub, mas location diferente). Agora libera por company.
+ *
+ * Fail-closed: erro de lookup → false (melhor esconder do que vazar pra fora
+ * da agência).
+ */
+export async function isLocationSparkbotEnabled(locationId: string): Promise<boolean> {
+  if (!locationId) return false;
+  // Fast path: a própria location é o hub.
+  if (await isLocationSparkbotHub(locationId)) return true;
+  // Senão: a company da location tem um hub ativo?
+  try {
+    const supabase = createAdminClient();
+    const { data: loc } = await supabase
+      .from("locations")
+      .select("company_id")
+      .eq("location_id", locationId)
+      .maybeSingle();
+    if (!loc?.company_id) return false;
+    const hubCompanies = await resolveHubCompanies();
+    return hubCompanies.has(loc.company_id as string);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Invalida o cache imediatamente (útil em testes ou após mudança de agent).
  */
 export function invalidateHubCache(): void {
   hubListCache = null;
+  hubCompanyCache = null;
 }
 
 // ---------------------------------------------------------------------------

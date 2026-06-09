@@ -26,7 +26,7 @@ import { identifyRepByGhlUser } from "@/lib/account-assistant/identity";
 import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { verifyFirebaseIdToken, isAdminClaims } from "@/lib/auth/ghl-idtoken";
-import { isLocationSparkbotHub } from "@/lib/account-assistant/hub-resolver";
+import { isLocationSparkbotEnabled } from "@/lib/account-assistant/hub-resolver";
 import { reportError } from "@/lib/admin-signals/report-error";
 
 export const maxDuration = 30;
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
     // admin. Retorna no_app (loader vê !data.ok → não injeta o botão). Checado
     // ANTES da validação de admin (mais barato: evita as chamadas GHL nas
     // locations sem o app).
-    if (!(await isLocationSparkbotHub(locationId))) {
+    if (!(await isLocationSparkbotEnabled(locationId))) {
       return json({ ok: false, reason: "no_app" });
     }
 
