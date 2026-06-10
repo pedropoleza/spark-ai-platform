@@ -610,6 +610,19 @@ async function processGroup(
       //      anúncio/automação → NÃO pausa (a menos que tenha userId = humano).
       //   3. Caso geral (a IA já falou aqui): mantém o anti-eco / mídia manual.
       const sentByGhlUser = !!(lastOutbound as { userId?: string }).userId;
+      // Fonte do outbound: automação/workflow do GHL (welcome, re-engajamento,
+      // campanha) NÃO é handoff humano — MESMO quando vem com userId (workflows
+      // rodam "como" um user, então a msg carrega userId). Fix bug observado em
+      // prod 2026-06-10 (Alves Cury): o welcome da automação tinha userId →
+      // sentByGhlUser=true → F52 pausava a IA em TODO lead novo antes dela
+      // responder (mesma raiz da Pergunta 1 do Pedro sobre o welcome). Checa a
+      // fonte ANTES do userId — é o discriminador mais confiável.
+      const outboundSource = String((lastOutbound as { source?: string }).source || "").toLowerCase();
+      const AUTOMATION_SOURCES = new Set([
+        "workflow", "workflows", "campaign", "campaigns", "bulk_actions",
+        "bulk", "automation", "automations", "scheduled", "integration",
+      ]);
+      const isAutomationOutbound = AUTOMATION_SOURCES.has(outboundSource);
       const { data: aiSends } = await supabase
         .from("execution_log")
         .select("action_payload")
@@ -621,7 +634,9 @@ async function processGroup(
         .limit(30);
       const aiTexts = extractAiSentTexts(aiSends);
       let isHuman: boolean;
-      if (sentByGhlUser) {
+      if (isAutomationOutbound) {
+        isHuman = false; // automação/workflow do GHL não é humano (mesmo com userId)
+      } else if (sentByGhlUser) {
         isHuman = true; // humano (user GHL) mandou manualmente → pausa
       } else if (aiTexts.length === 0) {
         isHuman = false; // IA nunca falou → outbound é anúncio/automação, não pausa

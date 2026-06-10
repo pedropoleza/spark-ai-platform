@@ -210,9 +210,23 @@ export async function loadLeadHistory(
       messageType: typeof m.messageType === "string" ? m.messageType : undefined,
     }));
 
-    // Última msg outbound humana (source != "api" significa não foi o nosso bot)
+    // Última msg outbound de HUMANO DE VERDADE (rep digitando no inbox do GHL).
+    // Fix bug observado em prod 2026-06-10 (Alves Cury): antes contava QUALQUER
+    // outbound com source != "api" como humano — mas automação/workflow do GHL
+    // (welcome, re-engajamento) tem source "workflow"/"campaign"/etc. Resultado:
+    // a mensagem de boas-vindas da automação virava "humano respondeu" e o
+    // should-respond calava a IA em TODO lead novo (mesma raiz da Pergunta 1 do
+    // Pedro sobre o welcome). Agora: só fontes de bot/automação ficam de fora;
+    // rep no inbox (source "app") continua contando como humano.
+    const NON_HUMAN_SOURCES = new Set([
+      "api", "workflow", "workflows", "bulk_actions", "bulk", "campaign",
+      "campaigns", "automation", "automations", "scheduled", "integration",
+    ]);
     const lastHumanOutbound = recent_messages.find(
-      (m) => m.direction === "outbound" && m.source && m.source !== "api",
+      (m) =>
+        m.direction === "outbound" &&
+        m.source &&
+        !NON_HUMAN_SOURCES.has(m.source.toLowerCase()),
     );
     const lastInbound = recent_messages.find((m) => m.direction === "inbound");
 
