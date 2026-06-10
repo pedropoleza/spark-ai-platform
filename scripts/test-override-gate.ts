@@ -7,8 +7,14 @@
 //  - na agenda de OUTRO user, override segue admin-only
 //  - to_notify:false (não notificar o CLIENTE) segue admin-only SEMPRE
 
-import { buildOverridePayload, resolveCalendarChoice } from "@/lib/account-assistant/tools/calendar";
+import {
+  buildOverridePayload,
+  resolveCalendarChoice,
+  checkBlockSlotPermission,
+} from "@/lib/account-assistant/tools/calendar";
+import { resolveAssignedUserId, getRepGhlUserId } from "@/lib/account-assistant/tools/types";
 import type { ToolContext } from "@/lib/account-assistant/tools/types";
+import type { ToolResult } from "@/types/account-assistant";
 
 const REP_USER = "RepGhlUser0000000001"; // ghl_user_id do rep na location ativa
 const LOC = "Loc00000000000000001";
@@ -191,6 +197,77 @@ for (const c of rcases) {
   }
 }
 
-const total = cases.length + rcases.length;
+// ── block_calendar_slot: gate self/admin (D1 paridade 2026-06-10) ──
+// Espelha o fluxo do handler: resolve assignee → fallback pro rep → gate.
+// null = bloqueio permitido; ToolResult de erro = barrado pelo gate self/admin.
+console.log("\n— block_calendar_slot (gate self/admin) —");
+function blockSlotGate(internal: boolean, assignedUserId: unknown): ToolResult | null {
+  const ctx = ctxFor(internal);
+  const resolved = resolveAssignedUserId(ctx, assignedUserId);
+  if (!resolved.ok) return resolved.error;
+  const targetUser = resolved.user_id || getRepGhlUserId(ctx);
+  if (!targetUser) {
+    return { status: "error", message: "sem targetUser", retryable: false };
+  }
+  return checkBlockSlotPermission(ctx, targetUser);
+}
+interface BCase {
+  name: string;
+  internal: boolean;
+  assigned?: unknown;
+  expectAllowed: boolean; // true = bloqueio permitido (gate retorna null)
+  why: string;
+}
+const bcases: BCase[] = [
+  {
+    name: "não-admin bloqueia a PRÓPRIA agenda (sem assignee)",
+    internal: false,
+    expectAllowed: true,
+    why: "default = self → liberado pra qualquer rep",
+  },
+  {
+    name: "não-admin bloqueia a PRÓPRIA agenda ('self')",
+    internal: false,
+    assigned: "self",
+    expectAllowed: true,
+    why: "'self' resolve pro ghl_user do rep → liberado",
+  },
+  {
+    name: "não-admin bloqueia a PRÓPRIA agenda (próprio ghl_user_id)",
+    internal: false,
+    assigned: REP_USER,
+    expectAllowed: true,
+    why: "id explícito == rep → liberado",
+  },
+  {
+    name: "não-admin bloqueia agenda de OUTRO user",
+    internal: false,
+    assigned: "OtherGhlUser000000002",
+    expectAllowed: false,
+    why: "agenda alheia → admin-only (paridade D1)",
+  },
+  {
+    name: "admin bloqueia agenda de OUTRO user",
+    internal: true,
+    assigned: "OtherGhlUser000000002",
+    expectAllowed: true,
+    why: "is_internal → liberado em qualquer agenda",
+  },
+];
+for (const c of bcases) {
+  const res = blockSlotGate(c.internal, c.assigned);
+  const allowed = res === null;
+  if (allowed === c.expectAllowed) {
+    pass++;
+    console.log(`✅ ${c.name}`);
+  } else {
+    fail++;
+    console.log(`❌ ${c.name}`);
+    console.log(`   esperado allowed=${c.expectAllowed}, recebido allowed=${allowed}${res ? ` (${res.message.slice(0, 60)}...)` : ""}`);
+    console.log(`   why: ${c.why}`);
+  }
+}
+
+const total = cases.length + rcases.length + bcases.length;
 console.log(`\nTOTAL: ${pass}/${total} passaram${fail > 0 ? ` — ${fail} FALHARAM` : " ✅"}`);
 process.exit(fail > 0 ? 1 : 0);

@@ -1209,6 +1209,35 @@ const createAppointment: ToolEntry = {
   },
 };
 
+/**
+ * D1 (paridade 2026-06-10): gate self/admin pro block_calendar_slot, espelhando
+ * buildOverridePayload ("agenda de OUTRO user = admin-only"). Antes o handler só
+ * validava o FORMATO do UUID via resolveAssignedUserId — sem gate self/admin,
+ * qualquer rep não-admin podia bloquear a agenda de um colega passando o
+ * assigned_user_id dele. resolveAssignedUserId já normaliza self/me/eu pro
+ * ghl_user do rep, então basta comparar o targetUser JÁ resolvido com o do rep.
+ *
+ *  - Self / default (sem assigned_user_id) → liberado pra qualquer rep.
+ *  - Agenda de OUTRO user → admin-only (ctx.rep.is_internal === true).
+ *
+ * Retorna null se permitido, ou ToolResult de erro se bloqueado.
+ */
+export function checkBlockSlotPermission(
+  ctx: ToolContext,
+  targetUser: string,
+): ToolResult | null {
+  if (targetUser !== getRepGhlUserId(ctx) && ctx.rep.is_internal !== true) {
+    return {
+      status: "error",
+      message:
+        "Bloquear a agenda de OUTRA pessoa da equipe é restrito a admin. " +
+        "Na sua própria agenda você pode bloquear normalmente.",
+      retryable: false,
+    };
+  }
+  return null;
+}
+
 // =====================================================================
 // Tool: block_calendar_slot — bloqueia agenda PESSOAL do rep
 // =====================================================================
@@ -1216,7 +1245,7 @@ const blockCalendarSlot: ToolEntry = {
   def: {
     name: "block_calendar_slot",
     description:
-      "⚠️ BLOQUEIA um horário no calendar do PRÓPRIO REP pra compromisso pessoal/folga/lembrete. NÃO é appointment com cliente:\n- Não envia link de Zoom\n- Não notifica nenhum contato\n- Não conta como reunião nas métricas\n- Só aparece como horário ocupado no calendar do rep, impedindo que clientes book esse slot\n\nUse APENAS quando rep pedir EXPLICITAMENTE pra bloquear agenda — frases como 'bloqueia minha agenda quarta 14h', 'tô em compromisso pessoal sexta 10-12h', 'marca 30min de almoço', 'reserva esse horário pra mim'. NUNCA use como fallback de create_appointment quando o slot tá ocupado — se appointment falhou, ofereça outro horário ou outro user, NÃO bloqueie.\n\nPor padrão bloqueia no user do próprio rep (não em calendar específico). Pra bloquear pra outro membro da equipe, passe assigned_user_id.",
+      "⚠️ BLOQUEIA um horário no calendar do PRÓPRIO REP pra compromisso pessoal/folga/lembrete. NÃO é appointment com cliente:\n- Não envia link de Zoom\n- Não notifica nenhum contato\n- Não conta como reunião nas métricas\n- Só aparece como horário ocupado no calendar do rep, impedindo que clientes book esse slot\n\nUse APENAS quando rep pedir EXPLICITAMENTE pra bloquear agenda — frases como 'bloqueia minha agenda quarta 14h', 'tô em compromisso pessoal sexta 10-12h', 'marca 30min de almoço', 'reserva esse horário pra mim'. NUNCA use como fallback de create_appointment quando o slot tá ocupado — se appointment falhou, ofereça outro horário ou outro user, NÃO bloqueie.\n\nPor padrão bloqueia no user do próprio rep (não em calendar específico). Bloquear a agenda de OUTRO membro da equipe é restrito a admin — rep não-admin recebe erro do gate.",
     risk: "high",
     parameters: {
       type: "object",
@@ -1231,7 +1260,7 @@ const blockCalendarSlot: ToolEntry = {
         assigned_user_id: {
           type: "string",
           description:
-            "OPCIONAL. ID do user pra quem bloquear. Default: o próprio rep que está conversando.",
+            "OPCIONAL. ID do user pra quem bloquear. Default: o próprio rep que está conversando. Apontar pra OUTRO user (≠ rep) é admin-only.",
         },
       },
       required: ["start_time", "end_time"],
@@ -1256,6 +1285,10 @@ const blockCalendarSlot: ToolEntry = {
         retryable: false,
       };
     }
+
+    // D1 (paridade 2026-06-10): bloquear agenda de OUTRO user é admin-only.
+    const blockGate = checkBlockSlotPermission(ctx, targetUser);
+    if (blockGate) return blockGate;
 
     try {
       // Fix CRITICAL Track 4 CRIT-3 (review 2026-05-05): spec do Spark Leads
