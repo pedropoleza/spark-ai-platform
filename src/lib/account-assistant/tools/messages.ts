@@ -1,8 +1,9 @@
 /**
  * Tools de Conversas/Mensagens.
  *
- * send_message_to_contact é HIGH RISK — sempre pede confirmação simples
- * (confirmation_mode='medium_and_high' ou 'always' captura).
+ * send_message_to_contact é risk:"high" — sempre pede confirmação simples.
+ * Por ser high risk, o gate captura em TODOS os modos de confirmação
+ * (high_only é o default; medium_and_high e always também pegam high).
  */
 
 import type { ToolEntry } from "./types";

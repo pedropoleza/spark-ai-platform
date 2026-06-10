@@ -46,7 +46,7 @@ Quando criar nova string user-facing, escolhe um:
 
 ### Sparkbot — Confirmation gate (H8)
 - Tools com `risk: "medium" | "high"` exigem `confirmed_by_rep: true` no input.
-- `tools/index.ts` (`withConfirmationParam`) injeta o param no schema dinamicamente, baseado em `agent_configs.confirmation_mode` (default `medium_and_high`).
+- `tools/index.ts` (`withConfirmationParam`) injeta o param no schema dinamicamente, baseado em `agent_configs.confirmation_mode` (default `high_only` desde migration `00069_confirmation_mode_default_high_only.sql` / decisão D3, 2026-05-20).
 - `executeTool()` enforça: bloqueia execution se não vier o flag.
 - LLM é instruído a perguntar "Confirma?" → esperar "sim/ok/pode/👍" → re-chamar tool com flag.
 
