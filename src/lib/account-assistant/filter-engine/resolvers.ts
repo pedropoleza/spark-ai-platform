@@ -147,11 +147,12 @@ async function resolveLeaf(
   }
 
   // 2a) opportunity.customField.{slug-or-id} — Pedro 2026-05-15
+  // NB-9 (review 2026-06-10): resolve por slug PRIMEIRO; ref só vira id literal
+  // se bater num cf.id real. Ver resolveCustomFieldRef pro porquê (bug prod).
   if (cond.field.startsWith("opportunity.customField.")) {
     const ref = cond.field.slice("opportunity.customField.".length);
-    if (looksLikeGhlUuid(ref)) return cond;
-    const cf = await resolveCustomFieldBySlug(ref, ctx, options, "opportunity");
-    if (!cf) {
+    const resolvedId = await resolveCustomFieldRef(ref, ctx, options, "opportunity");
+    if (!resolvedId) {
       throw new FilterEngineError(
         `Custom field de opportunity '${ref}' não encontrado nesta location. ` +
           `Use describe_filter_capabilities pra ver fields disponíveis.`,
@@ -159,23 +160,21 @@ async function resolveLeaf(
         { slug: ref, model: "opportunity" },
       );
     }
-    applied[`opportunity.customField.${ref}`] = cf.id;
+    if (resolvedId === ref) return cond; // ref já era o id real — passa direto
+    applied[`opportunity.customField.${ref}`] = resolvedId;
     return {
-      field: `opportunity.customField.${cf.id}` as FilterCondition["field"],
+      field: `opportunity.customField.${resolvedId}` as FilterCondition["field"],
       op: cond.op,
       value: cond.value,
     };
   }
 
   // 2b) customField.{slug-or-id} (contact) — se for slug, resolve pro id
+  // NB-9 (review 2026-06-10): slug-first, ver resolveCustomFieldRef.
   if (cond.field.startsWith("customField.")) {
     const ref = cond.field.slice("customField.".length);
-    if (looksLikeGhlUuid(ref)) {
-      // Já é UUID — passa direto
-      return cond;
-    }
-    const cf = await resolveCustomFieldBySlug(ref, ctx, options, "contact");
-    if (!cf) {
+    const resolvedId = await resolveCustomFieldRef(ref, ctx, options, "contact");
+    if (!resolvedId) {
       throw new FilterEngineError(
         `Custom field de contact '${ref}' não encontrado nesta location. ` +
           `Use describe_filter_capabilities pra ver fields disponíveis. ` +
@@ -184,9 +183,10 @@ async function resolveLeaf(
         { slug: ref, model: "contact" },
       );
     }
-    applied[`customField.${ref}`] = cf.id;
+    if (resolvedId === ref) return cond; // ref já era o id real — passa direto
+    applied[`customField.${ref}`] = resolvedId;
     return {
-      field: `customField.${cf.id}` as FilterCondition["field"],
+      field: `customField.${resolvedId}` as FilterCondition["field"],
       op: cond.op,
       value: cond.value,
     };
@@ -277,16 +277,60 @@ async function resolveStageName(
   return matches[0];
 }
 
-async function resolveCustomFieldBySlug(
-  slug: string,
+/**
+ * Resolve um ref de custom field (slug / fieldKey / name humano OU um id já
+ * resolvido) pro id REAL do GHL desta location. Retorna o id ou null.
+ *
+ * NB-9 (review 2026-06-10): ANTES, resolveLeaf decidia "isto já é id?" por um
+ * heurístico de SHAPE (`looksLikeGhlUuid` = /^[A-Za-z0-9]{18,}$/) ANTES de tentar
+ * resolver o slug. Isso classificava errado qualquer fieldKey/slug SEM separador
+ * com 18+ chars (`averageannualpremiumrange`, `clientpolicyanniversary`,
+ * `policyanniversarydate`) como id, PULAVA o resolver e mandava o slug cru
+ * downstream. Resultado em prod (silencioso, zero erro):
+ *   - contact CF + op server-side (eq): compiler manda `customFieldId=<slug>`
+ *     pro contacts_search_v2 → GHL devolve 0 matches SEM erro.
+ *   - opportunity CF / ops client-side: extractFieldValue faz
+ *     `cfs.find(c => c.id === ref)` → undefined em toda linha → 0 matches.
+ * GHL gera fieldKey com `_` (espaços→underscore), então campos multi-palavra
+ * escapavam; campos de 1 palavra longa ou key manual/importada caíam no bug.
+ *
+ * Fix: a lista de CFs da location é a FONTE DA VERDADE (e já re-fetch quando o
+ * cache está stale). Tenta resolver por slug/fieldKey/name PRIMEIRO; só trata o
+ * ref como id literal se ele bater num `cf.id` real. Senão devolve null → caller
+ * dispara ALIAS_NOT_FOUND (erro útil, não zero silencioso). Elimina o
+ * falso-positivo (slug≥18 tratado como id) E o falso-negativo (id curto/qualquer
+ * shape tratado como slug → ALIAS_NOT_FOUND espúrio).
+ */
+async function resolveCustomFieldRef(
+  ref: string,
   ctx: FilterExecutionContext,
   options: { bypass_cache?: boolean },
   model: "contact" | "opportunity",
-): Promise<CachedCustomField | null> {
+): Promise<string | null> {
   const cfs =
     model === "opportunity"
       ? await getOpportunityCustomFields(ctx.ghl_client, ctx.location_id, options)
       : await getCustomFields(ctx.ghl_client, ctx.location_id, options);
+
+  // 1) slug / fieldKey / name → id
+  const bySlug = matchCustomFieldBySlug(cfs, ref);
+  if (bySlug) return bySlug.id;
+
+  // 2) ref já é um id real desta location? (passa direto)
+  if (cfs.some((cf) => cf.id === ref)) return ref;
+
+  // 3) nem slug conhecido nem id conhecido
+  return null;
+}
+
+/**
+ * Match puro de um slug/fieldKey/name contra a lista de CFs (sem fetch).
+ * Ordem: fieldKey exato (com/sem prefix model) → name exato → name parcial.
+ */
+function matchCustomFieldBySlug(
+  cfs: CachedCustomField[],
+  slug: string,
+): CachedCustomField | null {
   const q = slug.toLowerCase().trim();
   // GHL fieldKey vem com prefix model (ex: 'opportunity.policy_anniversary')
   // — tira prefix antes de comparar pra match user-friendly:
@@ -323,10 +367,6 @@ async function resolveSelfUserId(ctx: FilterExecutionContext): Promise<string | 
 // =====================================================================
 // Helpers
 // =====================================================================
-
-function looksLikeGhlUuid(s: string): boolean {
-  return /^[A-Za-z0-9]{18,}$/.test(s);
-}
 
 /** Walk recursivamente, aplicando transform a cada FilterCondition leaf. */
 function walk(

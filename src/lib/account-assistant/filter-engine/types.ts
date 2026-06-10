@@ -94,8 +94,9 @@ export type FilterableField =
   | "opportunity.updatedAt"
   | "opportunity.lastStageChangeAt"
   // === Custom fields ===
-  // Aceita ambos: slug (`customField.aap_range`) E UUID (`customField.{uuid}`).
-  // Resolver decide qual usar com base no formato detectado.
+  // Aceita ambos: slug (`customField.aap_range`) E id (`customField.{id}`).
+  // NB-9 (review 2026-06-10): resolver tenta SLUG primeiro; só trata como id
+  // se bater num cf.id real da location (antes era heurístico de shape frágil).
   | `customField.${string}`;
 
 // =====================================================================
