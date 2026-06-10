@@ -15,6 +15,7 @@ import {
   listTasksOnContact,
 } from "@/lib/ghl/operations";
 import { executeContactsFilter, type FilterExpression } from "../filter-engine";
+import { normalizePhone, resolveLocationDefaultCountry } from "../identity";
 
 const searchContacts: ToolEntry = {
   def: {
@@ -232,10 +233,18 @@ const createContact: ToolEntry = {
     const firstName = args.first_name ? String(args.first_name).trim() : undefined;
     const lastName = args.last_name ? String(args.last_name).trim() : undefined;
     const email = args.email ? String(args.email).trim() : undefined;
-    const phone = args.phone ? String(args.phone).trim() : undefined;
-    if (!firstName && !lastName && !email && !phone) {
+    const phoneRaw = args.phone ? String(args.phone).trim() : undefined;
+    if (!firstName && !lastName && !email && !phoneRaw) {
       return { status: "error", message: "Pelo menos um de: first_name, last_name, email, phone", retryable: false };
     }
+
+    // Normaliza phone BR-aware (paridade c/ import tabular): operação é US mas
+    // mercado é BR — número BR de 10/11 dígitos sem `+` default-a pra +1 no GHL,
+    // gerando phone errado, falha de dedup e outbound (SMS/WhatsApp) que não
+    // entrega silenciosamente. normalizePhone preserva quem já veio em E.164.
+    const phone = phoneRaw
+      ? normalizePhone(phoneRaw, await resolveLocationDefaultCountry(ctx.locationId))
+      : undefined;
 
     try {
       const body: Record<string, unknown> = { locationId: ctx.locationId };
@@ -307,7 +316,12 @@ const updateContact: ToolEntry = {
     if (args.first_name) body.firstName = String(args.first_name);
     if (args.last_name) body.lastName = String(args.last_name);
     if (args.email) body.email = String(args.email);
-    if (args.phone) body.phone = String(args.phone);
+    // Normaliza phone BR-aware só quando veio no update (parcial). Mesmo motivo
+    // do create_contact: número BR sem `+` viraria +1 errado; E.164 é preservado.
+    if (args.phone) {
+      const defaultCountry = await resolveLocationDefaultCountry(ctx.locationId);
+      body.phone = normalizePhone(String(args.phone).trim(), defaultCountry);
+    }
     if (args.company_name) body.companyName = String(args.company_name);
     if (args.date_of_birth) body.dateOfBirth = String(args.date_of_birth);
     if (args.assigned_to) body.assignedTo = String(args.assigned_to);

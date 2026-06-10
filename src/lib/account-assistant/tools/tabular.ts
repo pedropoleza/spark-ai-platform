@@ -19,8 +19,7 @@
 import type { ToolEntry } from "./types";
 import { getRepGhlUserId } from "./types";
 import { upsertContact, postNoteOnContactRaw } from "@/lib/ghl/operations";
-import { normalizePhone, inferCountryFromTimezone } from "../identity";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { normalizePhone, resolveLocationDefaultCountry } from "../identity";
 import type { RepInput } from "@/types/account-assistant";
 
 const IMPORT_BATCH_SIZE = 10; // chamadas GHL paralelas por batch
@@ -197,19 +196,9 @@ const importContactsFromData: ToolEntry = {
     }
 
     // Resolve default country pra normalizePhone via timezone da location.
-    // Sem isso, números BR de 10/11 dígitos viram +1 (US wrong).
-    let defaultCountry: "US" | "BR" = "US";
-    try {
-      const sb = createAdminClient();
-      const { data: locRow } = await sb
-        .from("locations")
-        .select("timezone")
-        .eq("location_id", targetLocation)
-        .maybeSingle();
-      defaultCountry = inferCountryFromTimezone(locRow?.timezone);
-    } catch (err) {
-      console.warn("[Sparkbot:import] location timezone lookup falhou — usando US default:", err instanceof Error ? err.message : err);
-    }
+    // Sem isso, números BR de 10/11 dígitos viram +1 (US wrong). Helper
+    // compartilhado com as tools de contato (create/update) — fonte única.
+    const defaultCountry = await resolveLocationDefaultCountry(targetLocation);
 
     // Owner: 'self' resolve pro ghl_user_id do rep na location ativa.
     // Aceita também o user_id direto (caso o rep peça pra atribuir a outro).

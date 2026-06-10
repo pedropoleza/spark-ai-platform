@@ -95,6 +95,35 @@ export function inferCountryFromTimezone(tz: string | null | undefined): "US" | 
 }
 
 /**
+ * Resolve o default country ("US"|"BR") pra normalizePhone a partir do
+ * timezone IANA da location. Faz lookup na tabela `locations` via admin
+ * client e cai pra "US" (mercado dominante) em qualquer falha — fail-soft,
+ * nunca bloqueia a operação.
+ *
+ * Fonte única: usado tanto pelo import tabular quanto pelas tools de contato
+ * (create_contact/update_contact). Sem normalização BR-aware, número BR de
+ * 10/11 dígitos sem `+` default-a pra +1 no GHL → contato com phone errado,
+ * falha de dedup e outbound (SMS/WhatsApp) que não entrega silenciosamente.
+ */
+export async function resolveLocationDefaultCountry(locationId: string): Promise<"US" | "BR"> {
+  try {
+    const sb = createAdminClient();
+    const { data: locRow } = await sb
+      .from("locations")
+      .select("timezone")
+      .eq("location_id", locationId)
+      .maybeSingle();
+    return inferCountryFromTimezone(locRow?.timezone);
+  } catch (err) {
+    console.warn(
+      "[identity] resolveLocationDefaultCountry lookup falhou — usando US default:",
+      err instanceof Error ? err.message : err,
+    );
+    return "US";
+  }
+}
+
+/**
  * Busca o rep por phone. Se não existir, varre todas as locations conhecidas
  * procurando GHL users com esse phone e cria o registro. Retorna null se
  * nenhum match — nesse caso o assistente responde "não autorizado".
