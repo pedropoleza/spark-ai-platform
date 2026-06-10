@@ -13,9 +13,27 @@ import { pollDeliveryStatuses } from "@/lib/account-assistant/proactive/delivery
 import { GHLClient } from "@/lib/ghl/client";
 import { isAuthorizedCron } from "@/lib/utils/cron-auth";
 import { reportError } from "@/lib/admin-signals/report-error";
+import { mapWithConcurrency } from "@/lib/utils/concurrency";
 import type { ProactiveRule, RepIdentity, ScheduledTrigger } from "@/types/account-assistant";
 
 export const maxDuration = 60;
+
+// H39 (Pedro 2026-06-10): throttle + isolamento do polling reactive (post_meeting).
+//
+// Intervalo mínimo entre polls GHL do post_meeting. O grace de 30min do próprio
+// polling cobre folgado uma poll a cada 5min — ANTES batia GHL /calendars/events
+// DENTRO do loop de rules a cada tick de 30s (~51k calls/dia à toa: a rule
+// post_meeting fica enabled em prod, então o EXISTS de rules no guard do pg_cron
+// era sempre verdadeiro). DEVE ficar em sync com o `interval '5 minutes'` do
+// guard do pg_cron (migration 00104).
+const REACTIVE_POLL_INTERVAL_MS = 5 * 60_000;
+// Se o tick já gastou mais que isso quando chega no polling reactive, pula
+// (próximo tick cobre — grace de 30min). Mantém maxDuration=60 com folga, já que
+// o polling roda por ÚLTIMO (depois dos runners de entrega).
+const REACTIVE_START_BUDGET_MS = 40_000;
+// Cap de concorrência das calls GHL do post_meeting. Fan-out bounded evita
+// thundering-herd no mutex de token do GHL (mesma razão do H36 em calendar.ts).
+const POST_MEETING_POLL_CONCURRENCY = 12;
 
 /**
  * GET /api/cron/sparkbot-proactive
@@ -84,6 +102,11 @@ async function runProactiveCron(request: NextRequest): Promise<NextResponse> {
   // status='skipped_disabled' indicando que está aguardando V3 (WhatsApp).
   let firedCount = 0;
   let skippedCount = 0;
+  // H39 (Pedro 2026-06-10): reactive rules NÃO são processadas inline. São
+  // coletadas e rodadas DEPOIS dos runners de entrega (lembrete/bulk), porque o
+  // polling GHL síncrono do post_meeting (calls de ~20s cada) starvava esses
+  // runners quando o GHL degradava. Runners primeiro = nunca starvam.
+  const reactiveRules: ProactiveRule[] = [];
 
   for (const rule of rules) {
     if (rule.rule_type === "scheduled") {
@@ -198,12 +221,10 @@ async function runProactiveCron(request: NextRequest): Promise<NextResponse> {
         }
       }
     }
-    // Reactive rules de polling (briefing, opp_stale, task_due, etc) são
-    // tratadas em uma função dedicada por tipo de evento.
+    // Reactive rules de polling (post_meeting, etc): só coleta aqui — o
+    // processamento roda por último (ver bloco após os runners de entrega).
     if (rule.rule_type === "reactive") {
-      const reactiveResult = await processReactivePolling(rule as ProactiveRule);
-      firedCount += reactiveResult.fired;
-      skippedCount += reactiveResult.skipped;
+      reactiveRules.push(rule as ProactiveRule);
     }
   }
 
@@ -290,6 +311,29 @@ async function runProactiveCron(request: NextRequest): Promise<NextResponse> {
     console.warn("[cron] recurring failed:", err instanceof Error ? err.message : err);
     return { scanned: 0, fired: 0, skipped: 0, errors: 1 };
   });
+
+  // H39 (Pedro 2026-06-10): polling reactive (post_meeting) roda por ÚLTIMO,
+  // depois de TODOS os runners de entrega, e só se ainda houver orçamento de
+  // tempo no tick. O throttle de 5min vive dentro de processReactivePolling
+  // (claim atômico) e cada call GHL é paralelizada com cap + isolada. Com GHL
+  // saudável é no-op (throttle) ou poucos ms; com GHL lento, os runners acima
+  // já rodaram (nunca starvam) e o grace de 30min cobre o que ficar pro próximo
+  // tick. O start-budget evita começar o polling quando o tick já está perto do
+  // maxDuration=60.
+  const elapsedBeforeReactive = Date.now() - startTs;
+  if (reactiveRules.length > 0 && elapsedBeforeReactive < REACTIVE_START_BUDGET_MS) {
+    for (const rule of reactiveRules) {
+      const reactiveResult = await processReactivePolling(rule);
+      firedCount += reactiveResult.fired;
+      skippedCount += reactiveResult.skipped;
+    }
+  } else if (reactiveRules.length > 0) {
+    console.warn(
+      `[cron] polling reactive pulado neste tick (orçamento de tempo: ` +
+        `${elapsedBeforeReactive}ms >= ${REACTIVE_START_BUDGET_MS}ms). ` +
+        `Próximo tick cobre (grace 30min).`,
+    );
+  }
 
   // F20 (Pedro 2026-05-28): cleanup periódico de webhook_rate_limit_hits >5min.
   // Mantém tabela enxuta (steady ~250 rows pra 50 req/min × 5min window).
@@ -406,6 +450,35 @@ async function getRepTimezone(
 }
 
 /**
+ * Claim atômico do slot de polling reactive (H39, 2026-06-10).
+ *
+ * Só deixa pollar se a última poll foi há mais de REACTIVE_POLL_INTERVAL_MS.
+ * UPDATE ... WHERE reactive_last_polled_at <= cutoff RETURNING é atômico — e
+ * PRECISA ser, porque o `pg_try_advisory_xact_lock(8675309)` do pg_cron é
+ * xact-scoped e NÃO serializa os lambdas Vercel (ver NB-7 em docs/DECISIONS.md):
+ * dois ticks sobrepostos não pollam os dois (o segundo casa 0 linhas).
+ *
+ * Fail-OPEN: se o UPDATE falhar (ex: coluna ausente num branch sem a migration
+ * 00103), deixa pollar (comportamento legado) — nunca cala o post_meeting por
+ * erro de infra.
+ */
+async function claimReactivePollSlot(ruleId: string): Promise<boolean> {
+  const supabase = createAdminClient();
+  const cutoffIso = new Date(Date.now() - REACTIVE_POLL_INTERVAL_MS).toISOString();
+  const { data, error } = await supabase
+    .from("assistant_proactive_rules")
+    .update({ reactive_last_polled_at: new Date().toISOString() })
+    .eq("id", ruleId)
+    .lte("reactive_last_polled_at", cutoffIso)
+    .select("id");
+  if (error) {
+    console.warn("[cron] claimReactivePollSlot falhou (fail-open):", error.message);
+    return true;
+  }
+  return (data?.length ?? 0) > 0;
+}
+
+/**
  * Processa reactive rules que precisam de polling (não dependem de webhook).
  *
  * Implementado 2026-05-04:
@@ -420,6 +493,13 @@ async function getRepTimezone(
  * por endpoint do Spark Leads. Logam debug e retornam 0/0.
  */
 async function processReactivePolling(rule: ProactiveRule): Promise<{ fired: number; skipped: number }> {
+  // H39: claim do slot de polling ANTES de qualquer query/call. Vale pra TODOS
+  // os reactive (inclusive stubs) pra que reactive_last_polled_at avance e o
+  // guard do pg_cron (00104) não fique sempre-quente. Se não claimou (poll
+  // recente, <5min), pula sem tocar no GHL.
+  const claimed = await claimReactivePollSlot(rule.id);
+  if (!claimed) return { fired: 0, skipped: 0 };
+
   const trigger = rule.trigger_config as Record<string, unknown> | null;
   const event = typeof trigger?.event === "string" ? trigger.event : null;
   if (event === "post_meeting") {
@@ -458,16 +538,23 @@ async function processPostMeetingPolling(
   const now = Date.now();
   const windowStart = now - GRACE_MS;
   const windowEnd = now + offsetMs;
+  // Query +/- 1h da janela alvo pra cobrir reuniões longas (que começaram antes
+  // da janela mas terminam dentro). API retorna eventos cujo [start, end]
+  // intercepta [queryStart, queryEnd].
+  const queryStart = windowStart - 60 * 60_000;
+  const queryEnd = windowEnd + 60_000;
 
   const reps = await getEligibleReps(supabase, rule);
-  let fired = 0;
-  let skipped = 0;
+  if (reps.length === 0) return { fired: 0, skipped: 0 };
 
+  // Achata rep × location numa lista plana de tarefas de polling. Itera TODAS
+  // as locations do rep, não só active_location_id: reps multi-location (ex:
+  // agency owner com 6 sub-accounts) podem ter appointment em qualquer location.
+  // De-duplica por location_id (caso ghl_users[] tenha entries dup).
+  type PollTask = { rep: RepIdentity; locationId: string; ghlUserId: string };
+  const tasks: PollTask[] = [];
+  let skipped = 0;
   for (const rep of reps) {
-    // Itera TODAS as locations do rep, não só active_location_id. Reps
-    // multi-location (ex: agency owner com 6 sub-accounts) podem ter
-    // appointments em qualquer location — o cron precisa olhar em todas.
-    // De-duplica por location_id (caso ghl_users[] tenha entries dup).
     const locationsByRep = new Map<string, string>(); // location_id → ghl_user_id
     for (const u of rep.ghl_users || []) {
       if (u?.location_id && u?.ghl_user_id && !locationsByRep.has(u.location_id)) {
@@ -478,93 +565,126 @@ async function processPostMeetingPolling(
       skipped++;
       continue;
     }
-
     for (const [locationId, ghlUserId] of locationsByRep) {
-      const { data: location } = await supabase
-        .from("locations")
-        .select("location_id, company_id")
-        .eq("location_id", locationId)
-        .maybeSingle();
-      if (!location) {
-        // Location não está sincronizada na tabela — sem company_id não
-        // dá pra montar GHLClient. Pula silenciosamente.
+      tasks.push({ rep, locationId, ghlUserId });
+    }
+  }
+  if (tasks.length === 0) return { fired: 0, skipped };
+
+  // Bulk-fetch company_id de todas as locations num único query (evita N+1 —
+  // antes era 1 SELECT por location dentro do loop).
+  const uniqueLocationIds = [...new Set(tasks.map((t) => t.locationId))];
+  const { data: locationRows } = await supabase
+    .from("locations")
+    .select("location_id, company_id")
+    .in("location_id", uniqueLocationIds);
+  const companyByLocation = new Map<string, string>();
+  for (const row of locationRows || []) {
+    if (row.company_id) companyByLocation.set(row.location_id, row.company_id);
+  }
+
+  type EventRow = {
+    id: string;
+    title?: string;
+    startTime: string;
+    endTime: string;
+    contactId?: string;
+    appointmentStatus?: string;
+    assignedUserId?: string;
+  };
+  type PollOutcome =
+    | { ok: true; task: PollTask; events: EventRow[] }
+    | { ok: false; task: PollTask; error: string };
+
+  // H39: calls GHL paralelizadas com cap de concorrência. ANTES eram SÍNCRONAS
+  // no loop (uma esperando a outra): com ~18 locations e GHL lento (timeout 20s/
+  // call), o tick estourava maxDuration. Agora N voam juntas (cap), uma pendurada
+  // não bloqueia as outras, e cada falha fica isolada (o fn se auto-protege com
+  // try/catch e devolve {ok:false}, então o pool nunca rejeita).
+  const outcomes = await mapWithConcurrency(
+    tasks,
+    POST_MEETING_POLL_CONCURRENCY,
+    async (task): Promise<PollOutcome> => {
+      const companyId = companyByLocation.get(task.locationId);
+      if (!companyId) {
+        // Location não sincronizada (sem company_id) — sem GHLClient possível.
+        return { ok: false, task, error: "location sem company_id" };
+      }
+      try {
+        const ghlClient = new GHLClient(companyId, task.locationId);
+        const res = await ghlClient.get<{ events?: EventRow[] }>(
+          "/calendars/events",
+          {
+            locationId: task.locationId,
+            startTime: String(queryStart),
+            endTime: String(queryEnd),
+            userId: task.ghlUserId,
+          },
+        );
+        return { ok: true, task, events: res.events || [] };
+      } catch (err) {
+        return {
+          ok: false,
+          task,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  );
+
+  // Processa os resultados sequencialmente: dispatchRule só roda em MATCH (raro)
+  // e o cooldown atômico (assistant_alert_state UNIQUE rep+rule+target) impede
+  // disparo duplo do mesmo appointment.
+  let fired = 0;
+  for (const outcome of outcomes) {
+    if (!outcome.ok) {
+      console.warn(
+        `[cron] post_meeting polling falhou pra rep ${outcome.task.rep.id} ` +
+          `na location ${outcome.task.locationId}: ${outcome.error}`,
+      );
+      skipped++;
+      continue;
+    }
+    const { task, events } = outcome;
+    for (const event of events) {
+      const endMs = new Date(event.endTime).getTime();
+      if (isNaN(endMs)) continue;
+      // Filtro fino: só appointments cujo endTime caiu DENTRO da janela.
+      if (endMs < windowStart || endMs > windowEnd) continue;
+      const status = (event.appointmentStatus || "scheduled").toLowerCase();
+      if (
+        status === "cancelled" ||
+        status === "noshow" ||
+        status === "no-show" ||
+        status === "invalid"
+      ) {
         skipped++;
         continue;
       }
 
-      try {
-        const ghlClient = new GHLClient(location.company_id, locationId);
-        // Query +/- 1h da janela alvo pra cobrir reuniões longas (que
-        // começaram antes da janela mas terminam dentro). API retorna
-        // eventos cujo [start, end] intercepta [queryStart, queryEnd].
-        const queryStart = windowStart - 60 * 60_000;
-        const queryEnd = windowEnd + 60_000;
-        const res = await ghlClient.get<{
-          events?: Array<{
-            id: string;
-            title?: string;
-            startTime: string;
-            endTime: string;
-            contactId?: string;
-            appointmentStatus?: string;
-            assignedUserId?: string;
-          }>;
-        }>("/calendars/events", {
-          locationId,
-          startTime: String(queryStart),
-          endTime: String(queryEnd),
-          userId: ghlUserId,
-        });
-
-        for (const event of res.events || []) {
-          const endMs = new Date(event.endTime).getTime();
-          if (isNaN(endMs)) continue;
-          // Filtro fino: só appointments cujo endTime caiu DENTRO da janela
-          if (endMs < windowStart || endMs > windowEnd) continue;
-          const status = (event.appointmentStatus || "scheduled").toLowerCase();
-          if (
-            status === "cancelled" ||
-            status === "noshow" ||
-            status === "no-show" ||
-            status === "invalid"
-          ) {
-            skipped++;
-            continue;
-          }
-
-          // Dispara via dispatcher mode='real'. overrideLocationId garante
-          // que tools (get_contact, etc) rodem contra a location onde o
-          // appointment está — não a active_location do rep. Sem isso,
-          // get_contact buscaria em location errada e falharia.
-          // Cooldown atomic via UNIQUE (rep_id, rule_id, target_id=appt.id).
-          const result = await dispatchRule({
-            rule,
-            rep,
-            targetId: event.id,
-            overrideLocationId: locationId,
-            contextData: {
-              event: "post_meeting",
-              appointment_id: event.id,
-              title: event.title || null,
-              start_time: event.startTime,
-              end_time: event.endTime,
-              contact_id: event.contactId || null,
-              meeting_location_id: locationId,
-              status,
-            },
-            mode: "real",
-          });
-          if (result.status === "sent") fired++;
-          else skipped++;
-        }
-      } catch (err) {
-        console.warn(
-          `[cron] post_meeting polling falhou pra rep ${rep.id} ` +
-            `na location ${locationId}:`,
-          err instanceof Error ? err.message : err,
-        );
-        skipped++;
-      }
+      // Dispara via dispatcher mode='real'. overrideLocationId garante que tools
+      // (get_contact, etc) rodem contra a location onde o appointment está — não
+      // a active_location do rep. Sem isso, get_contact buscaria em location
+      // errada e falharia. Cooldown atomic via UNIQUE (rep, rule, target=appt).
+      const result = await dispatchRule({
+        rule,
+        rep: task.rep,
+        targetId: event.id,
+        overrideLocationId: task.locationId,
+        contextData: {
+          event: "post_meeting",
+          appointment_id: event.id,
+          title: event.title || null,
+          start_time: event.startTime,
+          end_time: event.endTime,
+          contact_id: event.contactId || null,
+          meeting_location_id: task.locationId,
+          status,
+        },
+        mode: "real",
+      });
+      if (result.status === "sent") fired++;
+      else skipped++;
     }
   }
 

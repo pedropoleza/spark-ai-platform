@@ -349,6 +349,12 @@ export interface ProactiveRule {
   source: ProactiveRuleSource;
   created_at: string;
   updated_at: string;
+  /**
+   * H39: timestamp da última poll de uma rule reactive (post_meeting). Throttle
+   * do polling GHL (claim atômico no cron, intervalo 5min) + gate do guard do
+   * pg_cron. Default epoch (1970). Ignorado por rules scheduled.
+   */
+  reactive_last_polled_at?: string;
 }
 
 export type AlertDispatchStatus =
