@@ -412,29 +412,30 @@ export async function POST(request: NextRequest) {
             id: string; label: string; text: string; auto_deactivate: boolean;
           }[];
 
-          // Determinar se é mensagem humana:
-          // 1) source="app" com userId → definitivamente humano
-          // 2) source vazio/desconhecido → anti-eco como fallback
-          let isHumanMessage = isFromGhlApp;
+          // Determinar se é mensagem humana. ANTI-ECO SEMPRE — mesmo com
+          // source="app"+userId. Fix bug observado em prod 2026-06-10 (Alves
+          // Cury, F56): o GHL carimba o envio via api da IA como source="app" +
+          // userId do ADMIN da conta (o instalador do app). Sem isto, a PRÓPRIA
+          // msg da IA caía como "humano (user GHL) respondeu" e pausava a IA logo
+          // após responder — ela falava 1× e emudecia. O eco da IA nunca é
+          // handoff humano, independente de source/userId. (source=api/workflow
+          // já retornou cedo lá em cima; chega aqui só app/desconhecido.)
+          // Match tolerante a truncamento/emoji do canal. isFromGhlApp sozinho
+          // NÃO basta mais.
+          void isFromGhlApp;
+          const ninetySecondsAgo = new Date(Date.now() - 90_000).toISOString();
+          const { data: aiResponses } = await supabaseAdmin
+            .from("execution_log")
+            .select("action_payload")
+            .eq("location_id", locationId)
+            .eq("contact_id", contactId)
+            .eq("action_type", "send_message")
+            .eq("success", true)
+            .gte("created_at", ninetySecondsAgo)
+            .order("created_at", { ascending: false })
+            .limit(10);
 
-          if (!isHumanMessage && !isFromApi) {
-            // Fallback anti-eco (lógica compartilhada em human-takeover.ts): o
-            // texto bate com algo que a IA registrou ter enviado nos últimos 90s?
-            // Se NÃO bate → humano. Match tolerante a truncamento/emoji do canal.
-            const ninetySecondsAgo = new Date(Date.now() - 90_000).toISOString();
-            const { data: aiResponses } = await supabaseAdmin
-              .from("execution_log")
-              .select("action_payload")
-              .eq("location_id", locationId)
-              .eq("contact_id", contactId)
-              .eq("action_type", "send_message")
-              .eq("success", true)
-              .gte("created_at", ninetySecondsAgo)
-              .order("created_at", { ascending: false })
-              .limit(10);
-
-            isHumanMessage = !isAiEcho(messageBody || "", extractAiSentTexts(aiResponses));
-          }
+          const isHumanMessage = !isAiEcho(messageBody || "", extractAiSentTexts(aiResponses));
 
           console.log(`[Webhook:outbound] isHuman=${isHumanMessage} | autoPause=${autoPauseEnabled} | agent=${outboundAgent.id}`);
 

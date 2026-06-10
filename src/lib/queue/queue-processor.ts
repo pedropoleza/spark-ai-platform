@@ -633,9 +633,17 @@ async function processGroup(
         .order("created_at", { ascending: false })
         .limit(30);
       const aiTexts = extractAiSentTexts(aiSends);
+      // Anti-eco ANTES do userId. Fix bug observado em prod 2026-06-10 (Alves
+      // Cury, F56): o GHL carimba o envio via api da IA com o userId do ADMIN da
+      // conta (o instalador do app) → sem isto, o F52 via a PRÓPRIA mensagem da
+      // IA como "humano (user GHL) respondeu" e pausava logo após responder — a
+      // IA falava 1× e emudecia. O eco da IA não é humano, mesmo com userId.
+      const aiEcho = !!body && isAiEcho(body, aiTexts);
       let isHuman: boolean;
       if (isAutomationOutbound) {
         isHuman = false; // automação/workflow do GHL não é humano (mesmo com userId)
+      } else if (aiEcho) {
+        isHuman = false; // é a própria msg da IA (userId do admin não é confiável)
       } else if (sentByGhlUser) {
         isHuman = true; // humano (user GHL) mandou manualmente → pausa
       } else if (aiTexts.length === 0) {
