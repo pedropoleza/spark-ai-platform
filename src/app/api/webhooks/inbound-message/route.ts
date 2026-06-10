@@ -536,20 +536,43 @@ export async function POST(request: NextRequest) {
     }
     console.log(`[Webhook] Found ${allAgents.length} active agent(s): ${allAgents.map(a => a.type).join(", ")}`);
 
-    // 1) Agente ja dono da conversa
+    // 1) Agente já dono da conversa — PREFERIR o que está ATIVO (não pausado).
+    // Fix bug observado em prod 2026-06-10 (Alves Cury): com 2 agentes lead
+    // (vendas+recrut) no mesmo contato, o seletor único da pílula (GU-7) liga 1
+    // e pausa o outro — mas aqui pegávamos "o PRIMEIRO com conversation_state",
+    // que podia ser o PAUSADO (recrut pausado pelo F52). Resultado: o inbound
+    // caía no agente errado e ninguém respondia, mesmo o rep tendo ligado vendas.
+    // Agora: ativo (ai_paused_at NULL) ganha do pausado; entre ativos, o
+    // updated_at mais recente (= o último escolhido na pílula).
     const { data: existingStates } = await supabase
       .from("conversation_state")
-      .select("agent_id")
+      .select("agent_id, ai_paused_at, updated_at")
       .eq("location_id", locationId)
       .eq("contact_id", contactId);
 
-    const stateAgentIds = new Set((existingStates || []).map((r) => r.agent_id).filter(Boolean));
+    const states = ((existingStates || []) as Array<{
+      agent_id: string | null;
+      ai_paused_at: string | null;
+      updated_at: string | null;
+    }>).filter((r) => r.agent_id);
 
     type AgentRow = typeof allAgents[number];
     let selectedAgent: AgentRow | null = null;
 
-    if (stateAgentIds.size > 0) {
-      selectedAgent = allAgents.find((a) => stateAgentIds.has(a.id)) || null;
+    if (states.length > 0) {
+      const ranked = [...states].sort((a, b) => {
+        const aActive = a.ai_paused_at ? 0 : 1;
+        const bActive = b.ai_paused_at ? 0 : 1;
+        if (aActive !== bActive) return bActive - aActive; // ativo primeiro
+        return new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime();
+      });
+      for (const st of ranked) {
+        const found = allAgents.find((a) => a.id === st.agent_id);
+        if (found) {
+          selectedAgent = found;
+          break;
+        }
+      }
     }
 
     // Precisamos da location para checar targeting
