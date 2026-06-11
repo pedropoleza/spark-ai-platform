@@ -14,6 +14,18 @@ import {
   getConversationMessages,
   postConversationMessage,
 } from "@/lib/ghl/operations";
+import { filterOutOptOutContacts } from "@/lib/account-assistant/proactive/optout-detector";
+
+// Fix P0 review pré-launch 2026-06-10 (TCPA/LGPD): mensagem rep-facing de bloqueio
+// quando o contato deu opt-out (STOP/cancelar/sair/...). send/schedule_message_to_contact
+// são rep-iniciados mas enviam pelo canal automatizado em NOME do rep — se o contato
+// pediu pra parar, NÃO mandamos. Bloqueia + INFORMA (não silencioso): o rep decide
+// remover o opt-out se o contato voltou a procurar. Paridade com bulk-runner e
+// reminder-runner (que já filtram opt-out no disparo).
+const OPTOUT_BLOCK_MESSAGE =
+  "Não enviei: esse contato pediu pra parar de receber mensagens (opt-out — respondeu STOP/cancelar/sair). " +
+  "Por compliance (TCPA/LGPD) o envio automático fica bloqueado. Se ele voltou a te procurar e quer falar, " +
+  "dá pra remover o opt-out dele nas configurações de mensagens — me avisa que te explico — ou responde direto do teu celular.";
 
 const searchConversations: ToolEntry = {
   def: {
@@ -141,6 +153,12 @@ const sendMessageToContact: ToolEntry = {
     const validChannels = ["SMS", "WhatsApp", "Email", "IG"];
     if (!validChannels.includes(channel)) {
       return { status: "error", message: `channel inválido (use ${validChannels.join("|")})`, retryable: false };
+    }
+
+    // Gate de opt-out (ver OPTOUT_BLOCK_MESSAGE). Antes de reatribuir/enviar.
+    const optedOut = await filterOutOptOutContacts(ctx.locationId, [contactId]);
+    if (optedOut.has(contactId)) {
+      return { status: "error", message: OPTOUT_BLOCK_MESSAGE, retryable: false };
     }
 
     // Fix Pedro 2026-05-06: PROTOCOLO PADRÃO — antes de QUALQUER send,
@@ -288,6 +306,14 @@ const scheduleMessageToContact: ToolEntry = {
     const message = String(args.message || "").trim();
     if (!message)
       return { status: "error", message: "message obrigatória", retryable: false };
+
+    // Gate de opt-out (ver OPTOUT_BLOCK_MESSAGE). Recusa AGENDAR pra contato que já
+    // deu opt-out; o reminder-runner também checa no disparo (defesa em profundidade —
+    // cobre opt-out que entra DEPOIS do agendamento, inclusive em recorrentes).
+    const scheduleOptedOut = await filterOutOptOutContacts(ctx.locationId, [contactId]);
+    if (scheduleOptedOut.has(contactId)) {
+      return { status: "error", message: OPTOUT_BLOCK_MESSAGE, retryable: false };
+    }
 
     const sendAt = String(args.send_at || "");
     const dateInvalid = validateIso8601(sendAt, "send_at");

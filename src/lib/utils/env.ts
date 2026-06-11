@@ -73,6 +73,18 @@ export function validateEnv(): void {
         "[env] 🚨 ASSISTANT_HUB_COMPANY_ID não configurado — Sparkbot não consegue chamar GHL pra Hub.",
       );
     }
+    // P0-5 review pré-launch 2026-06-10: SPOF do token de agência. Estas creds são
+    // usadas em token-refresher.ts (refresh + self-heal H38 + exchangeAuthCode). Se
+    // faltarem em prod, o refresh do token de agência falha quando ele expira → TODAS
+    // as chamadas ao Spark Leads passam a dar 401 (webhook, proativos, tools) ~24h depois,
+    // de forma silenciosa. Não throwa (não derruba SSR), mas loga ERROR audível.
+    if (!process.env.GHL_CLIENT_ID?.trim() || !process.env.GHL_CLIENT_SECRET?.trim()) {
+      console.error(
+        "[env] 🚨 GHL_CLIENT_ID/GHL_CLIENT_SECRET não configurados — o refresh/self-heal do token " +
+          "de agência (token-refresher.ts) vai falhar quando o token expirar, causando 401 em massa " +
+          "nas chamadas ao Spark Leads. Configure ANTES do launch.",
+      );
+    }
   }
 
   // OpenAI vs Anthropic

@@ -438,8 +438,19 @@ const moveOpportunity: ToolEntry = {
   handler: async (ctx, args) => {
     const oppId = String(args.opportunity_id || "");
     const stageId = String(args.stage_id || "");
-    const invalid = validateGhlId(oppId, "opportunity") || validateGhlId(stageId, "stage");
+    // Fix P1 review pré-launch 2026-06-10 (verificado em prod via probe-stage-id-format.ts):
+    // stage IDs do GHL são UUID v4 COM hífen (ex '51ffcd4b-a764-4a84-8fa5-36b0914b649a'),
+    // diferente dos demais IDs (contact/opp/pipeline/calendar = 20 chars alfanum SEM hífen).
+    // validateGhlId rejeita hífen (defesa anti-alucinação, types.ts:67), então rodá-lo no
+    // stage_id derrubava 100% dos moves com "stage_id inválido" — mensagem confiantemente
+    // errada que culpava um ID válido do rep. As 3 tools irmãs (create/update_opportunity/
+    // update_status) já passam stage_id DIRETO sem validar; aqui ficamos em paridade: só
+    // validamos opportunity_id (Mongo ID) + checagem leve de não-vazio no stage.
+    const invalid = validateGhlId(oppId, "opportunity");
     if (invalid) return invalid;
+    if (!stageId) {
+      return { status: "error", message: "stage_id obrigatório. Use list_pipelines pra obter o stage de destino.", retryable: false };
+    }
 
     const body: Record<string, unknown> = { pipelineStageId: stageId };
     if (args.pipeline_id) body.pipelineId = String(args.pipeline_id);
