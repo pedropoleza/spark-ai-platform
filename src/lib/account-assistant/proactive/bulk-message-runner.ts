@@ -65,6 +65,9 @@ interface BulkRecipientRow {
   // Etapa 4.4 (Pedro 2026-05-28): quando setado, o runner usa esse template
   // em vez do job.message_template. Sequence-runner seta isso pra steps 2+.
   message_template_override?: string | null;
+  // V2 multi-segmento (H28): texto final JÁ interpolado por recipient (filter-engine
+  // na criação do job). Tem prioridade sobre o template do job — enviar verbatim.
+  personalized_message?: string | null;
 }
 
 interface BulkJobRow {
@@ -262,26 +265,35 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
       }
     }
 
-    // Etapa 4.4 (Pedro 2026-05-28): se recipient tem message_template_override
-    // (usado por sequence-runner pra steps 2+), usa ele. Senão, usa o template
-    // do job (caminho original). variation_mode ainda se aplica em ambos.
-    const effectiveTemplate = recipient.message_template_override?.trim()
-      ? recipient.message_template_override
-      : job.message_template;
-
+    // Fix P0 review pré-launch 2026-06-10: V2 multi-segmento grava o texto FINAL
+    // já interpolado (filter-engine: {custom.*}/{opportunity.*}/{tags[0]}/etc) por
+    // recipient em personalized_message. Sem ler ele, TODOS recebiam o template do
+    // segmento 1 + placeholders ricos LITERAIS ('{custom.cidade}' cru pro lead).
+    // Prioridade: snapshot V2 (verbatim, sem re-interpolar/variar) > override de
+    // sequência > template do job.
     let messageToSend: string;
-    try {
-      messageToSend = await generateVariation(
-        effectiveTemplate,
-        job.variation_mode,
-        recipient.contact_name,
-      );
-    } catch (err) {
-      console.warn(
-        `[bulk-runner] variation falhou pra recipient ${recipient.id}, usando template direto:`,
-        err instanceof Error ? err.message : err,
-      );
-      messageToSend = effectiveTemplate;
+    const snapshot = recipient.personalized_message?.trim();
+    if (snapshot) {
+      messageToSend = snapshot;
+    } else {
+      // Etapa 4.4: message_template_override (sequence-runner, steps 2+) senão o
+      // template do job. variation_mode se aplica.
+      const effectiveTemplate = recipient.message_template_override?.trim()
+        ? recipient.message_template_override
+        : job.message_template;
+      try {
+        messageToSend = await generateVariation(
+          effectiveTemplate,
+          job.variation_mode,
+          recipient.contact_name,
+        );
+      } catch (err) {
+        console.warn(
+          `[bulk-runner] variation falhou pra recipient ${recipient.id}, usando template direto:`,
+          err instanceof Error ? err.message : err,
+        );
+        messageToSend = effectiveTemplate;
+      }
     }
 
     // Envia via GHL

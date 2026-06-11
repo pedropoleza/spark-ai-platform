@@ -19,6 +19,17 @@ export interface ProcessedMedia {
 
 async function downloadBuffer(url: string, maxSize: number): Promise<{ buffer: Buffer; contentType: string } | null> {
   try {
+    // SSRF guard (fix P0 review pré-launch 2026-06-10): a URL vem do attachment
+    // do webhook inbound LEAD-FACING, que é fail-open em prod (GHL não manda
+    // HMAC efetivo). Sem isto, um webhook forjado com url=http://169.254.169.254/...
+    // faria o servidor ler metadata/serviços internos. O gêmeo audio-transcriber.ts
+    // (e o input-parser do SparkBot) já aplicam o mesmo guard — esta era a regressão.
+    const { validateExternalUrl } = await import("@/lib/utils/url-allowlist");
+    const urlVal = validateExternalUrl(url);
+    if (!urlVal.ok) {
+      console.error(`[Media] SSRF guard rejected URL: ${urlVal.reason} (${url.substring(0, 60)})`);
+      return null;
+    }
     const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT) });
     if (!res.ok) {
       console.error(`[Media] Download failed: ${res.status} ${url.substring(0, 80)}`);

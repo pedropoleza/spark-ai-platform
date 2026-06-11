@@ -350,6 +350,24 @@ async function fireOutboundToContact(
     return "failed";
   }
 
+  // Opt-out gate (fix P0 review pré-launch 2026-06-10): TCPA/LGPD. Contato que
+  // respondeu STOP/PARAR não pode receber envio direto agendado/recorrente. O
+  // detector grava em outreach_optouts; bulk/outreach/followup já honram — este
+  // path (outbound_to_contact) não honrava. Cancela a task (não só pula o tick)
+  // pra a série recorrente parar de re-tentar indefinidamente.
+  const { filterOutOptOutContacts } = await import("./optout-detector");
+  const optedOut = await filterOutOptOutContacts(task.location_id, [payload.contact_id]);
+  if (optedOut.has(payload.contact_id)) {
+    console.warn(
+      `[reminder-runner] outbound task ${task.id} — contato ${payload.contact_id} opted-out (STOP); cancelando task.`,
+    );
+    await supabase
+      .from("assistant_scheduled_tasks")
+      .update({ status: "cancelled", last_run_at: new Date().toISOString() })
+      .eq("id", task.id);
+    return "skipped";
+  }
+
   const channel = payload.channel || "SMS";
   const body: Record<string, unknown> = {
     type: channel,
