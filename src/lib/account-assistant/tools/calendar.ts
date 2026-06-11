@@ -433,6 +433,47 @@ function computeWindowInTz(
   return { startMs, endMs, tzUsed };
 }
 
+/**
+ * H36 (review 2026-06-10): pool de concorrência minúsculo pra BOUNDAR o
+ * fan-out de chamadas GHL em `list_my_free_slots`.
+ *
+ * A tool dispara 1 `/free-slots` por calendar do rep (userCalendars, que era
+ * SEM cap nenhum) + 1 `/events` por calendar da location (eventCalendars, já
+ * capado em 30). Rep team_member de dezenas de calendars virava thundering
+ * herd de requests paralelas — o mutex de token em `lib/ghl/auth.ts` cita "37
+ * requests paralelas" desta exata tool. Em vez de só capar o tamanho da lista
+ * (perderia calendars), batcha: processa `items` com no máximo `limit` em voo
+ * via worker pool. Preserva ordem (results[i]) e NÃO engole erro — quem decide
+ * é `fn` (os callers já fazem `.catch` → `{ ok: false }`, então o worker nunca
+ * rejeita e a semântica de falha parcial fica intacta).
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  // JS é single-thread: `cursor++` não cruza await, então a leitura+incremento
+  // é atômica entre os workers — sem race no índice.
+  const worker = async (): Promise<void> => {
+    while (cursor < items.length) {
+      const i = cursor++;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  const poolSize = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: poolSize }, () => worker()));
+  return results;
+}
+
+// Teto de chamadas GHL de disponibilidade em voo POR map (H36). 8 = location
+// típica (≤8 calendars) dispara tudo de uma vez (zero latência extra); rep/
+// location com dezenas degrada pra batches sequenciais em vez de herd. Os dois
+// maps rodam concorrentes (Promise.all externo) → pico real ~2×, mas cada
+// fan-out fica individualmente batchado (e bem abaixo das ~37 de antes).
+const GHL_AVAILABILITY_CONCURRENCY = 8;
+
 const listMyFreeSlots: ToolEntry = {
   def: {
     name: "list_my_free_slots",
@@ -524,28 +565,34 @@ const listMyFreeSlots: ToolEntry = {
         }>;
         ok: boolean;
       };
+      // H36 (review 2026-06-10): fan-out BATCHADO via mapWithConcurrency (era
+      // Promise.all puro = TODAS as requests de uma vez). userCalendars não
+      // tinha cap — assimétrico com eventCalendars (.slice(0,30)); agora os
+      // DOIS maps passam pelo mesmo teto de concorrência. Falha parcial
+      // intacta: cada fn faz seu .catch → ok:false e os counters eventsFailed/
+      // eventsMissingField/eventsNotFound seguem incrementando no .then/.catch.
       const [freeSlotsResults, eventsResults] = await Promise.all([
-        Promise.all(
-          userCalendars.map((c) =>
-            getCalendarFreeSlots(ctx.ghlClient, c.id, {
-              startDate: String(startMs),
-              endDate: String(endMs),
-              userId: repUserId,
-            })
-              .then((res) => ({
-                calendar: c,
-                raw: res as Record<string, { slots?: string[] }>,
-                ok: true,
-              }))
-              .catch(() => ({
-                calendar: c,
-                raw: {} as Record<string, { slots?: string[] }>,
-                ok: false,
-              })),
-          ),
+        mapWithConcurrency(userCalendars, GHL_AVAILABILITY_CONCURRENCY, (c) =>
+          getCalendarFreeSlots(ctx.ghlClient, c.id, {
+            startDate: String(startMs),
+            endDate: String(endMs),
+            userId: repUserId,
+          })
+            .then((res) => ({
+              calendar: c,
+              raw: res as Record<string, { slots?: string[] }>,
+              ok: true,
+            }))
+            .catch(() => ({
+              calendar: c,
+              raw: {} as Record<string, { slots?: string[] }>,
+              ok: false,
+            })),
         ),
-        Promise.all<EventCalendarResult>(
-          eventCalendars.map((c) =>
+        mapWithConcurrency<typeof eventCalendars[0], EventCalendarResult>(
+          eventCalendars,
+          GHL_AVAILABILITY_CONCURRENCY,
+          (c) =>
             listCalendarEvents(ctx.ghlClient, {
               locationId: ctx.locationId,
               calendarId: c.id,
@@ -570,7 +617,6 @@ const listMyFreeSlots: ToolEntry = {
                 }
                 return { calendar: c, events: [], ok: false };
               }),
-          ),
         ),
       ]);
 

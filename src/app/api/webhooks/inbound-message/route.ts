@@ -16,8 +16,29 @@ const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_WINDOW = 60_000; // 1 minute
 const RATE_LIMIT_MAX = 30; // max 30 messages per contact per minute
 
+// Eviction preguiçosa (cleanup 2026-06-10): o Map só crescia — contato que para
+// de mandar mensagem deixava a entrada residente até o Vercel reciclar a
+// instância. Em vez de setInterval (não cabe em serverless: o timer recicla
+// junto com a lambda e não roda entre invokes), varremos as entradas expiradas
+// no próprio hot path, amortizado a cada N chamadas. Como só removemos entradas
+// com `now > resetAt` — exatamente as que o branch abaixo já trata como
+// expiradas e sobrescreve — a semântica do rate limit fica IDÊNTICA (entrada
+// podada == entrada reiniciada do zero no próximo inbound). Custo no caminho
+// comum: 1 incremento + 1 comparação. Sweep O(n) só 1x a cada SWEEP_EVERY.
+const RATE_LIMIT_SWEEP_EVERY = 500;
+let rateLimitCallCount = 0;
+
 function checkRateLimit(contactId: string): boolean {
   const now = Date.now();
+
+  if (++rateLimitCallCount >= RATE_LIMIT_SWEEP_EVERY) {
+    rateLimitCallCount = 0;
+    // delete durante for..of de Map é seguro por spec (entrada já visitada/atual).
+    for (const [key, entry] of rateLimitMap) {
+      if (now > entry.resetAt) rateLimitMap.delete(key);
+    }
+  }
+
   const entry = rateLimitMap.get(contactId);
   if (!entry || now > entry.resetAt) {
     rateLimitMap.set(contactId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
@@ -63,6 +84,7 @@ import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { processMessageQueue } from "@/lib/queue/queue-processor";
 import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { NON_HUMAN_SOURCES } from "@/lib/ghl/message-sources";
 import { reportError } from "@/lib/admin-signals/report-error";
 import type { TargetingRule } from "@/types/agent";
 
@@ -347,20 +369,35 @@ export async function POST(request: NextRequest) {
       // ===== DETECÇÃO DE MENSAGEM HUMANA (HANDOFF) =====
       // GHL envia campo "source" e "userId" no payload do webhook:
       //   - source="app" + userId presente = humano enviou pelo CRM
-      //   - source="api" ou sem userId = enviado via API (nossa IA)
-      //   - source="workflow" = automação do GHL
+      //   - source="api" = enviado via API (nossa IA)
+      //   - source="workflow"/"campaign"/"bulk"/"automation"/"scheduled"/... =
+      //     automação do GHL (welcome de lead novo, re-engajamento, etc).
       //
       // Combinamos source/userId com heurística anti-eco como fallback.
       const webhookSource = (body.source || "") as string;
       const webhookUserId = (body.userId || body.user_id || "") as string;
       const isFromGhlApp = webhookSource === "app" && !!webhookUserId;
-      const isFromApi = webhookSource === "api" || webhookSource === "workflow";
 
-      console.log(`[Webhook:outbound] contact=${contactId} | source="${webhookSource}" | userId="${webhookUserId}" | isApp=${isFromGhlApp} | body="${(messageBody || "").substring(0, 40)}"`);
+      // Fix bug 2026-06-10 (paridade F51↔F52): antes a checagem era estreita —
+      // só `source==="api" || source==="workflow"` early-retornava. Um outbound
+      // carimbado "campaign"/"bulk"/"automation"/"scheduled" (ex.: welcome de
+      // campanha pra um lead NOVO) furava o early return, caía no anti-eco abaixo
+      // e — como a IA ainda não tinha falado (aiResponses vazio) — virava
+      // isHumanMessage=true, PAUSANDO a IA em todo lead novo com auto_pause
+      // ligado. É a mesma classe de bug que o F52/F56 matou no ladder do
+      // queue-processor, só disparada por outro rótulo de source. Agora consome a
+      // FONTE ÚNICA NON_HUMAN_SOURCES (automação + "api", case-insensitive) de
+      // @/lib/ghl/message-sources — a MESMA base (AUTOMATION_SOURCES) que o
+      // classifyLastOutbound do F52 usa, então o webhook (F51) e o ladder do
+      // histórico (F52) não conseguem mais divergir no conjunto de fontes.
+      const isNonHumanSource = NON_HUMAN_SOURCES.has(String(webhookSource).toLowerCase());
 
-      // Se source indica API/workflow, é nossa IA ou automação — ignorar
-      if (isFromApi) {
-        return NextResponse.json({ received: true, skipped: "outbound_api" });
+      console.log(`[Webhook:outbound] contact=${contactId} | source="${webhookSource}" | userId="${webhookUserId}" | isApp=${isFromGhlApp} | nonHuman=${isNonHumanSource} | body="${(messageBody || "").substring(0, 40)}"`);
+
+      // Source de api ou automação = nossa IA ou automação do GHL → ignorar
+      // (nunca é handoff humano). app/desconhecido segue pro anti-eco abaixo.
+      if (isNonHumanSource) {
+        return NextResponse.json({ received: true, skipped: "outbound_non_human" });
       }
 
       try {
@@ -418,8 +455,8 @@ export async function POST(request: NextRequest) {
           // userId do ADMIN da conta (o instalador do app). Sem isto, a PRÓPRIA
           // msg da IA caía como "humano (user GHL) respondeu" e pausava a IA logo
           // após responder — ela falava 1× e emudecia. O eco da IA nunca é
-          // handoff humano, independente de source/userId. (source=api/workflow
-          // já retornou cedo lá em cima; chega aqui só app/desconhecido.)
+          // handoff humano, independente de source/userId. (source de api/
+          // automação já retornou cedo lá em cima; chega aqui só app/desconhecido.)
           // Match tolerante a truncamento/emoji do canal. isFromGhlApp sozinho
           // NÃO basta mais.
           void isFromGhlApp;

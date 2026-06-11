@@ -501,7 +501,12 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
         .eq("rep_id", rep.id)
         .eq("hub_location_id", hubLocationId)
         .eq("role", "user")
-        .eq("content", messageBody)
+        // Compara com .trim(): o persist path (linha ~747) grava
+        // repInput.text.trim(), então msg com espaço nas pontas (comum em
+        // copy-paste de WhatsApp) é guardada trimada — buscar o raw nunca
+        // casaria. Camadas 3 e 8 (raw-vs-raw) já pegam o dup real antes;
+        // isto só alinha esta query ao que de fato está no banco.
+        .eq("content", messageBody.trim())
         .gte("created_at", cutoffDup)
         .limit(1)
         .maybeSingle();

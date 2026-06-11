@@ -1,6 +1,7 @@
 import type { AgentConfig, DataField } from "@/types/agent";
 import { getTimezoneFromState, getCurrentTimeInTimezone } from "@/lib/utils/timezone";
 import { composePersonalityProfile } from "@/lib/ai/behavior-blocks";
+import { isHumanOutboundSource } from "@/lib/ghl/message-sources";
 
 /**
  * Sanitiza texto para prevenir prompt injection.
@@ -959,7 +960,7 @@ ${instructions}`;
  * resumo compacto: tags + funil/stage + últimas msgs + notas. Vazio se
  * não veio ou se histórico está vazio (lead totalmente novo).
  */
-function buildLeadHistorySection(ctx: PromptContext): string {
+export function buildLeadHistorySection(ctx: PromptContext): string {
   const h = ctx.leadHistory;
   if (!h || (h.recent_messages.length === 0 && h.opportunities.length === 0 && h.notes.length === 0 && h.contact.tags.length === 0)) {
     return "";
@@ -969,25 +970,38 @@ function buildLeadHistorySection(ctx: PromptContext): string {
   lines.push("USE este contexto pra responder coerente. NÃO pergunte coisas já respondidas. Reconheça continuidade — esse contato pode já ter conversado com humanos ou ter histórico.");
   lines.push("");
 
+  // Defense-in-depth 2026-06-10: sanitize() em todo campo controlável pelo lead
+  // (tags, nomes de opp/stage, corpo de msg/nota) — mesma proteção anti-injection
+  // das seções buildFeedbackSection/buildKnowledgeBaseSection. O inbound já chega
+  // cru ao LLM como user-role; isto só fecha o gap de consistência no system prompt.
+  // Truthiness dos condicionais segue no valor BRUTO pra manter comportamento igual.
   if (h.contact.tags.length > 0) {
-    lines.push(`**Tags do contato**: ${h.contact.tags.join(", ")}`);
+    lines.push(`**Tags do contato**: ${h.contact.tags.map((t) => sanitize(t, 60)).join(", ")}`);
   }
   if (h.opportunities.length > 0) {
     lines.push("**Oportunidades**:");
     for (const o of h.opportunities) {
-      const stage = o.pipelineName && o.stageName ? `${o.pipelineName} → ${o.stageName}` : o.stageName || "(stage desconhecido)";
+      const stage = o.pipelineName && o.stageName
+        ? `${sanitize(o.pipelineName, 80)} → ${sanitize(o.stageName, 80)}`
+        : (o.stageName ? sanitize(o.stageName, 80) : "(stage desconhecido)");
       const value = o.monetaryValue ? ` ($${o.monetaryValue})` : "";
       const status = o.status ? ` [${o.status}]` : "";
-      lines.push(`  - ${o.name || "(sem nome)"} — ${stage}${status}${value}`);
+      lines.push(`  - ${o.name ? sanitize(o.name, 80) : "(sem nome)"} — ${stage}${status}${value}`);
     }
   }
   if (h.recent_messages.length > 0) {
     lines.push("");
     lines.push(`**Últimas ${Math.min(h.recent_messages.length, 10)} mensagens** (mais recente em cima):`);
     for (const m of h.recent_messages.slice(0, 10)) {
-      const who = m.direction === "inbound" ? "Lead" : (m.source && m.source !== "api" ? "Humano (rep)" : "Bot/sistema");
+      // Rótulo humano×bot via fonte ÚNICA (@/lib/ghl/message-sources): mesma
+      // lógica do should-respond gate. Fix 2026-06-10: o check antigo
+      // `source !== "api"` rotulava o welcome de automação (source
+      // "workflow"/"campaign") como "Humano (rep)" — soft nudge que fazia o
+      // modelo assumir que um humano já estava atendendo o lead.
+      const who = m.direction === "inbound" ? "Lead" : (isHumanOutboundSource(m.source) ? "Humano (rep)" : "Bot/sistema");
       const date = m.dateAdded ? new Date(m.dateAdded).toISOString().slice(0, 16) : "";
-      lines.push(`  [${date}] ${who}: "${m.body}"`);
+      // m.body já vem cortado em 300 (lead-history.ts:249); sanitize tira #/quebras.
+      lines.push(`  [${date}] ${who}: "${sanitize(m.body, 300)}"`);
     }
   }
   if (h.notes.length > 0) {
@@ -995,7 +1009,7 @@ function buildLeadHistorySection(ctx: PromptContext): string {
     lines.push("**Notas internas** (não compartilhar literalmente com o lead):");
     for (const n of h.notes.slice(0, 5)) {
       const date = n.dateAdded ? new Date(n.dateAdded).toISOString().slice(0, 10) : "";
-      lines.push(`  - [${date}] ${n.body.slice(0, 300)}`);
+      lines.push(`  - [${date}] ${sanitize(n.body, 300)}`);
     }
   }
   return lines.join("\n");

@@ -253,18 +253,35 @@ Gere o resumo agora.`,
     }
 
     // 11. Salvar e logar
-    await supabase
+    // NB-8 (review 2026-06-10): guarda .eq("summary_note_id","generating") espelha
+    // o reset do catch-path (bloco catch abaixo) — só grava o noteId se ESTE
+    // processo ainda detém o lock. Se um segment-reset concorrente
+    // (action-executor.updateConversationState: summary_note_id→null + novo
+    // segmento, dispara só em noteId REAL) já moveu a row, o UPDATE casa 0 linhas:
+    // a nota no GHL JÁ foi criada (side-effect preservado), então só logamos e NÃO
+    // reescrevemos summary_note_id (evita clobber do reset). Defesa-em-profundidade,
+    // não bug vivo: hoje o lock atômico (L47, null→"generating") + o reset só
+    // disparar em noteId real já impedem o cenário.
+    const { data: savedState } = await supabase
       .from("conversation_state")
       .update({ summary_note_id: noteId, summary_note_created_at: new Date().toISOString() })
       .eq("agent_id", params.agentId)
-      .eq("contact_id", params.contactId);
+      .eq("contact_id", params.contactId)
+      .eq("summary_note_id", "generating")
+      .select("agent_id")
+      .maybeSingle();
+
+    const stateWritten = !!savedState;
+    if (!stateWritten) {
+      console.warn(`${tag} state write skipped: lock já movido (segment reset concorrente?) — nota GHL ${noteId} preservada`);
+    }
 
     await supabase.from("execution_log").insert({
       agent_id: params.agentId,
       location_id: params.locationId,
       contact_id: params.contactId,
       action_type: "summary_note_created",
-      action_payload: { trigger: params.triggerReason, segment, note_id: noteId },
+      action_payload: { trigger: params.triggerReason, segment, note_id: noteId, state_written: stateWritten },
       success: true,
     });
 

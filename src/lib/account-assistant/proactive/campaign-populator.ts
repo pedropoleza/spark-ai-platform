@@ -17,6 +17,9 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { executeContactsFilter } from "@/lib/account-assistant/filter-engine";
+// F60 (Pedro 2026-06-10): enforcement do cap diário (espalha recipients ≤ teto
+// por dia-ET). Ponto único de distribuição cap-aware, reusado pelo recurring-runner.
+import { getDailyCap, buildCappedScheduledAts } from "@/lib/account-assistant/tools/bulk-messages";
 import type {
   ContactResult,
   FilterExpression,
@@ -40,7 +43,7 @@ export async function populateCampaignRecipients(jobId: string): Promise<Populat
   const { data: job } = await supabase
     .from("bulk_message_jobs")
     .select(
-      "id, status, location_id, agent_id, rep_id, filter_config, message_template, interval_seconds, jitter_seconds, has_sequence, ab_variants",
+      "id, status, location_id, agent_id, rep_id, filter_config, message_template, interval_seconds, jitter_seconds, has_sequence, ab_variants, daily_cap",
     )
     .eq("id", jobId)
     .maybeSingle();
@@ -117,7 +120,25 @@ export async function populateCampaignRecipients(jobId: string): Promise<Populat
   // dentro da janela jitter_seconds. Mesma lógica do schedule_bulk_message_v2.
   const interval = Math.max(30, job.interval_seconds || 90);
   const jitter = Math.max(0, job.jitter_seconds || 30);
-  const baseStart = Date.now() + 5000; // 5s buffer pra evitar sair antes do PATCH retornar
+  const baseStart = new Date(Date.now() + 5000); // 5s buffer pra evitar sair antes do PATCH retornar
+
+  // F60 (Pedro 2026-06-10): teto diário. Lê o snapshot persistido no job
+  // (daily_cap); se for legado/NULL, faz fallback resolvendo o cap do agente em
+  // runtime (getDailyCap = daily_bulk_message_cap) pra nenhum job ficar sem
+  // proteção. buildCappedScheduledAts espalha os contatos ≤ cap por dia-ET
+  // (overflow rola pro próximo dia 09:00 ET), semeando o uso de hoje via
+  // countRecipientsLast24h. cap NULL = linear histórico (sem mudança). Diferente
+  // do chat path (que TRUNCA): aqui ESPALHA — a promessa "até N/dia" é de ritmo,
+  // não de descarte (ver bloco F60 em bulk-messages.ts).
+  const dailyCap = job.daily_cap ?? (await getDailyCap(job.agent_id));
+  const scheduledAts = await buildCappedScheduledAts({
+    locationId: job.location_id,
+    count: contacts.length,
+    dailyCap,
+    intervalSeconds: interval,
+    jitterSeconds: jitter,
+    baseStart,
+  });
 
   // Etapa 4.7: prepara distribuição de variants se job tem ab_variants.
   // Sorteio por weight normalizado. Salva variant_id (1-based) +
@@ -143,15 +164,14 @@ export async function populateCampaignRecipients(jobId: string): Promise<Populat
   }
 
   const recipientRows = contacts.map((c, i) => {
-    const jitterMs = Math.floor(Math.random() * jitter * 1000);
-    const scheduledAtMs = baseStart + i * interval * 1000 + jitterMs;
     const variant = pickVariant();
     return {
       job_id: jobId,
       contact_id: c.id,
       contact_name: c.name,
       contact_phone: c.phone,
-      scheduled_at: new Date(scheduledAtMs).toISOString(),
+      // F60: scheduled_at distribuído respeitando o cap por dia-ET (acima).
+      scheduled_at: scheduledAts[i].toISOString(),
       status: "pending" as const,
       // step 1 usa job.message_template (= sequences[0].template). Não precisa
       // override aqui. Steps 2+ sequenciados pelo sequence-runner.

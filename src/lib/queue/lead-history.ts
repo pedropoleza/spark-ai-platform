@@ -18,6 +18,9 @@
  * o turn do bot. Bot apenas perde o awareness, mas responde.
  */
 import { GHLClient } from "@/lib/ghl/client";
+import { isHumanOutboundSource } from "@/lib/ghl/message-sources";
+import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type { LeadContext, LeadHistoryConfig } from "@/types/agent";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -66,6 +69,7 @@ interface GhlMessageResp {
       messageType?: string;
       dateAdded?: string;
       source?: string;
+      userId?: string;
     }>;
   };
 }
@@ -131,6 +135,44 @@ const EMPTY_CONTEXT = (contactId: string, fetchMs: number): LeadContext => ({
   has_closed_opp: false,
   fetch_ms: fetchMs,
 });
+
+/**
+ * Esse OUTBOUND foi um HUMANO de verdade (rep digitando no inbox), levando o
+ * `userId` em conta quando o `source` falta?
+ *
+ * O `/conversations/{id}/messages` do GHL NEM SEMPRE devolve `source` (varia por
+ * canal/versão). Quando vem, ele decide sozinho: rep no inbox = "app" (humano);
+ * api/automação/welcome ficam de fora via {@link isHumanOutboundSource} — preserva
+ * e06f409/F56 (automação NÃO é humano MESMO carimbada com userId, porque o
+ * workflow do GHL roda "como" um user). Quando o `source` FALTA, caímos no
+ * `userId`: um userId real = um USER do GHL mandou manual = humano — EXCETO o eco
+ * do próprio envio da IA, que o GHL carimba com o userId do ADMIN da conta
+ * (instalador do app). Daí o anti-eco (mesma defesa do F56 em human-takeover.ts):
+ * se o corpo bate com algo que a IA registrou ter enviado, é eco da IA, não humano.
+ *
+ * Espelha o ladder do F52 (queue-processor) pro problema "humano assumiu?", mas SÓ
+ * usa userId como fallback positivo quando source está ausente — o source continua
+ * sendo o filtro primário.
+ *
+ * @param aiTexts textos que a IA registrou ter enviado (execution_log). `null` =
+ *   não deu pra carregar → fica conservador (NÃO conta como humano) pra honrar o
+ *   fail-open do módulo: na dúvida, a IA segue respondendo em vez de emudecer.
+ */
+export function isHumanOutboundMessage(
+  msg: { direction?: string; source?: string | null; body?: string | null; userId?: string | null },
+  aiTexts: string[] | null,
+): boolean {
+  if (msg.direction !== "outbound") return false;
+  // source presente decide sozinho — userId nem é consultado (api/automação fora,
+  // "app" = humano). Garante que welcome/automação não vira humano (e06f409).
+  if (msg.source) return isHumanOutboundSource(msg.source);
+  // source ausente: só um userId real pode indicar humano.
+  if (!msg.userId) return false;
+  // ...mas não se for eco do próprio envio da IA (userId do admin). aiTexts null =
+  // não verificável → conservador (não conta como humano).
+  if (aiTexts === null) return false;
+  return !isAiEcho(String(msg.body || ""), aiTexts);
+}
 
 /**
  * Carrega o histórico do lead do Spark Leads/GHL. Cacheado 5min por
@@ -207,6 +249,7 @@ export async function loadLeadHistory(
       body: String(m.body || "").slice(0, 300),
       dateAdded: String(m.dateAdded || ""),
       source: m.source,
+      userId: m.userId,
       messageType: typeof m.messageType === "string" ? m.messageType : undefined,
     }));
 
@@ -216,18 +259,42 @@ export async function loadLeadHistory(
     // (welcome, re-engajamento) tem source "workflow"/"campaign"/etc. Resultado:
     // a mensagem de boas-vindas da automação virava "humano respondeu" e o
     // should-respond calava a IA em TODO lead novo (mesma raiz da Pergunta 1 do
-    // Pedro sobre o welcome). Agora: só fontes de bot/automação ficam de fora;
-    // rep no inbox (source "app") continua contando como humano.
-    const NON_HUMAN_SOURCES = new Set([
-      "api", "workflow", "workflows", "bulk_actions", "bulk", "campaign",
-      "campaigns", "automation", "automations", "scheduled", "integration",
-    ]);
-    const lastHumanOutbound = recent_messages.find(
-      (m) =>
-        m.direction === "outbound" &&
-        m.source &&
-        !NON_HUMAN_SOURCES.has(m.source.toLowerCase()),
+    // Pedro sobre o welcome). A classificação humano×bot vive em
+    // @/lib/ghl/message-sources (fonte ÚNICA — antes cada call-site tinha a sua
+    // cópia e elas divergiram). rep no inbox (source "app") continua = humano.
+    //
+    // Fix review 2026-06-10: o `/conversations/{id}/messages` do GHL NEM SEMPRE
+    // devolve `source`. Sem source, a checagem só-por-source dava false e o gate
+    // "humano respondeu" do should-respond NUNCA disparava — o rep ligava "pausa
+    // quando eu responder" e a IA seguia atropelando. isHumanOutboundMessage cai no
+    // `userId` quando o source falta (com anti-eco contra o próprio envio da IA,
+    // que o GHL carimba com o userId do ADMIN). aiTexts (o que a IA registrou ter
+    // enviado) só é buscado quando há um outbound SEM source mas COM userId — o
+    // único caso que precisa do anti-eco. Caminho comum (msgs com source) = 0 query.
+    const needsEchoCheck = recent_messages.some(
+      (m) => m.direction === "outbound" && !m.source && m.userId,
     );
+    let aiTexts: string[] | null = [];
+    if (needsEchoCheck) {
+      aiTexts = null; // "não verificável" até a query confirmar (fail-open conservador)
+      try {
+        const supabase = createAdminClient();
+        const { data: aiSends } = await supabase
+          .from("execution_log")
+          .select("action_payload")
+          .eq("location_id", locationId)
+          .eq("contact_id", contactId)
+          .eq("action_type", "send_message")
+          .eq("success", true)
+          .order("created_at", { ascending: false })
+          .limit(30);
+        aiTexts = extractAiSentTexts(aiSends);
+      } catch {
+        // fail-soft: sem aiTexts o anti-eco fica conservador (não conta o eco como
+        // humano) e não derruba o resto do histórico já carregado do GHL.
+      }
+    }
+    const lastHumanOutbound = recent_messages.find((m) => isHumanOutboundMessage(m, aiTexts));
     const lastInbound = recent_messages.find((m) => m.direction === "inbound");
 
     // Notas

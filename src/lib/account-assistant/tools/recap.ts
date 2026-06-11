@@ -33,13 +33,26 @@ const RECAP_TOOL: ToolEntry = {
     const cutoffIso = new Date(Date.now() - minutes * 60_000).toISOString();
     const supabase = createAdminClient();
 
-    const { data: msgs } = await supabase
+    // Fix bug observado em review 2026-06-10: recap não escopava por location,
+    // vazava writes de OUTRA sub-account do mesmo rep (multi-location que usa
+    // switch_active_location). Espelha o filtro M9 do silence check
+    // (processor.ts ~376) — escopa por active_location_id, que é a location
+    // ativa NO MOMENTO do write (carimbada no insert do agent msg em
+    // webhook-handler.ts). hub_location_id não serve: é o hub/canal da conversa,
+    // constante entre switches, não escoparia nada.
+    // Guard: rep multi-location que ainda não escolheu pode ter ctx.locationId
+    // vazio — nesse caso NÃO aplica o filtro pra não zerar o recap (mesma
+    // postura tolerante do M9).
+    let query = supabase
       .from("sparkbot_messages")
       .select("created_at, role, content, metadata")
       .eq("rep_id", ctx.rep.id)
       .eq("role", "agent")
-      .gte("created_at", cutoffIso)
-      .order("created_at", { ascending: true });
+      .gte("created_at", cutoffIso);
+    if (ctx.locationId) {
+      query = query.eq("active_location_id", ctx.locationId);
+    }
+    const { data: msgs } = await query.order("created_at", { ascending: true });
 
     if (!msgs || msgs.length === 0) {
       return {

@@ -403,6 +403,195 @@ export function computeScheduledAts(
   return result;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// F60 (Pedro 2026-06-10) — Cap diário nos caminhos AUTOMÁTICOS de disparo
+// ─────────────────────────────────────────────────────────────────────
+// Gap de paridade: a UI promete "Aborda até N pessoas/dia" mas o teto só
+// era enforçado no chat do SparkBot. Prospecção, campanhas /hub e recorrentes
+// enfileiravam TODOS os contatos sem teto. Este helper é o ponto único de
+// distribuição cap-aware reusado pelo campaign-populator e pelo recurring-runner.
+//
+// SEMÂNTICA ESCOLHIDA (documentada — decisão F60):
+//   1. O cap é um TETO por DIA-DE-ENVIO em America/New_York — mesmo dia-ET que
+//      countRecipientsLast24h e o cap do chat já usam. NÃO é janela rolante de
+//      24h nem cap por-execução.
+//   2. ESPALHA, não trunca: todos os contatos são agendados, mas no máximo
+//      `cap` por dia-ET; o excedente ROLA pro próximo dia (começa às 09:00 ET).
+//      Diverge DE PROPÓSITO do chat path (que TRUNCA): lá o rep faz um disparo
+//      único e o trim é a UX certa; aqui é prospecção/campanha contínua e a
+//      promessa "até N/dia" é de RITMO (pacing), não de descarte. Admin pode
+//      cancelar o job se a cauda for longa demais.
+//   3. `usedByEtDay` semeia o contador com o que JÁ está agendado pra cada dia
+//      (location-wide, via countRecipientsLast24h) — teto é da LOCATION/dia,
+//      consistente com o chat (conta location-wide vs cap por-agente).
+//   4. Enforcement no POPULATE-TIME (aqui), NÃO no runner: cada recipient nasce
+//      com scheduled_at no seu dia, então o bulk-message-runner (que só claim'a
+//      scheduled_at <= now) respeita o teto naturalmente, sem contador próprio.
+//
+// Pura/determinística (injete `rng` nos testes). cap null/<=0 → comportamento
+// linear histórico (baseStart + i*interval + jitter), zero mudança.
+//
+// TZ-independente da máquina: agrupa por toEtDayString (Intl com America/New_York)
+// e constrói os instantes de rollover via etWallTimeToUtc (two-pass Intl), então
+// roda igual em UTC (serverless) e na máquina local do dev (testes).
+
+export interface DailyCapDistributionInput {
+  count: number;
+  /** Teto por dia-ET. null/<=0 = sem teto (linear). */
+  dailyCap: number | null;
+  intervalSeconds: number;
+  jitterSeconds: number;
+  /** 1º slot do dia 0. */
+  baseStart: Date;
+  /** recipients já agendados por dia-ET (YYYY-MM-DD) — seed location-wide. */
+  usedByEtDay?: Map<string, number>;
+  /** hora ET onde os dias rolados começam (default 9). */
+  rolloverStartHourEt?: number;
+  /** safety bound de dias (default = adaptativo p/ caber count/cap). */
+  maxDays?: number;
+  /** injeção de aleatoriedade pra teste determinístico (default Math.random). */
+  rng?: () => number;
+}
+
+/**
+ * Converte uma wall-clock ET (ano/mês/dia/hora) no instante UTC correspondente,
+ * DST-correct e independente do fuso da máquina. Two-pass: chuta UTC=wall e
+ * corrige pelo offset real que o Intl reporta (converge em ≤2 iterações, cobre
+ * transições de horário de verão).
+ */
+function etWallTimeToUtc(
+  year: number,
+  month1: number, // 1-12
+  day: number,
+  hour: number,
+  minute = 0,
+): Date {
+  let utc = Date.UTC(year, month1 - 1, day, hour, minute, 0);
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  for (let k = 0; k < 3; k++) {
+    const parts = fmt.formatToParts(new Date(utc));
+    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+    const etHour = get("hour") === 24 ? 0 : get("hour"); // alguns runtimes dão "24" pra meia-noite
+    const asEt = Date.UTC(get("year"), get("month") - 1, get("day"), etHour, get("minute"), get("second"));
+    const desired = Date.UTC(year, month1 - 1, day, hour, minute, 0);
+    const diff = desired - asEt;
+    if (diff === 0) break;
+    utc += diff;
+  }
+  return new Date(utc);
+}
+
+/** Instante UTC de `hour:00` ET do dia SEGUINTE a `etDayStr` (YYYY-MM-DD). */
+function etNextDayAtHour(etDayStr: string, hour: number): Date {
+  const [y, m, d] = etDayStr.split("-").map(Number);
+  // Date.UTC normaliza overflow de dia/mês; o two-pass re-deriva o dia-ET real.
+  return etWallTimeToUtc(y, m, d + 1, hour, 0);
+}
+
+/**
+ * Espalha `count` recipients em scheduled_at[] respeitando o cap por dia-ET.
+ * Ver bloco F60 acima pra semântica completa.
+ */
+export function distributeScheduledAtsByDailyCap(
+  input: DailyCapDistributionInput,
+): Date[] {
+  const rng = input.rng ?? Math.random;
+  const intervalMs = Math.max(1, input.intervalSeconds) * 1000;
+  const jitterMaxMs = Math.max(0, input.jitterSeconds) * 1000;
+  // jitter SEMPRE forward [0, jitterMax) — espelha o populator/recurring atuais.
+  const jitter = () => Math.floor(rng() * jitterMaxMs);
+  const cap =
+    input.dailyCap != null && input.dailyCap > 0 ? Math.floor(input.dailyCap) : null;
+  const out: Date[] = [];
+  if (input.count <= 0) return out;
+
+  // Sem cap → linear histórico (baseStart + i*interval + jitter). Zero mudança.
+  if (cap === null) {
+    for (let i = 0; i < input.count; i++) {
+      out.push(new Date(input.baseStart.getTime() + i * intervalMs + jitter()));
+    }
+    return out;
+  }
+
+  const rolloverHour = input.rolloverStartHourEt ?? 9;
+  const maxDays =
+    input.maxDays ?? Math.min(3650, Math.ceil(input.count / cap) + 10);
+  const used = input.usedByEtDay ?? new Map<string, number>();
+  const placed = new Map<string, number>(); // dia-ET → colocados por ESTE job
+  const dayLoad = (day: string) => (used.get(day) ?? 0) + (placed.get(day) ?? 0);
+
+  let cursor = new Date(input.baseStart);
+  let daysRolled = 0;
+
+  for (let i = 0; i < input.count; i++) {
+    // Dia-ET do cursor (re-detecta cruzamento natural de meia-noite ET — cobre
+    // o caso cap enorme onde os slots transbordam o dia sozinhos).
+    let day = toEtDayString(cursor);
+    // Rola enquanto o dia (seed + colocados) já bateu o cap.
+    while (dayLoad(day) >= cap && daysRolled < maxDays) {
+      cursor = etNextDayAtHour(day, rolloverHour);
+      day = toEtDayString(cursor);
+      daysRolled++;
+    }
+    out.push(new Date(cursor.getTime() + jitter()));
+    placed.set(day, (placed.get(day) ?? 0) + 1);
+    cursor = new Date(cursor.getTime() + intervalMs);
+  }
+  return out;
+}
+
+/**
+ * Helper de conveniência pros runners: resolve o cap efetivo do job e devolve
+ * os scheduled_at[] já distribuídos, semeando o uso de HOJE (dia-ET do baseStart)
+ * via countRecipientsLast24h. Mantém a lógica de cap idêntica entre o
+ * campaign-populator e o recurring-runner (fonte única).
+ *
+ * Se `dailyCap` for null → linear (sem query de seed desnecessária).
+ */
+export async function buildCappedScheduledAts(opts: {
+  locationId: string;
+  count: number;
+  dailyCap: number | null;
+  intervalSeconds: number;
+  jitterSeconds: number;
+  baseStart: Date;
+}): Promise<Date[]> {
+  if (opts.dailyCap == null || opts.dailyCap <= 0) {
+    return distributeScheduledAtsByDailyCap({
+      count: opts.count,
+      dailyCap: null,
+      intervalSeconds: opts.intervalSeconds,
+      jitterSeconds: opts.jitterSeconds,
+      baseStart: opts.baseStart,
+    });
+  }
+  // Semeia o dia de HOJE (dia-ET do baseStart) com o que já está agendado pra
+  // location — assim respeitamos "quantos já saíram nas últimas 24h" (o gap que
+  // o task aponta). Dias futuros nascem zerados (cross-job em dias futuros é a
+  // mesma simplificação warn-only do cooldown — documentado em F60).
+  const usedByEtDay = new Map<string, number>();
+  const todayEt = toEtDayString(opts.baseStart);
+  const usedToday = await countRecipientsLast24h(opts.locationId, opts.baseStart);
+  if (usedToday > 0) usedByEtDay.set(todayEt, usedToday);
+  return distributeScheduledAtsByDailyCap({
+    count: opts.count,
+    dailyCap: opts.dailyCap,
+    intervalSeconds: opts.intervalSeconds,
+    jitterSeconds: opts.jitterSeconds,
+    baseStart: opts.baseStart,
+    usedByEtDay,
+  });
+}
+
 /**
  * Track 7 C4 fix (review 2026-05-05): se start_at cair dentro de quiet_hours
  * configurado pro agent, desloca pro próximo `quiet_end`. Antes, recipients

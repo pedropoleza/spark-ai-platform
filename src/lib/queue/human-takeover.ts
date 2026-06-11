@@ -12,7 +12,14 @@
  * Como o GHLMessage não traz userId/source, distinguir "msg da IA" de "msg de
  * humano" é feito por ANTI-ECO: a mensagem bate com algo que a IA registrou ter
  * enviado (execution_log send_message)? Se não bate → humano.
+ *
+ * `classifyLastOutbound` é a ladder COMPLETA do F52 (anti-eco + source de
+ * automação + userId + "IA nunca falou" + mídia). FONTE ÚNICA: chamada tanto pelo
+ * runtime (queue-processor, que pausa a IA de verdade) quanto pelo pill "quem
+ * dirige a conversa" (contact-controls, read-only) — assim o pill conclui sempre
+ * o MESMO que o runtime, sem cópias divergindo.
  */
+import { AUTOMATION_SOURCES } from "@/lib/ghl/message-sources";
 
 /** Normaliza pra comparação tolerante (colapsa espaços, lower-case). */
 function normalize(s: string): string {
@@ -65,4 +72,70 @@ export function extractAiSentTexts(
     }
   }
   return out;
+}
+
+/**
+ * Campos do último OUTBOUND que a ladder consome. O GHLMessage NÃO tipa
+ * `userId`/`source` (chegam via cast nos call sites), por isso são opcionais aqui
+ * — quando ausentes, a ladder cai nos discriminadores que não dependem deles.
+ */
+export interface LastOutboundForClassify {
+  body?: string | null;
+  userId?: string | null;
+  source?: string | null;
+}
+
+// AUTOMATION_SOURCES (fontes de automação do GHL — welcome/campanha/bulk; NÃO é
+// handoff humano mesmo carimbado com userId) vem da fonte ÚNICA em
+// @/lib/ghl/message-sources, compartilhada com o gate do should-respond e o
+// rótulo do histórico no prompt. Fix bug observado em prod 2026-06-10 (Alves
+// Cury): o welcome da automação tinha userId → era lido como humano e pausava a
+// IA em todo lead novo. Ver discriminador 1 da ladder abaixo.
+
+/**
+ * Ladder de discriminação F52 — "humano assumiu a conversa?" a partir do ÚLTIMO
+ * outbound da conversa + os textos que a IA registrou ter enviado (anti-eco).
+ *
+ * Discriminadores, em ordem de confiança (igual ao runtime que pausa a IA):
+ *   1. source = automação → NÃO é humano, mesmo com userId (welcome/campanha).
+ *      Alves Cury 2026-06-10. Checado ANTES do userId (mais confiável).
+ *   2. eco da própria IA (anti-eco) → NÃO é humano. ANTES do userId porque o GHL
+ *      carimba o envio via API da IA com o userId do ADMIN da conta (o instalador
+ *      do app) — sem isto a IA via a própria msg como "humano (user GHL)" e
+ *      emudecia após 1 resposta. Alves Cury / F56 2026-06-10.
+ *   3. userId presente (e não foi eco/automação) = um USER do GHL mandou manual →
+ *      humano. Anúncio/automação/API/IA não têm userId limpo.
+ *   4. IA NUNCA falou nesta conversa (aiTexts vazio) → não há de quem o humano
+ *      assumir; o outbound é o anúncio/automação → NÃO pausa. Marcela Lana
+ *      2026-06-05 (lead de anúncio "AD MESSAGE" caía como humano e pausava).
+ *   5. outbound sem texto (áudio/mídia) DEPOIS da IA já ativa → humano (a IA só
+ *      manda texto).
+ *   6. caso geral (a IA já falou, tem texto, não bate eco) → humano.
+ */
+export function classifyLastOutbound(args: {
+  lastOutbound: LastOutboundForClassify;
+  aiTexts: string[];
+}): { isHuman: boolean } {
+  const { lastOutbound, aiTexts } = args;
+  const body = (lastOutbound.body || "").trim();
+  const sentByGhlUser = !!lastOutbound.userId;
+  const outboundSource = String(lastOutbound.source || "").toLowerCase();
+  const isAutomationOutbound = AUTOMATION_SOURCES.has(outboundSource);
+  const aiEcho = !!body && isAiEcho(body, aiTexts);
+
+  let isHuman: boolean;
+  if (isAutomationOutbound) {
+    isHuman = false; // automação/workflow do GHL não é humano (mesmo com userId)
+  } else if (aiEcho) {
+    isHuman = false; // é a própria msg da IA (userId do admin não é confiável)
+  } else if (sentByGhlUser) {
+    isHuman = true; // humano (user GHL) mandou manualmente → pausa
+  } else if (aiTexts.length === 0) {
+    isHuman = false; // IA nunca falou → outbound é anúncio/automação, não pausa
+  } else if (!body) {
+    isHuman = true; // mídia/áudio DEPOIS da IA já ativa = humano
+  } else {
+    isHuman = !isAiEcho(body, aiTexts); // tem texto, não bate eco → humano
+  }
+  return { isHuman };
 }

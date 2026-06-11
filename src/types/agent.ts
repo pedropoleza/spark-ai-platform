@@ -195,6 +195,7 @@ export interface LeadContext {
     body: string;
     dateAdded: string;
     source?: string; // "api" | "workflow" | "app" | null
+    userId?: string; // GHL user que enviou (humano manual no inbox); ausente/admin em api/automação/IA-eco
     messageType?: string;
   }>;
   notes: Array<{ body: string; dateAdded: string; userId?: string }>;

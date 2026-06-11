@@ -15,6 +15,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
+import { findContactOpportunityId, updateOpportunity } from "@/lib/ghl/operations";
 import type { AutomationRule, AutomationAction } from "@/types/agent";
 
 const BUCKET = "agent-media";
@@ -154,11 +155,24 @@ async function executeOne(
     }
     case "move_pipeline": {
       if (!action.pipeline_id || !action.stage_id) return;
-      await client.put(`/opportunities/`, {
+      // Fix bug observado em prod 2026-06-10: move_pipeline fazia
+      // PUT /opportunities/ sem oppId → 4xx → etapa NUNCA mudava. A GHL
+      // exige o oppId no path; resolvemos a opp do contato antes do PUT.
+      const oppId = await findContactOpportunityId(
+        client,
+        ctx.locationId,
+        ctx.contactId,
+        action.pipeline_id,
+      );
+      if (!oppId) {
+        console.warn(
+          `[ReactionEngine] move_pipeline: contato ${ctx.contactId} sem opportunity no Spark Leads — skip`,
+        );
+        return;
+      }
+      await updateOpportunity(client, oppId, {
         pipelineId: action.pipeline_id,
         pipelineStageId: action.stage_id,
-        contactId: ctx.contactId,
-        locationId: ctx.locationId,
       });
       break;
     }

@@ -174,7 +174,7 @@ Tests: `scripts/test-lead-awareness.ts` (12 cenários cobrindo decisões should-
 
 ### SparkBot Cron Guards (Pedro 2026-05-05)
 - pg_cron `sparkbot-proactive` agendado a cada 30s com:
-  - `pg_try_advisory_xact_lock(8675309)` — anti double-execution sob backlog
+  - `pg_try_advisory_xact_lock(8675309)` — **NÃO serializa as execuções do endpoint** (corrigido 2026-06-10; ver NB-7 em `docs/DECISIONS.md`). O lock é xact-scoped e `net.http_post` (pg_net) é ASSÍNCRONO: o tick só ENFILEIRA o POST e a transação commita (soltando o lock) em ms, antes do Vercel receber o request. Só evita que duas transações de DISPARO do MESMO instante co-enfileirem em paralelo — cenário ~impossível no schedule de 30s. A idempotência real (anti double-execution sob ticks sobrepostos, já que `maxDuration=60` > 30s) vem dos **claims atômicos CAS por linha nos runners**: `fireScheduledReminders` (`UPDATE … SET status='running' WHERE status='pending'`, `reminder-runner.ts`) e `claimBulkRecipients` (RPC `claim_bulk_recipients` com `FOR UPDATE SKIP LOCKED`, ou fallback `UPDATE … SET status='sending' WHERE status='pending'`, `bulk-message-runner.ts`). **NÃO remover esses claims achando que o lock cobre** — o lock fica só como guard barato.
   - `WHERE EXISTS` triplo (assistant_scheduled_tasks + assistant_proactive_rules enabled + bulk_message_recipients pending) — evita auto-DDoS de calls vazias
 - **Apenas `post_meeting` reactive rule é IMPLEMENTADO** — outros 3 (Lead esfriando, Tarefa atrasada, Task vencendo) eram stub mas estavam `enabled=true` em prod. Disabled em 2026-05-05 até implementação real (admin sees no UI). Activación: implementar polling em `processReactivePolling` + reativar enabled.
 

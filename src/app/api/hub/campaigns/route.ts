@@ -25,6 +25,7 @@ import { z } from "zod";
 import { getSession } from "@/lib/auth/sso";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { identifyRepByGhlUser } from "@/lib/account-assistant/identity";
+import { getDailyCap } from "@/lib/account-assistant/tools/bulk-messages";
 import { errorResponse, unauthorized } from "@/lib/utils/api";
 
 export const maxDuration = 15;
@@ -134,6 +135,12 @@ export async function POST(request: NextRequest) {
   const isSequence = !!(body.sequence_steps && body.sequence_steps.length > 1);
   const isAb = !!(body.ab_variants && body.ab_variants.length >= 2);
 
+  // F60 (Pedro 2026-06-10): snapshot do teto diário (daily_bulk_message_cap do
+  // agente, default 300). O populator (paused→running) espalha os recipients
+  // respeitando ≤ daily_cap por dia-ET. Antes, este path enfileirava TODOS os
+  // contatos da tag sem nenhum teto diário (gap de paridade). NULL = sem teto.
+  const dailyCap = await getDailyCap(body.agent_id);
+
   const { data: job, error } = await supabase
     .from("bulk_message_jobs")
     .insert({
@@ -147,6 +154,7 @@ export async function POST(request: NextRequest) {
       jitter_seconds: body.jitter_seconds ?? 30,
       delivery_channel: body.delivery_channel ?? "whatsapp_web_sms",
       respect_quiet_hours: true,
+      daily_cap: dailyCap,
       // Pausada por segurança — admin ativa via SparkBot chat por enquanto.
       // Commit 4.1.C trará botões direto no /hub/campaigns/[id].
       status: "paused",

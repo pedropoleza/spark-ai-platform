@@ -41,14 +41,74 @@ export async function GET(req: Request) {
       `[cron:refresh-ghl-token] ${result.refreshed}/${result.total} refreshed, ` +
         `${result.failed} failed in ${durationMs}ms`,
     );
-    return NextResponse.json({
-      ok: true,
-      total: result.total,
-      refreshed: result.refreshed,
-      failed: result.failed,
-      failures: result.failures,
-      duration_ms: durationMs,
-    });
+
+    // Fix silent-failure 2026-06-10: refreshAllCompanyTokens() agrega os erros
+    // por company e RETORNA NORMAL — então até "0/N renovados" caía aqui no
+    // caminho de sucesso (200, ok:true) e o reportError do catch NUNCA rodava.
+    // Resultado: falha TOTAL ficava muda até os tokens expirarem (~24h) e todo o
+    // data plane (SparkBot + agentes lead-facing) começar a dar 401 em
+    // /oauth/locationToken, sem nenhum alerta ligando o apagão ao refresh que
+    // falhou. Agora alertamos no resultado AGREGADO (não só em crash). A
+    // agregação em token-refresher.ts segue intacta — 1 company ruim não bloqueia
+    // as outras; só passamos a reagir ao placar final.
+    const totalFailure = result.total > 0 && result.refreshed === 0;
+    const partialFailure = result.refreshed > 0 && result.failed > 0;
+
+    if (totalFailure) {
+      reportError({
+        // Title ESTÁVEL (sem o N variável) pra clusterizar no /hub/admin/health.
+        title: "Cron refresh-ghl-token: 0 tokens renovados — tokens GHL vão expirar",
+        feature: "cron-refresh-ghl-token",
+        severity: "critical",
+        description:
+          `0/${result.total} company tokens renovados (${result.failed} falharam). ` +
+          `Tokens GHL expiram em ~24h → SparkBot + agentes lead-facing vão começar a ` +
+          `falhar /oauth/locationToken com 401. Checar GHL_CLIENT_ID/GHL_CLIENT_SECRET ` +
+          `e o endpoint OAuth do GHL.`,
+        // Error sintético só pra dar exception (+stack) ao Sentry/paging — o
+        // detalhe por company vai no metadata.failures.
+        error: new Error(
+          `refresh-ghl-token: 0/${result.total} renovados. Ex: ${result.failures[0]?.error ?? "?"}`,
+        ),
+        metadata: {
+          total: result.total,
+          refreshed: result.refreshed,
+          failed: result.failed,
+          failures: result.failures.slice(0, 20), // trunca pra não estourar o signal
+        },
+      });
+    } else if (partialFailure) {
+      reportError({
+        title: "Cron refresh-ghl-token: refresh parcial — alguns tokens GHL falharam",
+        feature: "cron-refresh-ghl-token",
+        // SignalSeverity não tem "warning" — parcial entra como "high" (abaixo de
+        // "critical", mas é outage garantido em ~24h pros companies que falharam).
+        severity: "high",
+        description:
+          `${result.refreshed}/${result.total} renovados, ${result.failed} falharam. ` +
+          `Os companies que falharam vão expirar em ~24h se não recuperarem no próximo run.`,
+        metadata: {
+          total: result.total,
+          refreshed: result.refreshed,
+          failed: result.failed,
+          failures: result.failures.slice(0, 20),
+        },
+      });
+    }
+
+    return NextResponse.json(
+      {
+        ok: !totalFailure,
+        total: result.total,
+        refreshed: result.refreshed,
+        failed: result.failed,
+        failures: result.failures,
+        duration_ms: durationMs,
+      },
+      // 500 em falha total → Vercel cron loga o run como failed também (não fica
+      // só no signal). Parcial segue 200 (algo passou); o warning cobre o resto.
+      { status: totalFailure ? 500 : 200 },
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[cron:refresh-ghl-token] FATAL:", msg);

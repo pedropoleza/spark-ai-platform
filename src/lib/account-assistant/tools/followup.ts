@@ -16,6 +16,7 @@
  */
 
 import type { ToolEntry } from "./types";
+import { validateIso8601 } from "./types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import {
@@ -293,6 +294,26 @@ const editFollowupTool: ToolEntry = {
     const ok = await verifyOwnership(id, ctx.rep.id, ctx.locationId);
     if (!ok) return { status: "not_found", message: "Sequence não encontrada ou não pertence a você." };
     const edits = Array.isArray(args.edits) ? (args.edits as Array<{ position: number; new_text?: string; new_scheduled_at?: string }>) : [];
+
+    // Paridade c/ schedule_message_to_contact (messages.ts): valida ISO + rejeita
+    // passado + normaliza ANTES de gravar. editSequence escrevia new_scheduled_at
+    // cru → data inválida ou no passado virava no-op silencioso no followup-runner.
+    // Sem upper-bound: igual ao tool irmão.
+    for (const edit of edits) {
+      if (typeof edit.new_scheduled_at !== "string" || edit.new_scheduled_at === "") continue;
+      const dateInvalid = validateIso8601(edit.new_scheduled_at, `horário da msg ${edit.position}`);
+      if (dateInvalid) return dateInvalid;
+      const iso = new Date(edit.new_scheduled_at).toISOString();
+      if (new Date(iso).getTime() < Date.now() - 60 * 1000) {
+        return {
+          status: "error",
+          message: `O horário da msg ${edit.position} está no passado. Use uma data/hora futura.`,
+          retryable: false,
+        };
+      }
+      edit.new_scheduled_at = iso; // normaliza pro ISO canônico (igual isoSend no irmão)
+    }
+
     const r = await editSequence(id, { messages: edits });
     return { status: "ok", data: { sequence_id: id, updated_messages: r.updated_messages } };
   },

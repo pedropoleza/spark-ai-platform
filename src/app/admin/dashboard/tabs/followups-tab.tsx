@@ -51,6 +51,8 @@ const STATUS_COLOR: Record<string, string> = {
   completed: "bg-purple-100 text-purple-700",
   cancelled: "bg-gray-100 text-gray-500",
   skipped_reply: "bg-cyan-100 text-cyan-700",
+  skipped_dnd: "bg-orange-100 text-orange-700",
+  skipped_optout: "bg-rose-100 text-rose-700",
   failed: "bg-red-100 text-red-700",
 };
 

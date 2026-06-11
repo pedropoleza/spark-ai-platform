@@ -91,6 +91,76 @@ async function refreshOneToken(refreshToken: string): Promise<GHLTokenResponse> 
 }
 
 /**
+ * UPSERT do par de tokens (access + refresh rotacionado) na "Token Refresher".
+ * Fonte ÚNICA do mapeamento GHLTokenResponse→colunas — usada pelo cron
+ * (refreshAllCompanyTokens), pelo self-heal inline (refreshCompanyToken) e pelo
+ * exchange inicial (exchangeAuthCode), pra esses três não driftarem.
+ */
+async function upsertCompanyTokens(
+  supabase: ReturnType<typeof createGHLTokenClient>,
+  companyId: string,
+  tokens: GHLTokenResponse,
+): Promise<void> {
+  const { error } = await supabase.from("Token Refresher").upsert(
+    {
+      companyId, // PK
+      access_token: tokens.access_token,
+      token_type: tokens.token_type,
+      expires_in: tokens.expires_in,
+      refresh_token: tokens.refresh_token, // rotation — GHL devolve novo
+      scope: tokens.scope,
+      userType: tokens.userType ?? "Company",
+      userId: tokens.userId ?? null,
+      refreshTokenId: tokens.refreshTokenId ?? null,
+      isBulkInstallation: tokens.isBulkInstallation
+        ? String(tokens.isBulkInstallation)
+        : null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "companyId" },
+  );
+
+  if (error) throw new Error(`UPSERT failed: ${error.message}`);
+}
+
+/**
+ * Refresh INLINE (on-demand) de UM company token + UPSERT — self-heal do
+ * SPOF de auth (H38, Pedro 2026-06-10).
+ *
+ * Usado pelo `auth.ts` quando um locationToken volta 401 porque o company token
+ * expirou FORA do cron diário (ex: o cron `/api/cron/refresh-ghl-token` falhou).
+ * Antes, a única recuperação era o próximo cron + re-run manual; agora a 1ª call
+ * que tropeça no 401 renova o par e re-tenta na hora.
+ *
+ * Lê o refresh_token salvo, faz POST grant_type=refresh_token e grava o par novo.
+ * Lança erro limpo se não houver refresh_token ou se o refresh falhar (caller
+ * trata — ex: refresh_token revogado = auth realmente quebrado).
+ */
+export async function refreshCompanyToken(
+  companyId: string,
+): Promise<GHLTokenResponse> {
+  const supabase = createGHLTokenClient();
+
+  const { data, error } = await supabase
+    .from("Token Refresher")
+    .select('"companyId", refresh_token')
+    .eq("companyId", companyId)
+    .single();
+
+  const refreshToken = (data as { refresh_token?: string } | null)?.refresh_token;
+  if (error || !refreshToken) {
+    throw new Error(
+      `Token Refresher sem refresh_token pra companyId=${companyId}` +
+        (error ? `: ${error.message}` : ""),
+    );
+  }
+
+  const tokens = await refreshOneToken(refreshToken);
+  await upsertCompanyTokens(supabase, companyId, tokens);
+  return tokens;
+}
+
+/**
  * Refresh de TODOS os company tokens em "Token Refresher".
  * Chamado pelo cron Vercel diário.
  */
@@ -119,29 +189,7 @@ export async function refreshAllCompanyTokens(): Promise<RefreshResult> {
   for (const row of rows as Array<{ companyId: string; refresh_token: string }>) {
     try {
       const tokens = await refreshOneToken(row.refresh_token);
-
-      const { error: upErr } = await supabase
-        .from("Token Refresher")
-        .upsert(
-          {
-            companyId: row.companyId, // PK
-            access_token: tokens.access_token,
-            token_type: tokens.token_type,
-            expires_in: tokens.expires_in,
-            refresh_token: tokens.refresh_token, // rotation — GHL devolve novo
-            scope: tokens.scope,
-            userType: tokens.userType ?? "Company",
-            userId: tokens.userId ?? null,
-            refreshTokenId: tokens.refreshTokenId ?? null,
-            isBulkInstallation: tokens.isBulkInstallation
-              ? String(tokens.isBulkInstallation)
-              : null,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "companyId" },
-        );
-
-      if (upErr) throw new Error(`UPSERT failed: ${upErr.message}`);
+      await upsertCompanyTokens(supabase, row.companyId, tokens);
       result.refreshed++;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -203,28 +251,7 @@ export async function exchangeAuthCode(params: {
   }
 
   const supabase = createGHLTokenClient();
-  const { error } = await supabase
-    .from("Token Refresher")
-    .upsert(
-      {
-        companyId: tokens.companyId,
-        access_token: tokens.access_token,
-        token_type: tokens.token_type,
-        expires_in: tokens.expires_in,
-        refresh_token: tokens.refresh_token,
-        scope: tokens.scope,
-        userType: tokens.userType ?? "Company",
-        userId: tokens.userId ?? null,
-        refreshTokenId: tokens.refreshTokenId ?? null,
-        isBulkInstallation: tokens.isBulkInstallation
-          ? String(tokens.isBulkInstallation)
-          : null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "companyId" },
-    );
-
-  if (error) throw new Error(`UPSERT failed: ${error.message}`);
+  await upsertCompanyTokens(supabase, tokens.companyId, tokens);
 
   return tokens;
 }

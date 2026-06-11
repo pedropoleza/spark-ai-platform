@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
 import { formatAvailableSlots } from "@/lib/ai/slots-format";
-import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
 import { assembleSystemPrompt, isUnifiedMotorEnabled, templateKeyForAgentType } from "@/lib/agent-platform/assembler";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ImageInput, ConversationTurn } from "@/lib/ai/openai-client";
@@ -597,32 +597,13 @@ async function processGroup(
       .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime());
     const lastOutbound = [...histMsgs].reverse().find((m) => m.direction === "outbound");
     if (lastOutbound) {
-      const body = (lastOutbound.body || "").trim();
-      // Fix bug observado em prod 2026-06-05 (caso Marcela Lana): o último
-      // outbound pode ser ANÚNCIO/automação (ex: "AD MESSAGE" do Meta), NÃO um
-      // humano. O F52 lia isso como "humano assumiu" e pausava a IA ANTES dela
-      // responder o lead novo — toda lead de anúncio caía nisso. Discriminadores
-      // em ordem de confiança:
-      //   1. userId no outbound = um USER do GHL (humano) mandou manualmente.
-      //      Anúncio/automação/API/IA NÃO têm userId — é o sinal mais limpo.
-      //   2. Sem NENHUM envio da IA nesta conversa = lead novo; não há "handoff"
-      //      possível (não tem de quem o humano assumir). O outbound é o
-      //      anúncio/automação → NÃO pausa (a menos que tenha userId = humano).
-      //   3. Caso geral (a IA já falou aqui): mantém o anti-eco / mídia manual.
-      const sentByGhlUser = !!(lastOutbound as { userId?: string }).userId;
-      // Fonte do outbound: automação/workflow do GHL (welcome, re-engajamento,
-      // campanha) NÃO é handoff humano — MESMO quando vem com userId (workflows
-      // rodam "como" um user, então a msg carrega userId). Fix bug observado em
-      // prod 2026-06-10 (Alves Cury): o welcome da automação tinha userId →
-      // sentByGhlUser=true → F52 pausava a IA em TODO lead novo antes dela
-      // responder (mesma raiz da Pergunta 1 do Pedro sobre o welcome). Checa a
-      // fonte ANTES do userId — é o discriminador mais confiável.
-      const outboundSource = String((lastOutbound as { source?: string }).source || "").toLowerCase();
-      const AUTOMATION_SOURCES = new Set([
-        "workflow", "workflows", "campaign", "campaigns", "bulk_actions",
-        "bulk", "automation", "automations", "scheduled", "integration",
-      ]);
-      const isAutomationOutbound = AUTOMATION_SOURCES.has(outboundSource);
+      // Ladder de discriminação F52 (+ fixes Marcela Lana 2026-06-05 / Alves Cury
+      // F56 2026-06-10). FONTE ÚNICA em human-takeover.ts: o pill "quem dirige a
+      // conversa" (contact-controls) chama a MESMA classifyLastOutbound, então
+      // conclui igual a este runtime — sem cópias divergindo. Detalhe de cada
+      // discriminador no docstring da função. lastOutbound (GHLMessage) carrega
+      // userId/source em runtime mesmo sem o tipo declará-los; a função lê via
+      // campos opcionais.
       const { data: aiSends } = await supabase
         .from("execution_log")
         .select("action_payload")
@@ -632,27 +613,10 @@ async function processGroup(
         .eq("success", true)
         .order("created_at", { ascending: false })
         .limit(30);
-      const aiTexts = extractAiSentTexts(aiSends);
-      // Anti-eco ANTES do userId. Fix bug observado em prod 2026-06-10 (Alves
-      // Cury, F56): o GHL carimba o envio via api da IA com o userId do ADMIN da
-      // conta (o instalador do app) → sem isto, o F52 via a PRÓPRIA mensagem da
-      // IA como "humano (user GHL) respondeu" e pausava logo após responder — a
-      // IA falava 1× e emudecia. O eco da IA não é humano, mesmo com userId.
-      const aiEcho = !!body && isAiEcho(body, aiTexts);
-      let isHuman: boolean;
-      if (isAutomationOutbound) {
-        isHuman = false; // automação/workflow do GHL não é humano (mesmo com userId)
-      } else if (aiEcho) {
-        isHuman = false; // é a própria msg da IA (userId do admin não é confiável)
-      } else if (sentByGhlUser) {
-        isHuman = true; // humano (user GHL) mandou manualmente → pausa
-      } else if (aiTexts.length === 0) {
-        isHuman = false; // IA nunca falou → outbound é anúncio/automação, não pausa
-      } else if (!body) {
-        isHuman = true; // mídia/áudio DEPOIS da IA já ativa = humano
-      } else {
-        isHuman = !isAiEcho(body, aiTexts);
-      }
+      const { isHuman } = classifyLastOutbound({
+        lastOutbound,
+        aiTexts: extractAiSentTexts(aiSends),
+      });
 
       // GU-6 (Pedro 2026-06-04): override "passa a bola pra IA". Se o rep LIGOU
       // o agente manualmente (pill na UI) DEPOIS dessa resposta humana, a IA

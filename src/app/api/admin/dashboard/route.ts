@@ -357,7 +357,7 @@ async function getFollowupsTab() {
       .select(
         "id, contact_name, status, spam_risk, total_messages, sent_messages, cancelled_reason, completed_at, cancelled_at, created_at",
       )
-      .in("status", ["completed", "cancelled", "skipped_reply", "failed"])
+      .in("status", ["completed", "cancelled", "skipped_reply", "skipped_dnd", "skipped_optout", "failed"])
       .gte("created_at", d7d)
       .order("created_at", { ascending: false })
       .limit(20),

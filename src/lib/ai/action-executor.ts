@@ -6,6 +6,8 @@ import {
   removeTagsFromContact,
   updateContactField,
   isBookingConflictError,
+  findContactOpportunityId,
+  updateOpportunity,
 } from "@/lib/ghl/operations";
 import type { AIAction, AIResponse } from "@/types/ai";
 
@@ -282,11 +284,25 @@ async function executeAction(
 
     case "move_pipeline":
       if (action.pipeline_id && action.stage_id) {
-        await client.put(`/opportunities/`, {
+        // Fix bug observado em prod 2026-06-10: move_pipeline fazia
+        // PUT /opportunities/ sem oppId → 4xx → throw silencioso → etapa
+        // NUNCA mudava (lead recebia "movi você" sem ter movido). A GHL
+        // exige o oppId no path; resolvemos a opp do contato antes do PUT.
+        const oppId = await findContactOpportunityId(
+          client,
+          ctx.locationId,
+          ctx.contactId,
+          action.pipeline_id,
+        );
+        if (!oppId) {
+          console.warn(
+            `[ActionExecutor] move_pipeline: contato ${ctx.contactId} sem opportunity no Spark Leads — skip`,
+          );
+          break;
+        }
+        await updateOpportunity(client, oppId, {
           pipelineId: action.pipeline_id,
           pipelineStageId: action.stage_id,
-          contactId: ctx.contactId,
-          locationId: ctx.locationId,
         });
       }
       break;

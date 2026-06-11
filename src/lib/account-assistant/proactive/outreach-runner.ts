@@ -93,6 +93,11 @@ export async function runOutreachForAgent(agentId: string): Promise<RunOutreachR
   // 4. Cria o bulk_message_job em status='paused' (admin ativa via SparkBot
   // ou UI). Filter_config snapshot da config no momento — runner do bulk
   // depois popula recipients via filter-engine real.
+  // F60 (Pedro 2026-06-10): `dailyCap` deixou de ser dead code — agora é
+  // PERSISTIDO em bulk_message_jobs.daily_cap (snapshot do outreach_config.daily_cap,
+  // a promessa "até N/dia" da UI). O campaign-populator lê essa coluna e espalha
+  // os recipients respeitando o teto por dia-ET. Antes do F60 o valor era
+  // calculado e descartado — a UI prometia o cap e nada o aplicava.
   const dailyCap = Math.max(1, Math.min(5000, Number(oc.daily_cap) || 100));
   const ratePerHour = Math.max(1, Math.min(500, Number(oc.rate_per_hour) || 20));
   const intervalSeconds = Math.max(30, Math.min(600, Math.round(3600 / ratePerHour)));
@@ -117,6 +122,9 @@ export async function runOutreachForAgent(agentId: string): Promise<RunOutreachR
       // (seg-sex 9-18) era ignorado.
       respect_quiet_hours: !!oc.respect_working_hours,
       status: "paused",
+      // F60: snapshot do teto diário (outreach_config.daily_cap). O populator
+      // (acionado no paused→running) espalha recipients ≤ daily_cap por dia-ET.
+      daily_cap: dailyCap,
       label: `Outreach automático (${new Date().toISOString().slice(0, 10)})`,
       total_contacts: 0,
       priority: 0,
@@ -213,7 +221,10 @@ export async function processOutreachTick(): Promise<{ scanned: number; created:
             severity: "medium",
             title: `Location ${locId.slice(0, 8)} tem ${count} agentes outreach ativos`,
             description:
-              `Cada agente tem cap próprio (default 100/dia). Total potencial: ${count * 100} msgs/dia. ` +
+              // F60: o cap por-agente JÁ é enforçado (daily_cap por dia-ET). O gap
+              // que sobra é GLOBAL: N agentes × cap próprio somam sem teto de location.
+              `Cada agente respeita o próprio cap (default 100/dia), mas não há teto GLOBAL de location. ` +
+              `Total potencial somado: ${count * 100} msgs/dia. ` +
               `Considere consolidar ou setar caps menores em agent_configs.outreach_config.daily_cap.`,
             metadata: { location_id: locId, agents_count: count, gap: "global_rate_governance" },
           });

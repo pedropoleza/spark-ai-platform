@@ -35,6 +35,8 @@ export type SequenceStatus =
   | "completed"
   | "cancelled"
   | "skipped_reply"
+  | "skipped_dnd"
+  | "skipped_optout"
   | "failed";
 
 export type MessageStatus =

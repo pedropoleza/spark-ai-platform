@@ -18,6 +18,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { GHLClient } from "@/lib/ghl/client";
+import { filterOutOptOutContacts } from "./optout-detector";
 
 const MAX_PER_TICK = 30;
 const STARTUP_GRACE_SECONDS = 5;
@@ -159,6 +160,68 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
           result.skipped++;
           continue;
         }
+      }
+
+      // F60 (review 2026-06-10): honra a tabela outreach_optouts no envio
+      // (paridade com bulk-message-runner, que já filtra por ela). O
+      // followup-runner ignorava → opt-out chegado out-of-band (unsubscribe de
+      // email, keyword detectada em outro canal, opt-out manual pelo admin) não
+      // parava a sequence = mesmo compliance gap do DND. Lookup local barato →
+      // roda ANTES do fetch de DND no GHL pra cortar o round-trip de quem já
+      // pediu pra sair.
+      const optedOut = await filterOutOptOutContacts(seqInfo.location_id, [
+        seqInfo.contact_id,
+      ]);
+      if (optedOut.has(seqInfo.contact_id)) {
+        // Opt-out ativo → para a sequence inteira + marca essa msg skipped.
+        await markSequenceSkippedOptOut(cand.sequence_id);
+        await supabase
+          .from("followup_messages")
+          .update({ status: "skipped", error_message: "contact_optout" })
+          .eq("id", cand.id);
+        result.skipped++;
+        continue;
+      }
+
+      // Fix: followup-runner não re-checava DND no envio (paridade com
+      // follow-up-scheduler) 2026-06-10. Sequence dura horas/dias — o contato
+      // pode virar DND no Spark Leads DEPOIS do start. stop_on_reply só pega
+      // resposta detectável; DND setado manualmente (ou via canal que não gera
+      // inbound) escapava e a IA seguia mandando = compliance gap. Re-checa
+      // AGORA, antes de cada envio. Fail-SAFE (NÃO fail-open): se não dá pra
+      // confirmar, NÃO envia — mandar pra contato DND é o dano que evitamos.
+      const dnd = await checkContactDnd(seqInfo.contact_id, seqInfo.location_id);
+      if (dnd.kind === "dnd") {
+        // DND ativo → para a sequence inteira + marca essa msg skipped.
+        await markSequenceSkippedDnd(cand.sequence_id);
+        await supabase
+          .from("followup_messages")
+          .update({ status: "skipped", error_message: "contact_dnd" })
+          .eq("id", cand.id);
+        result.skipped++;
+        continue;
+      }
+      if (dnd.kind === "error") {
+        // Não deu pra verificar DND (GHL hiccup / location não sincronizada).
+        // Skip defensivo: não envia. Severidade baixa (fail-safe esperado em
+        // hiccup de GHL, espelha follow-up-scheduler).
+        await supabase
+          .from("followup_messages")
+          .update({ status: "failed", error_message: "dnd_check_failed" })
+          .eq("id", cand.id);
+        reportError({
+          title: "Followup runner: verificação de DND falhou",
+          feature: "proactive-followup",
+          severity: "low",
+          error: dnd.error,
+          metadata: {
+            messageId: cand.id,
+            contactId: seqInfo.contact_id,
+            locationId: seqInfo.location_id,
+          },
+        });
+        result.failed++;
+        continue;
       }
 
       // Transition scheduled→running na primeira msg que envia
@@ -380,6 +443,116 @@ async function markSequenceSkippedReply(sequenceId: string): Promise<void> {
       err instanceof Error ? err.message.slice(0, 200) : err,
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// DND respect no envio (paridade com follow-up-scheduler) — 2026-06-10
+// ─────────────────────────────────────────────────────────────
+
+type DndCheckResult =
+  | { kind: "ok" }
+  | { kind: "dnd" }
+  | { kind: "error"; error: unknown };
+
+/**
+ * Re-checa o flag DND do contato no Spark Leads ANTES de cada envio.
+ *
+ * Fail-SAFE por design: 'error' (location não sincronizada OU GHL throw) faz o
+ * caller PULAR o envio — nunca fail-open, porque mandar pra um contato DND é
+ * justamente o dano que essa checagem existe pra evitar (diferente do
+ * targeting, que é fail-open de propósito).
+ */
+async function checkContactDnd(
+  contactId: string,
+  locationId: string,
+): Promise<DndCheckResult> {
+  const supabase = createAdminClient();
+  const { data: loc } = await supabase
+    .from("locations")
+    .select("company_id")
+    .eq("location_id", locationId)
+    .maybeSingle();
+  if (!loc?.company_id) {
+    // Sem company_id não dá pra falar com o GHL → não dá pra confirmar DND.
+    return { kind: "error", error: new Error("location não sincronizada (DND não verificável)") };
+  }
+
+  try {
+    const client = new GHLClient(loc.company_id, locationId);
+    const res = await client.get<{
+      contact: { dnd?: boolean; dndSettings?: { all?: { status?: string } } };
+    }>(`/contacts/${contactId}`);
+    const isDND =
+      res.contact?.dnd || res.contact?.dndSettings?.all?.status === "active";
+    return isDND ? { kind: "dnd" } : { kind: "ok" };
+  } catch (err) {
+    return { kind: "error", error: err };
+  }
+}
+
+/**
+ * Para a sequence por DND do contato. Espelha markSequenceSkippedReply, mas com
+ * status='skipped_dnd' + cancelled_reason='contact_dnd' pra trilha de compliance
+ * distinta (uma query por status acha todas as sequences paradas por DND).
+ */
+async function markSequenceSkippedDnd(sequenceId: string): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase
+    .from("followup_sequences")
+    .update({
+      status: "skipped_dnd",
+      cancelled_at: new Date().toISOString(),
+      cancelled_reason: "contact_dnd",
+    })
+    .eq("id", sequenceId)
+    .in("status", ["scheduled", "running"]);
+
+  // Cancela as msgs ainda pending (a atual está 'sending' → marcada à parte).
+  await supabase
+    .from("followup_messages")
+    .update({ status: "skipped", error_message: "contact_dnd" })
+    .eq("sequence_id", sequenceId)
+    .eq("status", "pending");
+
+  // Audit event pra compliance (quando/por que a sequence parou).
+  await supabase.from("followup_events").insert({
+    sequence_id: sequenceId,
+    event_type: "contact_dnd",
+    event_data: {},
+  });
+}
+
+/**
+ * F60 (review 2026-06-10): para a sequence por opt-out do contato. Espelha
+ * markSequenceSkippedDnd, mas com status='skipped_optout' +
+ * cancelled_reason='contact_optout' pra trilha de compliance distinta (opt-out
+ * é decisão explícita do contato — auditável separado de DND no Spark Leads).
+ */
+async function markSequenceSkippedOptOut(sequenceId: string): Promise<void> {
+  const supabase = createAdminClient();
+  await supabase
+    .from("followup_sequences")
+    .update({
+      status: "skipped_optout",
+      cancelled_at: new Date().toISOString(),
+      cancelled_reason: "contact_optout",
+    })
+    .eq("id", sequenceId)
+    .in("status", ["scheduled", "running"]);
+
+  // Cancela as msgs ainda pending (a atual está 'sending' → marcada à parte).
+  await supabase
+    .from("followup_messages")
+    .update({ status: "skipped", error_message: "contact_optout" })
+    .eq("sequence_id", sequenceId)
+    .eq("status", "pending");
+
+  // Audit event pra compliance (quando/por que a sequence parou).
+  await supabase.from("followup_events").insert({
+    sequence_id: sequenceId,
+    event_type: "contact_optout",
+    event_data: {},
+  });
 }
 
 /**

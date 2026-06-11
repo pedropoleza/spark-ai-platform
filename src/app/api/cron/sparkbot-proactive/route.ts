@@ -228,6 +228,15 @@ async function runProactiveCron(request: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // Idempotência sob ticks sobrepostos (maxDuration=60 > schedule de 30s) NÃO
+  // vem do pg_try_advisory_xact_lock(8675309) do pg_cron: esse é xact-scoped e o
+  // net.http_post é assíncrono, então o lock já foi solto quando este handler
+  // roda (ver NB-7 em docs/DECISIONS.md + claimReactivePollSlot acima). Quem
+  // serializa é o claim atômico CAS por linha DENTRO de cada runner abaixo
+  // (fireScheduledReminders: pending→running; fireBulkRecipients: pending→sending
+  // via claim_bulk_recipients FOR UPDATE SKIP LOCKED). Por isso 2+ ticks
+  // concorrentes não dão double-send.
+
   // Processa lembretes agendados (assistant_scheduled_tasks com next_run_at <= now)
   const reminderResult = await fireScheduledReminders();
   // F49: lembretes que falharam na entrega viram signal (antes só contados no JSON).

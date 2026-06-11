@@ -6,7 +6,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GHLClient } from "@/lib/ghl/client";
-import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
 import { checkContactMatchesTargeting } from "@/lib/queue/targeting";
 import type { TargetingRule } from "@/types/agent";
 
@@ -186,7 +186,14 @@ export async function computeContactDrivingState(args: {
   return { driving: true, reason: "active" };
 }
 
-/** Última msg OUTBOUND do GHL é de humano (não da IA)? + quando. Mesma lógica do F52. */
+/**
+ * Última msg OUTBOUND do GHL é de humano (não da IA)? + quando.
+ * Delega pra `classifyLastOutbound` (mesma ladder F52 do runtime que pausa a IA),
+ * pra o pill concluir EXATAMENTE o que o queue-processor concluiria — sem cópia
+ * divergente. Busca `userId`/`source` do outbound (não só body/direction/data):
+ * são discriminadores da ladder (welcome/campanha do GHL e envio manual de user
+ * só são distinguíveis com eles). Anti-eco/mídia já vêm dentro da função.
+ */
 async function lastOutboundIsHuman(args: {
   supabase: SupabaseClient;
   ghlClient: GHLClient;
@@ -204,7 +211,7 @@ async function lastOutboundIsHuman(args: {
   }
   if (!convId) return null;
   const resp = await ghlClient
-    .get<{ messages?: { messages?: Array<{ direction: string; body?: string; dateAdded: string }> } }>(
+    .get<{ messages?: { messages?: Array<{ direction: string; body?: string; dateAdded: string; userId?: string; source?: string }> } }>(
       `/conversations/${convId}/messages`,
       { locationId },
     )
@@ -215,8 +222,8 @@ async function lastOutboundIsHuman(args: {
     .reverse()
     .find((m) => m.direction === "outbound");
   if (!lastOutbound) return null;
-  const body = (lastOutbound.body || "").trim();
-  if (!body) return { isHuman: true, at: lastOutbound.dateAdded }; // áudio/mídia = humano
+  // Anti-eco precisa dos textos que a IA enviou — busca SEMPRE (mesmo sem body,
+  // mídia/áudio), igual ao runtime: a ladder decide via aiTexts, não o !body cru.
   const { data: aiSends } = await supabase
     .from("execution_log")
     .select("action_payload")
@@ -226,6 +233,9 @@ async function lastOutboundIsHuman(args: {
     .eq("success", true)
     .order("created_at", { ascending: false })
     .limit(30);
-  const isHuman = !isAiEcho(body, extractAiSentTexts(aiSends || []));
+  const { isHuman } = classifyLastOutbound({
+    lastOutbound,
+    aiTexts: extractAiSentTexts(aiSends || []),
+  });
   return { isHuman, at: lastOutbound.dateAdded };
 }

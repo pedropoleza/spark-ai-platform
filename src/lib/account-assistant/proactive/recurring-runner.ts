@@ -28,6 +28,9 @@ import type {
 } from "@/lib/account-assistant/filter-engine";
 import { computeNextRunAt } from "./cron-evaluator";
 import { evalQuietHours, type QuietHoursConfig } from "./quiet-hours";
+// F60 (Pedro 2026-06-10): mesmo enforcement de cap diário do campaign-populator,
+// inline aqui (recorrente popula recipients ele mesmo, não passa pelo populator).
+import { getDailyCap, buildCappedScheduledAts } from "@/lib/account-assistant/tools/bulk-messages";
 
 const INSERT_BATCH = 500;
 const MAX_PER_TICK = 5; // ≤5 campaigns por tick pra não estourar maxDuration
@@ -278,6 +281,8 @@ async function fireRecurringCampaign(row: RecurringRow): Promise<FireOutcome> {
   // 3. Cria bulk_message_job filho em status='running' (já dispara — diferente
   // do flow do /hub/campaigns que nasce paused). Recorrente é admin-aprovado
   // upfront (ele criou a regra), não precisa segundo OK.
+  // F60 (Pedro 2026-06-10): snapshot do teto diário (daily_bulk_message_cap).
+  const dailyCap = await getDailyCap(row.agent_id);
   const childLabel = `${row.label} — ${nowIso.slice(0, 10)}`;
   const { data: job, error: jobErr } = await supabase
     .from("bulk_message_jobs")
@@ -293,6 +298,7 @@ async function fireRecurringCampaign(row: RecurringRow): Promise<FireOutcome> {
       delivery_channel: row.delivery_channel,
       respect_quiet_hours: true,
       status: "running",
+      daily_cap: dailyCap,
       label: childLabel,
       total_contacts: contacts.length,
       has_sequence: false,
@@ -304,18 +310,28 @@ async function fireRecurringCampaign(row: RecurringRow): Promise<FireOutcome> {
     return "failed";
   }
 
-  // 4. Popula recipients. Espalha com interval 90s + jitter 30s.
+  // 4. Popula recipients. Espalha com interval 90s + jitter 30s, respeitando o
+  // teto por dia-ET (F60): ≤ daily_cap recipients/dia, overflow rola pro próximo
+  // dia. Sem cap (null) = linear histórico. Seed de "já agendado hoje" via
+  // countRecipientsLast24h dentro do helper.
   const interval = 90;
   const jitter = 30;
-  const baseStart = Date.now() + 5000;
+  const baseStart = new Date(Date.now() + 5000);
+  const scheduledAts = await buildCappedScheduledAts({
+    locationId: row.location_id,
+    count: contacts.length,
+    dailyCap,
+    intervalSeconds: interval,
+    jitterSeconds: jitter,
+    baseStart,
+  });
   const recipientRows = contacts.map((c, i) => {
-    const jitterMs = Math.floor(Math.random() * jitter * 1000);
     return {
       job_id: job.id,
       contact_id: c.id,
       contact_name: c.name,
       contact_phone: c.phone,
-      scheduled_at: new Date(baseStart + i * interval * 1000 + jitterMs).toISOString(),
+      scheduled_at: scheduledAts[i].toISOString(),
       status: "pending" as const,
       sequence_step: null,
     };

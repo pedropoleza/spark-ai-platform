@@ -7,7 +7,10 @@
  *  - loadLeadHistory: cache, fail-soft (sem fetch real)
  */
 import { evaluateShouldRespond } from "../src/lib/queue/should-respond";
-import { invalidateLeadHistoryCache } from "../src/lib/queue/lead-history";
+import { invalidateLeadHistoryCache, isHumanOutboundMessage } from "../src/lib/queue/lead-history";
+import { buildLeadHistorySection, type PromptContext } from "../src/lib/ai/sales-prompt-builder";
+import { isHumanOutboundSource, AUTOMATION_SOURCES, NON_HUMAN_SOURCES } from "../src/lib/ghl/message-sources";
+import { classifyLastOutbound } from "../src/lib/queue/human-takeover";
 import { DEFAULT_HANDOFF_POLICY, type LeadContext, type HandoffPolicy } from "../src/types/agent";
 
 let passed = 0;
@@ -42,6 +45,20 @@ function emptyContext(): LeadContext {
     has_closed_opp: false,
     fetch_ms: 0,
   };
+}
+
+// Renderiza a seção de histórico. buildLeadHistorySection só lê ctx.leadHistory,
+// então passamos um PromptContext mínimo (cast — os outros campos não são tocados).
+function renderHistory(ctx: LeadContext): string {
+  return buildLeadHistorySection({ leadHistory: ctx } as unknown as PromptContext);
+}
+
+function ctxWithOutbound(source: string | undefined): LeadContext {
+  const c = emptyContext();
+  c.recent_messages = [
+    { direction: "outbound", body: "Olá! Seja bem-vindo 👋", dateAdded: "2026-06-10T12:00:00Z", source },
+  ];
+  return c;
 }
 
 console.log("\n=== F37 Test Suite ===\n");
@@ -148,6 +165,137 @@ test("keyword 'humano' substring em 'humanoide' NÃO mata (acidentalmente match)
   const p: HandoffPolicy = { ...DEFAULT_HANDOFF_POLICY, enabled: true };
   const d = evaluateShouldRespond(emptyContext(), "esse robô parece humanoide demais", p);
   eq(d.decision, "skip"); // intentional substring match
+});
+
+console.log("\nisHumanOutboundSource (fonte ÚNICA humano×bot):");
+
+test("source 'app' (rep no inbox) → humano", () => eq(isHumanOutboundSource("app"), true));
+test("source 'workflow' (automação/welcome) → NÃO humano", () => eq(isHumanOutboundSource("workflow"), false));
+test("source 'campaign' → NÃO humano", () => eq(isHumanOutboundSource("campaign"), false));
+test("source 'api' → NÃO humano", () => eq(isHumanOutboundSource("api"), false));
+test("source vazio/undefined → NÃO humano", () => {
+  eq(isHumanOutboundSource(undefined), false);
+  eq(isHumanOutboundSource(""), false);
+});
+test("case-insensitive: 'WORKFLOW' → NÃO humano", () => eq(isHumanOutboundSource("WORKFLOW"), false));
+
+console.log("\nisHumanOutboundMessage (fallback userId + anti-eco quando source ausente):");
+
+// Fix review 2026-06-10: o GHL nem sempre devolve `source` no
+// /conversations/{id}/messages. Sem source, a checagem só-por-source dava false e
+// o gate "humano respondeu" (should-respond) morria silenciosamente — o rep ligava
+// "pausa quando eu responder" e a IA seguia atropelando. Estes casos cobrem o
+// fallback no userId + o anti-eco contra o próprio envio da IA (carimbado pelo GHL
+// com o userId do admin), espelhando a defesa do F52/F56 em human-takeover.ts.
+test("source ausente + userId (rep mandou manual) → humano", () =>
+  eq(isHumanOutboundMessage({ direction: "outbound", body: "deixa comigo", userId: "u_rep" }, []), true));
+
+test("source ausente, SEM userId → NÃO humano (não dá pra confirmar)", () =>
+  eq(isHumanOutboundMessage({ direction: "outbound", body: "oi", userId: undefined }, []), false));
+
+test("automação (source 'workflow') COM userId → NÃO humano (source manda, e06f409)", () =>
+  eq(isHumanOutboundMessage({ direction: "outbound", body: "Seja bem-vindo!", source: "workflow", userId: "u_admin" }, []), false));
+
+test("source 'app' (rep no inbox) → humano (userId nem é consultado)", () =>
+  eq(isHumanOutboundMessage({ direction: "outbound", body: "oi", source: "app", userId: "u_rep" }, []), true));
+
+test("eco da IA: source ausente + userId do admin + corpo = envio registrado da IA → NÃO humano", () => {
+  const aiSent = ["Perfeito! Tenho horário hoje às 11:30 ou 16:00. Qual prefere?"];
+  eq(isHumanOutboundMessage(
+    { direction: "outbound", body: "Perfeito! Tenho horário hoje às 11:30 ou 16:00. Qual prefere?", userId: "u_admin" },
+    aiSent,
+  ), false);
+});
+
+test("humano genuíno: source ausente + userId + corpo ≠ envios da IA → humano", () => {
+  const aiSent = ["Perfeito! Tenho horário hoje às 11:30 ou 16:00. Qual prefere?"];
+  eq(isHumanOutboundMessage(
+    { direction: "outbound", body: "Oi, aqui é a Márcia, vou assumir daqui 🙂", userId: "u_rep" },
+    aiSent,
+  ), true);
+});
+
+test("source ausente + userId mas aiTexts null (fetch do execution_log falhou) → NÃO humano (fail-open)", () =>
+  eq(isHumanOutboundMessage({ direction: "outbound", body: "qualquer", userId: "u_admin" }, null), false));
+
+test("inbound nunca conta como outbound-humano", () =>
+  eq(isHumanOutboundMessage({ direction: "inbound", body: "oi", userId: "u_rep" }, []), false));
+
+console.log("\nbuildLeadHistorySection — rótulo humano×bot:");
+
+// Bug-fix 2026-06-10: antes o rótulo usava `source !== \"api\"` (estreito), então
+// o welcome de automação (source 'workflow'/'campaign') aparecia como
+// \"Humano (rep)\" no prompt — soft nudge pro modelo achar que um humano já
+// atendia o lead. Agora alinhado com o should-respond gate (lead-history.ts).
+test("outbound source='workflow' → rótulo 'Bot/sistema', NUNCA 'Humano (rep)'", () => {
+  const section = renderHistory(ctxWithOutbound("workflow"));
+  if (!section.includes('Bot/sistema: "')) throw new Error(`esperava 'Bot/sistema':\n${section}`);
+  if (section.includes("Humano (rep)")) throw new Error(`workflow virou 'Humano (rep)':\n${section}`);
+});
+test("outbound source='campaign' → rótulo 'Bot/sistema'", () => {
+  const section = renderHistory(ctxWithOutbound("campaign"));
+  if (!section.includes('Bot/sistema: "')) throw new Error(`esperava 'Bot/sistema':\n${section}`);
+  if (section.includes("Humano (rep)")) throw new Error(`campaign virou 'Humano (rep)':\n${section}`);
+});
+test("outbound source='app' (rep no inbox) → rótulo 'Humano (rep)'", () => {
+  const section = renderHistory(ctxWithOutbound("app"));
+  if (!section.includes('Humano (rep): "')) throw new Error(`esperava 'Humano (rep)':\n${section}`);
+});
+test("outbound source='api' (IA/integração) → rótulo 'Bot/sistema'", () => {
+  const section = renderHistory(ctxWithOutbound("api"));
+  if (!section.includes('Bot/sistema: "')) throw new Error(`esperava 'Bot/sistema':\n${section}`);
+});
+test("inbound → rótulo 'Lead'", () => {
+  const c = emptyContext();
+  c.recent_messages = [{ direction: "inbound", body: "oi", dateAdded: "2026-06-10T12:00:00Z" }];
+  const section = renderHistory(c);
+  if (!section.includes('Lead: "oi"')) throw new Error(`esperava 'Lead':\n${section}`);
+});
+
+console.log("\nParidade webhook(F51) ↔ ladder(F52) — conjunto de fontes (Fix 2026-06-10):");
+
+// Trava anti-divergência: o early-return do webhook (branch outbound de
+// inbound-message/route.ts) usa NON_HUMAN_SOURCES.has(source); o discriminador 1
+// do classifyLastOutbound (F52) usa AUTOMATION_SOURCES. Antes do fix o webhook
+// tinha lista inline estreita (api|workflow) e furava campaign/bulk/automation/
+// scheduled — pausava a IA em TODO lead novo (welcome de campanha). Agora ambos
+// leem a MESMA base de @/lib/ghl/message-sources; estes asserts garantem que não
+// voltem a divergir no conjunto de fontes.
+
+// Espelha a predicate inline do route (branch outbound): String → lower → .has.
+const webhookEarlyReturns = (src: string) =>
+  NON_HUMAN_SOURCES.has(String(src).toLowerCase());
+
+test("NON_HUMAN_SOURCES === AUTOMATION_SOURCES ∪ {'api'} (sem drift de set)", () => {
+  eq([...NON_HUMAN_SOURCES].sort(), [...new Set([...AUTOMATION_SOURCES, "api"])].sort());
+  // "api" é não-humano mas NÃO é automação (a IA envia por ela; o F52 a pega via
+  // anti-eco, não pelo set). Asserta a assimetria intencional.
+  eq(AUTOMATION_SOURCES.has("api"), false);
+});
+
+test("toda fonte de automação: webhook early-returns E ladder classifica não-humano", () => {
+  for (const src of AUTOMATION_SOURCES) {
+    // pior caso F56: welcome de automação carimbado com o userId do admin.
+    const { isHuman } = classifyLastOutbound({
+      lastOutbound: { source: src, body: "Seja bem-vindo!", userId: "u_admin" },
+      aiTexts: [],
+    });
+    eq(isHuman, false, `ladder deveria classificar '${src}' como NÃO humano`);
+    eq(webhookEarlyReturns(src), true, `webhook deveria early-return em '${src}'`);
+    // case-insensitive: mesma conclusão em UPPER (welcome real chega variado).
+    eq(webhookEarlyReturns(src.toUpperCase()), true, `webhook case-insensitive falhou em '${src}'`);
+  }
+});
+
+test("'api' (IA/integração): webhook early-returns (F52 trata via anti-eco)", () =>
+  eq(webhookEarlyReturns("api"), true));
+
+test("'app' (rep no inbox) NÃO early-returns → segue pro anti-eco do webhook", () =>
+  eq(webhookEarlyReturns("app"), false));
+
+test("source desconhecido/vazio NÃO early-returns → segue pro anti-eco", () => {
+  eq(webhookEarlyReturns(""), false);
+  eq(webhookEarlyReturns("custom_thing"), false);
 });
 
 console.log("\nlead-history cache invalidate:");

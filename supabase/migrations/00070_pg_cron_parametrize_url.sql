@@ -19,6 +19,14 @@
 -- correto (senão continua chamando prod).
 --
 -- TODO(futuro): mover proactive_secret pra Vault/env em vez de tabela.
+--
+-- ⚠️ CORREÇÃO 2026-06-10 (ver NB-7 em docs/DECISIONS.md + correção no header da
+-- 00053): o "advisory lock" preservado abaixo NÃO serializa as execuções do
+-- endpoint — é xact-scoped e `net.http_post` é ASSÍNCRONO (solta o lock no
+-- commit do tick, ANTES do POST sair). Anti double-execution real = claims
+-- atômicos CAS por linha nos runners (reminder pending→running, bulk
+-- pending→sending), não o lock do cron. Mantido idêntico à 00053 só por
+-- paridade — não é o guard de idempotência que o nome sugere.
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS public.cron_config (
@@ -40,6 +48,8 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Recria o job lendo url+secret da cron_config. Guards (advisory lock + triplo
 -- EXISTS) PRESERVADOS idênticos à 00053 — só a url/header viram parametrizados.
+-- (NB: o "advisory lock" é guard barato, NÃO o que previne double-execution —
+-- ver CORREÇÃO no header + NB-7.)
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'sparkbot-proactive') THEN

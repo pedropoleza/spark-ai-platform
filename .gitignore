@@ -44,3 +44,6 @@ next-env.d.ts
 
 # IDE/Claude local launch config (não compartilhado)
 .claude/launch.json
+
+# Supabase CLI temp
+supabase/.temp/

@@ -486,6 +486,35 @@ export async function deleteOpportunity(
   await client.delete(`/opportunities/${oppId}`);
 }
 
+/**
+ * Resolve o ID da opportunity de um contato pra um move_pipeline.
+ *
+ * POR QUE EXISTE: a GHL exige o oppId no PATH pra PUT /opportunities/{id} —
+ * não dá pra "mover de etapa" só com contactId. Sem resolver o oppId antes,
+ * o caller caía em PUT /opportunities/ (sem id) → 4xx → etapa nunca mudava
+ * (bug observado em prod 2026-06-10). Busca TODAS as opps do contato numa
+ * call só: prioriza a que JÁ está na pipeline alvo; senão devolve a primeira
+ * (primary opp) — que o caller vai mover pra pipeline+etapa pedida. Devolve
+ * null se o contato não tem nenhuma opp (caller loga + pula, não estoura).
+ */
+export async function findContactOpportunityId(
+  client: GHLClient,
+  locationId: string,
+  contactId: string,
+  pipelineId: string,
+): Promise<string | null> {
+  const res = await searchOpportunities(client, {
+    location_id: locationId,
+    contact_id: contactId,
+  });
+  const opps = res.opportunities ?? [];
+  if (opps.length === 0) return null;
+  // Prefere a opp já na pipeline alvo; fallback = primary opp do contato.
+  const chosen = opps.find((o) => String(o.pipelineId ?? "") === pipelineId) ?? opps[0];
+  const id = chosen.id;
+  return typeof id === "string" && id ? id : null;
+}
+
 // =====================================================
 // Calendar
 // =====================================================

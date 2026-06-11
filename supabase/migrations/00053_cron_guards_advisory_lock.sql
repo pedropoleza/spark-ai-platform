@@ -7,10 +7,26 @@
 --      Antes: cron disparava 30s no vazio = 2880 calls/dia desnecessárias.
 --   2. pg_try_advisory_xact_lock(8675309) anti double-execution sob backlog.
 --      Sob spike, 2+ ticks paralelos podiam concorrer pelas mesmas rows.
+--      ⚠️ ESSA JUSTIFICATIVA ESTÁ ERRADA — ver CORREÇÃO 2026-06-10 no fim do header.
 --   3. Inclui bulk_message_recipients no EXISTS pra cobrir bulk-only jobs.
 --
 -- Mantém secret hardcoded (rotação via GUC fica pra runbook manual —
 -- requires ALTER DATABASE permission).
+--
+-- ⚠️ CORREÇÃO 2026-06-10 (ver NB-7 em docs/DECISIONS.md): o item (2) acima
+-- SUPERESTIMA o advisory lock. NÃO mexer no corpo (migration já aplicada) — só
+-- esta nota corretiva. O lock é xact-scoped e `net.http_post` (pg_net) é
+-- ASSÍNCRONO: este comando só ENFILEIRA o POST e a transação do pg_cron commita
+-- (soltando o lock) em ms, ANTES do Vercel receber o request. Logo o lock NÃO
+-- serializa as execuções reais do endpoint /api/cron/sparkbot-proactive nem dos
+-- runners internos; só evita que duas transações de DISPARO do MESMO instante
+-- co-enfileirem (cenário ~impossível no schedule de 30s). A idempotência real
+-- (anti double-execution sob ticks sobrepostos — maxDuration=60 > 30s) é o claim
+-- atômico CAS por linha DENTRO de cada runner: fireScheduledReminders (UPDATE
+-- status='running' WHERE status='pending') e claimBulkRecipients (RPC
+-- claim_bulk_recipients FOR UPDATE SKIP LOCKED / fallback UPDATE status='sending'
+-- WHERE status='pending'). O lock fica como guard barato (não faz mal), mas NÃO
+-- é o que previne double-execution — não remover os claims confiando nele.
 -- =============================================
 
 DO $$

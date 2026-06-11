@@ -78,40 +78,42 @@ export async function trackRunner<T>(
     return result;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message.slice(0, 500) : String(err);
-    // Incrementa consecutive_errors atomicamente. Faz SELECT + UPDATE — não há
-    // race aqui porque single-worker (cron tick).
-    const { data: cur } = await supabase
-      .from("runner_health")
-      .select("consecutive_errors")
-      .eq("runner_name", runnerName)
-      .maybeSingle();
-    const streak = ((cur?.consecutive_errors as number) ?? 0) + 1;
-    await supabase
-      .from("runner_health")
-      .upsert(
-        {
-          runner_name: runnerName,
-          last_tick_at: new Date().toISOString(),
-          last_status: "error",
-          last_error: errMsg,
-          last_error_at: new Date().toISOString(),
-          consecutive_errors: streak,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "runner_name" },
+    // Incrementa consecutive_errors ATOMICAMENTE no DB via RPC
+    // (increment_runner_error: INSERT .. ON CONFLICT DO UPDATE SET
+    // consecutive_errors = ...+1 RETURNING).
+    // NB-7 (review 2026-06-10): antes era SELECT + UPSERT (read-modify-write)
+    // com comment afirmando "single-worker (cron tick)" — FALSO. O pg_cron
+    // sparkbot-proactive (00053) dispara a cada 30s e o
+    // pg_try_advisory_xact_lock(8675309) é _xact_-scoped: solta no commit do
+    // tick (que só enfileira um net.http_post fire-and-forget via pg_net), NÃO
+    // serializa os lambdas Vercel (maxDuration=60). Tick lento (>30s) sobrepõe
+    // o seguinte; se o mesmo runner lança nos dois, ambos liam o mesmo
+    // consecutive_errors e gravam o mesmo +1 = lost update (subcontava a
+    // streak, atrasando o admin_signal de >= 3). Increment atômico elimina.
+    const { data: streak, error: rpcError } = await supabase.rpc(
+      "increment_runner_error",
+      { p_runner_name: runnerName, p_error: errMsg },
+    );
+    if (rpcError) {
+      console.error(
+        `[runner-health] increment_runner_error RPC falhou (${runnerName}):`,
+        rpcError.message,
       );
-    // 3+ erros seguidos = admin_signal. Fingerprint dedup colapsa em 1 row
-    // por runner. Pedro vê no /hub/admin/health card de signals.
-    if (streak >= 3) {
+    }
+    // 3+ erros seguidos = admin_signal. Usa o valor PÓS-incremento devolvido
+    // pela RPC (streak real mesmo sob ticks sobrepostos). Fingerprint dedup
+    // colapsa em 1 row por runner. Pedro vê no /hub/admin/health card de signals.
+    const streakCount = typeof streak === "number" ? streak : 0;
+    if (streakCount >= 3) {
       try {
         const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
         recordSignalAsync({
           type: "error",
           source: "bot_auto",
           severity: "high",
-          title: `${runnerName}: ${streak} erros consecutivos`,
+          title: `${runnerName}: ${streakCount} erros consecutivos`,
           description: errMsg.slice(0, 500),
-          metadata: { runner: runnerName, consecutive_errors: streak },
+          metadata: { runner: runnerName, consecutive_errors: streakCount },
         });
       } catch {
         /* não-fatal */

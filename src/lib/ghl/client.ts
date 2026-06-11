@@ -44,7 +44,12 @@ export class GHLClient {
       }
     }
 
-    // Se 401, invalidar cache e tentar com token novo
+    // Se 401, invalidar cache e tentar com token novo.
+    // SPOF hardening (H38, Pedro 2026-06-10): ao reentrar, `getLocationToken` faz
+    // self-heal do COMPANY token também — se a causa raiz do 401 for o company
+    // token expirado (cron diário falhou), ele renova inline e o retry recupera.
+    // Antes, esse caminho só regenerava o LOCATION token (inútil se o company
+    // token estava morto) e a recuperação dependia só do cron. Ver ghl/auth.ts.
     if (response.status === 401) {
       console.warn(`[GHL] 401 received, invalidating token cache and retrying...`);
       invalidateTokenCache(this.companyId, this.locationId);

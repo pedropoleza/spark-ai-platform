@@ -19,6 +19,14 @@
  * geralmente pega 0-1 por tick — limite só afeta backlog (ex: voltar de
  * quiet_hours com 8h de fila).
  *
+ * F60 (Pedro 2026-06-10): MAX_PER_TICK é throttle INTRA-tick, NÃO o teto diário.
+ * O teto diário (daily_cap) é enforçado UPSTREAM, no populate-time: o
+ * campaign-populator / recurring-runner já nascem com scheduled_at espalhado de
+ * modo que nenhum dia-ET ultrapasse o cap. Como o claim aqui filtra
+ * `scheduled_at <= now`, recipients de dias futuros não são pegos antes da hora —
+ * o runner respeita o teto sem precisar de contador diário próprio (ver
+ * distributeScheduledAtsByDailyCap em tools/bulk-messages.ts).
+ *
  * Silence gate: NÃO se aplica aqui — msg vai pro CONTATO, não pro rep.
  */
 
@@ -32,6 +40,12 @@ import { generateVariation } from "./bulk-message-variator";
 import { isInBlockedHours as sharedIsInBlockedHours } from "./quiet-hours";
 
 const MAX_PER_TICK = 5;
+
+// H37 (Pedro 2026-06-10): janela pra considerar uma row 'sending' como órfã
+// (lambda morreu entre o claim e o UPDATE final). 3min é bem acima do
+// maxDuration de 60s do lambda — nenhum tick vivo ainda segura a row, então o
+// revert pra pending é seguro. Ver reclaimOrphanedSending().
+const RECLAIM_STUCK_AFTER_MS = 3 * 60 * 1000;
 
 export interface BulkRunResult {
   fired: number;
@@ -67,6 +81,9 @@ interface BulkJobRow {
   sent_count: number;
   failed_count: number;
   skipped_count: number;
+  // NB-11 (2026-06-10): usado no tiebreaker client-side pós-claim (ordem de
+  // PROCESSAMENTO dentro do tick). A seleção autoritativa é no DB (RPC).
+  priority: number | null;
 }
 
 export async function fireBulkRecipients(): Promise<BulkRunResult> {
@@ -108,63 +125,29 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
     console.warn("[bulk-runner] continuing tick sem heartbeat ok — health-check vai pegar como stale");
   }
 
-  // Atomic claim: pega até MAX_PER_TICK pending vencidos. Update SQL atomic
-  // marca como 'sending'. Mesmo padrão do reminder-runner.
+  // H37 (Pedro 2026-06-10): ANTES de claimar, recupera recipients órfãos
+  // presos em 'sending' (lambda morreu entre o claim e o UPDATE final). Volta
+  // pra pending pra serem re-claimados — neste mesmo tick, inclusive. Sem isso
+  // o job ficava 'running' pra sempre (refreshJobCounters exige sending===0) e
+  // o rep nunca recebia a notificação de conclusão. Ver doc da função pro
+  // tradeoff de idempotência. Não-fatal (a função engole o próprio erro).
+  await reclaimOrphanedSending({ supabase, nowMs: tickStartedAt });
+
+  // Atomic claim: pega até MAX_PER_TICK pending vencidos, ORDENADOS POR PRIORITY
+  // NO DB, e marca como 'sending' num passo só.
   //
-  // F4.1 Pedro 2026-05-16: priority queue. Antes ordem era apenas
-  // scheduled_at ASC (FIFO global). Agora: priority DESC, scheduled_at ASC
-  // pra jobs urgentes furarem fila.
-  //
-  // Implementação em 2 passos pra usar JOIN com bulk_message_jobs.priority:
-  //   1. SELECT recipients pending vencidos JOIN jobs ORDER BY priority desc, sched asc
-  //   2. UPDATE atomico nos IDs selecionados
-  // O update individual evita race se 2 workers rodassem em paralelo
-  // (não é o caso hoje, mas defensivo).
+  // F4.1 Pedro 2026-05-16: priority queue (jobs urgentes furam fila).
+  // NB-11 (review 2026-06-10): a ordenação por priority agora é no DB (RPC
+  // claim_bulk_recipients, migration 00105). Antes era em 2 passos — SELECT
+  // ORDER BY scheduled_at LIMIT 20 (buffer) + sort client-side por priority —, e
+  // sob backlog (>=20 vencidos de baixa prioridade com timestamps antigos) o
+  // buffer de 20 era todo consumido por eles e o job de alta prioridade nunca
+  // entrava na janela: o "fura fila" falhava justo quando importa. PostgREST não
+  // ordena top-level por coluna de embed M2O (verificado em prod), então a
+  // ordenação tem que ser SQL. Ver claimBulkRecipients (RPC + fallback legado).
   let claimed: BulkRecipientRow[] = [];
   try {
-    // Pega top MAX_PER_TICK por priority+sched
-    const { data: candidates } = await supabase
-      .from("bulk_message_recipients")
-      // Etapa 4.4: inclui message_template_override pra runner usar quando presente.
-      .select("id, job_id, contact_id, contact_name, contact_phone, scheduled_at, status, message_template_override, bulk_message_jobs!inner(priority, status)")
-      .eq("status", "pending")
-      .lte("scheduled_at", nowIso)
-      .order("scheduled_at", { ascending: true })
-      .limit(MAX_PER_TICK * 4); // buffer pra reordenar client-side por priority
-
-    if (candidates && candidates.length > 0) {
-      // Ordena client-side por priority DESC (do job), scheduled_at ASC
-      type CandRow = {
-        id: string; job_id: string; contact_id: string;
-        contact_name: string | null; contact_phone: string | null;
-        scheduled_at: string; status: string;
-        message_template_override: string | null;
-        bulk_message_jobs: { priority: number | null; status: string } | { priority: number | null; status: string }[];
-      };
-      const sorted = (candidates as CandRow[])
-        .filter((r) => {
-          const j = Array.isArray(r.bulk_message_jobs) ? r.bulk_message_jobs[0] : r.bulk_message_jobs;
-          return j && j.status === "running";
-        })
-        .sort((a, b) => {
-          const pa = (Array.isArray(a.bulk_message_jobs) ? a.bulk_message_jobs[0] : a.bulk_message_jobs)?.priority ?? 50;
-          const pb = (Array.isArray(b.bulk_message_jobs) ? b.bulk_message_jobs[0] : b.bulk_message_jobs)?.priority ?? 50;
-          if (pa !== pb) return pb - pa;
-          return new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime();
-        })
-        .slice(0, MAX_PER_TICK);
-
-      if (sorted.length > 0) {
-        const ids = sorted.map((r) => r.id);
-        const { data: claimedRaw } = await supabase
-          .from("bulk_message_recipients")
-          .update({ status: "sending" })
-          .in("id", ids)
-          .eq("status", "pending") // double-check pra race
-          .select("*");
-        claimed = (claimedRaw || []) as BulkRecipientRow[];
-      }
-    }
+    claimed = await claimBulkRecipients(supabase, MAX_PER_TICK, nowIso);
   } catch (err) {
     tickError = err instanceof Error ? err.message : String(err);
     await recordTickError(tickError);
@@ -186,6 +169,18 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
   const jobsById = new Map<string, BulkJobRow>(
     (jobsData || []).map((j) => [j.id as string, j as BulkJobRow]),
   );
+
+  // NB-11 (2026-06-10): tiebreaker/fallback — re-ordena as rows reivindicadas
+  // por priority no app. A seleção autoritativa (quais recipients entram) já foi
+  // no DB (RPC ORDER BY priority DESC, scheduled_at ASC); aqui só garantimos
+  // ordem de PROCESSAMENTO determinística dentro do tick, já que UPDATE..
+  // RETURNING não garante ordem das rows devolvidas.
+  claimed.sort((a, b) => {
+    const pa = jobsById.get(a.job_id)?.priority ?? 50;
+    const pb = jobsById.get(b.job_id)?.priority ?? 50;
+    if (pa !== pb) return pb - pa;
+    return new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime();
+  });
 
   let fired = 0;
   let failed = 0;
@@ -343,6 +338,256 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
   );
 
   return { fired, failed, skipped, jobs_completed: jobsCompleted };
+}
+
+// NB-11 (2026-06-10): buffer do caminho de FALLBACK (RPC ainda não aplicada).
+// Grande o suficiente pra a ordenação client-side por priority furar fila mesmo
+// sob backlog realista — diferente do antigo MAX_PER_TICK*4 (=20), que era
+// justamente a causa do bug. Rows são leves (poucas colunas) e esse caminho só
+// roda no gap de deploy, então o custo é desprezível.
+const FALLBACK_CANDIDATE_BUFFER = 200;
+
+/**
+ * NB-11 (2026-06-10): candidato normalizado pro `selectClaimBatch`. Espelha as
+ * colunas que a RPC usa no WHERE/ORDER BY (status do recipient + status/priority
+ * do job + scheduled_at).
+ */
+export interface ClaimCandidate {
+  id: string;
+  scheduled_at: string;
+  job_priority: number;
+  job_status: string;
+  recipient_status: string;
+}
+
+/**
+ * NB-11 (2026-06-10): política de seleção do claim — PURA e exportada pra teste.
+ * Espelha o `ORDER BY j.priority DESC, r.scheduled_at ASC LIMIT n` da RPC
+ * `claim_bulk_recipients` (migration 00105). É o que faz priority "furar fila":
+ * sob backlog, um job de prioridade alta com scheduled_at mais novo ganha de 20+
+ * recipients antigos de prioridade baixa.
+ *
+ * Em runtime roda só no caminho de FALLBACK (RPC ausente). A ordenação
+ * AUTORITATIVA em prod é a SQL da RPC — esta função é o guard de paridade da
+ * política (mesmo papel do `isOrphanedSending` pro reclaim).
+ */
+export function selectClaimBatch(
+  candidates: ClaimCandidate[],
+  nowMs: number,
+  limit: number,
+): ClaimCandidate[] {
+  return candidates
+    .filter(
+      (c) =>
+        c.recipient_status === "pending" &&
+        c.job_status === "running" &&
+        new Date(c.scheduled_at).getTime() <= nowMs,
+    )
+    .sort((a, b) => {
+      if (a.job_priority !== b.job_priority) return b.job_priority - a.job_priority; // priority DESC
+      return new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime(); // scheduled_at ASC
+    })
+    .slice(0, Math.max(limit, 0));
+}
+
+/**
+ * NB-11 (2026-06-10): erro do supabase-js indica "função RPC não existe"? Usado
+ * pra detectar o gap de deploy (código novo + migration 00105 ainda não
+ * aplicada via MCP) e cair no fallback legado em vez de quebrar o tick.
+ *   - PGRST202: PostgREST não achou a função no schema cache.
+ *   - 42883: undefined_function no Postgres.
+ * Mensagem como rede de segurança final.
+ */
+function isMissingFunctionError(
+  err: { code?: string | null; message?: string | null } | null,
+): boolean {
+  if (!err) return false;
+  if (err.code === "PGRST202" || err.code === "42883") return true;
+  const m = (err.message ?? "").toLowerCase();
+  return (
+    m.includes("could not find the function") ||
+    (m.includes("function") && m.includes("does not exist"))
+  );
+}
+
+/**
+ * NB-11 (2026-06-10): claim atômico priority-first de até `limit` recipients.
+ *
+ * Primário (pós-migration 00105): RPC `claim_bulk_recipients` — ordena por
+ * priority NO DB antes do LIMIT + FOR UPDATE SKIP LOCKED, carimba claim_token/
+ * claimed_at (H37) e devolve as rows reivindicadas (status já = 'sending').
+ *
+ * Fallback (gap de deploy / rollback): se a RPC ainda não existe, usa o caminho
+ * legado (SELECT buffer + `selectClaimBatch` + UPDATE com double-check de
+ * status). O buffer é grande (FALLBACK_CANDIDATE_BUFFER) pra também furar fila —
+ * nunca pior que o comportamento pré-NB-11.
+ *
+ * Exportada pra teste (`scripts/test-bulk-priority-claim.ts`). Erros REAIS
+ * (não "função ausente") propagam pro caller (recordTickError + throw).
+ */
+export async function claimBulkRecipients(
+  supabase: ReturnType<typeof createAdminClient>,
+  limit: number,
+  nowIso: string,
+): Promise<BulkRecipientRow[]> {
+  // H37: 1 claim_token por tick (todas as rows do claim compartilham). claimed_at
+  // é o que reclaimOrphanedSending usa pra medir idade.
+  const claimToken = crypto.randomUUID();
+
+  const { data: rpcData, error: rpcErr } = await supabase.rpc("claim_bulk_recipients", {
+    p_limit: limit,
+    p_claim_token: claimToken,
+  });
+  if (!rpcErr) {
+    return (rpcData || []) as BulkRecipientRow[];
+  }
+  // Erro real → propaga (o caller registra tick error e re-tenta no próximo tick).
+  if (!isMissingFunctionError(rpcErr)) {
+    throw new Error(rpcErr.message || "claim_bulk_recipients RPC falhou");
+  }
+  console.warn(
+    "[bulk-runner] RPC claim_bulk_recipients ausente (aplicar migration 00105) — fallback legado priority-first",
+  );
+  return legacyClaimWithClientSort(supabase, limit, claimToken, nowIso);
+}
+
+/**
+ * NB-11 (2026-06-10): caminho legado do claim (pré-RPC). SELECT buffer ordenado
+ * por scheduled_at + `selectClaimBatch` (priority DESC) client-side + UPDATE
+ * atômico com double-check `.eq('status','pending')`. Só roda no fallback.
+ */
+async function legacyClaimWithClientSort(
+  supabase: ReturnType<typeof createAdminClient>,
+  limit: number,
+  claimToken: string,
+  nowIso: string,
+): Promise<BulkRecipientRow[]> {
+  const { data: candidates } = await supabase
+    .from("bulk_message_recipients")
+    .select("id, scheduled_at, status, bulk_message_jobs!inner(priority, status)")
+    .eq("status", "pending")
+    .lte("scheduled_at", nowIso)
+    .order("scheduled_at", { ascending: true })
+    .limit(FALLBACK_CANDIDATE_BUFFER);
+  if (!candidates || candidates.length === 0) return [];
+
+  type EmbeddedJob = { priority: number | null; status: string };
+  type Raw = {
+    id: string;
+    scheduled_at: string;
+    status: string;
+    bulk_message_jobs: EmbeddedJob | EmbeddedJob[];
+  };
+  const normalized: ClaimCandidate[] = (candidates as Raw[]).map((r) => {
+    const j = Array.isArray(r.bulk_message_jobs) ? r.bulk_message_jobs[0] : r.bulk_message_jobs;
+    return {
+      id: r.id,
+      scheduled_at: r.scheduled_at,
+      job_priority: j?.priority ?? 50,
+      job_status: j?.status ?? "",
+      recipient_status: r.status,
+    };
+  });
+  const selected = selectClaimBatch(normalized, Date.parse(nowIso), limit);
+  if (selected.length === 0) return [];
+
+  const ids = selected.map((c) => c.id);
+  const { data: claimedRaw } = await supabase
+    .from("bulk_message_recipients")
+    .update({ status: "sending", claim_token: claimToken, claimed_at: nowIso })
+    .in("id", ids)
+    .eq("status", "pending") // double-check pra race
+    .select("*");
+  return (claimedRaw || []) as BulkRecipientRow[];
+}
+
+/**
+ * H37 (Pedro 2026-06-10): decide se uma row 'sending' é órfã (lambda morreu)
+ * com base na IDADE do claim. Pura + exportada pra teste. cutoffMs deve ser
+ * `now - RECLAIM_STUCK_AFTER_MS`.
+ */
+export function isOrphanedSending(
+  row: { claimed_at: string | null; scheduled_at: string },
+  cutoffMs: number,
+): boolean {
+  // Caminho normal (pós-migration 00102): claimed_at carimbado no claim. Órfã
+  // se foi reivindicada antes do cutoff.
+  if (row.claimed_at) return new Date(row.claimed_at).getTime() < cutoffMs;
+  // claimed_at NULL: claim por código pré-00102 OU por lambda velho durante um
+  // deploy rolling. Usa scheduled_at como proxy de idade — o claim só pega
+  // `scheduled_at <= now`, então uma 'sending' com scheduled_at vencido há mais
+  // que a janela quase certamente é órfã (não um claim legítimo recente).
+  return new Date(row.scheduled_at).getTime() < cutoffMs;
+}
+
+/**
+ * H37 (Pedro 2026-06-10): reverte pra 'pending' recipients órfãos presos em
+ * 'sending'. Roda no começo de cada tick, ANTES do claim.
+ *
+ * Por que existe: se o lambda do Vercel morre (timeout maxDuration=60s, OOM,
+ * deploy no meio) ENTRE o claim atômico (pending→sending) e o UPDATE final
+ * (→sent/failed), a row fica presa em 'sending' pra sempre. Como
+ * refreshJobCounters() exige `sending===0` pra completar o job, o job fica
+ * 'running' eternamente e o rep nunca recebe a notificação de conclusão. (O
+ * reaper H12 resolve o mesmo no message_queue — mas lá a tabela tem updated_at;
+ * aqui dependemos do claimed_at da migration 00102.)
+ *
+ * Idempotência (tradeoff): se o GHL send REALMENTE completou mas o lambda
+ * morreu antes do UPDATE, reverter causa 1 reenvio. Aceito — a janela de
+ * RECLAIM_STUCK_AFTER_MS (3min, bem acima do maxDuration de 60s) torna isso
+ * raríssimo, e 1 msg duplicada << job preso pra sempre. Diferente do H12, NÃO
+ * temos um UNIQUE (tipo ghl_message_id) como seguro final, então a idade é a
+ * única proteção — por isso só revertemos rows velhas o suficiente.
+ *
+ * 'sending' é normalmente 0-5 rows (claim→terminal no mesmo tick); órfãs só
+ * acumulam em morte de lambda. Por isso fetch + filtro em JS (idade é lógica
+ * pura/testável) em vez de OR no PostgREST. Retorna quantos foram revertidos.
+ * Nunca lança (falha = warn + 0).
+ */
+export async function reclaimOrphanedSending(
+  deps: { supabase?: ReturnType<typeof createAdminClient>; nowMs?: number } = {},
+): Promise<number> {
+  const supabase = deps.supabase ?? createAdminClient();
+  const nowMs = deps.nowMs ?? Date.now();
+  const cutoffMs = nowMs - RECLAIM_STUCK_AFTER_MS;
+  try {
+    const { data: sendingRows } = await supabase
+      .from("bulk_message_recipients")
+      .select("id, claimed_at, scheduled_at")
+      .eq("status", "sending");
+    const orphanIds = (
+      (sendingRows || []) as Array<{
+        id: string;
+        claimed_at: string | null;
+        scheduled_at: string;
+      }>
+    )
+      .filter((r) => isOrphanedSending(r, cutoffMs))
+      .map((r) => r.id);
+    if (orphanIds.length === 0) return 0;
+
+    const { data: reverted } = await supabase
+      .from("bulk_message_recipients")
+      .update({ status: "pending", claim_token: null, claimed_at: null })
+      .in("id", orphanIds)
+      .eq("status", "sending") // double-check anti-race
+      .select("id");
+    const n = reverted?.length ?? 0;
+    if (n > 0) {
+      console.warn(
+        `[bulk-runner] reclaimed ${n} recipient(s) órfão(s) em 'sending' (>${Math.round(
+          RECLAIM_STUCK_AFTER_MS / 60000,
+        )}min) → pending`,
+      );
+    }
+    return n;
+  } catch (err) {
+    console.warn(
+      "[bulk-runner] reclaimOrphanedSending falhou (não-fatal):",
+      err instanceof Error ? err.message : err,
+    );
+    return 0;
+  }
 }
 
 /**
@@ -545,9 +790,19 @@ async function sendToContact(
  * marca job.status='completed' e completed_at=now.
  *
  * Returns true se job foi marcado completed nesta call.
+ *
+ * H37 (Pedro 2026-06-10): aceita deps injetáveis (supabase + notify) pra teste
+ * hermético do reclaim→completed. Em prod os call-sites não passam nada — usa
+ * createAdminClient() + o notifier real (comportamento idêntico ao anterior).
  */
-async function refreshJobCounters(jobId: string): Promise<boolean> {
-  const supabase = createAdminClient();
+export async function refreshJobCounters(
+  jobId: string,
+  deps: {
+    supabase?: ReturnType<typeof createAdminClient>;
+    notify?: (jobId: string) => Promise<void>;
+  } = {},
+): Promise<boolean> {
+  const supabase = deps.supabase ?? createAdminClient();
 
   // Fix Track 7 M3 (review 2026-05-05): antes fazia 6 queries (head count
   // por status). Agora 1 query select all rows + agregação JS. Em scale,
@@ -594,9 +849,14 @@ async function refreshJobCounters(jobId: string): Promise<boolean> {
   // completed (atomic check garante 1 só notif). Async/silent — não bloqueia
   // tick se notifier falhar.
   if (completed && affected && affected.length > 0) {
+    const notify =
+      deps.notify ??
+      (async (id: string) => {
+        const { notifyRepJobCompleted } = await import("./bulk-completion-notifier");
+        await notifyRepJobCompleted(id);
+      });
     try {
-      const { notifyRepJobCompleted } = await import("./bulk-completion-notifier");
-      await notifyRepJobCompleted(jobId);
+      await notify(jobId);
     } catch (err) {
       console.warn(
         `[bulk-runner] completion notify falhou job=${jobId}:`,

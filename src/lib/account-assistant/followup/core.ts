@@ -549,14 +549,30 @@ export async function editSequence(
     if (edit.new_text) updates.message_text = edit.new_text;
     if (edit.new_scheduled_at) updates.scheduled_at = edit.new_scheduled_at;
     if (Object.keys(updates).length === 1) continue;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("followup_messages")
       .update(updates)
       .eq("sequence_id", sequenceId)
       .eq("position", edit.position)
       .eq("status", "pending")
       .select("id");
-    updated += data?.length ?? 0;
+    // supabase-js NÃO lança — devolve {error}. Sem checar, um update que falha
+    // (ex: timestamp inválido) ou que não casa nenhuma linha pending vira no-op
+    // silencioso e o rep acha que editou. Validação de new_scheduled_at já mora
+    // no handler edit_followup; aqui é a rede defensiva pros outros callers.
+    if (error) {
+      console.error(
+        `[editSequence] update falhou seq=${sequenceId} pos=${edit.position}: ${error.message}`,
+      );
+      continue;
+    }
+    const affected = data?.length ?? 0;
+    if (affected === 0) {
+      console.warn(
+        `[editSequence] update sem efeito seq=${sequenceId} pos=${edit.position} — msg não está 'pending' ou position não existe`,
+      );
+    }
+    updated += affected;
   }
   if (updated > 0) {
     await supabase
