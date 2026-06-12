@@ -1,0 +1,157 @@
+/* ============ TV do estande — attract loop dark premium (plano 2026-06-11) ============ */
+/* Palco 1920×1080 auto-escalado. Regras de TV: tipo grande, alto contraste,    */
+/* sempre em movimento. Tokens dark separados do quiosque (que é claro).        */
+
+:root {
+  --tv-bg: #060d13;
+  --tv-bg-2: #0a1620;
+  --tv-ink: #f3f7fa;
+  --tv-ink-2: rgba(243, 247, 250, 0.72);
+  --tv-ink-3: rgba(243, 247, 250, 0.45);
+  --tv-panel: rgba(255, 255, 255, 0.045);
+  --tv-panel-2: rgba(255, 255, 255, 0.08);
+  --tv-line: rgba(255, 255, 255, 0.09);
+  --tv-brand: #0fb5e1;
+  --tv-brand-bright: #2bd4ff;
+  --tv-gradient: linear-gradient(135deg, #2bd4ff 0%, #0792ba 100%);
+  --tv-success: #34e27a;
+  --tv-warn: #ffa45c;
+  --tv-yellow: #ffd23f;
+}
+
+.tv-host, .tv-host * { box-sizing: border-box; }
+
+html:has(.tv-host), body:has(.tv-host) {
+  margin: 0; padding: 0; height: 100%; background: #000;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  cursor: none; /* TV não tem mouse — esconde se alguém esbarrar */
+}
+
+.tv-host {
+  position: fixed; inset: 0;
+  display: grid; place-items: center;
+  background: #000;
+  color: var(--tv-ink);
+  user-select: none;
+}
+
+.tv-stage {
+  width: 1920px; height: 1080px;
+  position: relative;
+  transform-origin: center;
+  overflow: hidden;
+  background:
+    radial-gradient(900px 700px at 12% -10%, rgba(15, 181, 225, 0.16), transparent 65%),
+    radial-gradient(1000px 800px at 95% 110%, rgba(7, 146, 186, 0.14), transparent 65%),
+    radial-gradient(circle at 50% 50%, var(--tv-bg-2) 0%, var(--tv-bg) 75%);
+}
+.tv-stage::before {
+  content: "";
+  position: absolute; inset: 0;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.05) 1.4px, transparent 1.4px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse at center, black 25%, transparent 78%);
+  pointer-events: none;
+}
+
+/* ============ Camadas do rotator ============ */
+.tv-layer { position: absolute; inset: 0; }
+.tv-enter { animation: tv-enter 0.75s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.tv-exit  { animation: tv-exit 0.75s ease-in both; pointer-events: none; }
+
+@keyframes tv-enter {
+  from { opacity: 0; transform: translateY(34px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes tv-exit {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(1.015); }
+}
+
+/* ============ Tipo (TV: legível a 5m) ============ */
+.tv-display-xl { font-size: 124px; line-height: 1.04; font-weight: 800; letter-spacing: -0.03em; }
+.tv-display    { font-size: 92px;  line-height: 1.06; font-weight: 800; letter-spacing: -0.025em; }
+.tv-display-sm { font-size: 64px;  line-height: 1.1;  font-weight: 800; letter-spacing: -0.02em; }
+.tv-lede       { font-size: 40px;  line-height: 1.35; font-weight: 500; color: var(--tv-ink-2); }
+.tv-body       { font-size: 32px;  line-height: 1.4;  color: var(--tv-ink-2); }
+.tv-eyebrow    { font-size: 26px;  font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--tv-brand-bright); }
+.tv-gradient-text {
+  background: var(--tv-gradient);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ============ Painéis glass ============ */
+.tv-glass {
+  background: var(--tv-panel);
+  border: 1px solid var(--tv-line);
+  border-radius: 32px;
+  backdrop-filter: blur(6px);
+}
+
+/* ============ Animações (delays absolutos por tela; remount reinicia) ============ */
+@keyframes tv-pop {
+  0%   { opacity: 0; transform: scale(0.6) translateY(26px); }
+  60%  { opacity: 1; transform: scale(1.06) translateY(-5px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes tv-rise {
+  from { opacity: 0; transform: translateY(44px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes tv-slide-right {
+  from { opacity: 0; transform: translateX(-44px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes tv-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes tv-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-16px); }
+}
+@keyframes tv-breath {
+  0%, 100% { transform: translateY(0) rotate(-1deg); }
+  50%      { transform: translateY(-18px) rotate(1deg); }
+}
+@keyframes tv-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.45); opacity: 0.5; }
+}
+@keyframes tv-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(43, 212, 255, 0.55), 0 18px 60px rgba(15, 181, 225, 0.30); }
+  50%      { box-shadow: 0 0 0 30px rgba(43, 212, 255, 0), 0 18px 60px rgba(15, 181, 225, 0.45); }
+}
+@keyframes tv-ring {
+  0%   { transform: scale(0.85); opacity: 0.8; }
+  100% { transform: scale(1.65); opacity: 0; }
+}
+@keyframes tv-typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%           { transform: translateY(-9px); opacity: 1; }
+}
+@keyframes tv-wave-bar {
+  0%, 100% { transform: scaleY(0.3); }
+  50%      { transform: scaleY(1); }
+}
+/* aparece e some (typing dots do roteiro) */
+@keyframes tv-show-hide {
+  0%, 100% { opacity: 0; transform: translateY(20px); }
+  12%, 82% { opacity: 1; transform: translateY(0); }
+}
+/* card do funil deslizando de coluna (--tv-move-x setado inline) */
+@keyframes tv-funnel-move {
+  0%   { transform: translateX(0); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); }
+  55%  { transform: translateX(calc(var(--tv-move-x) * 0.55)) translateY(-22px) rotate(2.5deg); box-shadow: 0 30px 70px rgba(43, 212, 255, 0.45); }
+  100% { transform: translateX(var(--tv-move-x)); box-shadow: 0 0 0 3px rgba(43, 212, 255, 0.8), 0 18px 50px rgba(43, 212, 255, 0.35); }
+}
+@keyframes tv-progress {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+@keyframes tv-scroll-up {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-50%); }
+}
