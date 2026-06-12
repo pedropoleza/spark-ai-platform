@@ -19,6 +19,20 @@ const jakarta = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   title: "SparkBot · Demonstração",
   robots: "noindex",
+  // PWA de quiosque (Pedro 2026-06-11): "Adicionar à Tela de Início" no iPad
+  // abre fullscreen, sem a barra de endereço do Safari.
+  manifest: "/demo/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "SparkBot Demo",
+  },
+  icons: {
+    apple: "/demo/icon-180.png",
+  },
+  formatDetection: { telephone: false },
+  // Next novo só emite "mobile-web-app-capable"; iPadOS antigo lê a tag apple-.
+  other: { "apple-mobile-web-app-capable": "yes" },
 };
 
 export const viewport: Viewport = {
