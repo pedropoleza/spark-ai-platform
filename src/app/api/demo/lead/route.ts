@@ -28,8 +28,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Dados inválidos" }, { status: 400 });
   }
 
-  // Quiosque roda em convenção BR — default +55 (mesma heurística do import de listas)
-  const e164 = normalizePhone(whatsappRaw, "BR");
+  // Convenção é nos EUA (Pedro 2026-06-12) — público BR morando lá, número US.
+  // Default +1; quem digitar com +55 explícito é preservado pelo normalizePhone.
+  const e164 = normalizePhone(whatsappRaw, "US");
 
   const queuedAtRaw = typeof body?.queued_at === "string" ? body.queued_at : null;
   const queuedAt = queuedAtRaw && !Number.isNaN(Date.parse(queuedAtRaw)) ? queuedAtRaw : null;

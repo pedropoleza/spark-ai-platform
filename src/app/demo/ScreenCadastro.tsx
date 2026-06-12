@@ -13,11 +13,13 @@ export function ScreenCadastro({ onCTA, onSubmit, initialName }: { onCTA: (r: Ro
 
   const set = (k: keyof LeadForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
+  // Formato AMERICANO (Pedro 2026-06-12): convenção é nos EUA — público BR
+  // morando lá usa número US: (407) 555-0123, 10 dígitos.
   const fmtPhone = (raw: string) => {
-    const d = raw.replace(/\D/g, "").slice(0, 11);
-    if (d.length <= 2) return d;
-    if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+    const d = raw.replace(/\D/g, "").slice(0, 10);
+    if (d.length <= 3) return d;
+    if (d.length <= 6) return `(${d.slice(0, 3)}) ${d.slice(3)}`;
+    return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
   };
 
   const valid = form.nome.trim().length >= 2 && form.whatsapp.replace(/\D/g, "").length >= 10 && form.agencia.trim().length >= 2;
@@ -79,15 +81,15 @@ export function ScreenCadastro({ onCTA, onSubmit, initialName }: { onCTA: (r: Ro
           <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
             <Field label="Seu nome" placeholder="Como você quer ser chamado?" value={form.nome} onChange={(v) => set("nome", v)} focused={activeField === "nome"} onFocus={() => setActiveField("nome")} onBlur={() => setActiveField(null)}
               icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="2" /><path d="M4 21c0-4 4-7 8-7s8 3 8 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>} />
-            <Field label="WhatsApp (com DDD)" placeholder="(11) 99000-0000" value={form.whatsapp} onChange={(v) => set("whatsapp", fmtPhone(v))} focused={activeField === "whatsapp"} onFocus={() => setActiveField("whatsapp")} onBlur={() => setActiveField(null)} inputMode="numeric"
+            <Field label="WhatsApp (número americano)" placeholder="(407) 555-0123" value={form.whatsapp} onChange={(v) => set("whatsapp", fmtPhone(v))} focused={activeField === "whatsapp"} onFocus={() => setActiveField("whatsapp")} onBlur={() => setActiveField(null)} inputMode="numeric"
               icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M20 4H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12V4z" stroke="currentColor" strokeWidth="2" /><path d="M13 16h.01" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /></svg>} />
             <Field label="Nome da agência ou equipe" placeholder="Ex.: Equipe Lima, Spark Corretora…" value={form.agencia} onChange={(v) => set("agencia", v)} focused={activeField === "agencia"} onFocus={() => setActiveField("agencia")} onBlur={() => setActiveField(null)}
               icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 21h18M5 21V8l7-4 7 4v13M9 21v-6h6v6" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" /></svg>} />
 
-            {/* plan placeholder — for future (Fase 2) */}
+            {/* próximo passo: checkout via QR na tela de sucesso (Pedro 2026-06-12) */}
             <div style={{ padding: 16, background: "var(--bg)", borderRadius: 16, border: "1px dashed var(--line)", display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 11, fontWeight: 800, color: "var(--ink-3)", letterSpacing: "0.08em", textTransform: "uppercase", background: "white", padding: "4px 10px", borderRadius: 999, border: "1px solid var(--line)", whiteSpace: "nowrap", flexShrink: 0 }}>Em breve</span>
-              <span style={{ fontSize: 14, color: "var(--ink-3)" }}>Você escolherá entre Starter / Growth / Agency na ativação.</span>
+              <span style={{ fontSize: 11, fontWeight: 800, color: "var(--ink-3)", letterSpacing: "0.08em", textTransform: "uppercase", background: "white", padding: "4px 10px", borderRadius: 999, border: "1px solid var(--line)", whiteSpace: "nowrap", flexShrink: 0 }}>Próximo passo</span>
+              <span style={{ fontSize: 14, color: "var(--ink-3)" }}>Depois do cadastro você já escolhe seu plano e ativa.</span>
             </div>
 
             <button onClick={submit} disabled={!valid} className="btn btn-primary" style={{ width: "100%", padding: "28px 32px", fontSize: 24, opacity: valid ? 1 : 0.55, cursor: valid ? "pointer" : "not-allowed", animation: valid ? "glow-ring 2.4s ease-in-out infinite" : "none" }}>
