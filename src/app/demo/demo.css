@@ -195,6 +195,11 @@ html:has(.kiosk-host), body:has(.kiosk-host) {
   0%, 100% { box-shadow: 0 0 0 0 rgba(15,181,225, 0.7), 0 14px 40px rgba(15, 181, 225, 0.35); }
   50% { box-shadow: 0 0 0 22px rgba(15,181,225, 0), 0 14px 40px rgba(15, 181, 225, 0.45); }
 }
+@keyframes shake-x {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-7px); }
+  40%, 80% { transform: translateX(7px); }
+}
 @keyframes typing-dot {
   0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
   30% { transform: translateY(-6px); opacity: 1; }

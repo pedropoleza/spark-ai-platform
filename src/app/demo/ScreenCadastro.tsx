@@ -6,8 +6,9 @@ import { Mascot, BrandChip, BgOrbs } from "./components";
 export interface LeadForm { nome: string; whatsapp: string; agencia: string }
 type Route = "attract" | "demo" | "cadastro" | "sucesso";
 
-export function ScreenCadastro({ onCTA, onSubmit }: { onCTA: (r: Route) => void; onSubmit: (f: LeadForm) => void }) {
-  const [form, setForm] = useState<LeadForm>({ nome: "", whatsapp: "", agencia: "" });
+export function ScreenCadastro({ onCTA, onSubmit, initialName }: { onCTA: (r: Route) => void; onSubmit: (f: LeadForm) => void; initialName?: string | null }) {
+  // Nome vem pré-preenchido da tela do nome (refactor 2026-06-11) — sobram 2 campos.
+  const [form, setForm] = useState<LeadForm>({ nome: initialName || "", whatsapp: "", agencia: "" });
   const [activeField, setActiveField] = useState<string | null>(null);
 
   const set = (k: keyof LeadForm, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -50,7 +51,7 @@ export function ScreenCadastro({ onCTA, onSubmit }: { onCTA: (r: Route) => void;
             <span style={{ background: "var(--brand-gradient)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>A gente te mostra ao vivo.</span>
           </h1>
           <p className="lede" style={{ marginTop: 24, maxWidth: 540 }}>
-            Em até 24h um especialista do Spark Leads liga pra ativar o SparkBot no WhatsApp da sua operação. Sem demo chata, sem pressão.
+            Em até 24h um especialista do Spark Leads te chama pra ativar a plataforma — CRM + SparkBot — na sua operação. Sem demo chata, sem pressão.
           </p>
 
           <div style={{ marginTop: 36, display: "flex", flexDirection: "column", gap: 14 }}>

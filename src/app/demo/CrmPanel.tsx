@@ -1,17 +1,16 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { type CSSProperties } from "react";
+import { type CSSProperties, type ReactNode } from "react";
 import { ConfettiBurst } from "./components";
 import { PIPELINE_STAGES, CONTACTS, CALENDAR_EVENTS, type Scene, type CalendarEvent, type PipelineStage, type Contact } from "./data";
 
 export type CrmPhase = "idle" | "reacting" | "done";
 
-// ============ CRM Panel — frames the active scene view ============
-export function CrmPanel({ scenario, eventPhase }: { scenario: Scene; eventPhase: CrmPhase; sceneIndex?: number }) {
-  const tabsByScene: Record<number, string> = { 1: "Agenda", 2: "Contatos", 3: "Conhecimento", 4: "Início" };
-  const activeTab = tabsByScene[scenario.id];
-
+// ============ CRM Frame — chrome de browser + sidebar (reusado pelas cenas de toque) ============
+export function CrmFrame({ activeTab, userName, children }: { activeTab: string; userName?: string | null; children: ReactNode }) {
+  const firstName = (userName || "").trim().split(/\s+/)[0];
+  const initials = firstName ? firstName.slice(0, 2).toUpperCase() : null;
   return (
     <div style={{
       width: "100%", height: "100%", borderRadius: 28, overflow: "hidden",
@@ -36,19 +35,36 @@ export function CrmPanel({ scenario, eventPhase }: { scenario: Scene; eventPhase
           <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>app.sparkleads.pro/{activeTab.toLowerCase()}</span>
           <span style={{ marginLeft: "auto", color: "var(--success)", fontWeight: 700, flexShrink: 0 }}>● ao vivo</span>
         </div>
+        {initials && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <span style={{ width: 28, height: 28, borderRadius: 999, background: "var(--brand-gradient)", color: "white", fontSize: 11, fontWeight: 800, display: "grid", placeItems: "center" }}>{initials}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-2)", maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis" }}>{firstName}</span>
+          </div>
+        )}
       </div>
 
       {/* App body — sidebar + main */}
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: "76px 1fr", minHeight: 0 }}>
         <CrmSidebar active={activeTab} />
         <div style={{ position: "relative", minHeight: 0, overflow: "hidden" }}>
-          {scenario.id === 1 && <CrmAgenda phase={eventPhase} />}
-          {scenario.id === 2 && <CrmContact phase={eventPhase} />}
-          {scenario.id === 3 && <CrmKnowledge phase={eventPhase} />}
-          {scenario.id === 4 && <CrmProactive phase={eventPhase} />}
+          {children}
         </div>
       </div>
     </div>
+  );
+}
+
+// ============ CRM Panel — views das cenas de voz/proativo ============
+export function CrmPanel({ scenario, eventPhase, userName }: { scenario: Scene; eventPhase: CrmPhase; userName?: string | null }) {
+  const tabsByAction: Record<string, string> = { "schedule": "Agenda", "update-lead": "Contatos", "proactive": "Início" };
+  const activeTab = tabsByAction[scenario.crmAction] || "Início";
+
+  return (
+    <CrmFrame activeTab={activeTab} userName={userName}>
+      {scenario.crmAction === "schedule" && <CrmAgenda phase={eventPhase} />}
+      {scenario.crmAction === "update-lead" && <CrmContact phase={eventPhase} />}
+      {scenario.crmAction === "proactive" && <CrmProactive phase={eventPhase} userName={userName} />}
+    </CrmFrame>
   );
 }
 
@@ -303,83 +319,12 @@ function ContactDetailStrip({ phase }: { phase: CrmPhase }) {
   );
 }
 
-/* ============ CENA 3 — Conhecimento (resposta de especialista) ============ */
-function CrmKnowledge({ phase }: { phase: CrmPhase }) {
-  const options = [
-    { tag: "Recomendação principal", title: "Seguradora Prudential — Vida Mais Saúde", body: "Aceita pré-existência com agravo, sem carência longa. Indicada pra perfis 35-55 controlados.", badge: "★ 92% match", color: "#1DB954" },
-    { tag: "Alternativa custo-benefício", title: "MetLife Vida Inteligente", body: "Capital de R$ 200-500k, exame médico simplificado pra DM2 estável < 5 anos.", badge: "Custo médio", color: "#0FB5E1" },
-    { tag: "Se quiser cobertura ampla", title: "Bradesco Vida + Doenças Graves", body: "Inclui cobertura adicional pra complicações cardiovasculares — relevante pro perfil.", badge: "Cobertura+", color: "#FF8A3D" },
-  ];
-  return (
-    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--line)" }}>
-        <div style={{ fontSize: 12, color: "var(--ink-3)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Conhecimento · Base interna</div>
-        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em" }}>Consulta de especialista</div>
-      </div>
-
-      <div style={{ flex: 1, padding: 22, overflow: "auto", minHeight: 0 }}>
-        {phase === "idle" ? (
-          <div style={{ height: "100%", minHeight: 380, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, padding: 40, background: "var(--brand-tint-2)", border: "2px dashed #BCE6F2", borderRadius: 18, textAlign: "center" }}>
-            <div style={{ width: 64, height: 64, borderRadius: 18, background: "white", border: "1px solid var(--line)", display: "grid", placeItems: "center", boxShadow: "var(--shadow-sm)" }}>
-              <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
-                <circle cx="11" cy="11" r="7" stroke="var(--brand-darker)" strokeWidth="2" />
-                <path d="M16 16l5 5" stroke="var(--brand-darker)" strokeWidth="2" strokeLinecap="round" />
-              </svg>
-            </div>
-            <div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: "var(--ink)" }}>Base de conhecimento pronta</div>
-              <div style={{ fontSize: 14, color: "var(--ink-3)", marginTop: 6, maxWidth: 360 }}>Faça uma pergunta técnica por áudio e o SparkBot responde com fontes oficiais do mercado.</div>
-            </div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", marginTop: 4 }}>
-              {["Doenças pré-existentes", "Capital recomendado", "Comparativos", "SUSEP"].map((t) => (
-                <span key={t} style={{ padding: "6px 12px", background: "white", border: "1px solid var(--line)", borderRadius: 999, fontSize: 12, color: "var(--ink-3)", fontWeight: 700 }}>{t}</span>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <>
-            <div style={{ background: "var(--brand-tint)", border: "1px solid #BCE6F2", borderRadius: 14, padding: "14px 18px", marginBottom: 16, display: "flex", gap: 12, alignItems: "flex-start", animation: "slide-up 0.4s ease-out" }}>
-              <div style={{ width: 32, height: 32, borderRadius: 999, background: "var(--brand)", color: "white", display: "grid", placeItems: "center", flexShrink: 0, fontSize: 14, fontWeight: 800 }}>?</div>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 800, color: "var(--brand-darker)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 2 }}>Pergunta do agente</div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", lineHeight: 1.4 }}>
-                  &ldquo;Cliente diabético tipo 2, 47 anos — qual a melhor opção de seguro de vida?&rdquo;
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {options.map((opt, i) => (
-                <div key={i} style={{ background: "white", border: "1px solid var(--line)", borderRadius: 14, padding: 14, display: "flex", gap: 12, animation: `slide-up 0.5s cubic-bezier(0.22,1,0.36,1) ${i * 0.18 + 0.2}s both` }}>
-                  <div style={{ width: 6, alignSelf: "stretch", borderRadius: 999, background: opt.color, flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                      <span style={{ fontSize: 10, fontWeight: 800, color: opt.color, letterSpacing: "0.08em", textTransform: "uppercase" }}>{opt.tag}</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: "var(--ink-3)", background: "var(--bg)", padding: "2px 8px", borderRadius: 999 }}>{opt.badge}</span>
-                    </div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)", marginBottom: 4 }}>{opt.title}</div>
-                    <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.4 }}>{opt.body}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {phase === "done" && (
-              <div style={{ marginTop: 14, padding: "10px 14px", background: "var(--bg)", borderRadius: 10, fontSize: 11, color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 8, animation: "slide-up 0.4s ease-out" }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2V5z" stroke="currentColor" strokeWidth="1.8" /></svg>
-                <span>Fontes: Base interna SparkLeads · Manual SUSEP · Tabela atuarial 2026</span>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ============ CENA 4 — Proativo (notificação espontânea) ============ */
-function CrmProactive({ phase }: { phase: CrmPhase }) {
+/* ============ CENA 5 — Proativo (notificação espontânea) ============ */
+/* Cena "Especialista no bolso" (CrmKnowledge) cortada no refactor 2026-06-11 —
+   fluxo principal segura ~2min30. Recuperável no git (commit e969491). */
+function CrmProactive({ phase, userName }: { phase: CrmPhase; userName?: string | null }) {
   const showAlert = phase !== "idle";
+  const firstName = (userName || "").trim().split(/\s+/)[0];
   const kpis = [
     { label: "Leads ativos", value: "47", trend: "+5 esta semana", color: "#0FB5E1" },
     { label: "Reuniões hoje", value: "6", trend: "2 confirmadas", color: "#1DB954" },
@@ -395,7 +340,7 @@ function CrmProactive({ phase }: { phase: CrmPhase }) {
     <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--line)", display: "flex", alignItems: "center", gap: 14 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 12, color: "var(--ink-3)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap" }}>Painel do agente</div>
+          <div style={{ fontSize: 12, color: "var(--ink-3)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", whiteSpace: "nowrap" }}>{firstName ? `Painel de ${firstName}` : "Painel do agente"}</div>
           <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>Hoje, terça-feira</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--success)", fontSize: 12, fontWeight: 800, background: "var(--success-tint)", padding: "8px 12px", borderRadius: 999, whiteSpace: "nowrap", flexShrink: 0 }}>

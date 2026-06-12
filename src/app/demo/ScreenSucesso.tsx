@@ -48,8 +48,8 @@ export function ScreenSucesso({ form, onCTA }: { form: LeadForm | null; onCTA: (
 
             <div style={{ marginTop: 24, padding: 22, background: "var(--brand-tint-2)", borderRadius: 18, border: "1px solid #BCE6F2", display: "flex", flexDirection: "column", gap: 18 }}>
               {[
-                { n: "1", t: "Te ligamos no WhatsApp", s: "Em até 24h pra alinhar a ativação" },
-                { n: "2", t: "Conectamos o SparkBot ao seu CRM", s: "Sem você fazer nada técnico" },
+                { n: "1", t: "Te chamamos no WhatsApp", s: "Em até 24h pra alinhar a ativação" },
+                { n: "2", t: "Ativamos o Spark Leads pra você", s: "CRM + SparkBot prontos, sem nada técnico" },
                 { n: "3", t: "Você manda áudio. Ele resolve.", s: "Como você viu na demonstração" },
               ].map((step) => (
                 <div key={step.n} style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
@@ -65,7 +65,7 @@ export function ScreenSucesso({ form, onCTA }: { form: LeadForm | null; onCTA: (
             <div style={{ marginTop: 28, display: "flex", gap: 14, flexWrap: "wrap" }}>
               <button className="btn btn-primary" onClick={() => onCTA("demo")}>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M5 4l14 8-14 8V4z" fill="white" /></svg>
-                Ver o SparkBot em ação
+                Rever a demonstração
               </button>
               <button className="btn btn-secondary" onClick={() => onCTA("attract")}>Voltar ao início</button>
             </div>

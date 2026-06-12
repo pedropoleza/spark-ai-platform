@@ -1,19 +1,61 @@
 "use client";
 
 /**
- * SparkBot — Demo de convenção (Fase 1). Implementação do handoff do Claude Design.
- * Quiosque iPad landscape, on-rails, silencioso. Palco fixo 1366×1024 auto-escalado.
- * Rotas: attract → demo → cadastro → sucesso → attract (hash + reset por inatividade).
+ * SparkBot — Demo de convenção. Refactor 2026-06-11 (handoff original: Claude Design).
+ * Quiosque iPad landscape, on-rails + toques guiados. Palco fixo 1366×1024 auto-escalado.
+ * Rotas: attract → nome → demo (3 atos) → cadastro → sucesso → attract
+ * (hash + reset por inatividade). Nome capturado cedo personaliza a jornada.
+ * Lead: POST /api/demo/lead com fila offline em localStorage (wifi de estande é loteria).
  */
 import { useEffect, useRef, useState } from "react";
 import { ScreenAttract } from "./ScreenAttract";
+import { ScreenNome } from "./ScreenNome";
 import { ScreenDemo } from "./ScreenDemo";
 import { ScreenCadastro, type LeadForm } from "./ScreenCadastro";
 import { ScreenSucesso } from "./ScreenSucesso";
 
-type Route = "attract" | "demo" | "cadastro" | "sucesso";
-const ROUTES: Route[] = ["attract", "demo", "cadastro", "sucesso"];
+type Route = "attract" | "nome" | "demo" | "cadastro" | "sucesso";
+const ROUTES: Route[] = ["attract", "nome", "demo", "cadastro", "sucesso"];
 const IDLE_RESET_MS = 90_000;
+const LEAD_QUEUE_KEY = "spark_demo_lead_queue";
+
+// ============ Fila offline de leads (best-effort, sem bloquear a UX) ============
+function enqueueLead(lead: LeadForm) {
+  try {
+    const q: unknown[] = JSON.parse(localStorage.getItem(LEAD_QUEUE_KEY) || "[]");
+    q.push({ ...lead, queued_at: new Date().toISOString() });
+    localStorage.setItem(LEAD_QUEUE_KEY, JSON.stringify(q.slice(-50)));
+  } catch { /* storage indisponível — a tela de sucesso aparece mesmo assim */ }
+}
+
+let flushing = false;
+async function flushLeadQueue() {
+  if (flushing) return;
+  flushing = true;
+  try {
+    let q: Record<string, unknown>[] = [];
+    try { q = JSON.parse(localStorage.getItem(LEAD_QUEUE_KEY) || "[]"); } catch { return; }
+    if (!q.length) return;
+    const remaining: Record<string, unknown>[] = [];
+    for (const lead of q) {
+      try {
+        const res = await fetch("/api/demo/lead", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(lead),
+          keepalive: true,
+        });
+        // 2xx = gravado; 4xx = payload inválido (não adianta re-tentar). 5xx/rede = mantém na fila.
+        if (!res.ok && res.status >= 500) remaining.push(lead);
+      } catch {
+        remaining.push(lead);
+      }
+    }
+    try { localStorage.setItem(LEAD_QUEUE_KEY, JSON.stringify(remaining)); } catch { /* noop */ }
+  } finally {
+    flushing = false;
+  }
+}
 
 function App() {
   const [route, setRoute] = useState<Route>(() => {
@@ -21,6 +63,7 @@ function App() {
     const h = (location.hash || "").replace("#", "");
     return (ROUTES as string[]).includes(h) ? (h as Route) : "attract";
   });
+  const [visitorName, setVisitorName] = useState<string | null>(null);
   const [form, setForm] = useState<LeadForm | null>(null);
 
   // hash → route
@@ -38,6 +81,14 @@ function App() {
     if (location.hash !== `#${route}`) history.replaceState(null, "", `#${route}`);
   }, [route]);
 
+  // Fila de leads: tenta drenar ao montar e quando a rede volta
+  useEffect(() => {
+    flushLeadQueue();
+    const onOnline = () => flushLeadQueue();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
   // Idle reset — kiosk behavior
   const lastActivityRef = useRef<number>(Date.now());
   useEffect(() => {
@@ -50,6 +101,7 @@ function App() {
       if (route !== "attract" && idleMs > IDLE_RESET_MS) {
         setRoute("attract");
         setForm(null);
+        setVisitorName(null);
         lastActivityRef.current = Date.now();
       }
     }, 5_000);
@@ -65,32 +117,33 @@ function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "1") setRoute("attract");
-      if (e.key === "2") setRoute("demo");
-      if (e.key === "3") setRoute("cadastro");
-      if (e.key === "4") setRoute("sucesso");
+      if (e.key === "2") setRoute("nome");
+      if (e.key === "3") setRoute("demo");
+      if (e.key === "4") setRoute("cadastro");
+      if (e.key === "5") setRoute("sucesso");
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Captura: guarda local + dispara persistência best-effort (não bloqueia a UX).
+  // Captura: guarda local + persiste via fila com retry (offline-safe).
   const handleSubmit = (f: LeadForm) => {
     setForm(f);
-    try {
-      fetch("/api/demo/lead", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(f),
-        keepalive: true,
-      }).catch(() => {});
-    } catch { /* offline-safe: a tela de sucesso aparece de qualquer forma */ }
+    enqueueLead(f);
+    flushLeadQueue();
+  };
+
+  const handleName = (name: string | null) => {
+    setVisitorName(name);
+    setRoute("demo");
   };
 
   return (
     <>
       {route === "attract" && <ScreenAttract onCTA={(r) => setRoute(r)} />}
-      {route === "demo" && <ScreenDemo onCTA={(r) => setRoute(r)} />}
-      {route === "cadastro" && <ScreenCadastro onCTA={setRoute} onSubmit={handleSubmit} />}
+      {route === "nome" && <ScreenNome onSubmit={handleName} onBack={() => setRoute("attract")} />}
+      {route === "demo" && <ScreenDemo onCTA={(r) => setRoute(r)} userName={visitorName} />}
+      {route === "cadastro" && <ScreenCadastro onCTA={setRoute} onSubmit={handleSubmit} initialName={visitorName} />}
       {route === "sucesso" && <ScreenSucesso form={form} onCTA={setRoute} />}
     </>
   );
@@ -115,7 +168,23 @@ export default function DemoPage() {
     };
     fit();
     window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
+
+    // Guard anti-scroll: elementos com overflow:hidden ainda aceitam scrollTop
+    // programático (focus de input / teclado do iPad tentando revelar o campo).
+    // Sem isso o palco inteiro desloca ~160px e o chrome do quiosque some.
+    const unscroll = (e: Event) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.classList?.contains("kiosk-stage") || t.classList?.contains("kiosk-host"))) {
+        t.scrollTop = 0;
+        t.scrollLeft = 0;
+      }
+    };
+    document.addEventListener("scroll", unscroll, true);
+
+    return () => {
+      window.removeEventListener("resize", fit);
+      document.removeEventListener("scroll", unscroll, true);
+    };
   }, []);
 
   return (

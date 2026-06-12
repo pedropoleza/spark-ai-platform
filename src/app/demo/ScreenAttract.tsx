@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Mascot, BrandChip, BgOrbs } from "./components";
 
-export function ScreenAttract({ onCTA }: { onCTA: (r: "demo" | "cadastro") => void }) {
+export function ScreenAttract({ onCTA }: { onCTA: (r: "nome" | "cadastro") => void }) {
   const prompts = [
     "“Marca uma reunião com o João terça 15h.”",
     "“Atualiza: cliente quer pensar até semana que vem.”",
@@ -33,18 +33,19 @@ export function ScreenAttract({ onCTA }: { onCTA: (r: "demo" | "cadastro") => vo
         <div style={{ position: "relative", zIndex: 4 }}>
           <div className="eyebrow" style={{ marginBottom: 24 }}>
             <span style={{ display: "inline-block", width: 28, height: 2, background: "var(--brand-darker)", marginRight: 12, verticalAlign: "middle" }} />
-            Conheça o SparkBot
+            Conheça o Spark Leads
           </div>
 
-          <h1 className="display-xl" style={{ margin: 0, color: "var(--ink)" }}>
-            Você fala.<br />
-            <span style={{ background: "var(--brand-gradient)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Ele resolve.</span>
+          {/* fontSize 64: "Operado por voz." precisa caber em 1 linha na coluna (~580px) */}
+          <h1 className="display-xl" style={{ margin: 0, color: "var(--ink)", fontSize: 64 }}>
+            CRM completo.<br />
+            <span style={{ background: "var(--brand-gradient)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Operado por voz.</span>
           </h1>
 
           <p className="lede" style={{ marginTop: 28, maxWidth: 580 }}>
-            O copiloto de IA que vive no seu WhatsApp. Manda um áudio — ele <b style={{ color: "var(--ink)" }}>agenda</b>,
-            <b style={{ color: "var(--ink)" }}> anota</b>, <b style={{ color: "var(--ink)" }}>atualiza o lead</b> e
-            <b style={{ color: "var(--ink)" }}> faz follow-up</b> dentro do seu CRM. Sozinho.
+            <b style={{ color: "var(--ink)" }}>Funil</b>, <b style={{ color: "var(--ink)" }}>agenda</b> e
+            <b style={{ color: "var(--ink)" }}> WhatsApp</b> num lugar só — com o <b style={{ color: "var(--ink)" }}>SparkBot</b>,
+            o copiloto de IA que agenda, anota e faz follow-up por você. Você fala. Ele resolve.
           </p>
 
           {/* live prompt ticker */}
@@ -65,9 +66,9 @@ export function ScreenAttract({ onCTA }: { onCTA: (r: "demo" | "cadastro") => vo
 
           {/* CTAs */}
           <div style={{ marginTop: 44, display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
-            <button className="btn btn-primary btn-lg" onClick={() => onCTA("demo")} style={{ animation: "glow-ring 2.6s ease-in-out infinite" }}>
+            <button className="btn btn-primary btn-lg" onClick={() => onCTA("nome")} style={{ animation: "glow-ring 2.6s ease-in-out infinite" }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M5 4l14 8-14 8V4z" fill="white" /></svg>
-              Conhecer o SparkBot
+              Tocar pra experimentar
             </button>
             <button className="btn btn-secondary btn-lg" onClick={() => onCTA("cadastro")}>
               Quero me cadastrar
@@ -80,17 +81,17 @@ export function ScreenAttract({ onCTA }: { onCTA: (r: "demo" | "cadastro") => vo
               <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
               <path d="M12 8v4l3 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
-            <span className="body">Demonstração de 90 segundos · ninguém precisa te ensinar</span>
+            <span className="body">Demonstração de 2 minutos · você mesmo pilota</span>
           </div>
         </div>
 
         {/* RIGHT — mascot stage */}
         <div style={{ position: "relative", height: "100%", display: "grid", placeItems: "center" }}>
           <div style={{ position: "absolute", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, rgba(15,181,225,0.20), transparent 65%)", filter: "blur(8px)" }} />
-          <OrbitChip angle={-55} distance={260} label="📅 Agenda" delay={0} />
-          <OrbitChip angle={55} distance={250} label="📝 Anota" delay={0.4} />
-          <OrbitChip angle={150} distance={260} label="🔄 Atualiza lead" delay={0.8} />
-          <OrbitChip angle={210} distance={260} label="🎯 Follow-up" delay={1.2} />
+          <OrbitChip angle={-55} distance={260} label="📊 Funil visual" delay={0} />
+          <OrbitChip angle={55} distance={250} label="📅 Agenda integrada" delay={0.4} />
+          <OrbitChip angle={150} distance={260} label="💬 WhatsApp no CRM" delay={0.8} />
+          <OrbitChip angle={210} distance={260} label="🎯 Follow-up sozinho" delay={1.2} />
 
           <Mascot pose="wave" size={600} breath ring />
 
