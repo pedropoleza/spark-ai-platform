@@ -189,6 +189,11 @@ export function ScreenDemo({ onCTA, userName }: { onCTA: (r: Route) => void; use
         </div>
       )}
 
+      {/* Setinhas discretas (Pedro 2026-06-12): pular cenas no toque, sem esperar
+          completar a interação — pro time apresentar no ritmo que quiser. */}
+      <SkipArrow dir="left" onClick={goBack} />
+      <SkipArrow dir="right" onClick={goNext} />
+
       {/* Bottom CTA bar */}
       <div style={{ position: "absolute", left: 32, right: 32, bottom: 28, display: "flex", alignItems: "center", gap: 16 }}>
         <div style={{ flex: 1, minWidth: 0, padding: "16px 22px", background: "white", border: "1px solid var(--line)", borderRadius: 18, display: "flex", alignItems: "center", gap: 14, boxShadow: "var(--shadow-sm)" }}>
@@ -232,6 +237,29 @@ export function ScreenDemo({ onCTA, userName }: { onCTA: (r: Route) => void; use
   );
 }
 
+function SkipArrow({ dir, onClick }: { dir: "left" | "right"; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={dir === "left" ? "Cena anterior" : "Próxima cena"}
+      style={{
+        position: "absolute", top: "50%", transform: "translateY(-50%)",
+        [dir]: 6,
+        width: 52, height: 52, borderRadius: "50%",
+        background: "rgba(255,255,255,0.75)", border: "1px solid var(--line)",
+        color: "var(--ink-3)", cursor: "pointer", fontFamily: "inherit",
+        display: "grid", placeItems: "center",
+        boxShadow: "var(--shadow-sm)", opacity: 0.55, zIndex: 30,
+        transition: "opacity 0.2s",
+      }}
+    >
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+        <path d={dir === "left" ? "M15 6l-6 6 6 6" : "M9 6l6 6-6 6"} stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
 function HelperLabel({ phase, scenario }: { phase: Phase; scenario: Scene }) {
   if (scenario.kind === "touch") {
     if (phase === "complete") return <>{scenario.successLabel}</>;
@@ -246,7 +274,7 @@ function HelperLabel({ phase, scenario }: { phase: Phase; scenario: Scene }) {
   if (phase === "ready") return <>Segure o botão azul pra mandar o áudio.</>;
   if (phase === "userSent" || phase === "typing") return <>SparkBot ouvindo e organizando…</>;
   if (phase === "responded") return <>Olha o CRM se atualizando à direita →</>;
-  if (phase === "complete") return <>Pronto. Reunião lançada, lead atualizado, follow-up agendado.</>;
+  if (phase === "complete") return <>{scenario.successLabel || "Pronto. O CRM já está atualizado."}</>;
   return <></>;
 }
 

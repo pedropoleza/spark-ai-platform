@@ -4,7 +4,7 @@
 // Ato 2 = mesmas ações por voz (SparkBot); Ato 3 = bot proativo. On-rails: nada
 // conecta com sistema real.
 
-export type CrmAction = "funnel-touch" | "card-touch" | "schedule" | "update-lead" | "proactive";
+export type CrmAction = "funnel-touch" | "card-touch" | "schedule" | "update-lead" | "knowledge" | "proactive";
 export type SceneKind = "touch" | "voice" | "auto";
 
 export interface Scene {
@@ -74,6 +74,7 @@ export const SCENES: Scene[] = [
     superpower: "Agendar por voz",
     title: "Agora não toca em nada. Fala.",
     sub: "Manda um áudio — o SparkBot agenda direto no CRM que você acabou de usar.",
+    successLabel: "Pronto. Reunião na agenda e convite no WhatsApp do cliente.",
     audioTranscript: "Marca uma reunião com o João Silva terça às 15h sobre a renovação do seguro de vida.",
     audioDuration: "0:11",
     botText: "Pronto{vocativo}! ✓\n\n📅 *Reunião com João Silva*\nTerça-feira, 15:00 — Renovação Seguro de Vida\n\nJá lancei na sua agenda e mandei o convite no WhatsApp dele.",
@@ -88,15 +89,33 @@ export const SCENES: Scene[] = [
     superpower: "Atualizar falando",
     title: "O que você fez com o dedo, ele faz com a sua voz.",
     sub: "Fala a atualização — o funil se move e a nota cai na ficha.",
+    successLabel: "O que você fez com o dedo no Ato 1, ele fez com a sua voz.",
     audioTranscript: "Atualização do João Silva: ele quer pensar até semana que vem. Manda follow-up sexta.",
     audioDuration: "0:09",
     botText: "Atualizei o João Silva ✓\n\n📝 Anotação salva na ficha\n🔄 Etapa: *Proposta* → *Em consideração*\n⏰ Follow-up agendado pra sexta, 10h",
     crmAction: "update-lead",
   },
 
-  // ============ ATO 3 — CENA 5: proativo ============
+  // ============ ATO 2 — CENA 5: especialista no bolso (National Life) ============
+  // Restaurada em 2026-06-12 (Pedro) — tinha sido cortada no refactor V2 pra
+  // segurar o tempo. Conteúdo agora fala a língua do público (National Life).
   {
     id: 5,
+    act: 2,
+    kind: "voice",
+    superpower: "Especialista no bolso",
+    title: "Pergunta técnica? Resposta na hora.",
+    sub: "Dúvidas de produto National Life — direto da base de conhecimento.",
+    successLabel: "Resposta de especialista em segundos — base National Life sempre à mão.",
+    audioTranscript: "Cliente diabético tipo 2, 47 anos. Qual a melhor opção de seguro de vida pra ele?",
+    audioDuration: "0:08",
+    botText: "Pra esse perfil tenho 3 caminhos que costumam funcionar 👇\n\nOlha no painel — já trouxe da base de conhecimento.",
+    crmAction: "knowledge",
+  },
+
+  // ============ ATO 3 — CENA 6: proativo ============
+  {
+    id: 6,
     act: 3,
     kind: "auto",
     superpower: "Trabalha sozinho",
@@ -107,6 +126,19 @@ export const SCENES: Scene[] = [
     crmAction: "proactive",
   },
 ];
+
+// ============ Base de conhecimento (cena Especialista — National Life) ============
+export interface KnowledgeOption { tag: string; title: string; body: string; badge: string; color: string }
+export const KNOWLEDGE = {
+  question: "Cliente diabético tipo 2, 47 anos — qual a melhor opção de seguro de vida?",
+  chips: ["Living benefits", "IUL · FlexLife", "Underwriting", "Conversão de term"],
+  options: [
+    { tag: "Recomendação principal", title: "FlexLife (IUL) com living benefits", body: "Perfil 35-55 com diabetes tipo 2 controlada costuma qualificar com rate ajustado — protege a família e ainda acumula cash value.", badge: "★ melhor encaixe", color: "#1DB954" },
+    { tag: "Alternativa acessível", title: "Term com conversão garantida", body: "Entrada mais barata agora, com direito de converter pra permanente depois — sem novo exame médico.", badge: "Custo menor", color: "#0FB5E1" },
+    { tag: "Se o foco é aposentadoria", title: "Estratégia LIRP com IUL", body: "Proteção hoje + renda com vantagem fiscal lá na frente. O caminho pra quem pensa no longo prazo.", badge: "Longo prazo", color: "#FF8A3D" },
+  ] as KnowledgeOption[],
+  sources: "Fontes: Base interna Spark Leads · Materiais National Life · Tabelas 2026",
+};
 
 export interface PipelineStage { key: string; label: string; color: string }
 export const PIPELINE_STAGES: PipelineStage[] = [

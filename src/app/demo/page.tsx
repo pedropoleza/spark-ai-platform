@@ -16,7 +16,16 @@ import { ScreenSucesso } from "./ScreenSucesso";
 
 type Route = "attract" | "nome" | "demo" | "cadastro" | "sucesso";
 const ROUTES: Route[] = ["attract", "nome", "demo", "cadastro", "sucesso"];
-const IDLE_RESET_MS = 90_000;
+// Idle reset POR ROTA (Pedro 2026-06-12: 90s fixo cortava a pessoa no meio do
+// cadastro e do scan do QR de checkout). Teclado virtual do iPad nem sempre
+// emite pointer/keydown — o bump em "input" (abaixo) cobre a digitação.
+const IDLE_RESET_MS: Record<Route, number> = {
+  attract: Number.POSITIVE_INFINITY, // já é a tela de descanso
+  nome: 120_000,
+  demo: 120_000,
+  cadastro: 300_000, // 5min — digitando com calma
+  sucesso: 240_000,  // 4min — tempo de pegar o celular e escanear o QR
+};
 const LEAD_QUEUE_KEY = "spark_demo_lead_queue";
 
 // ============ Fila offline de leads (best-effort, sem bloquear a UX) ============
@@ -89,16 +98,20 @@ function App() {
     return () => window.removeEventListener("online", onOnline);
   }, []);
 
-  // Idle reset — kiosk behavior
+  // Idle reset — kiosk behavior (timeout por rota; ver IDLE_RESET_MS)
   const lastActivityRef = useRef<number>(Date.now());
   useEffect(() => {
     const bump = () => { lastActivityRef.current = Date.now(); };
     window.addEventListener("pointerdown", bump);
     window.addEventListener("touchstart", bump);
     window.addEventListener("keydown", bump);
+    // teclado virtual do iPad: "input"/"focusin" disparam mesmo quando
+    // pointer/keydown não chegam na página
+    window.addEventListener("input", bump, true);
+    window.addEventListener("focusin", bump, true);
     const id = setInterval(() => {
       const idleMs = Date.now() - lastActivityRef.current;
-      if (route !== "attract" && idleMs > IDLE_RESET_MS) {
+      if (route !== "attract" && idleMs > (IDLE_RESET_MS[route] ?? 120_000)) {
         setRoute("attract");
         setForm(null);
         setVisitorName(null);
@@ -109,6 +122,8 @@ function App() {
       window.removeEventListener("pointerdown", bump);
       window.removeEventListener("touchstart", bump);
       window.removeEventListener("keydown", bump);
+      window.removeEventListener("input", bump, true);
+      window.removeEventListener("focusin", bump, true);
       clearInterval(id);
     };
   }, [route]);

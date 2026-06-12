@@ -36,8 +36,14 @@ Personalização: `{vocativo}` nos textos do bot, chip do user no chrome do CRM,
 
 ## Follow-ups
 - [ ] Testar o DRAG real no iPad físico (validado no preview só via fallback tap-tap e pointer sintético; conversão de escala implementada em `CrmTouch.tsx:toBoardCoords`).
-- [ ] Se sentir falta na convenção: reintroduzir "Especialista no bolso" como cena bônus pós-Ato 3.
+- [x] ~~Reintroduzir "Especialista no bolso"~~ — RESTAURADA 2026-06-12 (pedido do Pedro) como cena 5 do Ato 2, conteúdo adaptado pra National Life (FlexLife/IUL, term com conversão, LIRP). Demo agora tem 6 cenas (~2min50).
 - [ ] Rodar `scripts/import-demo-leads.ts <locationId>` depois do evento (leads ficam em `demo_leads`, RLS service-role-only).
+
+## Ajustes pós-review no iPad (Pedro 2026-06-12)
+- **Formato US**: máscara do WhatsApp (407) 555-0123, endpoint normaliza +1.
+- **Checkout via QR** na tela de sucesso → sparkleads.pro/#planos.
+- **Idle reset por rota** (90s fixo cortava cadastro/scan): nome/demo 120s, cadastro 300s, sucesso 240s + bump em `input`/`focusin` (teclado virtual do iPad não emite pointer/keydown confiável).
+- **Setinhas discretas** nas bordas do ScreenDemo: pulam cenas sem completar a interação (pro time apresentar no próprio ritmo).
 
 ## Bugs pegos na verificação (já fixados)
 - `autoFocus` da tela do nome scrollava o palco (overflow:hidden tem scrollTop) → `focus({preventScroll})` + guard anti-scroll no stage (cobre teclado do iPad).

@@ -3,7 +3,7 @@
 
 import { type CSSProperties, type ReactNode } from "react";
 import { ConfettiBurst } from "./components";
-import { PIPELINE_STAGES, CONTACTS, CALENDAR_EVENTS, type Scene, type CalendarEvent, type PipelineStage, type Contact } from "./data";
+import { PIPELINE_STAGES, CONTACTS, CALENDAR_EVENTS, KNOWLEDGE, type Scene, type CalendarEvent, type PipelineStage, type Contact } from "./data";
 
 export type CrmPhase = "idle" | "reacting" | "done";
 
@@ -56,13 +56,14 @@ export function CrmFrame({ activeTab, userName, children }: { activeTab: string;
 
 // ============ CRM Panel — views das cenas de voz/proativo ============
 export function CrmPanel({ scenario, eventPhase, userName }: { scenario: Scene; eventPhase: CrmPhase; userName?: string | null }) {
-  const tabsByAction: Record<string, string> = { "schedule": "Agenda", "update-lead": "Contatos", "proactive": "Início" };
+  const tabsByAction: Record<string, string> = { "schedule": "Agenda", "update-lead": "Contatos", "knowledge": "Conhecimento", "proactive": "Início" };
   const activeTab = tabsByAction[scenario.crmAction] || "Início";
 
   return (
     <CrmFrame activeTab={activeTab} userName={userName}>
       {scenario.crmAction === "schedule" && <CrmAgenda phase={eventPhase} />}
       {scenario.crmAction === "update-lead" && <CrmContact phase={eventPhase} />}
+      {scenario.crmAction === "knowledge" && <CrmKnowledge phase={eventPhase} />}
       {scenario.crmAction === "proactive" && <CrmProactive phase={eventPhase} userName={userName} />}
     </CrmFrame>
   );
@@ -319,9 +320,78 @@ function ContactDetailStrip({ phase }: { phase: CrmPhase }) {
   );
 }
 
-/* ============ CENA 5 — Proativo (notificação espontânea) ============ */
-/* Cena "Especialista no bolso" (CrmKnowledge) cortada no refactor 2026-06-11 —
-   fluxo principal segura ~2min30. Recuperável no git (commit e969491). */
+/* ============ CENA 5 — Conhecimento (especialista National Life) ============ */
+/* Restaurada 2026-06-12 (Pedro) — conteúdo adaptado pro público da convenção:
+   produtos National Life (FlexLife/IUL, term com conversão, LIRP). */
+function CrmKnowledge({ phase }: { phase: CrmPhase }) {
+  return (
+    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--line)" }}>
+        <div style={{ fontSize: 12, color: "var(--ink-3)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" }}>Conhecimento · Base interna</div>
+        <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em" }}>Consulta de especialista</div>
+      </div>
+
+      <div style={{ flex: 1, padding: 22, overflow: "auto", minHeight: 0 }}>
+        {phase === "idle" ? (
+          <div style={{ height: "100%", minHeight: 380, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, padding: 40, background: "var(--brand-tint-2)", border: "2px dashed #BCE6F2", borderRadius: 18, textAlign: "center" }}>
+            <div style={{ width: 64, height: 64, borderRadius: 18, background: "white", border: "1px solid var(--line)", display: "grid", placeItems: "center", boxShadow: "var(--shadow-sm)" }}>
+              <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+                <circle cx="11" cy="11" r="7" stroke="var(--brand-darker)" strokeWidth="2" />
+                <path d="M16 16l5 5" stroke="var(--brand-darker)" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "var(--ink)" }}>Base de conhecimento pronta</div>
+              <div style={{ fontSize: 14, color: "var(--ink-3)", marginTop: 6, maxWidth: 380 }}>Faça uma pergunta técnica por áudio — produtos National Life, underwriting, living benefits.</div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", marginTop: 4 }}>
+              {KNOWLEDGE.chips.map((t) => (
+                <span key={t} style={{ padding: "6px 12px", background: "white", border: "1px solid var(--line)", borderRadius: 999, fontSize: 12, color: "var(--ink-3)", fontWeight: 700 }}>{t}</span>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={{ background: "var(--brand-tint)", border: "1px solid #BCE6F2", borderRadius: 14, padding: "14px 18px", marginBottom: 16, display: "flex", gap: 12, alignItems: "flex-start", animation: "slide-up 0.4s ease-out" }}>
+              <div style={{ width: 32, height: 32, borderRadius: 999, background: "var(--brand)", color: "white", display: "grid", placeItems: "center", flexShrink: 0, fontSize: 14, fontWeight: 800 }}>?</div>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "var(--brand-darker)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 2 }}>Pergunta do agente</div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)", lineHeight: 1.4 }}>
+                  &ldquo;{KNOWLEDGE.question}&rdquo;
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {KNOWLEDGE.options.map((opt, i) => (
+                <div key={i} style={{ background: "white", border: "1px solid var(--line)", borderRadius: 14, padding: 14, display: "flex", gap: 12, animation: `slide-up 0.5s cubic-bezier(0.22,1,0.36,1) ${i * 0.18 + 0.2}s both` }}>
+                  <div style={{ width: 6, alignSelf: "stretch", borderRadius: 999, background: opt.color, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: opt.color, letterSpacing: "0.08em", textTransform: "uppercase" }}>{opt.tag}</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "var(--ink-3)", background: "var(--bg)", padding: "2px 8px", borderRadius: 999 }}>{opt.badge}</span>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)", marginBottom: 4 }}>{opt.title}</div>
+                    <div style={{ fontSize: 13, color: "var(--ink-2)", lineHeight: 1.4 }}>{opt.body}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {phase === "done" && (
+              <div style={{ marginTop: 14, padding: "10px 14px", background: "var(--bg)", borderRadius: 10, fontSize: 11, color: "var(--ink-3)", display: "flex", alignItems: "center", gap: 8, animation: "slide-up 0.4s ease-out" }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2V5z" stroke="currentColor" strokeWidth="1.8" /></svg>
+                <span>{KNOWLEDGE.sources}</span>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ============ CENA 6 — Proativo (notificação espontânea) ============ */
 function CrmProactive({ phase, userName }: { phase: CrmPhase; userName?: string | null }) {
   const showAlert = phase !== "idle";
   const firstName = (userName || "").trim().split(/\s+/)[0];
