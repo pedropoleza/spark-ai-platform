@@ -37,21 +37,45 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const validationResult = await validateGHLUser(
-      companyId,
-      data.location_id,
-      data.user_id
-    );
+    // Acesso de agency admin/user (Pedro 2026-06-11): o Custom Menu Link manda
+    // user_id+location_id CRUS e validateGHLUser confirma o user na LISTA da
+    // location — mas agency admin/user NÃO aparecem nessa lista (a GHL API não
+    // retorna users de agência por location; é o MESMO motivo do caminho idToken
+    // no ui-auth, ver comentário lá). Sem isto, agency batia no fail-closed e via
+    // "Falha na validação do usuário". Reusa a allowlist EXPLÍCITA já provada no
+    // ui-auth/check-admin (`userId:companyId`, vírgula-separada). NÃO é wildcard —
+    // mantém o fail-closed contra forja de user_id no POST público; o admin lista
+    // exatamente quem libera. Match = agency admin (isAdmin=true). Cross-company é
+    // barrado: a chave amarra companyId, e GHLClient não consegue cunhar token de
+    // location de outra company (getLocationToken falha), então dados não vazam.
+    const agencyAllowlist = (process.env.ASSISTANT_ALLOWED_AGENCY_USERS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
-    if (!validationResult) {
-      return NextResponse.json({ error: "Falha na validacao do usuario" }, { status: 403 });
+    let isAdmin: boolean;
+    if (agencyAllowlist.includes(`${data.user_id}:${companyId}`)) {
+      isAdmin = true;
+      console.log("[SSO] agency user liberado via allowlist:", { userId: data.user_id, companyId });
+    } else {
+      const validationResult = await validateGHLUser(
+        companyId,
+        data.location_id,
+        data.user_id
+      );
+
+      if (!validationResult) {
+        return NextResponse.json({ error: "Falha na validacao do usuario" }, { status: 403 });
+      }
+      isAdmin = validationResult.isAdmin;
     }
-
-    const { user, isAdmin } = validationResult;
 
     // Buscar timezone da location via GHL API
     let locationTimezone = "America/New_York";
-    let locationName = user.name || "Minha Location";
+    // locationName real vem do fetch da location abaixo; "Minha Location" só
+    // sobrevive se esse fetch falhar (agency user tem token de location válido,
+    // então no caminho normal é sempre sobrescrito pelo nome real).
+    let locationName = "Minha Location";
     try {
       const client = new GHLClient(companyId, data.location_id);
       const locationData = await client.get<{
