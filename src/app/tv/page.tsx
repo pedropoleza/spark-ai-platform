@@ -141,6 +141,65 @@ function TvApp() {
   );
 }
 
+// ============ Botão de tela cheia (Pedro 2026-06-12) ============
+// Fullscreen exige gesto do usuário — botão some quando já está em tela cheia
+// (Esc traz de volta). Atalho: tecla F. Cobre browser de smart TV sem F11.
+type FsDocument = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => void;
+};
+type FsElement = HTMLElement & { webkitRequestFullscreen?: () => void };
+
+function enterFullscreen() {
+  const el = document.documentElement as FsElement;
+  try {
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    else el.webkitRequestFullscreen?.();
+  } catch { /* sem suporte — segue em janela */ }
+}
+
+function FullscreenButton() {
+  const [isFs, setIsFs] = useState(false);
+
+  useEffect(() => {
+    const doc = document as FsDocument;
+    const onChange = () => setIsFs(!!(document.fullscreenElement || doc.webkitFullscreenElement));
+    document.addEventListener("fullscreenchange", onChange);
+    document.addEventListener("webkitfullscreenchange", onChange);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "f" || e.key === "F") enterFullscreen();
+    };
+    window.addEventListener("keydown", onKey);
+    onChange();
+    return () => {
+      document.removeEventListener("fullscreenchange", onChange);
+      document.removeEventListener("webkitfullscreenchange", onChange);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  if (isFs) return null;
+  return (
+    <button
+      onClick={enterFullscreen}
+      style={{
+        position: "fixed", right: 28, bottom: 28, zIndex: 100,
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "16px 28px", borderRadius: 999,
+        background: "rgba(10,22,32,0.85)", border: "1px solid rgba(43,212,255,0.45)",
+        color: "var(--tv-ink)", fontSize: 22, fontWeight: 700, fontFamily: "inherit",
+        cursor: "pointer", boxShadow: "0 14px 40px rgba(0,0,0,0.5)",
+        animation: "tv-glow 2.6s ease-in-out infinite",
+      }}
+    >
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      Tela cheia
+    </button>
+  );
+}
+
 // ============ Palco 1920×1080 escalado pro viewport ============
 export default function TvPage() {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -164,6 +223,7 @@ export default function TvPage() {
       <div className="tv-stage" ref={stageRef}>
         {mounted && <TvApp />}
       </div>
+      {mounted && <FullscreenButton />}
     </div>
   );
 }
