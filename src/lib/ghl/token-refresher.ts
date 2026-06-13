@@ -136,7 +136,55 @@ async function upsertCompanyTokens(
  * Lança erro limpo se não houver refresh_token ou se o refresh falhar (caller
  * trata — ex: refresh_token revogado = auth realmente quebrado).
  */
+// Anti-thundering-herd (Pedro 2026-06-13, apagão de auth). O refresh_token do
+// GHL é de USO ÚNICO — rotaciona a cada refresh bem-sucedido. Quando o company
+// token vence, CENTENAS de requests concorrentes caíam aqui ao mesmo tempo, cada
+// uma lendo o MESMO refresh_token salvo e fazendo POST /oauth/token. O GHL aceita
+// só a 1ª (rotaciona → invalida o refresh_token usado) e responde 401
+// invalid_grant pro resto. Sob essa thrash a rotação às vezes se perdia (vencedor
+// não salvava antes da próxima onda reler o token já invalidado) → "Token
+// Refresher" travava num refresh_token morto e NADA renovava (49k on-demand + 21k
+// falhas em ~26h, integração fora). Uma única chamada SERIALIZADA recuperou.
+//
+// Fix: coalescing in-memory por companyId — refreshes concorrentes NA MESMA
+// lambda compartilham UMA Promise (some o herd intra-lambda). Cross-lambda, o
+// vencedor salva o token válido e os perdedores re-leem o válido na próxima.
+// + cooldown pós-falha: se acabou de FALHAR, não martela o GHL de novo por
+// COOLDOWN_MS — se o refresh_token estiver genuinamente revogado (precisa
+// re-auth), evita repetir o storm de 401.
+const inFlightRefresh = new Map<string, Promise<GHLTokenResponse>>();
+const lastRefreshFailAt = new Map<string, number>();
+const REFRESH_FAIL_COOLDOWN_MS = 10_000;
+
 export async function refreshCompanyToken(
+  companyId: string,
+): Promise<GHLTokenResponse> {
+  const inFlight = inFlightRefresh.get(companyId);
+  if (inFlight) return inFlight; // junta na chamada em voo — não dispara outra
+
+  const failedAt = lastRefreshFailAt.get(companyId);
+  if (failedAt && Date.now() - failedAt < REFRESH_FAIL_COOLDOWN_MS) {
+    throw new Error(
+      `refresh em cooldown pra companyId=${companyId} (falhou há <${REFRESH_FAIL_COOLDOWN_MS}ms — ` +
+        `provável refresh_token revogado: precisa RE-AUTORIZAR o app, não adianta retry)`,
+    );
+  }
+
+  const p = doRefreshCompanyToken(companyId);
+  inFlightRefresh.set(companyId, p);
+  try {
+    const tokens = await p;
+    lastRefreshFailAt.delete(companyId);
+    return tokens;
+  } catch (e) {
+    lastRefreshFailAt.set(companyId, Date.now());
+    throw e;
+  } finally {
+    inFlightRefresh.delete(companyId);
+  }
+}
+
+async function doRefreshCompanyToken(
   companyId: string,
 ): Promise<GHLTokenResponse> {
   const supabase = createGHLTokenClient();
