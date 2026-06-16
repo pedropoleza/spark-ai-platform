@@ -730,7 +730,14 @@ export async function POST(request: NextRequest) {
       message_body: messageBody || (audioUrl ? "[audio]" : mediaAttachments.length > 0 ? "[media]" : ""),
       message_type: messageType,
       message_direction: direction,
-      ghl_message_id: (body.id as string) || null,
+      // Fix bug observado em prod 2026-06-16 (Alves Cury, lead 959-236-9723 — agente
+      // respondendo 2×): o conversation-provider (Stevo/dual-app) entrega cada inbound
+      // 2× e usa `messageId`, NÃO `id`. Como só líamos body.id, ghl_message_id virava
+      // null → o índice UNIQUE de dedup (00021, parcial WHERE ghl_message_id IS NOT
+      // NULL) não pegava → 2 linhas no message_queue → 2 processamentos → resposta
+      // duplicada pro lead. Os 2 webhooks carregam o MESMO messageId, então ler ele
+      // como fallback faz o 2º insert bater 23505 e ser descartado.
+      ghl_message_id: (body.id as string) || (body.messageId as string) || null,
       received_at: now,
       process_after: processAfter,
       status: "pending",
