@@ -9,6 +9,7 @@ import {
   findContactOpportunityId,
   updateOpportunity,
 } from "@/lib/ghl/operations";
+import { reportError } from "@/lib/admin-signals/report-error";
 import type { AIAction, AIResponse } from "@/types/ai";
 
 // Delay curto entre mensagens (max 1.5s para não causar timeout no serverless)
@@ -137,6 +138,25 @@ export async function executeActions(
       }
     } catch (error) {
       await logExecution(supabase, ctx, "send_message", { message: response.message }, false, error);
+      // Sweep ultra-review 2026-06-15: este era o ÚNICO send-path lead-facing mudo no
+      // catch (só logExecution, sem alerta). GHL/Stevo caindo = lead sem resposta e
+      // ZERO sinal pro admin (ponto cego do F49). reportError → admin_signal high +
+      // Sentry. NÃO re-lança de propósito: preserva o fluxo atual (grupo conclui, sem
+      // retry/double-send) — mudar pra retry exige eval supervisionado.
+      reportError({
+        title: "Agente lead-facing: falha ao enviar mensagem",
+        feature: "action-executor-send",
+        error,
+        severity: "high",
+        description:
+          "client.post(/conversations/messages) falhou no envio pro lead (sales/recruitment). Lead pode não ter recebido a resposta.",
+        metadata: {
+          location_id: ctx.locationId,
+          contact_id: ctx.contactId,
+          agent_id: ctx.agentId,
+          channel: ctx.channel || "SMS",
+        },
+      });
     }
   }
 

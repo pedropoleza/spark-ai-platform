@@ -268,6 +268,20 @@ async function runProactiveCron(request: NextRequest): Promise<NextResponse> {
   const bulkResult = await withFeatureTag("bulk-runner", () =>
     trackRunner("bulk-runner", () => fireBulkRecipients()),
   );
+  // Sweep ultra-review 2026-06-15: mesmo gate do reminderResult acima. Antes
+  // bulkResult.failed só fluía pro JSON e o trackRunner classificava failed>0 como
+  // 'partial' (resetando consecutive_errors) → rajada de failed por tick (ex: Stevo
+  // recusando metade dos sends) NÃO escalava pra signal. checkBulkRunnerStaleAndAlert
+  // só pega stall >30min, não rajada-por-tick.
+  if (bulkResult.failed > 0) {
+    reportError({
+      title: "SparkBot: disparo(s) em massa falharam no envio",
+      feature: "bulk-runner",
+      severity: "high",
+      description: `${bulkResult.failed} envio(s) de disparo falharam neste tick (de ${bulkResult.fired + bulkResult.failed} processados).`,
+      metadata: { fired: bulkResult.fired, failed: bulkResult.failed, skipped: bulkResult.skipped },
+    });
+  }
 
   // F1.5 Pedro 2026-05-16 (caso Gustavo): checa se há jobs RUNNING com
   // recipients pending mas runner NÃO está enviando há > 5min. Antes,

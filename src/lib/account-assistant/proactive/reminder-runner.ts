@@ -50,7 +50,7 @@ export async function fireScheduledReminders(): Promise<ReminderRunResult> {
   // Atomic claim: marca pending → running em uma só query.
   // Fix Pedro 2026-05-06: estende pra outbound_to_contact (mensagens
   // agendadas pra CONTATO, não pro rep) — schedule_message_to_contact.
-  const { data: claimed } = await supabase
+  const { data: claimed, error: claimErr } = await supabase
     .from("assistant_scheduled_tasks")
     .update({ status: "running" })
     .eq("status", "pending")
@@ -65,6 +65,21 @@ export async function fireScheduledReminders(): Promise<ReminderRunResult> {
     .select("*")
     .order("next_run_at", { ascending: true })
     .limit(50);
+
+  // Sweep ultra-review 2026-06-15: o claim ignorava o error (anti-pattern do
+  // CLAUDE.md). Se o UPDATE falhar (drift de schema/RLS — cenário EXATO do apagão
+  // do disparo), claimed=null e o tick parecia "sem trabalho" SEM erro logado →
+  // lembretes paravam mudos. Agora vira signal high antes do return.
+  if (claimErr) {
+    reportError({
+      title: "SparkBot: claim de lembretes falhou",
+      feature: "reminder-runner",
+      error: claimErr,
+      description:
+        "UPDATE de claim (pending→running) em assistant_scheduled_tasks retornou erro — tick não processou lembretes. Possível drift de schema/RLS.",
+    });
+    return { fired: 0, failed: 0, skipped: 0 };
+  }
 
   if (!claimed || claimed.length === 0) {
     return { fired: 0, failed: 0, skipped: 0 };

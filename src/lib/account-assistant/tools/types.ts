@@ -291,6 +291,24 @@ export function ghlErrorToResult(err: unknown, action: string): ToolResult {
     };
   }
 
+  // Slot bloqueado/indisponível em create OU update de appointment (caso Erika
+  // 2026-06-15): o Spark Leads roda free-slot validation até quando você só muda
+  // horário no reagendamento. Sem ignoreFreeSlotValidation → 400 "The slot you have
+  // selected is no longer available". Damos uma DICA EXPLÍCITA de recuperação pro LLM
+  // (antes surfava genérico e o LLM alucinava 'erro de usuário' → caminho errado).
+  if (/slot[^.]*(no longer available|not available|unavailable|já (?:não|nao)[^.]*dispon|indispon)/i.test(fullMsg)) {
+    return {
+      status: "error",
+      message:
+        `${action}: o horário está ocupado/bloqueado no calendário. ` +
+        `Se o rep é admin/internal e JÁ confirmou "mesmo assim", re-chame a tool ` +
+        `(create_appointment ou update_appointment) com ignore_free_slot_validation: true. ` +
+        `Senão, ofereça o próximo horário livre via get_free_slots.`,
+      retryable: false,
+      code: "slot_unavailable",
+    };
+  }
+
   // Caminho principal: SE temos mensagem do GHL, expõe sanitizada pro LLM.
   // Fix Pedro 2026-05-04: antes mascarávamos pra "Spark Leads rejeitou X" —
   // LLM não tinha como tomar decisão. Agora bot vê "The slot you have

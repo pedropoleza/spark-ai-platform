@@ -105,7 +105,7 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
 
   // Claim atomico via update com filter status=pending
   const ids = eligible.map((c) => c.id);
-  const { data: claimed } = await supabase
+  const { data: claimed, error: claimErr } = await supabase
     .from("followup_messages")
     .update({
       status: "sending",
@@ -115,6 +115,20 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
     .in("id", ids)
     .eq("status", "pending")
     .select("id");
+
+  // Sweep ultra-review 2026-06-15: o claim ignorava o error. Se o UPDATE falhar
+  // (ex: drift das colunas claim_token/claimed_at, ou RLS), claimed=null e a
+  // sequência de follow-up travava MUDA pro lead, sem sinal. Agora vira signal.
+  if (claimErr) {
+    reportError({
+      title: "SparkBot: claim de follow-ups falhou",
+      feature: "followup-runner",
+      error: claimErr,
+      description:
+        "UPDATE de claim (pending→sending) em followup_messages retornou erro — sequência travada sem envio. Possível drift (claim_token/claimed_at) ou RLS.",
+    });
+    return result;
+  }
 
   if (!claimed || claimed.length === 0) return result;
   const claimedIds = new Set(claimed.map((c) => c.id as string));
