@@ -169,7 +169,20 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
   // armazenamos top-level pra resolver fácil em runtime.
   let repTimezone: string | null = null;
 
-  for (const loc of locations) {
+  // Fix bug observado em prod 2026-06-16 (caso Manuela Garcia 954-477-1397 / Ana
+  // Paula Lemika 954-451-8104): a varredura de PRIMEIRA VIAGEM era SEQUENCIAL
+  // sobre TODAS as locations. Com 120 sub-accounts (~855ms/loc incluindo mint de
+  // location-token + retries de location inativa) dava ~103s — estourando o
+  // maxDuration=60s do webhook (waitUntil) → o lambda morria NO MEIO da varredura
+  // → rep novo NUNCA era criado e o corretor não recebia NADA (nem o "não
+  // cadastrado", pois o código morria antes). Reps já existentes não passam por
+  // aqui (lookup local no passo 1). Agora roda em LOTES PARALELOS — cabe em poucos
+  // segundos. Ordem preservada (displayName/repTimezone = 1º match em ordem de
+  // location, idêntico ao sequencial anterior).
+  const SCAN_CONCURRENCY = 20;
+  const scanLocation = async (
+    loc: (typeof locations)[number],
+  ): Promise<Array<{ link: GHLUserLink; name: string; tz: string | null }>> => {
     try {
       const client = new GHLClient(loc.company_id, loc.location_id);
       // GHL API: GET /users/search (V2) ou /users/ com filtro de phone
@@ -184,29 +197,39 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
         }>;
       }>("/users/", { locationId: loc.location_id });
 
-      const users = res.users || [];
-      for (const u of users) {
-        const userPhone = normalizePhone(u.phone || "");
-        if (userPhone === normalizedPhone) {
-          const name = [u.firstName, u.lastName].filter(Boolean).join(" ");
+      const out: Array<{ link: GHLUserLink; name: string; tz: string | null }> = [];
+      for (const u of res.users || []) {
+        if (normalizePhone(u.phone || "") === normalizedPhone) {
           const tz = (u.timezone || "").trim() || null;
-          matches.push({
-            location_id: loc.location_id,
-            ghl_user_id: u.id,
-            location_name: loc.location_name || null,
-            role: u.roles?.role || null,
-            timezone: tz,
+          out.push({
+            link: {
+              location_id: loc.location_id,
+              ghl_user_id: u.id,
+              location_name: loc.location_name || null,
+              role: u.roles?.role || null,
+              timezone: tz,
+            },
+            name: [u.firstName, u.lastName].filter(Boolean).join(" "),
+            tz,
           });
-          if (!displayName && name) displayName = name;
-          // Top-level timezone = primeiro non-null encontrado. Em prática,
-          // GHL user tem 1 timezone único — múltiplas locations devolvem o
-          // mesmo valor. Se vier discrepância, prevalece o primeiro match.
-          if (!repTimezone && tz) repTimezone = tz;
         }
       }
+      return out;
     } catch (err) {
       console.warn(`[identity] failed to search users in location ${loc.location_id}:`, err instanceof Error ? err.message : err);
       // Continua pras outras locations — falha parcial não deve bloquear
+      return [];
+    }
+  };
+
+  for (let i = 0; i < locations.length; i += SCAN_CONCURRENCY) {
+    const batchResults = await Promise.all(locations.slice(i, i + SCAN_CONCURRENCY).map(scanLocation));
+    for (const found of batchResults) {
+      for (const m of found) {
+        matches.push(m.link);
+        if (!displayName && m.name) displayName = m.name;
+        if (!repTimezone && m.tz) repTimezone = m.tz;
+      }
     }
   }
 
