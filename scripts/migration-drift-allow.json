@@ -1,0 +1,12 @@
+{
+  "_doc": "Exceções do check-migration-drift.ts: objetos declarados em migration mas legitimamente AUSENTES de prod (hold deliberado, renomeação não-parseada, etc). Cada entrada exige reason + since + by. NÃO use pra silenciar drift real — aplique a migration.",
+  "allow": [
+    {
+      "type": "index",
+      "name": "idx_sparkbot_messages_old",
+      "reason": "DDL invalido: indice parcial com WHERE created_at < now() - interval '30 days'; now() nao e IMMUTABLE, Postgres recusa o predicado, nunca foi criavel. TTL e feito por cron de cleanup, nao por esse indice. Declarado em 00040. FOLLOW-UP P2: remover a linha do 00040 (replay em staging quebra nela).",
+      "since": "2026-06-15",
+      "by": "claude+pedro"
+    }
+  ]
+}
