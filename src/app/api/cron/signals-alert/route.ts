@@ -170,6 +170,63 @@ async function checkRunnerHeartbeat(
   return { stale: false, stale_minutes: staleMin };
 }
 
+// Silêncio de INBOUND = webhook do Stevo parou de chegar. Em horário comercial,
+// nenhum inbound por > este tempo é forte sinal de apagão de inbound — a sessão
+// WhatsApp pode estar UP e o SEND funcionando, mas os reps mandam msg e o bot
+// fica MUDO. Foi EXATAMENTE o apagão de 2026-06-17 (webhook do Stevo parou
+// 22:45, ~19h mudo SEM NINGUÉM SABER) — porque o heartbeat acima só vigia os
+// RUNNERS proativos, não o inbound. Este detector fecha esse buraco cego.
+const INBOUND_SILENCE_MINUTES = 45;
+
+/** Detecta silêncio de INBOUND (webhook do Stevo parou). Grava signal crítico. */
+async function checkInboundSilence(
+  supabase: ReturnType<typeof createAdminClient>,
+  nowMs: number,
+): Promise<{ silent: boolean; minutes: number }> {
+  // Só alerta em horário comercial ET (08–22) — de madrugada o silêncio é
+  // normal e dispararia falso-positivo. (Agência opera US/Florida.)
+  const etHour = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      hour: "numeric",
+      hour12: false,
+    }).format(new Date(nowMs)),
+  );
+  if (etHour < 8 || etHour >= 22) return { silent: false, minutes: 0 };
+
+  const { data } = await supabase
+    .from("stevo_webhook_samples")
+    .select("received_at")
+    .order("received_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!data?.received_at) return { silent: false, minutes: 0 };
+
+  const lastMs = new Date(data.received_at as string).getTime();
+  const minutes = Math.round((nowMs - lastMs) / 60000);
+  if (minutes > INBOUND_SILENCE_MINUTES) {
+    // Title ESTÁVEL (dedup por fingerprint). Runbook embutido na description.
+    await recordSignal({
+      type: "failure",
+      severity: "critical",
+      source: "system",
+      title: "SparkBot inbound MUDO — webhook do Stevo parado",
+      description:
+        `Nenhum webhook do Stevo chegou há ${minutes}min (último: ${new Date(lastMs).toISOString()}), em horário comercial. ` +
+        `A sessão WhatsApp pode estar UP e o SEND funcionando, mas os inbounds dos reps NÃO estão chegando ` +
+        `(URL do webhook no painel Stevo caiu/desapontou, ou sessão perdida). Reps mandam msg e o bot fica MUDO. ` +
+        `Recovery: re-apontar a URL do webhook no painel Stevo (…/api/webhooks/stevo, evento Message) ou POST /instance/reconnect; checar GET /instance/status.`,
+      metadata: {
+        feature: "inbound-silence",
+        silence_minutes: minutes,
+        last_inbound_at: new Date(lastMs).toISOString(),
+      },
+    });
+    return { silent: true, minutes };
+  }
+  return { silent: false, minutes };
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!isAuthorizedCron(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -197,6 +254,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (hb.stale) result.heartbeat_stale_minutes = hb.stale_minutes;
   } catch (e) {
     errors.push("heartbeat: " + (e instanceof Error ? e.message : String(e)));
+  }
+
+  // 1b. INBOUND SILENCE — webhook do Stevo parado (apagão de inbound). O
+  //     heartbeat acima só pega os RUNNERS proativos; este pega o INBOUND
+  //     (buraco cego que deixou 19h de silêncio passar em 2026-06-17).
+  try {
+    const inb = await checkInboundSilence(supabase, nowMs);
+    result.inbound_silent = inb.silent;
+    if (inb.silent) result.inbound_silence_minutes = inb.minutes;
+  } catch (e) {
+    errors.push("inbound-silence: " + (e instanceof Error ? e.message : String(e)));
   }
 
   // 2. Sem canal configurado → no-op no PUSH (mas o heartbeat já gravou o
