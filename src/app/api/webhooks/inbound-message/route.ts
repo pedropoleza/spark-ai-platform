@@ -570,6 +570,17 @@ export async function POST(request: NextRequest) {
 
     if (!allAgents || allAgents.length === 0) {
       console.log(`[Webhook] Skipped: no_active_agent for location ${locationId}`);
+      // Sweep 2026-06-17: lead mandou msg mas a location não tem agente
+      // lead-facing ativo. Geralmente normal (lead-facing é pago/opt-in) → LOW
+      // (visível no painel, não empurra push). Vira sinal se um agente que
+      // DEVIA estar ativo foi pausado/excluído sem querer.
+      reportError({
+        title: "Inbound: location sem agente lead-facing ativo",
+        feature: "inbound-webhook",
+        severity: "low",
+        description: "Chegou inbound de lead mas a location não tem sales/recruitment/custom agent ativo.",
+        metadata: { location_id: locationId, contact_id: contactId, channel },
+      });
       return NextResponse.json({ received: true, skipped: "no_active_agent" });
     }
     console.log(`[Webhook] Found ${allAgents.length} active agent(s): ${allAgents.map(a => a.type).join(", ")}`);
@@ -622,6 +633,15 @@ export async function POST(request: NextRequest) {
 
     if (!location) {
       console.log(`[Webhook] Skipped: location_not_found (${locationId})`);
+      // Sweep 2026-06-17: há agentes ativos referenciando esta location, mas
+      // ela não está na tabela `locations` — drift/misconfig. Lead fica mudo.
+      reportError({
+        title: "Inbound: location do webhook não está cadastrada",
+        feature: "inbound-webhook",
+        severity: "high",
+        description: "Chegou inbound (com agente ativo) mas a location não existe na tabela locations. Lead sem resposta — verificar sync de locations / wiring do webhook.",
+        metadata: { location_id: locationId, contact_id: contactId },
+      });
       return NextResponse.json({ received: true, skipped: "location_not_found" });
     }
 
@@ -659,6 +679,16 @@ export async function POST(request: NextRequest) {
 
     if (!selectedAgent) {
       console.log(`[Webhook] Skipped: no_agent_matched_targeting for contact ${contactId}`);
+      // Sweep 2026-06-17: há agentes ativos mas NENHUM casou o targeting deste
+      // contato — provável targeting estreito demais (classe de bug F27/RV-W:
+      // agente mudo). MEDIUM: empurra push se virar padrão (occ>=20).
+      reportError({
+        title: "Inbound: nenhum agente casou o targeting do contato",
+        feature: "inbound-webhook",
+        severity: "medium",
+        description: "Existem agentes lead-facing ativos mas as targeting_rules de todos excluíram este contato. Se for engano, afrouxe o targeting (tag/etapa/campo).",
+        metadata: { location_id: locationId, contact_id: contactId, channel, active_agents: allAgents.length },
+      });
       return NextResponse.json({ received: true, skipped: "no_agent_matched_targeting" });
     }
     console.log(`[Webhook] Selected agent: ${selectedAgent.type} (${selectedAgent.id})`);
@@ -674,6 +704,16 @@ export async function POST(request: NextRequest) {
     // ===== FILTRO: Canal habilitado =====
     if (!enabledChannels.includes(channel)) {
       console.log(`[Webhook] Skipped: channel_not_enabled (${channel} not in [${enabledChannels}])`);
+      // Sweep 2026-06-17: lead mandou por um canal que o agente não tem
+      // habilitado (ex: Instagram DM). O agente fica mudo nesse canal. MEDIUM —
+      // surfaceia a decisão de habilitar o canal por agente.
+      reportError({
+        title: "Inbound: canal não habilitado no agente (lead sem resposta)",
+        feature: "inbound-webhook",
+        severity: "medium",
+        description: `Lead mandou pelo canal "${channel}" mas o agente ${agent.type} só tem [${enabledChannels.join(", ")}] habilitado(s). Habilite o canal na config se for pra responder.`,
+        metadata: { location_id: locationId, contact_id: contactId, channel, enabled_channels: enabledChannels, agent_id: agent.id },
+      });
       return NextResponse.json({ received: true, skipped: "channel_not_enabled" });
     }
 

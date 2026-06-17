@@ -234,10 +234,30 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
 
   // 3. Identifica o rep pelo telefone (busca ou cria).
   const rep = await identifyRep(parsed.phone);
+  if (rep === "scan_failed") {
+    // Varredura quebrou em 100% das locations (token GHL caído). O reportError
+    // crítico já disparou dentro do identifyRep. Stevo fase 1 não responde a
+    // número não-identificado (evita spam a randoms) — só loga e sai; o sinal
+    // crítico avisa o Pedro.
+    console.warn(
+      `[stevo-handler] identifyRep scan_failed pra ${parsed.phone} — token GHL provavelmente caído (signal crítico já gravado).`,
+    );
+    return;
+  }
   if (!rep) {
     console.warn(
       `[stevo-handler] telefone ${parsed.phone} não cadastrado em nenhuma location — ignorando (fase 1 não envia aviso).`,
     );
+    // Sweep 2026-06-17: sinal LOW pra visibilidade de onboarding (mesmo title
+    // estável do webhook-handler → clusteriza os 2 canais numa row só). Não
+    // empurra push (low), mas se MUITOS números forem rejeitados o occ sobe.
+    reportError({
+      title: "SparkBot: número não cadastrado (rep não encontrado)",
+      feature: "sparkbot-stevo",
+      severity: "low",
+      description: "identifyRep (Stevo) varreu as locations e não achou esse phone em nenhum GHL user.",
+      metadata: { phone: parsed.phone },
+    });
     return;
   }
 

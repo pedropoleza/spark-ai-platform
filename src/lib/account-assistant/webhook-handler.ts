@@ -290,7 +290,27 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
 
   // 2. Identifica rep (busca ou cria)
   const rep = await identifyRep(phone);
+  if (rep === "scan_failed") {
+    // Sweep 2026-06-17: a varredura quebrou em 100% das locations (token GHL
+    // caído) — NÃO dizer "não cadastrado" (mentira que esconde apagão). O
+    // reportError crítico já foi disparado dentro do identifyRep. Pede retry.
+    await sendResponseToRep(
+      hubClient, contactId, conversationId, messageType,
+      "Tô com um probleminha técnico pra te identificar agora 😕 Manda sua mensagem de novo daqui a 1 minutinho?",
+    );
+    return;
+  }
   if (!rep) {
+    // Rep não encontrado em location nenhuma (varredura OK). Pode ser rep com
+    // phone divergente no Spark Leads — sinal LOW (visível no painel, não
+    // empurra push) pra debug de onboarding.
+    reportError({
+      title: "SparkBot: número não cadastrado (rep não encontrado)",
+      feature: "sparkbot-webhook",
+      severity: "low",
+      description: "identifyRep varreu as locations e não achou esse phone em nenhum GHL user. Pode ser rep com phone divergente no Spark Leads.",
+      metadata: { contact_id: contactId, phone },
+    });
     await sendResponseToRep(
       hubClient, contactId, conversationId, messageType,
       "Olá! Seu número não está cadastrado em nenhuma location. Fale com o admin da sua agência pra ser autorizado.",

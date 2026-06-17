@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
+import { reportError } from "@/lib/admin-signals/report-error";
 import {
   setTermsAccepted,
   setTermsRejected,
@@ -125,10 +126,18 @@ export async function resolveLocationDefaultCountry(locationId: string): Promise
 
 /**
  * Busca o rep por phone. Se não existir, varre todas as locations conhecidas
- * procurando GHL users com esse phone e cria o registro. Retorna null se
- * nenhum match — nesse caso o assistente responde "não autorizado".
+ * procurando GHL users com esse phone e cria o registro.
+ *
+ * Retorno:
+ *   - `RepIdentity` — achou/criou o rep.
+ *   - `null` — rep genuinamente não é user em nenhuma location (varredura OK,
+ *      phone não bateu). Caller responde "não cadastrado".
+ *   - `"scan_failed"` — a varredura QUEBROU em 100% das locations (provável
+ *      apagão de token GHL). Caller NÃO deve dizer "não cadastrado" (seria
+ *      mentira que esconde um apagão) — responde "problema técnico, tenta de
+ *      novo". reportError crítico já foi disparado aqui dentro.
  */
-export async function identifyRep(phone: string): Promise<RepIdentity | null> {
+export async function identifyRep(phone: string): Promise<RepIdentity | null | "scan_failed"> {
   // Fix CRITICAL stress test 2026-05-03: webhook chega ANTES de saber o
   // país. Tenta variações pra cobrir BR + US sem assumir um default.
   // Phone candidato é a query — gera variantes:
@@ -179,10 +188,16 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
   // aqui (lookup local no passo 1). Agora roda em LOTES PARALELOS — cabe em poucos
   // segundos. Ordem preservada (displayName/repTimezone = 1º match em ordem de
   // location, idêntico ao sequencial anterior).
+  // Conta locations que ERRARAM a varredura (vs. as que varreram OK e só não
+  // tinham o phone). Distingue "rep não existe" de "varredura quebrou" (token
+  // caído). NB: ~metade das ~120 locations vivem inativas e SEMPRE erram o mint
+  // de token — por isso só tratamos como falha técnica se 100% erraram (ver
+  // branch matches.length===0 abaixo). Ver [[sparkbot-new-rep-scaling]].
+  let scanErrors = 0;
   const SCAN_CONCURRENCY = 20;
   const scanLocation = async (
     loc: (typeof locations)[number],
-  ): Promise<Array<{ link: GHLUserLink; name: string; tz: string | null }>> => {
+  ): Promise<{ found: Array<{ link: GHLUserLink; name: string; tz: string | null }>; errored: boolean }> => {
     try {
       const client = new GHLClient(loc.company_id, loc.location_id);
       // GHL API: GET /users/search (V2) ou /users/ com filtro de phone
@@ -214,18 +229,19 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
           });
         }
       }
-      return out;
+      return { found: out, errored: false };
     } catch (err) {
       console.warn(`[identity] failed to search users in location ${loc.location_id}:`, err instanceof Error ? err.message : err);
       // Continua pras outras locations — falha parcial não deve bloquear
-      return [];
+      return { found: [], errored: true };
     }
   };
 
   for (let i = 0; i < locations.length; i += SCAN_CONCURRENCY) {
     const batchResults = await Promise.all(locations.slice(i, i + SCAN_CONCURRENCY).map(scanLocation));
-    for (const found of batchResults) {
-      for (const m of found) {
+    for (const res of batchResults) {
+      if (res.errored) scanErrors++;
+      for (const m of res.found) {
         matches.push(m.link);
         if (!displayName && m.name) displayName = m.name;
         if (!repTimezone && m.tz) repTimezone = m.tz;
@@ -233,7 +249,27 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null> {
     }
   }
 
-  if (matches.length === 0) return null;
+  if (matches.length === 0) {
+    // Fix bug observado em prod 2026-06-16 (onboarding mudo): distingue "rep
+    // genuinamente não é user em nenhuma location" (null → "não cadastrado")
+    // de "a varredura QUEBROU em TODAS" (token GHL caído → "scan_failed"). No
+    // 2º caso, dizer "não cadastrado" é mentira que ESCONDE um apagão. Como
+    // ~metade das locations vivem inativas e sempre erram, só é falha técnica
+    // se 100% erraram (inclui as ativas) — aí é sistêmico de verdade.
+    if (locations.length > 0 && scanErrors === locations.length) {
+      reportError({
+        title: "SparkBot: varredura de identificação de rep falhou 100%",
+        feature: "sparkbot-identify-rep",
+        severity: "critical",
+        description:
+          `identifyRep não conseguiu varrer NENHUMA das ${locations.length} locations (todas erraram) ` +
+          `ao procurar o phone. Provável apagão de token GHL — onboarding de rep novo está MUDO.`,
+        metadata: { phone, locations_total: locations.length, scan_errors: scanErrors },
+      });
+      return "scan_failed";
+    }
+    return null;
+  }
 
   // 3. Cria rep_identity
   const { data: created, error } = await supabase

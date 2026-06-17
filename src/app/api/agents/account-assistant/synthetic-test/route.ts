@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
 
   // Identifica rep
   const rep = await identifyRep(normalizePhone(repPhone));
-  if (!rep) {
+  if (!rep || rep === "scan_failed") {
     return errorResponse(
       `Nenhum user Spark Leads com phone ${repPhone}. Cadastre primeiro numa location.`,
       404,

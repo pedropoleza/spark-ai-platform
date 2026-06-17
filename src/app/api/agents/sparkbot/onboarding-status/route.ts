@@ -108,7 +108,7 @@ export async function GET() {
 
   // Identifica rep via phone — sem criar (essa rota é só consulta)
   const rep = await identifyRep(phone);
-  if (!rep) {
+  if (!rep || rep === "scan_failed") {
     return NextResponse.json({
       ok: true,
       first_time: true,
