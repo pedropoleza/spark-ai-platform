@@ -1215,9 +1215,12 @@ export function buildFollowUpPrompt(ctx: FollowUpPromptContext): string {
   const name = p?.name || "Assistente";
   const isHuman = p?.identity_mode === "human";
 
+  // Fix bug observado em prod 2026-06-16: o ramo recruitment dizia "CLIENTE que
+  // já comprou / pós-venda" — INVERTIDO pra um CANDIDATO frio de prospecção. Como
+  // o custom_prompt é ADITIVO (não sobrescreve), a frase errada vazava no prompt
+  // e contradizia o follow-up. Corrigido pra prospecção de recrutamento.
   const contextDesc = isRecruitment
-    ? `Voce esta retomando contato com um CLIENTE que ja e nosso (ja comprou).
-O tom e de relacionamento pos-venda, nao de prospeccao. Nao qualifique como lead novo.
+    ? `Voce esta retomando contato com um CANDIDATO que demonstrou interesse na oportunidade de carreira (NAO e cliente, NAO comprou nada). E PROSPECCAO: reaqueca o interesse e conduza pra apresentacao, sem reapresentar do zero e sem requalificar o que ele ja respondeu.
 ${ctx.config.specialist_name ? `Se precisar escalar, mencione que ${ctx.config.specialist_name} pode ajudar.` : ""}`
     : "Voce esta retomando contato com um lead sobre um servico/produto.";
 
