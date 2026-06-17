@@ -143,7 +143,21 @@ export async function POST(request: NextRequest) {
     if (!isAdmin) {
       const validation = await validateGHLUser(companyId, locationId, userId);
       if (validation === null) {
-        reportError({ title: "check-admin: validação GHL falhou (502)", feature: "sparkbot-check-admin", severity: "medium", metadata: { userId, locationId } });
+        // Triagem 2026-06-17: o gate isLocationSparkbotEnabled acima já passou
+        // (location tem agente ativo), então a falha aqui é quase sempre a
+        // location ter perdido o acesso OAuth no Spark Leads (install revogada/
+        // inativa — ~metade das ~120 vivem assim) e um admin abriu o painel ali.
+        // É ESPERADO e advisory (o admin vê o painel não carregar → reconecta),
+        // por isso LOW (não empurra push). Era 'medium' e virou o maior sinal
+        // vivo do painel à toa. Um 5xx transiente real do GHL apareceria em
+        // vários outros sinais ao mesmo tempo — não some por causa disso.
+        reportError({
+          title: "check-admin: location sem acesso ao Spark Leads (reconectar)",
+          feature: "sparkbot-check-admin",
+          severity: "low",
+          description: "Admin abriu o painel SparkBot numa location cuja validação no Spark Leads (GHL) falhou — provável install OAuth inativa/revogada. Reconectar a location resolve.",
+          metadata: { userId, locationId },
+        });
         return json({ ok: false, reason: "ghl_validation_failed" }, { status: 502 });
       }
       if (validation.isAdmin) {

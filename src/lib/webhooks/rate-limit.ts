@@ -95,7 +95,11 @@ export async function checkWebhookRateLimit(
           recordSignalAsync({
             type: "error",
             source: "system",
-            severity: "high",
+            // Triagem 2026-06-17: advisory (NÃO bloqueia nada) — o pool de IPs
+            // do GHL é legítimo e estoura o threshold em bursts (disparo bulk).
+            // 'high' empurrava push/poluía como crítico num evento esperado.
+            // LOW: visível pra quem quiser investigar spoofing, sem alarme falso.
+            severity: "low",
             title: `Webhook GHL: location ${locationId.slice(0, 8)} com muitos IPs únicos`,
             description:
               `Location ${locationId.slice(0, 8)} recebeu inbound de ${uniqueIps.size} IPs distintos no último minuto. ` +
