@@ -352,6 +352,12 @@ async function processWithClaude(
     }
   }
   messages.push({ role: "user", content: currentContent });
+  // NB (review 2026-06-17): NADA de prefill de assistant aqui — a família Claude
+  // 4.6+ (Sonnet 4.6, o default lead-facing) retorna 400 em prefill de último
+  // turno assistant (foi removido; confirmado na ref oficial da Claude API). Pra
+  // forçar JSON, a rede é o REPAIR em parseAIResponse (escapeControlCharsInStrings)
+  // + futuro structured outputs (output_config.format, GA no Sonnet 4.6) — este
+  // último precisa validar a compat do schema (union type:["string","null"]).
 
   const response = await client.messages.create({
     model: input.model,
@@ -448,6 +454,34 @@ function buildResult(
   };
 }
 
+/**
+ * Escapa caracteres de controle (quebra de linha, CR, tab) que aparecem CRUS
+ * DENTRO de strings JSON — o Claude às vezes faz isso e quebra o JSON.parse.
+ * Pequena máquina de estado: só mexe no que está entre aspas; a estrutura fora
+ * de strings fica intacta. Usado como last-resort antes do fallback.
+ */
+function escapeControlCharsInStrings(s: string): string {
+  let out = "";
+  let inStr = false;
+  let escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (escaped) { out += ch; escaped = false; continue; }
+      if (ch === "\\") { out += ch; escaped = true; continue; }
+      if (ch === '"') { out += ch; inStr = false; continue; }
+      if (ch === "\n") { out += "\\n"; continue; }
+      if (ch === "\r") { out += "\\r"; continue; }
+      if (ch === "\t") { out += "\\t"; continue; }
+      out += ch;
+    } else {
+      if (ch === '"') { inStr = true; }
+      out += ch;
+    }
+  }
+  return out;
+}
+
 function parseAIResponse(text: string): AIResponse | null {
   try {
     let cleaned = text.trim();
@@ -464,7 +498,16 @@ function parseAIResponse(text: string): AIResponse | null {
       cleaned = cleaned.substring(firstBrace, lastBrace + 1);
     }
 
-    const parsed = JSON.parse(cleaned);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let parsed: any;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      // Repair (Fix 2026-06-17): o Claude às vezes deixa quebra de linha/tab
+      // CRUA dentro de uma string (JSON inválido). Escapa só os caracteres de
+      // controle DENTRO de strings e tenta de novo, antes de cair no fallback.
+      parsed = JSON.parse(escapeControlCharsInStrings(cleaned));
+    }
 
     let message: string | string[] = "";
     const rawMsg = parsed.message || parsed.message_to_user || parsed.response;
