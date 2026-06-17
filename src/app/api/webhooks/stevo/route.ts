@@ -71,6 +71,17 @@ export async function POST(req: NextRequest) {
         console.warn(
           `[stevo-webhook] instanceToken inválido (recebido="${parsed.instanceToken.slice(0, 8)}…") — rejeitando.`,
         );
+        // Hardening 2026-06-17: rotação/mismatch de token = inbound rejeitado, mas
+        // o stevo_webhook_samples acima JÁ gravou → um heartbeat por received_at
+        // ficaria VERDE com inbound mudo. Vira signal pra não mascarar. (Só o
+        // prefixo do token no metadata, nunca o token cru.)
+        reportError({
+          title: "SparkBot: webhook Stevo rejeitado por token inválido",
+          feature: "sparkbot-inbound-stevo",
+          severity: "high",
+          description: "O instanceToken do webhook não bate com STEVO_INSTANCE_TOKEN — todo inbound está sendo rejeitado. Rotação de token? Atualizar a env.",
+          metadata: { token_prefix: parsed.instanceToken.slice(0, 8) },
+        });
         return NextResponse.json({ ok: true, skipped: "invalid_token" });
       }
     } else {

@@ -191,6 +191,15 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
   const hub = await resolvePrimaryHub();
   if (!hub || !hub.locationId) {
     console.error("[stevo-handler] nenhum hub Sparkbot ativo — abortando.");
+    // Hardening 2026-06-17: estado de config que MATA 100% do inbound do SparkBot
+    // — antes só console (mudo). Vira signal crítico pra não repetir apagão silencioso.
+    reportError({
+      title: "SparkBot: hub não resolvido no inbound Stevo (bot mudo)",
+      feature: "sparkbot-inbound-stevo",
+      severity: "critical",
+      description: "resolvePrimaryHub() não retornou hub/locationId — nenhum SparkBot ativo. TODO inbound do rep é abortado em silêncio.",
+      metadata: { phone: parsed.phone },
+    });
     return;
   }
   const { locationId: hubLocationId, agentId } = hub;
@@ -200,6 +209,13 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
     console.error(
       `[stevo-handler] hub ${hubLocationId} sem agentId resolvido (fallback env?) — abortando.`,
     );
+    reportError({
+      title: "SparkBot: hub não resolvido no inbound Stevo (bot mudo)",
+      feature: "sparkbot-inbound-stevo",
+      severity: "critical",
+      description: `Hub ${hubLocationId} sem agentId (fallback env?) — inbound do rep abortado em silêncio.`,
+      metadata: { phone: parsed.phone, hub_location_id: hubLocationId },
+    });
     return;
   }
 
@@ -526,6 +542,15 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       console.error(
         `[stevo-handler] envio via Stevo FALHOU pra ${parsed.phone} (${sentKind}): ${sendResult.error}`,
       );
+      // Hardening 2026-06-17: o LLM rodou (tokens+billing), o rep foi processado,
+      // mas a RESPOSTA não chegou — antes só console.error. Vira signal (dedup por title).
+      reportError({
+        title: "SparkBot: envio da resposta via Stevo falhou",
+        feature: "sparkbot-inbound-stevo",
+        severity: "high",
+        description: `Resposta gerada mas o Stevo não entregou (${sentKind}; ${sendResult.sent}/${sendResult.total}): ${sendResult.error}`,
+        metadata: { phone: parsed.phone, sent_kind: sentKind, send_error: sendResult.error },
+      });
     }
   } else {
     console.log(

@@ -170,21 +170,22 @@ async function checkRunnerHeartbeat(
   return { stale: false, stale_minutes: staleMin };
 }
 
-// Silêncio de INBOUND = webhook do Stevo parou de chegar. Em horário comercial,
-// nenhum inbound por > este tempo é forte sinal de apagão de inbound — a sessão
-// WhatsApp pode estar UP e o SEND funcionando, mas os reps mandam msg e o bot
-// fica MUDO. Foi EXATAMENTE o apagão de 2026-06-17 (webhook do Stevo parou
-// 22:45, ~19h mudo SEM NINGUÉM SABER) — porque o heartbeat acima só vigia os
-// RUNNERS proativos, não o inbound. Este detector fecha esse buraco cego.
-const INBOUND_SILENCE_MINUTES = 45;
+// Silêncio de INBOUND. Mede o sinal END-TO-END mais fiel: a última mensagem de
+// rep PROCESSADA (sparkbot_messages role=user channel=whatsapp) — prova que o
+// caminho INTEIRO está vivo (webhook→parse→auth→process→persist). Pega TODOS os
+// modos do apagão de 2026-06-17: webhook parou de chegar (zero samples), webhook
+// chega mas é rejeitado por token (sample grava mas nada processa), ou o
+// processamento quebrou. Threshold DINÂMICO (sem gate cego de horário — o apagão
+// começou 22:45 e o gate antigo 08-22 só dispararia 9h depois): de dia o tráfego
+// é denso (lull >75min é raríssimo); de madrugada afrouxa (silêncio é normal).
+const INBOUND_SILENCE_DAY_MIN = 75;
+const INBOUND_SILENCE_NIGHT_MIN = 240;
 
-/** Detecta silêncio de INBOUND (webhook do Stevo parou). Grava signal crítico. */
+/** Detecta silêncio de INBOUND (nada de rep chegando/processando). Grava signal crítico. */
 async function checkInboundSilence(
   supabase: ReturnType<typeof createAdminClient>,
   nowMs: number,
 ): Promise<{ silent: boolean; minutes: number }> {
-  // Só alerta em horário comercial ET (08–22) — de madrugada o silêncio é
-  // normal e dispararia falso-positivo. (Agência opera US/Florida.)
   const etHour = Number(
     new Intl.DateTimeFormat("en-US", {
       timeZone: "America/New_York",
@@ -192,39 +193,57 @@ async function checkInboundSilence(
       hour12: false,
     }).format(new Date(nowMs)),
   );
-  if (etHour < 8 || etHour >= 22) return { silent: false, minutes: 0 };
+  const isDay = etHour >= 8 && etHour < 22;
+  const threshold = isDay ? INBOUND_SILENCE_DAY_MIN : INBOUND_SILENCE_NIGHT_MIN;
 
-  const { data } = await supabase
+  // Sinal primário: último inbound de rep PROCESSADO de fato.
+  const { data: lastMsg } = await supabase
+    .from("sparkbot_messages")
+    .select("created_at")
+    .eq("role", "user")
+    .eq("channel", "whatsapp")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!lastMsg?.created_at) return { silent: false, minutes: 0 };
+  const inboundMin = Math.round((nowMs - new Date(lastMsg.created_at as string).getTime()) / 60000);
+  if (inboundMin <= threshold) return { silent: false, minutes: inboundMin };
+
+  // Contexto p/ diagnóstico: o POST do webhook ainda chega, ou parou de vez?
+  const { data: lastSample } = await supabase
     .from("stevo_webhook_samples")
     .select("received_at")
     .order("received_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (!data?.received_at) return { silent: false, minutes: 0 };
+  const webhookMin = lastSample?.received_at
+    ? Math.round((nowMs - new Date(lastSample.received_at as string).getTime()) / 60000)
+    : null;
+  const canalMorto = webhookMin === null || webhookMin > threshold;
 
-  const lastMs = new Date(data.received_at as string).getTime();
-  const minutes = Math.round((nowMs - lastMs) / 60000);
-  if (minutes > INBOUND_SILENCE_MINUTES) {
-    // Title ESTÁVEL (dedup por fingerprint). Runbook embutido na description.
-    await recordSignal({
-      type: "failure",
-      severity: "critical",
-      source: "system",
-      title: "SparkBot inbound MUDO — webhook do Stevo parado",
-      description:
-        `Nenhum webhook do Stevo chegou há ${minutes}min (último: ${new Date(lastMs).toISOString()}), em horário comercial. ` +
-        `A sessão WhatsApp pode estar UP e o SEND funcionando, mas os inbounds dos reps NÃO estão chegando ` +
-        `(URL do webhook no painel Stevo caiu/desapontou, ou sessão perdida). Reps mandam msg e o bot fica MUDO. ` +
-        `Recovery: re-apontar a URL do webhook no painel Stevo (…/api/webhooks/stevo, evento Message) ou POST /instance/reconnect; checar GET /instance/status.`,
-      metadata: {
-        feature: "inbound-silence",
-        silence_minutes: minutes,
-        last_inbound_at: new Date(lastMs).toISOString(),
-      },
-    });
-    return { silent: true, minutes };
-  }
-  return { silent: false, minutes };
+  // Title ESTÁVEL (dedup por fingerprint). Runbook embutido na description.
+  await recordSignal({
+    type: "failure",
+    severity: "critical",
+    source: "system",
+    title: "SparkBot inbound MUDO — sem mensagens de rep chegando",
+    description:
+      `Nenhuma mensagem de rep PROCESSADA há ${inboundMin}min (threshold ${threshold}min, ${isDay ? "comercial" : "madrugada"} ET). ` +
+      (canalMorto
+        ? `O webhook do Stevo TAMBÉM parou de chegar (último POST há ${webhookMin ?? "?"}min) → canal de inbound caiu. `
+        : `O webhook AINDA chega (último POST há ${webhookMin}min) mas nada processa → rejeição por token, parser, ou hub não resolvido. `) +
+      `A sessão WhatsApp pode estar UP e o SEND funcionando — reps mandam msg e o bot fica MUDO. ` +
+      `Recovery: GET /instance/status; re-apontar a URL do webhook no painel Stevo (…/api/webhooks/stevo, evento Message) ou POST /instance/reconnect.`,
+    metadata: {
+      feature: "inbound-silence",
+      inbound_silent_minutes: inboundMin,
+      webhook_silent_minutes: webhookMin,
+      canal_morto: canalMorto,
+      threshold_min: threshold,
+      period: isDay ? "day" : "night",
+    },
+  });
+  return { silent: true, minutes: inboundMin };
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
