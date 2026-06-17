@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { AIResponse, AIProcessingResult } from "@/types/ai";
 import { sanitizeAgentMessage } from "@/lib/ai/response-sanitizer";
+import { reportError } from "@/lib/admin-signals/report-error";
 
 const OPENAI_VISION_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"];
 // Fix MED-7 (deep review 2026-05-05): detectar Claude por prefix em vez de
@@ -104,57 +105,131 @@ function trimTurns(turns: ConversationTurn[], maxChars: number): ConversationTur
   return result;
 }
 
+/**
+ * Cadeia de fallback cross-provider (Fix bug observado em prod 2026-06-16: o
+ * apagão de crédito da Anthropic deu 400 e o caminho lead-facing NÃO tinha
+ * fallback — dropou leads a seco dentro da janela, enquanto o SparkBot caía pro
+ * OpenAI). A cadeia tenta: o modelo pedido → um Claude barato (erro transitório
+ * do Claude) → OUTRO provider (salva apagão de conta/crédito do provider
+ * primário). `STRICT_CLAUDE_ONLY=1` desliga o tier OpenAI (~85% pior compliance
+ * no stress test do SparkBot — mas ainda melhor que lead mudo). O fallback só
+ * dispara em FALHA, então o caminho feliz e o custo normal ficam idênticos.
+ */
+function buildModelChain(primary: string): string[] {
+  // `=== "1"` igual ao SparkBot (llm-client.ts) — fonte única, sem divergência
+  // (um STRICT_CLAUDE_ONLY="true" não pode desligar OpenAI aqui e não lá).
+  const strictClaude = process.env.STRICT_CLAUDE_ONLY === "1";
+  const chain: string[] = [primary];
+  if (isClaude(primary)) {
+    if (!primary.startsWith("claude-haiku")) chain.push("claude-haiku-4-5-20251001");
+    if (!strictClaude) chain.push("gpt-4.1-mini");
+  } else {
+    // Primary OpenAI → fallback pro Claude (cobre apagão de conta OpenAI).
+    if (!strictClaude) chain.push("claude-haiku-4-5-20251001");
+  }
+  return chain.filter((m, i) => chain.indexOf(m) === i);
+}
+
 export async function processWithAI(input: ProcessMessageInput): Promise<AIProcessingResult> {
   const startTime = Date.now();
+  const chain = buildModelChain(input.model);
+  const errors: string[] = [];
 
-  try {
-    const systemTokens = estimateTokens(input.systemPrompt);
-    const runtimeTokens = estimateTokens(input.runtimeContext || "");
-    const newMsgTokens = estimateTokens(input.newMessages);
-    const useStructured = Array.isArray(input.conversationMessages) && input.conversationMessages.length > 0;
-
-    let conversationMessages: ConversationTurn[] | undefined = input.conversationMessages;
-    let conversationHistory = input.conversationHistory;
-
-    if (useStructured) {
-      const historyChars = conversationMessages!.reduce((s, t) => s + t.content.length, 0);
-      const historyTokens = estimateTokens(" ".repeat(historyChars));
-      const totalEstimate = systemTokens + runtimeTokens + newMsgTokens + historyTokens;
-      if (totalEstimate > 100000) {
-        const available = Math.max(0, 100000 - systemTokens - runtimeTokens - newMsgTokens);
-        conversationMessages = trimTurns(conversationMessages!, available * 4);
-        console.warn(`[AI] Budget exceeded (~${totalEstimate}tok). Trimmed history to ${conversationMessages.length} turns.`);
-      }
-    } else {
-      const historyTokens = estimateTokens(conversationHistory || "");
-      const totalEstimate = systemTokens + runtimeTokens + newMsgTokens + historyTokens;
-      if (totalEstimate > 100000) {
-        const available = Math.max(0, 100000 - systemTokens - runtimeTokens - newMsgTokens);
-        if (conversationHistory && conversationHistory.length > available * 4) {
-          conversationHistory = conversationHistory.slice(-(available * 4));
-          console.warn(`[AI] Budget exceeded (~${totalEstimate}tok). Truncated legacy history.`);
+  for (let i = 0; i < chain.length; i++) {
+    const model = chain[i];
+    try {
+      const result = await runOneModel({ ...input, model }, startTime);
+      if (result.success) {
+        if (i > 0) {
+          // Caiu pro fallback — loga qual tier salvou e por quê (telemetria de
+          // degradação; o erro do tier primário não pode sumir).
+          console.warn(
+            `[AI] fallback OK no tier ${i} (model=${model}) após falha de [${chain.slice(0, i).join(", ")}]: ${errors.join(" | ")}`,
+          );
+          // Sinal de DEGRADAÇÃO não-terminal: o fallback respondeu, mas o tier
+          // primário está falhando. Sem isso, um apagão MASCARADO pelo fallback
+          // (ex: crédito Anthropic — cenário 2026-06-16) ficaria invisível até
+          // virar outage total. Title estável dedupa; severity medium só empurra
+          // push quando occ≥20 (apagão sustentado) — blips ficam quietos.
+          reportError({
+            title: "LLM lead-facing: tier primário degradado (fallback ativo)",
+            feature: "openai-client",
+            severity: "medium",
+            error: new Error(errors.join(" | ")),
+            metadata: { primary: input.model, savedByTier: i, model },
+          });
         }
+        return result;
+      }
+      errors.push(`${model}: ${result.error || "falha (success=false)"}`);
+    } catch (error) {
+      errors.push(`${model}: ${error instanceof Error ? error.message : "erro desconhecido"}`);
+    }
+  }
+
+  // TODOS os tiers falharam — NUNCA silencioso. Vira admin_signal (high) +
+  // Sentry; com o canal de push setado (observability-alerts), pinga na hora.
+  const aggErr = errors.join(" | ");
+  reportError({
+    title: "LLM lead-facing: todos os providers/tiers falharam",
+    feature: "openai-client",
+    severity: "high",
+    error: new Error(aggErr),
+    metadata: { primary: input.model, chain },
+  });
+  return {
+    success: false,
+    response: null,
+    error: `Todos os modelos falharam: ${aggErr}`,
+    duration_ms: Date.now() - startTime,
+  };
+}
+
+/**
+ * Executa UMA tentativa com um modelo específico (sem fallback). Faz o budget/
+ * trim e despacha pro provider certo. Throw OU `success:false` sobem pro
+ * processWithAI, que decide o próximo tier da cadeia.
+ */
+async function runOneModel(input: ProcessMessageInput, startTime: number): Promise<AIProcessingResult> {
+  const systemTokens = estimateTokens(input.systemPrompt);
+  const runtimeTokens = estimateTokens(input.runtimeContext || "");
+  const newMsgTokens = estimateTokens(input.newMessages);
+  const useStructured = Array.isArray(input.conversationMessages) && input.conversationMessages.length > 0;
+
+  let conversationMessages: ConversationTurn[] | undefined = input.conversationMessages;
+  let conversationHistory = input.conversationHistory;
+
+  if (useStructured) {
+    const historyChars = conversationMessages!.reduce((s, t) => s + t.content.length, 0);
+    const historyTokens = estimateTokens(" ".repeat(historyChars));
+    const totalEstimate = systemTokens + runtimeTokens + newMsgTokens + historyTokens;
+    if (totalEstimate > 100000) {
+      const available = Math.max(0, 100000 - systemTokens - runtimeTokens - newMsgTokens);
+      conversationMessages = trimTurns(conversationMessages!, available * 4);
+      console.warn(`[AI] Budget exceeded (~${totalEstimate}tok). Trimmed history to ${conversationMessages.length} turns.`);
+    }
+  } else {
+    const historyTokens = estimateTokens(conversationHistory || "");
+    const totalEstimate = systemTokens + runtimeTokens + newMsgTokens + historyTokens;
+    if (totalEstimate > 100000) {
+      const available = Math.max(0, 100000 - systemTokens - runtimeTokens - newMsgTokens);
+      if (conversationHistory && conversationHistory.length > available * 4) {
+        conversationHistory = conversationHistory.slice(-(available * 4));
+        console.warn(`[AI] Budget exceeded (~${totalEstimate}tok). Truncated legacy history.`);
       }
     }
-
-    const currentUserText = buildCurrentUserText(input);
-    // Fallback legado: histórico como string vai junto com a user message.
-    const legacyText = useStructured
-      ? currentUserText
-      : `${input.runtimeContext ? `${input.runtimeContext}\n\n` : ""}Histórico da conversa:\n${conversationHistory || "Nenhum histórico anterior."}\n\nNova mensagem do lead:\n${input.newMessages}`;
-
-    if (isClaude(input.model)) {
-      return await processWithClaude(input, legacyText, currentUserText, conversationMessages, startTime);
-    }
-    return await processWithOpenAI(input, legacyText, currentUserText, conversationMessages, startTime);
-  } catch (error) {
-    return {
-      success: false,
-      response: null,
-      error: error instanceof Error ? error.message : "Erro desconhecido",
-      duration_ms: Date.now() - startTime,
-    };
   }
+
+  const currentUserText = buildCurrentUserText(input);
+  // Fallback legado: histórico como string vai junto com a user message.
+  const legacyText = useStructured
+    ? currentUserText
+    : `${input.runtimeContext ? `${input.runtimeContext}\n\n` : ""}Histórico da conversa:\n${conversationHistory || "Nenhum histórico anterior."}\n\nNova mensagem do lead:\n${input.newMessages}`;
+
+  if (isClaude(input.model)) {
+    return await processWithClaude(input, legacyText, currentUserText, conversationMessages, startTime);
+  }
+  return await processWithOpenAI(input, legacyText, currentUserText, conversationMessages, startTime);
 }
 
 // ===== OpenAI =====
