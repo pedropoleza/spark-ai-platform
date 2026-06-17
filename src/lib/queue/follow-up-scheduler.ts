@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
+import { channelToMessageType } from "@/lib/ghl/channel";
 import { buildFollowUpPrompt } from "@/lib/ai/sales-prompt-builder";
 import { processWithAI } from "@/lib/ai/openai-client";
 import { trackAndCharge } from "@/lib/billing/charge";
@@ -143,6 +144,14 @@ function calculateCumulativeDelay(
 }
 
 /**
+ * Canais com JANELA de sessão: o Instagram (e o WhatsApp) só aceitam mensagem
+ * proativa até 24h depois da ÚLTIMA mensagem do lead. SMS/Email não têm janela.
+ */
+function channelHasSessionWindow(channel?: string): boolean {
+  return channel === "Instagram" || channel === "WhatsApp";
+}
+
+/**
  * Processa follow-ups agendados que estao prontos
  * Chamado pelo cron job
  */
@@ -280,6 +289,52 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         continue;
       }
 
+      // === Canal correto + janela de sessão (Fix bug observado em prod 2026-06-16) ===
+      // Antes o follow-up saía SEMPRE como type:"SMS" hardcoded — no Instagram
+      // (e WhatsApp) isso quebrava: canal errado, lead sem telefone, ou o
+      // proativo era recusado por estar FORA da janela de 24h. Agora derivamos o
+      // canal do ÚLTIMO inbound do lead (1 query serve canal + âncora da janela).
+      const { data: lastInbound } = await supabase
+        .from("message_queue")
+        .select("channel, received_at")
+        .eq("location_id", followUp.location_id)
+        .eq("contact_id", followUp.contact_id)
+        .eq("message_direction", "inbound")
+        .order("received_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const channel =
+        (lastInbound?.channel as string | undefined) ||
+        (Array.isArray(config.enabled_channels) ? (config.enabled_channels[0] as string) : undefined) ||
+        "SMS";
+      const outboundType = channelToMessageType(channel);
+      // Email exige `subject` no GHL (os outros canais não); sem ele o POST
+      // type:"Email" cai no vácuo. Follow-up não tem assunto próprio → genérico
+      // de retomada. (Regressão pega na review 2026-06-16: o fix de canal expôs
+      // o Email, que antes saía — errado — como SMS hardcoded.)
+      const outboundSubject = outboundType === "Email" ? "Continuando nossa conversa" : undefined;
+
+      // Janela 24h (Instagram/WhatsApp): fora dela o provedor recusa e o toque
+      // some no vácuo. Cancela a sequência pendente — um novo inbound do lead
+      // re-agenda do zero (re-ancorando a janela). Sem isso, o modo ai_auto com
+      // maxDelay de 7 dias dispararia direto numa janela já fechada.
+      if (channelHasSessionWindow(channel) && lastInbound?.received_at) {
+        const ageMs = Date.now() - new Date(lastInbound.received_at as string).getTime();
+        if (ageMs >= 24 * 60 * 60 * 1000) {
+          console.log(
+            `[FollowUp] Janela 24h fechada (${channel}) pra contact=${followUp.contact_id} — cancelando sequência pendente.`,
+          );
+          await supabase
+            .from("scheduled_followups")
+            .update({ status: "cancelled" })
+            .eq("agent_id", followUp.agent_id)
+            .eq("contact_id", followUp.contact_id)
+            .in("status", ["pending", "processing"]);
+          continue;
+        }
+      }
+
       // Buscar location
       const { data: location } = await supabase
         .from("locations")
@@ -304,9 +359,10 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       // Se tem mensagem customizada, enviar direto
       if (followUp.custom_message) {
         await client.post("/conversations/messages", {
-          type: "SMS",
+          type: outboundType,
           contactId: followUp.contact_id,
           message: followUp.custom_message,
+          ...(outboundSubject ? { subject: outboundSubject } : {}),
         });
         sentText = followUp.custom_message;
       } else {
@@ -428,9 +484,10 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             : String(msgRaw);
           if (msgText.trim()) {
             await client.post("/conversations/messages", {
-              type: "SMS",
+              type: outboundType,
               contactId: followUp.contact_id,
               message: msgText.trim(),
+              ...(outboundSubject ? { subject: outboundSubject } : {}),
             });
             sentText = msgText.trim();
           }
