@@ -49,7 +49,10 @@ export async function checkBulkRunnerStaleAndAlert(): Promise<HealthCheckResult>
         runnerStale = true;
         recordSignalAsync({
           type: "error",
-          title: `bulk-runner: stale há ${Math.round(ageMs / 60000)}min`,
+          // Triagem 2026-06-17: título ESTÁVEL — minutos vão só na description.
+          // Antes embutia ${min} no título → fingerprint(type+title) novo a cada
+          // minuto → 1 runner parado virava N rows no painel.
+          title: `bulk-runner: heartbeat parado (stale)`,
           description:
             `Runner não bate heartbeat há ${Math.round(ageMs / 60000)} minutos. ` +
             `Consecutive_errors: ${health.consecutive_errors ?? 0}. ` +
@@ -99,7 +102,11 @@ export async function checkBulkRunnerStaleAndAlert(): Promise<HealthCheckResult>
         stalledCount++;
         recordSignalAsync({
           type: "error",
-          title: `bulk job ${job.id.slice(0, 8)}: stalled (${overdueCount} pending overdue)`,
+          // Triagem 2026-06-17: título ESTÁVEL por job (sem a contagem dinâmica).
+          // Antes embutia (${overdueCount} pending overdue) → como recipients
+          // drenam tick a tick (17→11→...→1), cada contagem virava um row novo
+          // (1 job stalled gerou ~11 sinais). Contagem fica na description+metadata.
+          title: `bulk job ${job.id.slice(0, 8)}: stalled (pending overdue)`,
           description:
             `Job running tem ${overdueCount} recipients overdue há >10min E sent_count (${job.sent_count}/${job.total_contacts}) parado há >30min. ` +
             `Provável: runner não está conseguindo enviar (Stevo down, GHL rate limit, ou bug em sendToContact).`,

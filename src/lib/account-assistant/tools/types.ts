@@ -288,6 +288,12 @@ export function ghlErrorToResult(err: unknown, action: string): ToolResult {
         ` Pra adicionar tags, use add_tag.` +
         ` Pra criar nota nele, use create_note.`,
       retryable: false,
+      // Triagem 2026-06-17: dedup de contato NÃO é erro — é o bot ACERTANDO
+      // (o GHL recusou a duplicata e o LLM troca pra update_contact). Antes
+      // isto virava admin_signal a cada nome (título com nome+id → fingerprint
+      // novo → ~27 rows de ruído no painel). Este code faz executeTool() pular
+      // o auto-signal (ver tools/index.ts). Comportamento do bot inalterado.
+      code: "duplicate_contact",
     };
   }
 

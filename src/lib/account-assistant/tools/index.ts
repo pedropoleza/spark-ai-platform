@@ -263,6 +263,9 @@ export async function executeTool(
   if (
     result.status === "error" &&
     result.retryable !== true &&
+    // Triagem 2026-06-17: dedup de contato ("já existe") não é erro — é o bot
+    // acertando. Não polui o painel (antes virava ~27 rows, 1 por nome).
+    result.code !== "duplicate_contact" &&
     !result.message?.includes("não encontrado") &&
     !result.message?.includes("not found") &&
     !result.message?.includes("Nenhum") &&

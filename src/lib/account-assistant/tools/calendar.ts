@@ -160,16 +160,11 @@ const listAppointments: ToolEntry = {
           enum: ["today", "tomorrow", "week", "next_week"],
           description: "Janela de tempo. Default 'today'.",
         },
-        all_users: {
-          type: "boolean",
-          description: "Se true, lista de TODA a location (não só do rep). Default false.",
-        },
       },
     },
   },
   handler: async (ctx, args) => {
     const when = String(args.when || "today");
-    const allUsers = args.all_users === true;
     // Fix LOW-1 (audit 2026-05-05): antes setHours operava em UTC do
     // servidor Vercel — pra rep BR, slot 23h BRT (= 02h UTC dia seguinte)
     // virava "amanhã" pro bot. Agora usa computeWindowInTz igual
@@ -180,13 +175,27 @@ const listAppointments: ToolEntry = {
       repTimezoneRaw,
     );
     const repUserId = getRepGhlUserId(ctx);
+    // Triagem 2026-06-17: GHL /calendars/events EXIGE userId, calendarId ou
+    // groupId — sem isso é 422 "Either of userId, calendarId or groupId is
+    // required". A flag all_users (removida) caía nesse 422: dropava o userId e
+    // o GHL não tem modo "toda a location" sem groupId. Agora sempre escopa pra
+    // agenda do PRÓPRIO rep (cobre o caso real). Sem rep identificado → erro
+    // claro em vez de 422 cru. (Follow-up "ver agenda da location inteira":
+    // iterar calendarId ou descobrir groupId — rastreado em _planning.)
+    if (!repUserId) {
+      return {
+        status: "error",
+        message: "Não consegui identificar seu usuário no Spark Leads pra listar a agenda. Tenta de novo ou avisa o admin.",
+        retryable: false,
+      };
+    }
 
     try {
       const res = await listCalendarEvents(ctx.ghlClient, {
         locationId: ctx.locationId,
         startTime: String(startTs),
         endTime: String(endTs),
-        ...(allUsers || !repUserId ? {} : { userId: repUserId }),
+        userId: repUserId,
       });
       const events = res.events || [];
       // Fix Track 3 HIGH-8 (review 2026-05-05): retorna not_found pra empty
@@ -194,7 +203,7 @@ const listAppointments: ToolEntry = {
       if (events.length === 0) {
         return {
           status: "not_found",
-          message: `Nenhum appointment ${when === "today" ? "hoje" : `em '${when}'`} pra ${allUsers ? "esta location" : "você"}.`,
+          message: `Nenhum appointment ${when === "today" ? "hoje" : `em '${when}'`} pra você.`,
         };
       }
       return {
@@ -1462,6 +1471,30 @@ const updateAppointment: ToolEntry = {
 
     // H26: admin override flags
     Object.assign(body, overrideResult.body);
+
+    // Fix bug observado em prod 2026-06-15 (triagem 2026-06-17): reagendamento
+    // (mudança de horário) em calendário round-robin/collective dava GHL 422
+    // "A team member needs to be selected. assignedUserId is missing" — o PUT ia
+    // SEM assignedUserId. O GHL EXIGE assignedUserId ao mudar horário nesses
+    // calendários (create_appointment já resolve; update ficou sem paridade).
+    // Só roda em reschedule (muda start/end); status/meeting-location puro não
+    // precisa. Reusa o assignee ATUAL do appointment (NÃO troca dono); fallback
+    // pro próprio rep. Resolve o caso recorrente sem mexer no gate de ownership.
+    const isReschedule = body.startTime !== undefined || body.endTime !== undefined;
+    if (isReschedule && body.assignedUserId === undefined) {
+      let assignee: string | null = null;
+      try {
+        const current = await ghlGetAppointment(ctx.ghlClient, appointmentId);
+        assignee = current.appointment?.assignedUserId || null;
+      } catch (err) {
+        console.warn(
+          "[update_appointment] GET pro assignee atual falhou, usando o rep:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+      if (!assignee) assignee = getRepGhlUserId(ctx) || null;
+      if (assignee) body.assignedUserId = assignee;
+    }
 
     if (Object.keys(body).length === 0) {
       return { status: "error", message: "Nenhum campo pra atualizar", retryable: false };
