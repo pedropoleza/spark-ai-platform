@@ -72,7 +72,11 @@ export async function scheduleFollowUps(params: {
       // Modo ai_auto: distribui pela intensidade entre min/max.
       const maxAttempts = Math.min(followUpConfig.max_attempts, 10);
       const intensity = followUpConfig.intensity;
-      const minDelay = followUpConfig.min_delay_minutes || 10;
+      // Fix Marina 2026-06-18: default 10min era atropelo garantido num canal de
+      // conversa (follow-up disparava 10min depois da nossa própria resposta).
+      // Sobe pra 60min. O gate de decisão no runner é a proteção real; isto só
+      // evita o toque cedo demais quando o agente não setou delay próprio.
+      const minDelay = followUpConfig.min_delay_minutes || 60;
       const maxDelay = followUpConfig.max_delay_minutes || 10080; // 7 dias
       for (let i = 0; i < maxAttempts; i++) {
         const totalDelayMinutes = calculateCumulativeDelay(i + 1, intensity, maxAttempts, minDelay, maxDelay);
@@ -355,6 +359,10 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       // INVISÍVEL: o loader (👍/👎) e o anti-eco do F52 identificam "mensagem da
       // IA" por execution_log.send_message — era o "não mostra thumbs no follow-up".
       let sentText: string | null = null;
+      // Fix Marina 2026-06-18: a IA pode DECIDIR não fazer follow-up (lead adiou/
+      // recusou/acabamos de responder) retornando message vazia. Antes o prompt
+      // mandava "SEMPRE envie" → virava o "já voltou do Brasil?" 10min depois.
+      let aiDecidedSkip = false;
 
       // Se tem mensagem customizada, enviar direto
       if (followUp.custom_message) {
@@ -490,7 +498,11 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
               ...(outboundSubject ? { subject: outboundSubject } : {}),
             });
             sentText = msgText.trim();
+          } else {
+            aiDecidedSkip = true; // message vazia = a IA optou por NÃO mandar agora
           }
+        } else if (result.success) {
+          aiDecidedSkip = true; // sucesso sem campo message = decidiu não mandar
         }
       }
 
@@ -513,10 +525,29 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           },
           success: true,
         });
+        await supabase.from("scheduled_followups").update({ status: "sent" }).eq("id", followUp.id);
+        sent++;
+      } else if (aiDecidedSkip) {
+        // A IA leu o contexto e decidiu que NÃO vale follow-up agora (lead adiou
+        // "volto semana que vem", recusou, ou a última msg foi nossa). Cancela ESTE
+        // toque (os próximos da sequência re-avaliam quando chegarem) + audita.
+        await supabase.from("scheduled_followups").update({ status: "cancelled" }).eq("id", followUp.id);
+        await supabase.from("execution_log").insert({
+          agent_id: followUp.agent_id,
+          conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+          contact_id: followUp.contact_id,
+          location_id: followUp.location_id,
+          action_type: "followup_skipped",
+          action_payload: { attempt_number: followUp.attempt_number, reason: "ai_decided_no_followup" },
+          success: true,
+        });
+      } else {
+        // Sem texto e sem decisão explícita de skip (custom_message vazio ou
+        // geração sem message recuperável): mantém comportamento anterior — marca
+        // sent pra não reprocessar em loop.
+        await supabase.from("scheduled_followups").update({ status: "sent" }).eq("id", followUp.id);
+        sent++;
       }
-
-      await supabase.from("scheduled_followups").update({ status: "sent" }).eq("id", followUp.id);
-      sent++;
     } catch (error) {
       console.error("Erro no follow-up:", error);
       // F49 (review 2026-06-05): falha do runner não pode ser silenciosa.

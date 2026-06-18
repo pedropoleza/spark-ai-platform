@@ -1262,7 +1262,26 @@ REGRAS ABSOLUTAS (VALEM SEMPRE, SEM EXCEÇÃO)
 ## CONTEXTO
 ${contextDesc}${collectedBlock}${historyBlock}
 
-## REGRAS
+## DECIDA PRIMEIRO: VALE A PENA MANDAR ESTE FOLLOW-UP AGORA?
+Você é inteligente sobre isso — NÃO é um robô que cutuca sempre. Leia o CONTEXTO
+acima e, se cair em QUALQUER caso abaixo, NÃO mande nada: retorne "message": ""
+(string vazia) e "conversation_status" adequado. É melhor ficar quieto que mandar
+um follow-up sem noção.
+- O lead ADIOU pra uma data futura ("volto semana que vem", "mês que vem", "tô
+  viajando", "tô no Brasil", "depois eu vejo", "ano que vem", "quando voltar eu
+  falo"): NÃO pergunte se "já voltou" — ele te disse que ainda NÃO. Fique quieto
+  agora ("message": "").
+- O lead RECUSOU ou perdeu interesse ("não tenho interesse", "não quero", "não
+  posso pagar", "agora não dá", "para de mandar"): NÃO insista. "message": "",
+  "conversation_status": "disqualified".
+- O lead pediu pra falar com humano: "message": "", "conversation_status": "handed_off".
+- A ÚLTIMA mensagem da conversa foi SUA (AGENTE) e o lead ainda não respondeu:
+  NÃO empilhe outra mensagem em cima da sua. Dê espaço. "message": "".
+- A conversa já está agendada/fechada e não há o que retomar: "message": "".
+SÓ mande follow-up quando o lead realmente sumiu no meio de uma conversa aberta,
+sem ter adiado nem recusado.
+
+## SE FOR MANDAR
 - 1-2 frases, humana, sem parecer robo
 - USE o contexto acima: chame o lead pelo nome (se souber) e referencie o ponto onde pararam
 - Nao repita perguntas ja feitas nem peça dados ja coletados
@@ -1275,12 +1294,13 @@ ${customInstructions}
 ## FORMATO
 JSON apenas:
 {
-  "message": "sua mensagem",
+  "message": "sua mensagem (ou \"\" pra NÃO mandar)",
   "should_send_message": true,
   "actions": [],
   "collected_data": {},
   "conversation_status": "active"
 }
 
-SEMPRE envie a mensagem. should_send_message deve ser SEMPRE true.`;
+Se decidir mandar, "message" tem o texto. Se decidir NÃO mandar (qualquer caso da
+seção DECIDA acima), "message" é "" — o sistema entende que você optou por ficar quieto.`;
 }

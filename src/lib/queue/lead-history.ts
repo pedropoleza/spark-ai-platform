@@ -163,15 +163,25 @@ export function isHumanOutboundMessage(
   aiTexts: string[] | null,
 ): boolean {
   if (msg.direction !== "outbound") return false;
-  // source presente decide sozinho — userId nem é consultado (api/automação fora,
-  // "app" = humano). Garante que welcome/automação não vira humano (e06f409).
-  if (msg.source) return isHumanOutboundSource(msg.source);
-  // source ausente: só um userId real pode indicar humano.
-  if (!msg.userId) return false;
-  // ...mas não se for eco do próprio envio da IA (userId do admin). aiTexts null =
-  // não verificável → conservador (não conta como humano).
+  // Automação/api do GHL (welcome/campanha/workflow) NUNCA é humano (Alves Cury).
+  const src = String(msg.source || "");
+  if (src && !isHumanOutboundSource(src)) return false;
+  // ANTI-ECO PRIMEIRO (Fix bug observado em prod 2026-06-18, caso Marina/Vandinha):
+  // no Instagram o GHL carimba o NOSSO próprio envio com source="app" — idêntico a
+  // um humano digitando no inbox. A lógica antiga deixava o source="app" decidir
+  // sozinho (humano), SEM checar anti-eco → o eco do próprio envio da IA virava
+  // "humano respondeu", e o gate F37 (should-respond) calava a IA por até 60min.
+  // A Vandinha mandou 7 msgs e a IA não respondeu por ler o próprio eco como humano.
+  // Agora: se o corpo bate o que a IA registrou ter enviado, é a IA, não humano.
+  // aiTexts null = não verificável → conservador (não conta humano, fail-open).
   if (aiTexts === null) return false;
-  return !isAiEcho(String(msg.body || ""), aiTexts);
+  if (isAiEcho(String(msg.body || ""), aiTexts)) return false;
+  // Não é automação e NÃO é eco da nossa IA → OUTRO está atendendo (humano de
+  // verdade OU 2ª automação/bot). source="app" (rep/2º bot no inbox) confirma;
+  // sem source, exige userId real. A recência (a IA só recua se foi recente) é
+  // aplicada pelo chamador (should-respond: skip_if_human_replied_within_minutes).
+  if (src) return true;
+  return !!msg.userId;
 }
 
 /**
@@ -271,8 +281,13 @@ export async function loadLeadHistory(
     // que o GHL carimba com o userId do ADMIN). aiTexts (o que a IA registrou ter
     // enviado) só é buscado quando há um outbound SEM source mas COM userId — o
     // único caso que precisa do anti-eco. Caminho comum (msgs com source) = 0 query.
+    // Fix Marina 2026-06-18: o anti-eco agora roda pra QUALQUER outbound não-
+    // automação (inclui source="app" do IG, que é como o GHL carimba o NOSSO
+    // envio). Antes só buscava quando faltava source — então no IG o aiTexts ficava
+    // vazio e o eco da própria IA passava como humano. Busca aiTexts quando há
+    // outbound humano-ish (app/sem-source); api/automação não precisa.
     const needsEchoCheck = recent_messages.some(
-      (m) => m.direction === "outbound" && !m.source && m.userId,
+      (m) => m.direction === "outbound" && (!m.source || isHumanOutboundSource(m.source)),
     );
     let aiTexts: string[] | null = [];
     if (needsEchoCheck) {

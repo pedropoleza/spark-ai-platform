@@ -96,27 +96,29 @@ export interface LastOutboundForClassify {
  * Ladder de discriminação F52 — "humano assumiu a conversa?" a partir do ÚLTIMO
  * outbound da conversa + os textos que a IA registrou ter enviado (anti-eco).
  *
- * Discriminadores, em ordem de confiança (igual ao runtime que pausa a IA):
- *   1. source = automação → NÃO é humano, mesmo com userId (welcome/campanha).
- *      Alves Cury 2026-06-10. Checado ANTES de tudo (mais confiável).
- *   2. eco da própria IA (anti-eco) → NÃO é humano. O GHL carimba o envio via API
- *      da IA com o userId do ADMIN da conta — sem isto a IA via a própria msg como
- *      "humano (user GHL)" e emudecia após 1 resposta. Alves Cury / F56 2026-06-10.
- *   3. SEM userId de um user do GHL → NÃO é humano. Pedro 2026-06-18 ("só pausa se
- *      o usuário enviar mensagem"): handoff humano EXIGE sinal positivo = um user
- *      do GHL mandou manual (userId). Sem userId = eco da IA / anúncio / automação
- *      sem source / artefato de canal → NUNCA pausa (era o que mutava 39 leads no
- *      caso Marina: outbound sem userId caía no "caso geral → humano"). Bias a
- *      NÃO-mutar: falso-pause silencia o agente (pior) > falso-no-pause (a IA pode
- *      falar junto, e o rep pausa manual no pill).
- *   4. userId presente, não-eco, não-automação → um USER do GHL mandou manual →
- *      humano (pausa). Cobre handoff real E mídia/áudio do rep (a IA só manda texto).
+ * Sinal PRIMÁRIO = ANTI-ECO, NÃO userId (Fix bug observado em prod 2026-06-18,
+ * caso Marina): neste canal (Instagram via Stevo) o GHL carimba TUDO — nosso envio,
+ * o do 2º atendente e o humano — como source="app" SEM userId. Então userId não
+ * discrimina nada aqui. O que separa "fui eu" de "foi outro" é o anti-eco contra o
+ * que a IA registrou ter enviado. (O commit c2ee2a6 exigiu userId pra pausar — ERRADO
+ * pra esse canal: como userId nunca vem, a IA deixou de recuar do 2º atendente e
+ * passou a atropelá-lo. Revertido.)
  *
- * NOTA (F51, webhook): o roteador AINDA reforça com uma janela anti-eco — se a IA
- * enviou nos últimos ~90s, o outbound é presumido eco (multi-parte do IG chega em
- * segundos, às vezes mangled + com o userId do admin) e NÃO pausa, nem com userId.
- * Ver inbound-message/route.ts. Aqui (ladder compartilhada com F52/pill) ficamos no
- * sinal de userId, que o histórico do GHL carrega pra envios humanos de verdade.
+ * Discriminadores, em ordem de confiança:
+ *   1. source = automação → NÃO é humano (welcome/campanha/workflow). Alves Cury.
+ *   2. eco da própria IA (anti-eco) → NÃO é humano. É o que impede a IA de se
+ *      auto-pausar pelo próprio envio multi-parte (caso das 39 / Vandinha).
+ *   3. userId de user do GHL presente → humano (sinal forte; reforço, não requisito).
+ *   4. IA NUNCA falou nesta conversa (aiTexts vazio) → NÃO pausa: é lead de anúncio/
+ *      automação de entrada, não há de quem "assumir". Marcela Lana 2026-06-05.
+ *   5. outbound sem texto (mídia/áudio) DEPOIS da IA já ativa → humano (a IA só texto).
+ *   6. caso geral (a IA já falou, tem texto, NÃO bate eco) → OUTRO assumiu (humano
+ *      OU 2ª automação) → recua. É a regra que faz a IA não atropelar quem já atende.
+ *
+ * Recência é aplicada pelos CHAMADORES: should-respond usa
+ * skip_if_human_replied_within_minutes; o webhook F51 reforça com janela anti-eco
+ * (se a IA enviou nos ~90s, presume eco e não pausa). Assim, outbound antigo de
+ * outro não cala a IA pra sempre — só recua quando o outro falou recentemente.
  */
 export function classifyLastOutbound(args: {
   lastOutbound: LastOutboundForClassify;
@@ -133,11 +135,15 @@ export function classifyLastOutbound(args: {
   if (isAutomationOutbound) {
     isHuman = false; // automação/workflow do GHL não é humano (mesmo com userId)
   } else if (aiEcho) {
-    isHuman = false; // é a própria msg da IA (userId do admin não é confiável)
-  } else if (!sentByGhlUser) {
-    isHuman = false; // sem user GHL = não é handoff humano confiável → não pausa
+    isHuman = false; // é a própria msg da IA → NÃO auto-pausa pelo próprio eco
+  } else if (sentByGhlUser) {
+    isHuman = true; // user GHL mandou manual (sinal forte de humano)
+  } else if (aiTexts.length === 0) {
+    isHuman = false; // IA nunca falou → ad/automação de entrada, não pausa (Marcela Lana)
+  } else if (!body) {
+    isHuman = true; // mídia/áudio depois da IA já ativa = outro atende
   } else {
-    isHuman = true; // user GHL mandou manual (texto não-eco OU mídia) → humano
+    isHuman = true; // texto, IA já falou, não bate eco → OUTRO assumiu → recua
   }
   return { isHuman };
 }
