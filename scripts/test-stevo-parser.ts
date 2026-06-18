@@ -225,6 +225,38 @@ function check(name: string, cond: boolean, detail?: string) {
 }
 
 // ---------------------------------------------------------------------------
+{
+  // Fix bug prod 2026-06-18 (Matheus Curty): tap no formato TEMPLATE/NATIVE-FLOW
+  // (templateButtonReplyMessage, Type="text"/MediaType=""). Sem o ramo, o "Aceito"
+  // era descartado e o rep ficava em loop de termos. Payload real capturado.
+  const r = parseStevoWebhook({
+    event: "Message",
+    instanceToken: INSTANCE_TOKEN,
+    data: {
+      Info: infoBase({ Type: "text", MediaType: "" }),
+      Message: {
+        templateButtonReplyMessage: {
+          selectedID: "terms_accept",
+          selectedIndex: 0,
+          selectedDisplayText: "Aceito ✅",
+          contextInfo: {
+            stanzaID: "3EB08A13",
+            quotedMessage: {
+              interactiveMessage: { body: { text: "*SparkBot*\n\nTopa começar?" } },
+            },
+          },
+        },
+      },
+    },
+  });
+  check("template btn: kind=interactive", r?.kind === "interactive");
+  check("template btn: type=button", r?.kind === "interactive" && r.interactiveType === "button");
+  check("template btn: text=display", r?.kind === "interactive" && r.text === "Aceito ✅");
+  check("template btn: selectionId=selectedID", r?.kind === "interactive" && r.selectionId === "terms_accept");
+  check("template btn: stanza", r?.kind === "interactive" && r.replyToStanzaId === "3EB08A13");
+}
+
+// ---------------------------------------------------------------------------
 // 6. RESPOSTA DE LISTA (list_response) — formato real capturado
 // ---------------------------------------------------------------------------
 {

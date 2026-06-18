@@ -264,6 +264,35 @@ export function parseStevoWebhook(body: unknown): ParsedStevoMessage | null {
     }
   }
 
+  // 3c. Tap em botão no formato TEMPLATE/NATIVE-FLOW (templateButtonReplyMessage).
+  // Fix bug observado em prod 2026-06-18 (Matheus Curty, +1 732…): alguns clientes
+  // de WhatsApp (Business/versões) mandam o tap como `templateButtonReplyMessage`
+  // com Info.Type="text"/MediaType="" — NÃO como buttonsResponseMessage. Sem este
+  // ramo, o "Aceito ✅" era descartado, terms_accepted_at nunca gravava e o rep
+  // ficava em LOOP de termos (toda msg reenviava os termos). selectedID carrega o
+  // ID estável (terms_accept/terms_reject). Mesmo shape dos outros taps.
+  const tplResp = asRecord(message.templateButtonReplyMessage);
+  if (tplResp) {
+    const selectionId =
+      asString(tplResp.selectedID) || asString(tplResp.selectedId);
+    const display = asString(tplResp.selectedDisplayText);
+    const ctx = asRecord(tplResp.contextInfo);
+    const stanza = asString(ctx?.stanzaID) || asString(ctx?.stanzaId);
+    const quotedText = extractQuotedText(asRecord(ctx?.quotedMessage));
+    const textVal = display || selectionId;
+    if (textVal) {
+      return {
+        ...base,
+        kind: "interactive",
+        interactiveType: "button",
+        text: textVal,
+        selectionId,
+        replyToStanzaId: stanza,
+        quotedText,
+      };
+    }
+  }
+
   const listResp = asRecord(message.listResponseMessage);
   if (listResp) {
     const sel = asRecord(listResp.singleSelectReply);
