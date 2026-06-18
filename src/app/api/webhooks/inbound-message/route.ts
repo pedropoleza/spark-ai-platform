@@ -476,10 +476,21 @@ export async function POST(request: NextRequest) {
             .order("created_at", { ascending: false })
             .limit(10);
 
-          const { isHuman: isHumanMessage } = classifyLastOutbound({
+          const aiTexts = extractAiSentTexts(aiResponses);
+          const { isHuman } = classifyLastOutbound({
             lastOutbound: { body: messageBody, userId: webhookUserId, source: webhookSource },
-            aiTexts: extractAiSentTexts(aiResponses),
+            aiTexts,
           });
+          // Reforço anti-eco (Pedro 2026-06-18, caso Marina): a IA manda em VÁRIAS
+          // partes no IG; o eco volta em segundos, às vezes mangled (não bate o
+          // texto) E com o userId do admin (GHL carimba o api-send como app+user).
+          // Se a IA enviou nos últimos ~90s (aiResponses não vazio), presumimos eco
+          // e NÃO pausamos — nem com userId. Só consideramos handoff humano quando
+          // a IA NÃO acabou de falar. (Janela curta: handoff humano logo após a IA
+          // é raro; o rep sempre pode pausar manual no pill.) Mata a auto-pausa que
+          // mutou 39 leads.
+          const aiSentRecently = aiTexts.length > 0;
+          const isHumanMessage = isHuman && !aiSentRecently;
 
           console.log(`[Webhook:outbound] isHuman=${isHumanMessage} | autoPause=${autoPauseEnabled} | agent=${outboundAgent.id}`);
 
