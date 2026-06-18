@@ -25,13 +25,35 @@ export const updateAgentSchema = z.object({
 // Targeting rule
 const targetingRuleSchema = z.object({
   id: z.string(),
-  type: z.enum(["tag", "custom_field", "pipeline_stage"]),
+  type: z.enum(["tag", "custom_field", "pipeline_stage", "message"]),
   tag: z.string().optional(),
   custom_field_key: z.string().optional(),
   custom_field_value: z.string().optional(),
   pipeline_id: z.string().optional(),
   pipeline_stage_id: z.string().optional(),
+  // type="message" (Pedro 2026-06-17): filtro por conteúdo da mensagem.
+  message_operator: z
+    .enum(["contains", "not_contains", "eq", "starts_with", "ends_with", "in", "matches_regex"])
+    .optional(),
+  message_value: z.string().optional(),
+  message_values: z.array(z.string()).optional(),
+  case_sensitive: z.boolean().optional(),
 });
+
+// Composição E/OU v2 (Pedro 2026-06-17). targeting_rules aceita o array flat
+// legado OU este set versionado — back-compat (ver normalizeTargeting).
+const targetingRuleSetSchema = z.object({
+  version: z.literal(2),
+  match: z.enum(["all", "any"]),
+  groups: z.array(
+    z.object({
+      id: z.string(),
+      match: z.enum(["all", "any"]),
+      rules: z.array(targetingRuleSchema),
+    }),
+  ),
+});
+const targetingRulesUnion = z.union([z.array(targetingRuleSchema), targetingRuleSetSchema]);
 
 // Data field
 const dataFieldSchema = z.object({
@@ -92,7 +114,7 @@ const personalitySchema = z.object({
 
 export const updateAgentConfigSchema = z.object({
   personality: personalitySchema.nullable().optional(),
-  targeting_rules: z.array(targetingRuleSchema).nullable().optional(),
+  targeting_rules: targetingRulesUnion.nullable().optional(),
   enabled_channels: z.array(z.enum(["SMS", "WhatsApp", "Instagram", "Email"])).nullable().optional(),
   calendar_id: z.string().nullable().optional(),
   tone_creativity: z.number().min(0).max(100).nullable().optional(),

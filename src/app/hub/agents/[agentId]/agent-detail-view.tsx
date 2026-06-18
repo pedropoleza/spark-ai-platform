@@ -21,7 +21,7 @@ import type { AgentStatus, ChannelKey } from "@/components/hub/types";
 import { channelsFromDb, channelsToDb, nonUiChannels, CHANNEL_LABEL } from "@/components/hub/types";
 import type {
   DataField, FollowUpConfig, WorkingHoursConfig, WorkingHoursDay,
-  TargetingRule, AutomationRule, AutomationAction, DeactivationRule, HandoffMessage,
+  TargetingRule, TargetingRules, TargetingRuleSet, TargetingGroup, MessageMatchOp, AutomationRule, AutomationAction, DeactivationRule, HandoffMessage,
 } from "@/types/agent";
 
 const TEMPLATE_LABEL: Record<string, string> = { sparkbot: "SparkBot", sales: "Vendas", recruitment: "Recrutamento", custom: "Personalizado" };
@@ -48,6 +48,36 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
 const bool = (v: unknown, d = false) => (typeof v === "boolean" ? v : d);
 const rid = () => Math.random().toString(36).slice(2, 10);
 
+/** Uma folha de targeting só "conta" se tiver valor preenchido — senão é regra
+ *  fantasma (UI semeia regra vazia ao clicar "+"). Limpamos no save pra não
+ *  persistir lixo que o runtime trataria como neutro/ruidoso. */
+function isCompleteLeaf(r: TargetingRule): boolean {
+  switch (r.type) {
+    case "message":
+      return r.message_operator === "in"
+        ? !!r.message_values?.some((v) => v.trim())
+        : !!r.message_value?.trim();
+    case "tag":
+      return !!r.tag?.trim();
+    case "custom_field":
+      return !!r.custom_field_key?.trim();
+    case "pipeline_stage":
+      return !!r.pipeline_stage_id?.trim();
+    default:
+      return false;
+  }
+}
+
+/** Remove folhas incompletas e grupos vazios antes de salvar. Aceita array
+ *  legado (filtra folhas) ou set v2 (filtra folhas + drop grupos sem regra). */
+function cleanTargetingRules(tr: TargetingRules): TargetingRules {
+  if (Array.isArray(tr)) return tr.filter(isCompleteLeaf);
+  const groups = tr.groups
+    .map((g) => ({ ...g, rules: g.rules.filter(isCompleteLeaf) }))
+    .filter((g) => g.rules.length > 0);
+  return { ...tr, groups };
+}
+
 interface Quiet { enabled: boolean; start: string; end: string; timezone?: string; days?: number[] }
 interface PostBooking { behavior: "stop_and_handoff" | "continue_until_appointment"; handoff_message: string; allow_reschedule: boolean }
 interface Notif { on_qualified: boolean; on_booked: boolean; on_handed_off: boolean; on_error: boolean; notification_email: string }
@@ -69,7 +99,7 @@ interface Editable {
   debounce_seconds: number;
   auto_pause_on_human_message: boolean;
   data_fields: DataField[];
-  targeting_rules: TargetingRule[];
+  targeting_rules: TargetingRules;
   channels: ChannelKey[];
   extra_channels: string[]; // canais do DB que o /hub não edita (ex: Email) — preservados
   follow_up_config: FollowUpConfig;
@@ -135,7 +165,8 @@ function makeSeed(c: Record<string, any>): Editable {
     debounce_seconds: clampNum(c.debounce_seconds, 5, 60, 10),
     auto_pause_on_human_message: bool(c.auto_pause_on_human_message, true),
     data_fields: Array.isArray(c.data_fields) ? (c.data_fields as DataField[]) : [],
-    targeting_rules: Array.isArray(c.targeting_rules) ? (c.targeting_rules as TargetingRule[]) : [],
+    // v2 (Pedro 2026-06-17): preserva array flat legado OU set v2 (grupos E/OU).
+    targeting_rules: (c.targeting_rules as TargetingRules | null) ?? [],
     channels: channelsFromDb(c.enabled_channels),
     extra_channels: nonUiChannels(c.enabled_channels),
     follow_up_config: {
@@ -311,7 +342,7 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
     setSaving(true);
     try {
       // Filtra entradas incompletas pra não falhar a validação do PUT inteiro.
-      const cleanTargeting = e.targeting_rules.filter((t) => t.tag || t.custom_field_key || t.pipeline_stage_id);
+      const cleanTargeting = cleanTargetingRules(e.targeting_rules);
       const cleanHandoff = e.handoff_messages.filter((h) => h.label.trim() && h.text.trim());
       const cleanDeact = e.deactivation_rules.filter((d) => d.tag || d.field_key);
       const cleanAutos = e.automations.filter((a) => a.actions.length > 0);
@@ -922,19 +953,18 @@ function CatQualification({ e, patch }: { e: Editable; patch: (p: Partial<Editab
  * Trocar de tipo limpa o "outro lado" (rules ↔ outreach) pra evitar
  * config fantasma. Agente só pode estar em UM modo de ativação por vez. */
 
-type ActivationType = "inbound" | "tag" | "custom_field" | "pipeline_stage" | "bulk";
+type ActivationType = "inbound" | "tag" | "custom_field" | "pipeline_stage" | "bulk" | "advanced";
 
 function detectActivationType(
-  rules: TargetingRule[],
+  rules: TargetingRules,
   outreachEnabled: boolean,
 ): ActivationType {
   if (outreachEnabled) return "bulk";
+  // Set v2 (grupos E/OU) OU array com folha de mensagem → modo Avançado.
+  if (!Array.isArray(rules)) return "advanced";
   if (rules.length === 0) return "inbound";
-  const t = rules[0].type;
-  // "message" (filtro por conteúdo, v2 Pedro 2026-06-17) ainda não tem editor
-  // simples — o editor de grupos E/OU vem no próximo lote. Não há regra message
-  // salva em prod, então mapear pra "inbound" aqui é só pra satisfazer o tipo.
-  return t === "message" ? "inbound" : t;
+  if (rules.some((r) => r.type === "message")) return "advanced";
+  return rules[0].type === "message" ? "advanced" : rules[0].type;
 }
 
 const ACTIVATION_CHIPS: { value: ActivationType; label: string; hint: string }[] = [
@@ -943,7 +973,212 @@ const ACTIVATION_CHIPS: { value: ActivationType; label: string; hint: string }[]
   { value: "custom_field", label: "Por campo personalizado", hint: "Filtra por valor de custom field do Spark Leads." },
   { value: "pipeline_stage", label: "Por oportunidade (funil)", hint: "Atende quem está em estágio específico do funil." },
   { value: "bulk", label: "Por disparo em massa", hint: "Agente INICIA a conversa com uma lista. Você define ritmo e mensagem." },
+  { value: "advanced", label: "Avançado (E / OU)", hint: "Combina várias condições — tag, campo, funil E conteúdo da mensagem — com grupos E (todas) e OU (qualquer)." },
 ];
+
+/* ─── Editor avançado de grupos E/OU (v2, Pedro 2026-06-17) ──────────
+ * Permite combinar N condições em N grupos, cada grupo com seu próprio
+ * E/OU, e os grupos entre si com E/OU. Inclui a folha "message" (filtro
+ * por CONTEÚDO da mensagem do lead) com operadores de texto. */
+
+const MSG_OPS: { value: MessageMatchOp; label: string; multi?: boolean }[] = [
+  { value: "contains", label: "contém a palavra" },
+  { value: "not_contains", label: "NÃO contém" },
+  { value: "eq", label: "é exatamente igual a" },
+  { value: "starts_with", label: "começa com" },
+  { value: "ends_with", label: "termina com" },
+  { value: "in", label: "contém qualquer uma da lista", multi: true },
+  { value: "matches_regex", label: "casa com a expressão (regex)" },
+];
+
+const COND_TYPES: { value: TargetingRule["type"]; label: string }[] = [
+  { value: "message", label: "Conteúdo da mensagem" },
+  { value: "tag", label: "Tag" },
+  { value: "custom_field", label: "Campo personalizado" },
+  { value: "pipeline_stage", label: "Etapa do funil" },
+];
+
+/** Editor de UMA folha (condição) dentro de um grupo. */
+function LeafEditor({
+  r,
+  onChange,
+  onRemove,
+}: {
+  r: TargetingRule;
+  onChange: (p: Partial<TargetingRule>) => void;
+  onRemove: () => void;
+}) {
+  const op = r.message_operator ?? "contains";
+  const isMulti = MSG_OPS.find((o) => o.value === op)?.multi;
+  return (
+    <div
+      className="row"
+      style={{ gap: 8, alignItems: "center", background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: 8, flexWrap: "wrap" }}
+    >
+      {/* Tipo da condição */}
+      <select
+        className="input"
+        style={{ width: "auto", minWidth: 160 }}
+        value={r.type}
+        onChange={(ev) => {
+          const next = ev.target.value as TargetingRule["type"];
+          // Troca de tipo limpa os campos do tipo anterior pra não vazar valor.
+          onChange({
+            type: next,
+            tag: undefined,
+            custom_field_key: undefined,
+            custom_field_value: undefined,
+            pipeline_id: undefined,
+            pipeline_stage_id: undefined,
+            message_operator: next === "message" ? "contains" : undefined,
+            message_value: undefined,
+            message_values: undefined,
+          });
+        }}
+      >
+        {COND_TYPES.map((t) => (
+          <option key={t.value} value={t.value}>{t.label}</option>
+        ))}
+      </select>
+
+      {r.type === "message" && (
+        <>
+          <select
+            className="input"
+            style={{ width: "auto", minWidth: 180 }}
+            value={op}
+            onChange={(ev) => {
+              const nextOp = ev.target.value as MessageMatchOp;
+              const nextMulti = MSG_OPS.find((o) => o.value === nextOp)?.multi;
+              // Migra valor entre single ↔ lista ao trocar de operador.
+              if (nextMulti) {
+                onChange({ message_operator: nextOp, message_values: r.message_values ?? (r.message_value ? [r.message_value] : []), message_value: undefined });
+              } else {
+                onChange({ message_operator: nextOp, message_value: r.message_value ?? r.message_values?.[0] ?? "", message_values: undefined });
+              }
+            }}
+          >
+            {MSG_OPS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          {isMulti ? (
+            <input
+              className="input"
+              style={{ flex: 1, minWidth: 200 }}
+              value={(r.message_values ?? []).join(", ")}
+              onChange={(ev) => onChange({ message_values: ev.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+              placeholder="palavra1, palavra2, palavra3"
+            />
+          ) : (
+            <input
+              className="input"
+              style={{ flex: 1, minWidth: 200 }}
+              value={r.message_value ?? ""}
+              onChange={(ev) => onChange({ message_value: ev.target.value })}
+              placeholder={op === "matches_regex" ? "ex: (quero|preciso).*seguro" : "ex: orçamento"}
+            />
+          )}
+          <Toggle label="Diferenciar maiúsculas" checked={!!r.case_sensitive} onChange={() => onChange({ case_sensitive: !r.case_sensitive })} />
+        </>
+      )}
+
+      {r.type === "tag" && (
+        <TagPicker value={r.tag || ""} onChange={(v) => onChange({ tag: v })} placeholder="escolha a tag" />
+      )}
+      {r.type === "custom_field" && (
+        <CustomFieldPicker
+          fieldKey={r.custom_field_key || ""}
+          fieldValue={r.custom_field_value || ""}
+          onChange={(next) => onChange({ custom_field_key: next.custom_field_key, custom_field_value: next.custom_field_value })}
+        />
+      )}
+      {r.type === "pipeline_stage" && (
+        <PipelineStagePicker
+          pipelineId={r.pipeline_id || ""}
+          stageId={r.pipeline_stage_id || ""}
+          onChange={(next) => onChange({ pipeline_id: next.pipeline_id, pipeline_stage_id: next.pipeline_stage_id })}
+        />
+      )}
+
+      <button className="btn btn--quiet btn--icon btn--sm" onClick={onRemove} aria-label="Remover condição"><Trash2 size={13} /></button>
+    </div>
+  );
+}
+
+/** Editor do set v2 inteiro: grupos com E/OU + combinação entre grupos. */
+function GroupsEditor({
+  set,
+  onChange,
+}: {
+  set: TargetingRuleSet;
+  onChange: (next: TargetingRuleSet) => void;
+}) {
+  const updGroup = (gi: number, p: Partial<TargetingGroup>) =>
+    onChange({ ...set, groups: set.groups.map((g, i) => (i === gi ? { ...g, ...p } : g)) });
+  const addLeaf = (gi: number) =>
+    updGroup(gi, { rules: [...set.groups[gi].rules, { id: rid(), type: "message", message_operator: "contains", message_value: "" }] });
+  const updLeaf = (gi: number, li: number, p: Partial<TargetingRule>) =>
+    updGroup(gi, { rules: set.groups[gi].rules.map((r, i) => (i === li ? { ...r, ...p } : r)) });
+  const remLeaf = (gi: number, li: number) =>
+    updGroup(gi, { rules: set.groups[gi].rules.filter((_, i) => i !== li) });
+  const addGroup = () =>
+    onChange({ ...set, groups: [...set.groups, { id: rid(), match: "all", rules: [{ id: rid(), type: "message", message_operator: "contains", message_value: "" }] }] });
+  const remGroup = (gi: number) =>
+    onChange({ ...set, groups: set.groups.filter((_, i) => i !== gi) });
+
+  return (
+    <div className="col" style={{ gap: 10 }}>
+      {set.groups.length > 1 && (
+        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+          <span className="muted" style={{ fontSize: 12.5 }}>Combinar os grupos com</span>
+          <Seg
+            value={set.match}
+            options={[{ v: "all" as const, l: "E (todos os grupos)" }, { v: "any" as const, l: "OU (qualquer grupo)" }]}
+            onChange={(v) => onChange({ ...set, match: v })}
+          />
+        </div>
+      )}
+
+      {set.groups.map((g, gi) => (
+        <div key={g.id} className="col" style={{ gap: 8, border: "1px solid var(--border)", borderRadius: "var(--r-md)", padding: 10, background: "var(--surface-2)" }}>
+          <div className="row" style={{ gap: 8, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+            <div className="row" style={{ gap: 8, alignItems: "center" }}>
+              <span className="muted" style={{ fontSize: 12.5 }}>Dentro do grupo {gi + 1}:</span>
+              <Seg
+                value={g.match}
+                options={[{ v: "all" as const, l: "E (todas batem)" }, { v: "any" as const, l: "OU (qualquer bate)" }]}
+                onChange={(v) => updGroup(gi, { match: v })}
+              />
+            </div>
+            {set.groups.length > 1 && (
+              <button className="btn btn--quiet btn--sm" onClick={() => remGroup(gi)}>
+                <Trash2 size={13} /> Remover grupo
+              </button>
+            )}
+          </div>
+
+          {g.rules.map((r, li) => (
+            <LeafEditor
+              key={r.id}
+              r={r}
+              onChange={(p) => updLeaf(gi, li, p)}
+              onRemove={() => remLeaf(gi, li)}
+            />
+          ))}
+
+          <button className="btn btn--ghost btn--sm" style={{ alignSelf: "flex-start" }} onClick={() => addLeaf(gi)}>
+            <Plus /> Adicionar condição
+          </button>
+        </div>
+      ))}
+
+      <button className="btn btn--ghost btn--sm" style={{ alignSelf: "flex-start" }} onClick={addGroup}>
+        <Plus /> Adicionar grupo
+      </button>
+    </div>
+  );
+}
 
 function CatActivation({
   e,
@@ -958,6 +1193,14 @@ function CatActivation({
 }) {
   const tr = e.targeting_rules;
   const type = detectActivationType(tr, outreachEnabled);
+  // Modos simples (tag/custom_field/pipeline_stage/inbound) operam num array
+  // flat. Modo avançado opera num set v2 com grupos E/OU.
+  const flat: TargetingRule[] = Array.isArray(tr) ? tr : [];
+  const ruleSet: TargetingRuleSet | null = !Array.isArray(tr) ? tr : null;
+  // Array legado com folha "message" também cai no editor avançado: embrulha
+  // num set v2 transitório (1 grupo "all" = AND). Ao 1º edit vira set de fato.
+  const advSet: TargetingRuleSet =
+    ruleSet ?? { version: 2, match: "all", groups: [{ id: "g0", match: "all", rules: flat }] };
 
   const switchType = (next: ActivationType) => {
     if (next === type) return;
@@ -969,12 +1212,23 @@ function CatActivation({
     } else if (next === "inbound") {
       patch({ targeting_rules: [] });
       setOutreachEnabled(false);
+    } else if (next === "advanced") {
+      // Semeia o set v2 a partir das regras simples atuais (1 grupo "all" =
+      // mesma semântica AND do legado). Sem regras → 1 folha message vazia.
+      const seedRules: TargetingRule[] =
+        flat.length > 0
+          ? flat
+          : [{ id: rid(), type: "message", message_operator: "contains", message_value: "" }];
+      patch({ targeting_rules: { version: 2, match: "all", groups: [{ id: rid(), match: "all", rules: seedRules }] } });
+      setOutreachEnabled(false);
     } else {
       // tag / custom_field / pipeline_stage: limpa outreach, semeia 1 regra
-      // do tipo escolhido se ainda não tem nenhuma daquele tipo.
-      const hasOfType = tr.some((r) => r.type === next);
+      // do tipo escolhido se ainda não tem nenhuma daquele tipo. Vem do set
+      // v2? achata pras folhas do tipo escolhido.
+      const source = ruleSet ? ruleSet.groups.flatMap((g) => g.rules) : flat;
+      const hasOfType = source.some((r) => r.type === next);
       const newRules = hasOfType
-        ? tr.filter((r) => r.type === next) // só mantém as do tipo escolhido
+        ? source.filter((r) => r.type === next) // só mantém as do tipo escolhido
         : [{ id: rid(), type: next } as TargetingRule];
       patch({ targeting_rules: newRules });
       setOutreachEnabled(false);
@@ -982,10 +1236,10 @@ function CatActivation({
   };
 
   const addT = (forType: TargetingRule["type"]) =>
-    patch({ targeting_rules: [...tr, { id: rid(), type: forType }] });
+    patch({ targeting_rules: [...flat, { id: rid(), type: forType }] });
   const updT = (i: number, p: Partial<TargetingRule>) =>
-    patch({ targeting_rules: tr.map((r, idx) => (idx === i ? { ...r, ...p } : r)) });
-  const remT = (i: number) => patch({ targeting_rules: tr.filter((_, idx) => idx !== i) });
+    patch({ targeting_rules: flat.map((r, idx) => (idx === i ? { ...r, ...p } : r)) });
+  const remT = (i: number) => patch({ targeting_rules: flat.filter((_, idx) => idx !== i) });
 
   const setOutreach = (p: Partial<Outreach>) =>
     patch({ outreach: { ...e.outreach, ...p } });
@@ -1048,7 +1302,7 @@ function CatActivation({
           hint="Combinação AND — o contato precisa bater em TODAS as regras pro agente atender."
         >
           <div className="col" style={{ gap: 8 }}>
-            {tr.length === 0 && (
+            {flat.length === 0 && (
               <div
                 style={{
                   background: "#fef3c7",
@@ -1065,7 +1319,7 @@ function CatActivation({
                 Adicione pelo menos 1 regra abaixo OU troca pra &ldquo;Por mensagem&rdquo; no topo.
               </div>
             )}
-            {tr.map((r, i) =>
+            {flat.map((r, i) =>
               r.type !== type ? null : (
                 <div key={r.id} className="row" style={{ gap: 8, alignItems: "center", background: "var(--surface-2)", borderRadius: "var(--r-sm)", padding: 8, flexWrap: "wrap" }}>
                   {/* F35: pickers dinâmicos puxam de /api/ghl/{tags,pipelines,custom-fields}. Fallback pra input se API offline. */}
@@ -1154,6 +1408,34 @@ function CatActivation({
             </span>
           </div>
         </>
+      )}
+
+      {type === "advanced" && (
+        <Field
+          label="Condições de ativação (E / OU)"
+          hint="Monte grupos de condições. Dentro de cada grupo escolha E (todas batem) ou OU (qualquer bate); e como combinar os grupos entre si."
+        >
+          <div className="col" style={{ gap: 10 }}>
+            <div
+              style={{
+                background: "var(--primary-soft)",
+                borderRadius: "var(--r-sm)",
+                padding: 10,
+                fontSize: 12.5,
+                color: "var(--primary-ink)",
+                lineHeight: 1.5,
+              }}
+            >
+              💡 A condição <strong>Conteúdo da mensagem</strong> é checada a CADA mensagem do
+              lead (não em disparos proativos). Se ela for a <strong>única</strong> condição, o
+              agente fica quieto nas mensagens que não baterem — inclusive respostas no meio da
+              conversa. Pra ativar por <strong>perfil</strong> (tag/campo/funil) e usar a mensagem
+              só como gatilho de entrada, combine as duas: ex. grupo 1 = tag &ldquo;VIP&rdquo;,
+              grupo 2 = mensagem contém &ldquo;orçamento&rdquo;, combinando os grupos com <strong>E</strong>.
+            </div>
+            <GroupsEditor set={advSet} onChange={(next) => patch({ targeting_rules: next })} />
+          </div>
+        </Field>
       )}
     </>
   );
