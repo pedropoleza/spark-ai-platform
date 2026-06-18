@@ -100,5 +100,38 @@ const orTop: TargetingRuleSet = {
 ok("OU topo: tag falha mas mensagem bate → ok", evaluateTargetingSet(orTop, contact, opps, { messageText: "qual o preço?" }) === true);
 ok("OU topo: tag falha e mensagem falha → block", evaluateTargetingSet(orTop, contact, opps, { messageText: "oi" }) === false);
 
+console.log("\n=== conversa ativa: folha message é gatilho de ATIVAÇÃO (Fix Marina 2026-06-18) ===");
+// REGRESSÃO direta do bug: follow-up "Florida" não contém a frase, mas a conversa
+// já está ativa → folha message vira neutra → agente continua respondendo.
+ok("REGRESSÃO: message não bate MAS conversa ativa → neutra → passa",
+  evaluateTargetingSet(msgSet, contact, opps, { messageText: "Florida", conversationActive: true }) === true);
+// 1º contato (não ativa): a folha message AINDA gateia a ativação (intencional).
+ok("1º contato: message bate → ativa (match)",
+  evaluateTargetingSet(msgSet, contact, opps, { messageText: "quero um orçamento" }) === true);
+ok("1º contato: message não bate → block (gateia ativação)",
+  evaluateTargetingSet(msgSet, contact, opps, { messageText: "bom dia" }) === false);
+// Combo perfil+mensagem com conversa ativa: sobra só o PERFIL (message neutra).
+const tagAndMsg: TargetingRuleSet = {
+  version: 2, match: "all",
+  groups: [
+    { id: "g1", match: "all", rules: [leaf({ type: "tag", tag: "VIP" })] },
+    { id: "g2", match: "all", rules: [leaf({ type: "message", message_operator: "contains", message_value: "orçamento" })] },
+  ],
+};
+ok("ativa: tag VIP E (msg neutra) → vale só a tag → passa",
+  evaluateTargetingSet(tagAndMsg, contact, opps, { messageText: "qualquer coisa", conversationActive: true }) === true);
+const tagAusenteAndMsg: TargetingRuleSet = {
+  version: 2, match: "all",
+  groups: [
+    { id: "g1", match: "all", rules: [leaf({ type: "tag", tag: "nao-existe" })] },
+    { id: "g2", match: "all", rules: [leaf({ type: "message", message_operator: "contains", message_value: "orçamento" })] },
+  ],
+};
+ok("ativa NÃO afrouxa perfil: tag ausente E (msg neutra) → block",
+  evaluateTargetingSet(tagAusenteAndMsg, contact, opps, { messageText: "qualquer coisa", conversationActive: true }) === false);
+// conversationActive ausente = comportamento legado idêntico (folha message vale).
+ok("sem conversationActive = legado (message não bate → block)",
+  evaluateTargetingSet(msgSet, contact, opps, { messageText: "bom dia" }) === false);
+
 console.log(`\n=== RESULTADO: ${pass} pass / ${fail} fail ===`);
 process.exit(fail === 0 ? 0 : 1);

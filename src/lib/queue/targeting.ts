@@ -38,6 +38,16 @@ export interface TargetingOpts {
    */
   isProactive?: boolean;
   /**
+   * true quando a conversa JÁ está ativa (o agente já respondeu ao menos 1×
+   * neste segmento). Folhas type="message" são GATILHO DE ATIVAÇÃO (1º contato)
+   * — uma vez a conversa ativa, NÃO devem re-bloquear follow-ups (a resposta do
+   * lead "Florida"/"sim" não contém a frase de abertura). Fix bug observado em
+   * prod 2026-06-18 (caso Marina): folha message única silenciava todo follow-up.
+   * Folhas de PERFIL (tag/custom_field/pipeline_stage) continuam valendo (são
+   * atributo do contato, não conteúdo de 1 msg).
+   */
+  conversationActive?: boolean;
+  /**
    * "open" (default): erro de fetch / dados faltando → ok:true (gate de runtime
    * — não silencia o agente). "closed": → ok:false (roteador do webhook — não
    * escolhe o agente errado pro lead).
@@ -139,8 +149,10 @@ function evalLeaf(
       return m ? "match" : "no_match";
     }
     case "message": {
-      // Sem texto do lead (pill/contexto sem msg) ou fluxo proativo → neutra.
-      if (opts.messageText == null || opts.isProactive) return "neutral";
+      // Neutra quando: sem texto do lead (pill/contexto sem msg), fluxo proativo,
+      // OU conversa já ativa (folha message é gatilho de ATIVAÇÃO no 1º contato —
+      // não re-bloqueia follow-ups; ver TargetingOpts.conversationActive).
+      if (opts.messageText == null || opts.isProactive || opts.conversationActive) return "neutral";
       if (!rule.message_operator) return "neutral";
       const val =
         rule.message_operator === "in"

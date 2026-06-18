@@ -397,6 +397,16 @@ async function processGroup(
   // GU-6 (Pedro 2026-06-04): ativação manual pela UI (ai_resumed_at) é override
   // explícito do dono da conversa — a IA atende mesmo fora do targeting.
   const manuallyResumed = !!(convState as { ai_resumed_at?: string | null })?.ai_resumed_at;
+  // Fix bug observado em prod 2026-06-18 (caso Marina): conversa já ATIVA (a IA
+  // já respondeu ≥1× neste segmento) → folhas type="message" do targeting viram
+  // NEUTRAS (gatilho de ativação só vale no 1º contato; follow-up "Florida"/"sim"
+  // não repete a frase de abertura). Perfil (tag/cf/stage) segue valendo.
+  // last_ai_response_at é o sinal primário (robusto ao segment-reset, que zera
+  // message_count mas NÃO last_ai_response_at).
+  const conversationActive = !!(
+    (convState as { last_ai_response_at?: string | null })?.last_ai_response_at ||
+    ((convState as { message_count?: number } | null)?.message_count ?? 0) > 0
+  );
   // normalizeTargeting cobre array legado E set v2 (Pedro 2026-06-17); null = sem
   // regra efetiva = responde a todos (não chama o gate).
   if (
@@ -411,8 +421,9 @@ async function processGroup(
       group.locationId,
       // Filtro por mensagem (Pedro 2026-06-17): passa o texto do lead. Em fluxo
       // PROATIVO (syntheticTrigger), o aggregatedBody é instrução nossa → a folha
-      // message vira NEUTRA (isProactive) pra não casar a própria instrução.
-      { messageText: group.aggregatedBody, isProactive: !!group.syntheticTrigger },
+      // message vira NEUTRA (isProactive). conversationActive → folha message
+      // neutra em follow-up (gatilho de ativação só no 1º contato).
+      { messageText: group.aggregatedBody, isProactive: !!group.syntheticTrigger, conversationActive },
     );
     if (!match.ok) {
       log("log", `SKIP outside_targeting (${match.reason || "no match"})`);
