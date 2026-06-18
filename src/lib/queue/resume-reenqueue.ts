@@ -42,9 +42,15 @@ export async function reenqueueInboundsSincePause(
     // nada a recuperar.
     if (!pausedSince) return { requeued: 0 };
 
+    const reasonLc = (pausedReason || "").toLowerCase();
     // Opt-out/STOP: o lead pediu pra parar. Reprocessar = responder a quem pediu
     // silêncio. Não recupera (compliance).
-    if ((pausedReason || "").toLowerCase().startsWith("opt_out")) return { requeued: 0 };
+    if (reasonLc.startsWith("opt_out")) return { requeued: 0 };
+    // Handoff humano (Fix review 2026-06-18): se a pausa foi porque um humano/2º
+    // atendente assumiu (auto_pause:human_message / human_handling), NÃO re-enfileira
+    // — o humano pode já ter respondido essas msgs no inbox do GHL (fora do nosso
+    // pipeline) e re-responder colidiria. Recupera só pausa de sistema/manual.
+    if (reasonLc.includes("human")) return { requeued: 0 };
 
     const pausedMs = new Date(pausedSince).getTime();
     if (!Number.isFinite(pausedMs)) return { requeued: 0 };

@@ -152,12 +152,18 @@ function evalLeaf(
       // Neutra quando: sem texto do lead (pill/contexto sem msg), fluxo proativo,
       // OU conversa já ativa (folha message é gatilho de ATIVAÇÃO no 1º contato —
       // não re-bloqueia follow-ups; ver TargetingOpts.conversationActive).
-      if (opts.messageText == null || opts.isProactive || opts.conversationActive) return "neutral";
+      if (!opts.messageText || opts.isProactive || opts.conversationActive) return "neutral";
       if (!rule.message_operator) return "neutral";
       const val =
         rule.message_operator === "in"
           ? rule.message_values ?? []
           : rule.message_value ?? "";
+      // Needle vazio → NEUTRA (defesa em profundidade, review 2026-06-18). Sem
+      // isso, matchTextOp("contains", t, "") casaria QUALQUER msg (catch-all) e
+      // "not_contains" com "" bloquearia tudo. A UI já limpa folha vazia
+      // (cleanTargetingRules), mas uma regra salva via API direta furava.
+      const needleEmpty = Array.isArray(val) ? !val.some((v) => v.trim()) : !val.trim();
+      if (needleEmpty) return "neutral";
       return matchTextOp(rule.message_operator as TextOp, opts.messageText, val, {
         caseSensitive: rule.case_sensitive,
       })

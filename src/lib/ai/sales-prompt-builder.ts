@@ -1264,9 +1264,10 @@ ${contextDesc}${collectedBlock}${historyBlock}
 
 ## DECIDA PRIMEIRO: VALE A PENA MANDAR ESTE FOLLOW-UP AGORA?
 Você é inteligente sobre isso — NÃO é um robô que cutuca sempre. Leia o CONTEXTO
-acima e, se cair em QUALQUER caso abaixo, NÃO mande nada: retorne "message": ""
-(string vazia) e "conversation_status" adequado. É melhor ficar quieto que mandar
-um follow-up sem noção.
+acima e, se cair em QUALQUER caso abaixo, NÃO mande nada: retorne EXATAMENTE
+"message": "[[NAO_ENVIAR]]" (esse marcador literal) e "conversation_status"
+adequado. O sistema entende esse marcador como "ficar quieto". É melhor ficar
+quieto que mandar um follow-up sem noção.
 - O lead ADIOU pra uma data futura ("volto semana que vem", "mês que vem", "tô
   viajando", "tô no Brasil", "depois eu vejo", "ano que vem", "quando voltar eu
   falo"): NÃO pergunte se "já voltou" — ele te disse que ainda NÃO. Fique quieto
@@ -1294,13 +1295,14 @@ ${customInstructions}
 ## FORMATO
 JSON apenas:
 {
-  "message": "sua mensagem (ou \"\" pra NÃO mandar)",
+  "message": "sua mensagem (ou \"[[NAO_ENVIAR]]\" pra NÃO mandar)",
   "should_send_message": true,
   "actions": [],
   "collected_data": {},
   "conversation_status": "active"
 }
 
-Se decidir mandar, "message" tem o texto. Se decidir NÃO mandar (qualquer caso da
-seção DECIDA acima), "message" é "" — o sistema entende que você optou por ficar quieto.`;
+Se decidir mandar, "message" tem o texto do follow-up. Se decidir NÃO mandar
+(qualquer caso da seção DECIDA acima), "message" é EXATAMENTE "[[NAO_ENVIAR]]" — o
+sistema reconhece esse marcador e fica quieto (não manda nada pro lead).`;
 }

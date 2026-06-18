@@ -75,6 +75,10 @@ function cleanTargetingRules(tr: TargetingRules): TargetingRules {
   const groups = tr.groups
     .map((g) => ({ ...g, rules: g.rules.filter(isCompleteLeaf) }))
     .filter((g) => g.rules.length > 0);
+  // Set v2 que ficou SEM grupo (rep limpou tudo) → colapsa pro array vazio
+  // canônico (= "sem targeting, responde a todos"). Evita persistir um objeto v2
+  // vazio {version,groups:[]} que confunde leitura/auditoria (review 2026-06-18).
+  if (groups.length === 0) return [];
   return { ...tr, groups };
 }
 
@@ -1426,12 +1430,13 @@ function CatActivation({
                 lineHeight: 1.5,
               }}
             >
-              💡 A condição <strong>Conteúdo da mensagem</strong> é checada a CADA mensagem do
-              lead (não em disparos proativos). Se ela for a <strong>única</strong> condição, o
-              agente fica quieto nas mensagens que não baterem — inclusive respostas no meio da
-              conversa. Pra ativar por <strong>perfil</strong> (tag/campo/funil) e usar a mensagem
-              só como gatilho de entrada, combine as duas: ex. grupo 1 = tag &ldquo;VIP&rdquo;,
-              grupo 2 = mensagem contém &ldquo;orçamento&rdquo;, combinando os grupos com <strong>E</strong>.
+              💡 A condição <strong>Conteúdo da mensagem</strong> é um <strong>gatilho de
+              ENTRADA</strong>: vale no 1º contato pra DECIDIR se o agente entra na conversa. Depois
+              que ele já respondeu uma vez, ela é ignorada e o agente segue o papo normalmente (não
+              fica re-checando a frase em cada resposta do lead). As condições de <strong>perfil</strong>
+              (tag/campo/funil) continuam valendo a conversa toda. Ex.: grupo 1 = tag &ldquo;VIP&rdquo;
+              + grupo 2 = mensagem contém &ldquo;orçamento&rdquo;, com <strong>E</strong> → entra só pra
+              VIP que falou em orçamento, e a partir daí conduz tudo.
             </div>
             <GroupsEditor set={advSet} onChange={(next) => patch({ targeting_rules: next })} />
           </div>

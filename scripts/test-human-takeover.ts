@@ -4,6 +4,7 @@
  * Falso-negativo = IA atropela o humano. Os dois são ruins → cobrir bem.
  */
 import { isAiEcho, extractAiSentTexts, classifyLastOutbound } from "../src/lib/queue/human-takeover";
+import { isHumanOutboundMessage } from "../src/lib/queue/lead-history";
 
 let passed = 0, failed = 0;
 function eq(name: string, actual: unknown, expected: unknown) {
@@ -63,6 +64,33 @@ eq("IA já ativa + não-eco SEM userId (2º bot/humano no IG) → humano (recua)
 // disc 5 — mídia (sem texto) depois da IA ativa → humano (a IA só manda texto).
 eq("mídia sem texto, IA já ativa → humano",
   cl({ lastOutbound: { body: "", userId: "", source: "app" }, aiTexts: aiMsgs }), true);
+
+console.log("\n=== isHumanOutboundMessage (F37/should-respond) — paridade c/ classifyLastOutbound ===");
+const ihm = isHumanOutboundMessage;
+// Fix P1 review 2026-06-18: o auto-silêncio da Vandinha (nosso eco source=app lido
+// como humano) + a disc-4 (Marcela Lana) que faltava aqui.
+eq("eco da própria IA (source=app, bate aiTexts) → NÃO humano (fix Vandinha)",
+  ihm({ direction: "outbound", source: "app", body: aiMsgs[0], userId: null }, aiMsgs), false);
+eq("disc-4: IA nunca falou (aiTexts vazio) + welcome source=app → NÃO humano (Marcela Lana)",
+  ihm({ direction: "outbound", source: "app", body: "Bem-vindo! Como posso ajudar?", userId: null }, []), false);
+eq("aiTexts null (não verificável) → NÃO humano (conservador)",
+  ihm({ direction: "outbound", source: "app", body: "qualquer", userId: null }, null), false);
+eq("automação (workflow) → NÃO humano",
+  ihm({ direction: "outbound", source: "workflow", body: "promo", userId: null }, aiMsgs), false);
+eq("2º bot/humano: IA já falou + texto não-eco source=app → humano (recua)",
+  ihm({ direction: "outbound", source: "app", body: "e ai? sumiu haha tudo bem?", userId: null }, aiMsgs), true);
+eq("inbound nunca é humano-outbound",
+  ihm({ direction: "inbound", source: "app", body: "oi", userId: null }, aiMsgs), false);
+
+console.log("\n=== sentinela do follow-up [[NAO_ENVIAR]] (gate de decisão sobrevive ao parse) ===");
+// Fix P0 review 2026-06-18: parseAIResponse reescreve message:"" → "Pode me contar
+// mais?", então o skip via msg vazia era MORTO. O sentinela é texto não-vazio que
+// sobrevive ao parse; o runner detecta com este regex e NÃO envia.
+const SENTINEL_RE = /\[\[\s*NAO_ENVIAR\s*\]\]/i;
+eq("detecta [[NAO_ENVIAR]]", SENTINEL_RE.test("[[NAO_ENVIAR]]"), true);
+eq("detecta com espaços [[ NAO_ENVIAR ]]", SENTINEL_RE.test("[[ NAO_ENVIAR ]]"), true);
+eq("mensagem normal NÃO casa sentinela", SENTINEL_RE.test("Oi Pedro, tudo bem?"), false);
+eq("o default do parse ('Pode me contar mais?') NÃO casa sentinela", SENTINEL_RE.test("Pode me contar mais?"), false);
 
 console.log(`\n=== ${passed} passed, ${failed} failed ===\n`);
 process.exit(failed > 0 ? 1 : 0);

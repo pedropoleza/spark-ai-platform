@@ -176,12 +176,20 @@ export function isHumanOutboundMessage(
   // aiTexts null = não verificável → conservador (não conta humano, fail-open).
   if (aiTexts === null) return false;
   if (isAiEcho(String(msg.body || ""), aiTexts)) return false;
-  // Não é automação e NÃO é eco da nossa IA → OUTRO está atendendo (humano de
-  // verdade OU 2ª automação/bot). source="app" (rep/2º bot no inbox) confirma;
-  // sem source, exige userId real. A recência (a IA só recua se foi recente) é
-  // aplicada pelo chamador (should-respond: skip_if_human_replied_within_minutes).
+  // userId de user do GHL → humano (rep mandou manual). Checado ANTES do disc-4
+  // (paridade EXATA com classifyLastOutbound: userId vence aiTexts-vazio) — um rep
+  // que escreve pra um lead NOVO (IA ainda não falou) É humano.
+  if (msg.userId) return true;
+  // disc-4 (Marcela Lana, review 2026-06-18): SEM userId e a IA NUNCA falou
+  // (aiTexts vazio) → o outbound é welcome/anúncio/automação de entrada, não há de
+  // quem "assumir". NÃO conta como humano (senão o gate F37 calava a IA no 1º
+  // contato de lead novo — o auto-silêncio que a Vandinha sofreu).
+  if (aiTexts.length === 0) return false;
+  // Não é automação, a IA já falou, não é eco, sem userId — source="app" (rep/2º
+  // bot no inbox) → OUTRO está atendendo → humano. A recência (a IA só recua se foi
+  // recente) é aplicada pelo chamador (should-respond: skip_if_human_replied...).
   if (src) return true;
-  return !!msg.userId;
+  return false;
 }
 
 /**

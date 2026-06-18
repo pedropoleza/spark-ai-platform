@@ -7,8 +7,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GHLClient } from "@/lib/ghl/client";
 import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
-import { checkContactMatchesTargeting } from "@/lib/queue/targeting";
-import type { TargetingRule } from "@/types/agent";
+import { checkContactMatchesTargeting, normalizeTargeting } from "@/lib/queue/targeting";
+import type { TargetingRules } from "@/types/agent";
 
 export const LEAD_FACING_TYPES = ["sales_agent", "recruitment_agent", "custom_agent"] as const;
 
@@ -152,7 +152,7 @@ export async function computeContactDrivingState(args: {
     .eq("agent_id", agentId)
     .maybeSingle();
   const autoPause = (cfg as { auto_pause_on_human_message?: boolean } | null)?.auto_pause_on_human_message === true;
-  const targetingRules = (cfg as { targeting_rules?: TargetingRule[] } | null)?.targeting_rules ?? null;
+  const targetingRules = (cfg as { targeting_rules?: TargetingRules } | null)?.targeting_rules ?? null;
 
   // 3. Humano assumiu? (última outbound do GHL não é da IA, mais recente que o
   //    "ligar manual"). Só quando a conta quer auto-pause-on-human. Fail-open.
@@ -178,7 +178,10 @@ export async function computeContactDrivingState(args: {
   }
 
   // 4. Targeting exclui? (checkContactMatchesTargeting é fail-open por dentro)
-  if (targetingRules && targetingRules.length > 0) {
+  // Fix review 2026-06-18: usa normalizeTargeting (cobre array legado E set v2) em
+  // vez de `.length` — um targeting v2 ({version,groups}) não tem .length, então o
+  // pill IGNORAVA a exclusão e reportava "IA dirigindo" pra contato que o v2 exclui.
+  if (normalizeTargeting(targetingRules)) {
     const match = await checkContactMatchesTargeting(contactId, targetingRules, companyId, locationId);
     if (!match.ok) return { driving: false, reason: "not_targeted" };
   }

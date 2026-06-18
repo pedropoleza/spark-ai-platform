@@ -316,18 +316,23 @@ async function processGroup(
     // "Florida"). Agora audita. A RECUPERAÇÃO da msg engolida é feita no resume
     // via reenqueueInboundsSincePause (não revertemos pra pending aqui — evita
     // busy-loop de re-claim a cada tick enquanto a conversa segue pausada).
-    await supabase.from("execution_log").insert({
-      agent_id: agent.id,
-      location_id: group.locationId,
-      contact_id: group.contactId,
-      conversation_id: group.conversationId,
-      action_type: "ai_paused_skip",
-      action_payload: {
-        reason: convState.ai_paused_reason || "manual",
-        messages_swallowed: group.messages.length,
-      },
-      success: true,
-    });
+    // try/catch (review 2026-06-18): o insert de auditoria NÃO pode derrubar um
+    // SKIP benigno — se lançasse, o grupo viraria 'failed' → reaper re-claima →
+    // re-skip → loop de failed só por causa do log. Fail-soft.
+    try {
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "ai_paused_skip",
+        action_payload: {
+          reason: convState.ai_paused_reason || "manual",
+          messages_swallowed: group.messages.length,
+        },
+        success: true,
+      });
+    } catch { /* observabilidade best-effort */ }
     return;
   }
 
@@ -644,7 +649,7 @@ async function processGroup(
       // campos opcionais.
       const { data: aiSends } = await supabase
         .from("execution_log")
-        .select("action_payload")
+        .select("action_payload, created_at")
         .eq("location_id", group.locationId)
         .eq("contact_id", group.contactId)
         .eq("action_type", "send_message")
@@ -655,6 +660,15 @@ async function processGroup(
         lastOutbound,
         aiTexts: extractAiSentTexts(aiSends),
       });
+      // Guarda de recência espelhando o webhook F51 (Fix review 2026-06-18): o
+      // anti-eco por TEXTO pode falhar se o canal mangleou o corpo OU se o envio
+      // da IA não estiver logado. Se a última outbound saiu LOGO APÓS um send
+      // nosso (≤120s), é quase certo o eco do próprio envio — NÃO é handoff. Sem
+      // isso, o F52 pausava a IA sozinha na cauda de eco perdido (qualquer canal).
+      const lastAiSendMs = aiSends?.[0]?.created_at ? new Date(aiSends[0].created_at as string).getTime() : 0;
+      const lastOutboundTs = new Date(lastOutbound.dateAdded).getTime();
+      const looksLikeOwnEcho =
+        lastAiSendMs > 0 && lastOutboundTs - lastAiSendMs <= 120_000 && lastOutboundTs - lastAiSendMs >= -5_000;
 
       // GU-6 (Pedro 2026-06-04): override "passa a bola pra IA". Se o rep LIGOU
       // o agente manualmente (pill na UI) DEPOIS dessa resposta humana, a IA
@@ -683,7 +697,7 @@ async function processGroup(
       const lastOutboundMs = new Date(lastOutbound.dateAdded).getTime();
       const overriddenByManualResume = resumedAtMs > 0 && lastOutboundMs <= resumedAtMs;
 
-      if (isHuman && !overriddenByManualResume) {
+      if (isHuman && !overriddenByManualResume && !looksLikeOwnEcho) {
         log("log", `F52 handoff: última outbound não é da IA — humano assumiu, pausando contato=${group.contactId}`);
         const nowIso = new Date().toISOString();
         await supabase.from("conversation_state").upsert(

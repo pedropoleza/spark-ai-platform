@@ -490,7 +490,13 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           const msgText = Array.isArray(msgRaw)
             ? msgRaw.filter((s) => typeof s === "string" && s.trim()).join("\n\n")
             : String(msgRaw);
-          if (msgText.trim()) {
+          // Sentinela do gate de decisão (Fix P0 review 2026-06-18): a IA marca
+          // "não vale follow-up" com [[NAO_ENVIAR]]. NÃO dá pra usar message:""
+          // porque parseAIResponse (openai-client.ts:520) reescreve string vazia
+          // pra "Pode me contar mais?" ANTES daqui — o gate via msg vazia era
+          // MORTO e o bot mandava "Pode me contar mais?" pra quem recusou/adiou.
+          const decidedNoSend = /\[\[\s*NAO_ENVIAR\s*\]\]/i.test(msgText);
+          if (!decidedNoSend && msgText.trim()) {
             await client.post("/conversations/messages", {
               type: outboundType,
               contactId: followUp.contact_id,
@@ -499,7 +505,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             });
             sentText = msgText.trim();
           } else {
-            aiDecidedSkip = true; // message vazia = a IA optou por NÃO mandar agora
+            aiDecidedSkip = true; // sentinela OU vazio = a IA optou por NÃO mandar
           }
         } else if (result.success) {
           aiDecidedSkip = true; // sucesso sem campo message = decidiu não mandar
