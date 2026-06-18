@@ -930,7 +930,11 @@ function detectActivationType(
 ): ActivationType {
   if (outreachEnabled) return "bulk";
   if (rules.length === 0) return "inbound";
-  return rules[0].type;
+  const t = rules[0].type;
+  // "message" (filtro por conteúdo, v2 Pedro 2026-06-17) ainda não tem editor
+  // simples — o editor de grupos E/OU vem no próximo lote. Não há regra message
+  // salva em prod, então mapear pra "inbound" aqui é só pra satisfazer o tipo.
+  return t === "message" ? "inbound" : t;
 }
 
 const ACTIVATION_CHIPS: { value: ActivationType; label: string; hint: string }[] = [

@@ -3,7 +3,18 @@ export type AgentStatus = "active" | "inactive";
 export type AgentObjective = "qualification_only" | "qualification_and_booking" | "booking_only";
 export type ConversationStatus = "active" | "qualified" | "booked" | "disqualified" | "handed_off" | "stale";
 export type QueueStatus = "pending" | "processing" | "completed" | "failed";
-export type TargetingRuleType = "tag" | "custom_field" | "pipeline_stage";
+export type TargetingRuleType = "tag" | "custom_field" | "pipeline_stage" | "message";
+
+/** Operadores de texto pro type="message" (Pedro 2026-06-17). Espelha TextOp em
+ *  @/lib/account-assistant/filter-engine/text-ops (o matcher). */
+export type MessageMatchOp =
+  | "contains"
+  | "not_contains"
+  | "eq"
+  | "starts_with"
+  | "ends_with"
+  | "in"
+  | "matches_regex";
 
 export interface TargetingRule {
   id: string;
@@ -13,7 +24,30 @@ export interface TargetingRule {
   custom_field_value?: string;
   pipeline_id?: string;
   pipeline_stage_id?: string;
+  // type="message" (Pedro 2026-06-17): filtro por CONTEÚDO da mensagem do lead.
+  message_operator?: MessageMatchOp;
+  message_value?: string; // operadores single-value
+  message_values?: string[]; // operador "in" (qualquer da lista)
+  case_sensitive?: boolean; // default false
 }
+
+/**
+ * Composição E/OU (v2, Pedro 2026-06-17). Back-compat: um array flat legado
+ * (TargetingRule[]) é lido como 1 grupo "all" (= AND, idêntico ao runtime
+ * legado). Ver normalizeTargeting em @/lib/queue/targeting.
+ */
+export interface TargetingGroup {
+  id: string;
+  match: "all" | "any"; // "all" = E (todas batem), "any" = OU (qualquer bate)
+  rules: TargetingRule[];
+}
+export interface TargetingRuleSet {
+  version: 2;
+  match: "all" | "any"; // como combinar os GRUPOS entre si
+  groups: TargetingGroup[];
+}
+/** O que vive em agent_configs.targeting_rules: array legado OU set v2. */
+export type TargetingRules = TargetingRule[] | TargetingRuleSet;
 
 export interface DataField {
   key: string;
