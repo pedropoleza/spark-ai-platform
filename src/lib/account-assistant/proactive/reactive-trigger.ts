@@ -22,7 +22,8 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { TargetingRule } from "@/types/agent";
+import { normalizeTargeting } from "@/lib/queue/targeting";
+import type { TargetingRule, TargetingRules } from "@/types/agent";
 
 const REACTIVE_TRIGGER_PREFIX = "__reactive_trigger__:";
 
@@ -56,8 +57,13 @@ interface AgentRow {
 
 function extractConfig(agent: AgentRow) {
   const cfg = Array.isArray(agent.agent_configs) ? agent.agent_configs[0] : agent.agent_configs;
+  // v2 (Pedro 2026-06-17): targeting_rules pode ser array legado OU set v2 com
+  // grupos E/OU. Achata pra folhas — ruleMatchesTrigger só casa tag/pipeline_stage
+  // (ignora message/custom_field, que não têm trigger reativo por evento).
+  const set = normalizeTargeting((cfg?.targeting_rules ?? null) as TargetingRules | null);
+  const rules: TargetingRule[] = set ? set.groups.flatMap((g) => g.rules) : [];
   return {
-    rules: (cfg?.targeting_rules || []) as TargetingRule[],
+    rules,
     outreachOn: !!(cfg?.outreach_config as { enabled?: boolean } | null)?.enabled,
   };
 }

@@ -83,10 +83,11 @@ import { GHLClient } from "@/lib/ghl/client";
 import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { processMessageQueue } from "@/lib/queue/queue-processor";
+import { checkContactMatchesTargeting, normalizeTargeting } from "@/lib/queue/targeting";
 import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
 import { NON_HUMAN_SOURCES } from "@/lib/ghl/message-sources";
 import { reportError } from "@/lib/admin-signals/report-error";
-import type { TargetingRule } from "@/types/agent";
+import type { TargetingRules } from "@/types/agent";
 
 // ===== Cutover Stevo (Pedro 2026-05-20) =====
 // Quando SPARKBOT_INBOUND_PRIMARY="stevo", o recebimento do Hub passa a ser
@@ -654,13 +655,25 @@ export async function POST(request: NextRequest) {
         const cfg = Array.isArray(candidate.agent_configs)
           ? candidate.agent_configs[0]
           : candidate.agent_configs;
-        const rules: TargetingRule[] = cfg?.targeting_rules || [];
-        if (rules.length === 0) {
+        const rawRules = (cfg?.targeting_rules ?? null) as TargetingRules | null;
+        // Unificado com o gate de runtime (Pedro 2026-06-17): MESMO avaliador
+        // (tag/custom_field/pipeline_stage/MESSAGE + grupos E/OU). normalizeTargeting
+        // cobre array legado E set v2; null = sem regra = catch-all/fallback.
+        if (!normalizeTargeting(rawRules)) {
           ruleless++;
           if (!fallback) fallback = candidate; // 1º sem-regra = catch-all
           continue;
         }
-        const matches = await checkTargetingRules(rules, contactId, location.company_id, locationId);
+        // failMode "closed": no ROTEAMENTO, erro de fetch = "não escolhe ESTE
+        // agente" (não atende quem talvez não devia — tenta o próximo). messageBody
+        // alimenta as folhas type="message" → agente com filtro de mensagem É
+        // selecionável pro lead novo (antes o roteador divergente nem conhecia).
+        const matches = (
+          await checkContactMatchesTargeting(contactId, rawRules, location.company_id, locationId, {
+            messageText: messageBody || "",
+            failMode: "closed",
+          })
+        ).ok;
         if (matches) {
           selectedAgent = candidate;
           break;
@@ -856,61 +869,10 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Verifica targeting rules. FAIL CLOSED: retorna false em caso de erro.
- */
-async function checkTargetingRules(
-  rules: TargetingRule[], contactId: string, companyId: string, locationId: string
-): Promise<boolean> {
-  try {
-    const client = new GHLClient(companyId, locationId);
-    const contact = await client.get<{
-      contact: {
-        id: string;
-        tags: string[];
-        customFields: { id: string; value: string; fieldKey?: string }[];
-      };
-    }>(`/contacts/${contactId}`);
-
-    const contactData = contact.contact;
-    if (!contactData) return false;
-
-    for (const rule of rules) {
-      switch (rule.type) {
-        case "tag":
-          if (rule.tag && contactData.tags?.includes(rule.tag)) return true;
-          break;
-        case "custom_field":
-          if (rule.custom_field_key) {
-            const field = contactData.customFields?.find(
-              (f) => f.id === rule.custom_field_key || f.fieldKey === rule.custom_field_key
-            );
-            if (field && field.value === rule.custom_field_value) return true;
-          }
-          break;
-        case "pipeline_stage":
-          if (rule.pipeline_id && rule.pipeline_stage_id) {
-            try {
-              const opps = await client.get<{
-                opportunities: { pipelineId: string; pipelineStageId: string }[];
-              }>("/opportunities/search", {
-                location_id: locationId, contact_id: contactId, pipeline_id: rule.pipeline_id,
-              });
-              if (opps.opportunities?.some(
-                (o) => o.pipelineId === rule.pipeline_id && o.pipelineStageId === rule.pipeline_stage_id
-              )) return true;
-            } catch { /* skip this rule */ }
-          }
-          break;
-      }
-    }
-    return false;
-  } catch (error) {
-    // FAIL CLOSED: se não conseguiu verificar, não processar
-    console.error("[Webhook] Targeting check failed (BLOCKING):", error);
-    return false;
-  }
-}
+// checkTargetingRules (roteador divergente: OR + fail-closed + case-sensitive)
+// REMOVIDO 2026-06-17 — unificado em checkContactMatchesTargeting (failMode
+// "closed"), que cobre tag/custom_field/pipeline_stage/MESSAGE + grupos E/OU
+// com a MESMA semântica do gate de runtime. Ver src/lib/queue/targeting.ts.
 
 /**
  * Verifica se é mensagem real (não evento interno do GHL)

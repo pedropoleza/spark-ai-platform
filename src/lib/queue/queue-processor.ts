@@ -15,7 +15,8 @@ import { scheduleFollowUps } from "@/lib/queue/follow-up-scheduler";
 import { generateSummaryNote } from "@/lib/queue/summary-note-generator";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
-import { checkContactMatchesTargeting } from "@/lib/queue/targeting";
+import { checkContactMatchesTargeting, normalizeTargeting } from "@/lib/queue/targeting";
+import type { TargetingRules } from "@/types/agent";
 // F27.D (Pedro 2026-05-29): detecção de trigger reativo (msg sintética
 // enfileirada pelo reactive-trigger.ts quando tag/stage muda no GHL).
 import { isReactiveTriggerBody, parseTriggerBody } from "@/lib/account-assistant/proactive/reactive-trigger";
@@ -373,15 +374,16 @@ async function processGroup(
   // eram IGNORADAS — agente respondia a TODOS os contatos da location.
   // AGORA: se config.targeting_rules tiver regras, contato precisa bater TODAS
   // (AND) pro agente responder. Fail-OPEN em erro de fetch (ver targeting.ts).
-  const targetingRules = (config as { targeting_rules?: TargetingRule[] | null })
+  const targetingRules = (config as { targeting_rules?: TargetingRules | null })
     .targeting_rules;
   // GU-6 (Pedro 2026-06-04): ativação manual pela UI (ai_resumed_at) é override
   // explícito do dono da conversa — a IA atende mesmo fora do targeting.
   const manuallyResumed = !!(convState as { ai_resumed_at?: string | null })?.ai_resumed_at;
+  // normalizeTargeting cobre array legado E set v2 (Pedro 2026-06-17); null = sem
+  // regra efetiva = responde a todos (não chama o gate).
   if (
     !manuallyResumed &&
-    Array.isArray(targetingRules) &&
-    targetingRules.length > 0 &&
+    normalizeTargeting(targetingRules) &&
     locationForBilling?.company_id
   ) {
     const match = await checkContactMatchesTargeting(
@@ -389,6 +391,10 @@ async function processGroup(
       targetingRules,
       locationForBilling.company_id,
       group.locationId,
+      // Filtro por mensagem (Pedro 2026-06-17): passa o texto do lead. Em fluxo
+      // PROATIVO (syntheticTrigger), o aggregatedBody é instrução nossa → a folha
+      // message vira NEUTRA (isProactive) pra não casar a própria instrução.
+      { messageText: group.aggregatedBody, isProactive: !!group.syntheticTrigger },
     );
     if (!match.ok) {
       log("log", `SKIP outside_targeting (${match.reason || "no match"})`);
@@ -401,7 +407,10 @@ async function processGroup(
         action_type: "targeting_skip",
         action_payload: {
           reason: match.reason,
-          rules_count: targetingRules.length,
+          // v2-aware: array legado → length; set v2 → total de folhas nos grupos.
+          rules_count: Array.isArray(targetingRules)
+            ? targetingRules.length
+            : (normalizeTargeting(targetingRules)?.groups.reduce((n, g) => n + g.rules.length, 0) ?? 0),
         },
         success: true,
       });
