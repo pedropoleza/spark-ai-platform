@@ -22,6 +22,7 @@ import { reportError } from "@/lib/admin-signals/report-error";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { LEAD_FACING_TYPES, agentBelongsToLocation } from "@/lib/agents/contact-controls";
+import { reenqueueInboundsSincePause } from "@/lib/queue/resume-reenqueue";
 
 export const maxDuration = 20;
 
@@ -105,6 +106,15 @@ async function setActive(
   args: { agentId: string; contactId: string; locationId: string; nowIso: string },
 ) {
   const { agentId, contactId, locationId, nowIso } = args;
+  // Captura a janela de pausa ANTES de limpar — pra recuperar inbounds engolidos
+  // durante a pausa (Fix prod 2026-06-18, caso Marina).
+  const { data: prev } = await supabase
+    .from("conversation_state")
+    .select("ai_paused_at, ai_paused_reason")
+    .eq("agent_id", agentId)
+    .eq("contact_id", contactId)
+    .maybeSingle();
+
   const patch = {
     status: "active",
     ai_paused_at: null,
@@ -127,4 +137,12 @@ async function setActive(
       ...patch,
     });
   }
+
+  // Recupera inbounds engolidos durante a pausa (fail-soft).
+  await reenqueueInboundsSincePause(supabase, {
+    agentId,
+    contactId,
+    pausedSince: (prev as { ai_paused_at: string | null } | null)?.ai_paused_at,
+    pausedReason: (prev as { ai_paused_reason: string | null } | null)?.ai_paused_reason,
+  });
 }

@@ -20,6 +20,7 @@ import { reportError } from "@/lib/admin-signals/report-error";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { resolveAgentForContact, agentBelongsToLocation } from "@/lib/agents/contact-controls";
+import { reenqueueInboundsSincePause } from "@/lib/queue/resume-reenqueue";
 
 export const maxDuration = 20;
 
@@ -56,6 +57,19 @@ export async function POST(request: NextRequest) {
       agentId = agent.id;
     }
 
+    // Ao RETOMAR, captura a janela de pausa ANTES de limpar — pra recuperar
+    // inbounds engolidos durante a pausa (Fix prod 2026-06-18, caso Marina).
+    let pausePrev: { ai_paused_at: string | null; ai_paused_reason: string | null } | null = null;
+    if (!paused) {
+      const { data } = await supabase
+        .from("conversation_state")
+        .select("ai_paused_at, ai_paused_reason")
+        .eq("agent_id", agentId)
+        .eq("contact_id", contactId)
+        .maybeSingle();
+      pausePrev = (data as { ai_paused_at: string | null; ai_paused_reason: string | null } | null) ?? null;
+    }
+
     const nowIso = new Date().toISOString();
     const patch = paused
       ? {
@@ -90,6 +104,16 @@ export async function POST(request: NextRequest) {
         contact_id: contactId,
         conversation_id: "",
         ...patch,
+      });
+    }
+
+    // Retomou → recupera inbounds engolidos durante a pausa (fail-soft).
+    if (!paused) {
+      await reenqueueInboundsSincePause(supabase, {
+        agentId,
+        contactId,
+        pausedSince: pausePrev?.ai_paused_at,
+        pausedReason: pausePrev?.ai_paused_reason,
       });
     }
 

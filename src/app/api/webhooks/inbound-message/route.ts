@@ -84,7 +84,7 @@ import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { processMessageQueue } from "@/lib/queue/queue-processor";
 import { checkContactMatchesTargeting, normalizeTargeting } from "@/lib/queue/targeting";
-import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
 import { NON_HUMAN_SOURCES } from "@/lib/ghl/message-sources";
 import { reportError } from "@/lib/admin-signals/report-error";
 import type { TargetingRules } from "@/types/agent";
@@ -450,16 +450,19 @@ export async function POST(request: NextRequest) {
             id: string; label: string; text: string; auto_deactivate: boolean;
           }[];
 
-          // Determinar se é mensagem humana. ANTI-ECO SEMPRE — mesmo com
-          // source="app"+userId. Fix bug observado em prod 2026-06-10 (Alves
-          // Cury, F56): o GHL carimba o envio via api da IA como source="app" +
-          // userId do ADMIN da conta (o instalador do app). Sem isto, a PRÓPRIA
-          // msg da IA caía como "humano (user GHL) respondeu" e pausava a IA logo
-          // após responder — ela falava 1× e emudecia. O eco da IA nunca é
-          // handoff humano, independente de source/userId. (source de api/
-          // automação já retornou cedo lá em cima; chega aqui só app/desconhecido.)
-          // Match tolerante a truncamento/emoji do canal. isFromGhlApp sozinho
-          // NÃO basta mais.
+          // Determinar se é mensagem humana via a LADDER UNIFICADA
+          // classifyLastOutbound (FONTE ÚNICA com o F52 do queue-processor).
+          // Fix bug observado em prod 2026-06-18 (caso Marina): aqui usava-se
+          // `isAiEcho` CRU — que NÃO tem o discriminador "IA nunca falou → não é
+          // humano" (disc 4 da ladder). Resultado: quando o eco do próprio envio
+          // multi-parte da IA chegava ANTES do send_message ser logado (race) OU
+          // num contato onde a IA ainda não tinha falado, isAiEcho dava false →
+          // isHuman=true → pausa espúria. 35 contatos desta location ficaram
+          // pausados com reason auto_pause:human_message e message_count=0.
+          // A ladder cobre: automação (disc 1), eco da IA (disc 2), userId de
+          // user GHL (disc 3), IA-nunca-falou (disc 4), mídia pós-IA (disc 5).
+          // (source api/automação já retornou cedo lá em cima — chega aqui só
+          // app/desconhecido.) isFromGhlApp sozinho NÃO basta.
           void isFromGhlApp;
           const ninetySecondsAgo = new Date(Date.now() - 90_000).toISOString();
           const { data: aiResponses } = await supabaseAdmin
@@ -473,7 +476,10 @@ export async function POST(request: NextRequest) {
             .order("created_at", { ascending: false })
             .limit(10);
 
-          const isHumanMessage = !isAiEcho(messageBody || "", extractAiSentTexts(aiResponses));
+          const { isHuman: isHumanMessage } = classifyLastOutbound({
+            lastOutbound: { body: messageBody, userId: webhookUserId, source: webhookSource },
+            aiTexts: extractAiSentTexts(aiResponses),
+          });
 
           console.log(`[Webhook:outbound] isHuman=${isHumanMessage} | autoPause=${autoPauseEnabled} | agent=${outboundAgent.id}`);
 

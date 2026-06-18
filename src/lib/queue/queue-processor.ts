@@ -310,6 +310,24 @@ async function processGroup(
 
   if (convState?.ai_paused_at) {
     log("log", `SKIP IA pausada (${convState.ai_paused_reason || "manual"})`);
+    // Observabilidade (Fix bug observado em prod 2026-06-18, caso Marina): esse
+    // gate era o ÚNICO skip pré-targeting que NÃO logava — "agente mudo durante
+    // pausa" ficava invisível no execution_log (foi o que escondeu a perda do
+    // "Florida"). Agora audita. A RECUPERAÇÃO da msg engolida é feita no resume
+    // via reenqueueInboundsSincePause (não revertemos pra pending aqui — evita
+    // busy-loop de re-claim a cada tick enquanto a conversa segue pausada).
+    await supabase.from("execution_log").insert({
+      agent_id: agent.id,
+      location_id: group.locationId,
+      contact_id: group.contactId,
+      conversation_id: group.conversationId,
+      action_type: "ai_paused_skip",
+      action_payload: {
+        reason: convState.ai_paused_reason || "manual",
+        messages_swallowed: group.messages.length,
+      },
+      success: true,
+    });
     return;
   }
 
