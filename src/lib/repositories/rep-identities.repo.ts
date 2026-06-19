@@ -156,6 +156,72 @@ export async function setTermsRejected(repId: string, isoDate: string): Promise<
     .eq("id", repId);
 }
 
+// --- Terms PARTE 2 (campanha de grupo) -------------------------------------
+// Espelham os setters acima, trocando só a coluna. Ver migration 00113.
+
+/**
+ * Marca a Parte 2 (campanha de grupo) como aceita e LIMPA pending + rejected
+ * (reject de grupo é reversível — aceitar depois apaga a recusa anterior).
+ */
+export async function setGroupCampaignTermsAccepted(
+  repId: string,
+  isoDate: string,
+): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("rep_identities")
+    .update({
+      group_campaign_terms_accepted_at: isoDate,
+      group_campaign_terms_pending_at: null,
+      group_campaign_terms_rejected_at: null,
+    })
+    .eq("id", repId);
+  if (error) console.warn(`[group-terms] accept update falhou (${repId}):`, error.message);
+}
+
+/** Marca a Parte 2 como recusada e LIMPA o pending. NÃO silencia o SparkBot. */
+export async function setGroupCampaignTermsRejected(
+  repId: string,
+  isoDate: string,
+): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("rep_identities")
+    .update({ group_campaign_terms_rejected_at: isoDate, group_campaign_terms_pending_at: null })
+    .eq("id", repId);
+  if (error) console.warn(`[group-terms] reject update falhou (${repId}):`, error.message);
+}
+
+/**
+ * Marca que o rep entrou no fluxo de aceite da Parte 2 (gate determinístico).
+ * LIMPA rejected_at: reject de grupo é reversível, re-entrar zera a recusa pra o
+ * gate 1b do processor poder capturar o novo accept/reject.
+ */
+export async function setGroupCampaignTermsPending(
+  repId: string,
+  isoDate: string,
+): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("rep_identities")
+    .update({ group_campaign_terms_pending_at: isoDate, group_campaign_terms_rejected_at: null })
+    .eq("id", repId);
+  if (error) console.warn(`[group-terms] pending update falhou (${repId}):`, error.message);
+}
+
+/**
+ * Limpa o pending da Parte 2 SEM registrar aceite/recusa. Usado quando a resposta
+ * é ambígua (rep mudou de assunto) — evita prender o rep no gate de termos.
+ */
+export async function clearGroupCampaignTermsPending(repId: string): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("rep_identities")
+    .update({ group_campaign_terms_pending_at: null })
+    .eq("id", repId);
+  if (error) console.warn(`[group-terms] clear pending falhou (${repId}):`, error.message);
+}
+
 /**
  * Seta active_location_id do rep.
  */

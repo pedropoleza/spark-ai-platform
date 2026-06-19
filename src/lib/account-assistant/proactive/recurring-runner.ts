@@ -31,6 +31,12 @@ import { evalQuietHours, type QuietHoursConfig } from "./quiet-hours";
 // F60 (Pedro 2026-06-10): mesmo enforcement de cap diário do campaign-populator,
 // inline aqui (recorrente popula recipients ele mesmo, não passa pelo populator).
 import { getDailyCap, buildCappedScheduledAts } from "@/lib/account-assistant/tools/bulk-messages";
+// Group campaigns (00113): recorrência de grupo posta nos group_targets via Stevo.
+import { computeBatchedScheduledAts } from "@/lib/account-assistant/tools/bulk-delivery-strategy";
+import {
+  GROUP_INTERVAL_SECONDS_DEFAULT,
+  GROUP_JITTER_SECONDS_DEFAULT,
+} from "@/lib/account-assistant/group-campaigns/config";
 
 const INSERT_BATCH = 500;
 const MAX_PER_TICK = 5; // ≤5 campaigns por tick pra não estourar maxDuration
@@ -58,6 +64,9 @@ interface RecurringRow {
   last_run_at: string | null;
   next_run_at: string | null;
   per_run_cap: number;
+  // Group campaigns (00113): 'groups' posta nos group_targets em vez de filtrar contatos.
+  target_type?: "contacts" | "groups" | null;
+  group_targets?: Array<{ jid: string; name: string }> | null;
 }
 
 export async function processRecurringTick(): Promise<RecurringTickResult> {
@@ -73,7 +82,7 @@ export async function processRecurringTick(): Promise<RecurringTickResult> {
   const { data: rows, error: selErr } = await supabase
     .from("recurring_campaigns")
     .select(
-      "id, rep_id, location_id, agent_id, label, cron_expression, timezone, filter_config, message_template, delivery_channel, refresh_segment_on_run, enabled, last_run_at, next_run_at, per_run_cap",
+      "id, rep_id, location_id, agent_id, label, cron_expression, timezone, filter_config, message_template, delivery_channel, refresh_segment_on_run, enabled, last_run_at, next_run_at, per_run_cap, target_type, group_targets",
     )
     .eq("enabled", true)
     .not("next_run_at", "is", null)
@@ -202,9 +211,89 @@ async function fireRecurringCampaign(row: RecurringRow): Promise<FireOutcome> {
     .eq("agent_id", row.agent_id)
     .maybeSingle();
   const qh = (cfg?.quiet_hours as QuietHoursConfig | null) || null;
-  if (qh?.enabled && evalQuietHours(qh)) {
+  // Fix P2 review 2026-06-18: quiet_hours NÃO se aplica a campanha de grupo — o
+  // rep escolheu o horário explícito (ex.: 7:30) e o one-shot de grupo já nasce
+  // com respect_quiet_hours:false. Senão o post diário sumiria sem o rep entender.
+  if (row.target_type !== "groups" && qh?.enabled && evalQuietHours(qh)) {
     await writeAfterRun("skipped", null, "skipped_outside_hours");
     return "skipped";
+  }
+
+  // Group campaigns (00113): posta nos group_targets via Stevo (não filtra
+  // contatos, não precisa de company_id/GHL). Cada ocorrência = job filho NOVO →
+  // o mesmo grupo reaparece dia após dia sem colidir com UNIQUE(job_id,contact_id).
+  // Variação anti-ban via variation_mode='light' (o runner varia por grupo no send).
+  if (row.target_type === "groups") {
+    const targets = Array.isArray(row.group_targets) ? row.group_targets : [];
+    if (targets.length === 0) {
+      await writeAfterRun("skipped", null);
+      return "skipped";
+    }
+    const groups = targets.slice(0, row.per_run_cap);
+    const scheduledAts = computeBatchedScheduledAts({
+      total_recipients: groups.length,
+      strategy: {
+        type: "today",
+        interval_seconds: GROUP_INTERVAL_SECONDS_DEFAULT,
+        jitter_seconds: GROUP_JITTER_SECONDS_DEFAULT,
+      },
+      base_start: new Date(Date.now() + 5000),
+      daily_cap: 100000,
+    });
+    const childLabel = `${row.label} — ${nowIso.slice(0, 10)}`;
+    const { data: gJob, error: gJobErr } = await supabase
+      .from("bulk_message_jobs")
+      .insert({
+        rep_id: row.rep_id,
+        location_id: row.location_id,
+        agent_id: row.agent_id,
+        filter_config: row.filter_config,
+        message_template: row.message_template,
+        variation_mode: "light",
+        interval_seconds: GROUP_INTERVAL_SECONDS_DEFAULT,
+        jitter_seconds: GROUP_JITTER_SECONDS_DEFAULT,
+        delivery_channel: "whatsapp_web_sms",
+        target_type: "groups",
+        respect_quiet_hours: false,
+        status: "running",
+        label: childLabel,
+        total_contacts: groups.length,
+        has_sequence: false,
+      })
+      .select("id")
+      .single();
+    if (gJobErr || !gJob) {
+      await writeAfterRun("failed", null);
+      return "failed";
+    }
+    const gRows = groups.map((g, i) => ({
+      job_id: gJob.id,
+      contact_id: g.jid,
+      contact_name: g.name,
+      contact_phone: null,
+      target_jid: g.jid,
+      group_name: g.name,
+      scheduled_at: scheduledAts[i].toISOString(),
+      status: "pending" as const,
+      sequence_step: null,
+    }));
+    for (let i = 0; i < gRows.length; i += INSERT_BATCH) {
+      const { error: recErr } = await supabase
+        .from("bulk_message_recipients")
+        .insert(gRows.slice(i, i + INSERT_BATCH));
+      if (recErr) {
+        // supabase-js não lança — checa o erro. Sem isso, reportaria 'fired' com 0
+        // recipients (job running mudo). Marca o job failed e reporta failed.
+        await supabase
+          .from("bulk_message_jobs")
+          .update({ status: "failed", cancelled_reason: `group recipients insert: ${recErr.message.slice(0, 200)}` })
+          .eq("id", gJob.id);
+        await writeAfterRun("failed", gJob.id);
+        return "failed";
+      }
+    }
+    await writeAfterRun("fired", gJob.id);
+    return "fired";
   }
 
   // 1. Resolve location pro company_id (GHL client). Sem isso não roda.

@@ -94,6 +94,15 @@ export interface RepIdentity {
    * loop reenviando termos a cada msg posterior.
    */
   terms_rejected_at?: string | null;
+  /**
+   * Terms & Segurança PARTE 2 (campanha de grupo, migration 00113). Aceite/recusa
+   * do 2º consentimento, pedido só antes da primeira campanha de grupo. Diferente
+   * dos termos da Parte 1: REJECT aqui NÃO silencia o SparkBot (só bloqueia grupo).
+   * `_pending_at` = rep está no fluxo de aceite (gate determinístico no processor).
+   */
+  group_campaign_terms_accepted_at?: string | null;
+  group_campaign_terms_rejected_at?: string | null;
+  group_campaign_terms_pending_at?: string | null;
   unanswered_count: number;
   unanswered_pause_until: string | null;
   /**

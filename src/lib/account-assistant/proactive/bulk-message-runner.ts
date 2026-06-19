@@ -68,6 +68,10 @@ interface BulkRecipientRow {
   // V2 multi-segmento (H28): texto final JÁ interpolado por recipient (filter-engine
   // na criação do job). Tem prioridade sobre o template do job — enviar verbatim.
   personalized_message?: string | null;
+  // Group campaigns (00113, 2026-06-18): JID do grupo destino quando o job é
+  // target_type='groups'. NULL pra contatos. group_name é só pra log.
+  target_jid?: string | null;
+  group_name?: string | null;
 }
 
 interface BulkJobRow {
@@ -78,6 +82,9 @@ interface BulkJobRow {
   message_template: string;
   variation_mode: "none" | "light" | "medium";
   delivery_channel: "whatsapp_web_sms" | "whatsapp_api";
+  // Group campaigns (00113): 'contacts' (default, GHL contactId) | 'groups'
+  // (JID via Stevo). Ortogonal a delivery_channel. select('*') traz junto.
+  target_type?: "contacts" | "groups" | null;
   respect_quiet_hours: boolean;
   status: string;
   total_contacts: number;
@@ -225,12 +232,15 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
     }
     touchedJobIds.add(job.id);
 
-    // Etapa 4.8: skip opt-outs (set pre-computado acima).
-    const optedSet = optedOutByLocation.get(job.location_id);
-    if (optedSet?.has(recipient.contact_id)) {
-      await markRecipientSkipped(recipient.id, "contact_opted_out");
-      skipped++;
-      continue;
+    // Etapa 4.8: skip opt-outs (set pre-computado acima). NÃO se aplica a grupos
+    // (opt-out é por phone de contato individual; contact_id de grupo é um JID).
+    if (job.target_type !== "groups") {
+      const optedSet = optedOutByLocation.get(job.location_id);
+      if (optedSet?.has(recipient.contact_id)) {
+        await markRecipientSkipped(recipient.id, "contact_opted_out");
+        skipped++;
+        continue;
+      }
     }
 
     // Fix C4 (review 2026-05-16): priority queue claim (F4.1) já filtra
@@ -308,12 +318,15 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
         })
         .eq("id", recipient.id);
       // F3.2 Pedro 2026-05-16: registra cooldown pra preview futuro avisar
-      // duplicação. Async/silent — não bloqueia se falhar.
-      try {
-        const { recordContactBulkSent } = await import("@/lib/account-assistant/tools/bulk-messages");
-        await recordContactBulkSent(recipient.contact_id, job.location_id, job.id);
-      } catch {
-        // silent — cooldown é warn-only metadata
+      // duplicação. Async/silent — não bloqueia se falhar. NÃO pra grupos
+      // (cooldown é por contato; contact_id de grupo é um JID, não polui).
+      if (job.target_type !== "groups") {
+        try {
+          const { recordContactBulkSent } = await import("@/lib/account-assistant/tools/bulk-messages");
+          await recordContactBulkSent(recipient.contact_id, job.location_id, job.id);
+        } catch {
+          // silent — cooldown é warn-only metadata
+        }
       }
       fired++;
     } else {
@@ -718,6 +731,12 @@ async function sendToContact(
   recipient: BulkRecipientRow,
   message: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  // Group campaigns (00113): grupo NÃO é endereçável por contactId/GHL — vai por
+  // JID via Stevo. Intercepta no TOPO (antes de montar GHLClient/assignedTo, que
+  // são conceitos de contato) e devolve o MESMO shape { ok; error? } pro loop.
+  if (job.target_type === "groups") {
+    return await sendToGroup(job, recipient, message);
+  }
   try {
     const supabase = createAdminClient();
     const { data: location } = await supabase
@@ -790,6 +809,46 @@ async function sendToContact(
       }
       throw err;
     }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: errMsg.slice(0, 500) };
+  }
+}
+
+/**
+ * Envio a GRUPO de WhatsApp (group campaigns, 00113). Resolve a instância Stevo
+ * DEDICADA da location do job (gate anti-ban: NUNCA a compartilhada) e posta o
+ * texto no JID via /send/text. Devolve o MESMO shape { ok; error? } de
+ * sendToContact pra o loop principal gravar sent/failed sem mudança.
+ *
+ * O texto já chega pronto (snapshot personalized_message — a variação anti-ban é
+ * aplicada no AGENDAMENTO, não aqui). Não interpola nem re-varia.
+ */
+async function sendToGroup(
+  job: BulkJobRow,
+  recipient: BulkRecipientRow,
+  message: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const jid = (recipient.target_jid || recipient.contact_id || "").trim();
+    if (!/@g\.us$/i.test(jid)) {
+      return { ok: false, error: `JID de grupo inválido (${jid.slice(0, 40)})` };
+    }
+    const { getStevoInstanceForRep } = await import("@/lib/repositories/stevo-instances.repo");
+    const inst = await getStevoInstanceForRep(job.location_id);
+    if (!inst.ok) {
+      // Defense-in-depth: schedule já exigiu dedicada, mas pode ter mudado.
+      const reasonMsg =
+        inst.reason === "no_instance"
+          ? "instância Stevo não encontrada pra essa location"
+          : inst.reason === "misconfigured"
+            ? "instância dedicada sem credenciais (provisionamento incompleto)"
+            : "instância Stevo não é dedicada (campanha de grupo bloqueada)";
+      return { ok: false, error: reasonMsg };
+    }
+    const { sendGroupText } = await import("@/lib/account-assistant/webhook/stevo-groups");
+    const r = await sendGroupText(inst.instance.serverUrl, inst.instance.instanceToken, jid, message);
+    return { ok: r.ok, error: r.error };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     return { ok: false, error: errMsg.slice(0, 500) };

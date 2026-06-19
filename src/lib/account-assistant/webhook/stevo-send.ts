@@ -68,9 +68,20 @@ export type StevoSendParams = {
  * Normaliza o número pro formato que o Stevo espera: só dígitos, com DDI.
  * O webhook entrega o Sender como "17867717077@s.whatsapp.net" e o parser
  * normaliza pra "+17867717077"; aqui tiramos o "+", "@…" e qualquer não-dígito.
+ *
+ * EXCEÇÃO grupo (group campaigns, 2026-06-18): um JID de GRUPO tem o formato
+ * "<criador>-<timestamp>@g.us" (ou "<id numérico>@g.us"). O `.split("@")[0]` +
+ * `replace(/\D/g)` DESTRUIRIA isso (jogava fora o sufixo "@g.us" — a única marca
+ * de "isto é grupo" — e comia o hífen, concatenando dois números num blob). Pra
+ * grupo o Stevo aceita o JID COMPLETO no campo `number` (com formatJid). Então:
+ * se o raw termina em "@g.us", devolve o JID cru (trim só). Caso contrário,
+ * comportamento original (contato individual). Centralizado aqui → os 3 senders
+ * (text/button/list) herdam.
  */
 export function normalizeStevoNumber(raw: string): string {
-  const localPart = (raw || "").split("@")[0] || "";
+  const trimmed = (raw || "").trim();
+  if (/@g\.us$/i.test(trimmed)) return trimmed; // JID de grupo — NÃO normalizar
+  const localPart = trimmed.split("@")[0] || "";
   return localPart.replace(/\D/g, "");
 }
 
@@ -87,7 +98,7 @@ const INTER_BUBBLE_GAP_MS = 350;
  * Extrai o ID da mensagem do response (vários formatos, incl. data.Info.ID —
  * que é o `stanzaID` usado pra correlacionar o tap depois).
  */
-async function stevoPostJson(
+export async function stevoPostJson(
   base: string,
   apiKey: string,
   path: string,

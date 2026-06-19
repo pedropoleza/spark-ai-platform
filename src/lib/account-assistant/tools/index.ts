@@ -37,6 +37,9 @@ import { FOLLOWUP_TOOLS } from "./followup";
 import { PRESENTATION_TOOLS } from "./presentation";
 import { GUIDED_OUTREACH_TOOLS } from "./guided-outreach-tools";
 import { isGuidedOutreachEnabled } from "../proactive/guided-outreach";
+// Group campaigns (Pedro 2026-06-18): campanhas em grupos de WhatsApp via Stevo.
+import { GROUP_CAMPAIGN_TOOLS } from "./group-campaigns";
+import { isGroupCampaignsEnabled } from "../group-campaigns/config";
 
 const ALL_ENTRIES: ToolEntry[] = [
   ...CONTACTS_TOOLS,
@@ -60,6 +63,8 @@ const ALL_ENTRIES: ToolEntry[] = [
   ...PRESENTATION_TOOLS,
   // Gated: só expõe as tools do acompanhamento guiado quando a feature tá ligada.
   ...(isGuidedOutreachEnabled() ? GUIDED_OUTREACH_TOOLS : []),
+  // Gated: campanhas em grupo só aparecem com GROUP_CAMPAIGNS_ENABLED (default OFF).
+  ...(isGroupCampaignsEnabled() ? GROUP_CAMPAIGN_TOOLS : []),
 ];
 
 export const TOOL_REGISTRY: Record<string, ToolEntry> = Object.fromEntries(
