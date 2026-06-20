@@ -40,6 +40,9 @@ import { isGuidedOutreachEnabled } from "../proactive/guided-outreach";
 // Group campaigns (Pedro 2026-06-18): campanhas em grupos de WhatsApp via Stevo.
 import { GROUP_CAMPAIGN_TOOLS } from "./group-campaigns";
 import { isGroupCampaignsEnabled } from "../group-campaigns/config";
+// Task orchestrator (Pedro 2026-06-20): rascunho persistente de fluxos N-etapas (anti-alucinação).
+import { TASK_ORCHESTRATOR_TOOLS } from "./task-orchestrator";
+import { isTaskOrchestratorEnabled } from "../task-orchestrator/config";
 
 const ALL_ENTRIES: ToolEntry[] = [
   ...CONTACTS_TOOLS,
@@ -65,6 +68,8 @@ const ALL_ENTRIES: ToolEntry[] = [
   ...(isGuidedOutreachEnabled() ? GUIDED_OUTREACH_TOOLS : []),
   // Gated: campanhas em grupo só aparecem com GROUP_CAMPAIGNS_ENABLED (default OFF).
   ...(isGroupCampaignsEnabled() ? GROUP_CAMPAIGN_TOOLS : []),
+  // Gated: orquestrador de tarefas (montagem de fluxo) com TASK_ORCHESTRATOR_ENABLED (default OFF).
+  ...(isTaskOrchestratorEnabled() ? TASK_ORCHESTRATOR_TOOLS : []),
 ];
 
 export const TOOL_REGISTRY: Record<string, ToolEntry> = Object.fromEntries(

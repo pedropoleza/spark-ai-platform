@@ -1,0 +1,121 @@
+/**
+ * Teste do Motor de Orquestração de Tarefas — F1 (montagem honesta).
+ * Pedro 2026-06-20. Plano: _planning/jussara-sparkbot/EXECUCAO.md.
+ *
+ * Cobre: helpers puros (validação) + buildSnapshot + round-trip no DB (rep
+ * descartável). Prova que o estado vem do DB (não da memória) e que mutação
+ * inválida NÃO altera o estado.
+ *
+ * Uso: npx tsx -r tsconfig-paths/register scripts/test-task-orchestrator.ts
+ */
+import { config } from "dotenv";
+import { resolve } from "path";
+config({ path: resolve(__dirname, "..", ".env.local") });
+
+import { createAdminClient } from "../src/lib/supabase/admin";
+import { isValidSendTime, isValidOffsetDays } from "../src/lib/account-assistant/task-orchestrator/config";
+import { buildSnapshot } from "../src/lib/account-assistant/task-orchestrator/core";
+import * as core from "../src/lib/account-assistant/task-orchestrator/core";
+import type { DraftWithSteps } from "../src/lib/account-assistant/task-orchestrator/types";
+
+let pass = 0;
+let fail = 0;
+function check(name: string, cond: boolean) {
+  if (cond) { pass++; console.log(`  ✓ ${name}`); }
+  else { fail++; console.log(`  ✗ ${name}`); }
+}
+
+function fakeStep(over: Partial<DraftWithSteps["steps"][number]>): DraftWithSteps["steps"][number] {
+  return {
+    id: "x", draft_id: "d", position: 1, offset_days: 0, send_time: null, intra_day_delay_s: 0,
+    message_text: "oi", media_url: null, media_type: null, send_condition: null,
+    created_at: "", updated_at: "", ...over,
+  };
+}
+
+async function main() {
+  console.log("\n=== Helpers puros ===");
+  check("send_time '09:30' válido", isValidSendTime("09:30"));
+  check("send_time '24:00' inválido", !isValidSendTime("24:00"));
+  check("send_time '9h' inválido", !isValidSendTime("9h"));
+  check("offset_days 0 válido", isValidOffsetDays(0));
+  check("offset_days -1 inválido", !isValidOffsetDays(-1));
+  check("offset_days 2.5 inválido", !isValidOffsetDays(2.5));
+  check("offset_days 400 inválido", !isValidOffsetDays(400));
+
+  console.log("\n=== buildSnapshot (mock) ===");
+  const snap = buildSnapshot({
+    draft: { id: "d1", rep_id: "r", location_id: "l", agent_id: null, kind: "followup_sequence",
+      status: "building", title: "T", meta: {}, materialized_job_id: null, materialized_count: null,
+      materialized_at: null, created_at: "", updated_at: "" },
+    steps: [fakeStep({ offset_days: 0, message_text: "dia0" }), fakeStep({ offset_days: 2, message_text: "" , media_url: null })],
+  });
+  check("snapshot numera passos 1..N", snap.steps[0].n === 1 && snap.steps[1].n === 2);
+  check("day_label correto", snap.steps[1].day_label === "Dia 2");
+  check("whats_missing aponta alvo faltando", snap.whats_missing.some((w) => w.includes("ALVO")));
+  check("whats_missing aponta passo sem conteúdo", snap.whats_missing.some((w) => w.includes("Passo 2")));
+
+  // --- Integração no DB com rep descartável ---
+  console.log("\n=== Integração DB (rep descartável) ===");
+  const db = createAdminClient();
+  const phone = "+19990000001";
+  // limpa resto de execução anterior
+  await db.from("rep_identities").delete().eq("phone", phone);
+  const { data: rep, error: repErr } = await db
+    .from("rep_identities")
+    .insert({ phone, display_name: "TEST orchestrator", is_internal: true })
+    .select("id")
+    .single();
+  if (repErr || !rep) { console.error("não criou rep de teste:", repErr?.message); process.exit(1); }
+  const repId = rep.id as string;
+  const LOC = "TEST_LOC";
+
+  try {
+    const s0 = await core.startDraft(repId, LOC, null, { title: "Fluxo teste" });
+    check("startDraft ok", s0.ok && s0.snapshot.status === "building" && s0.snapshot.step_count === 0);
+
+    const a1 = await core.addStep(repId, undefined, { offset_days: 2, message_text: "dia 2" });
+    check("add dia 2 → 1 passo", a1.ok && a1.snapshot.step_count === 1);
+
+    const a2 = await core.addStep(repId, undefined, { offset_days: 0, message_text: "dia 0" });
+    // ordem canônica por offset_days → dia 0 vira passo 1
+    check("add dia 0 → 2 passos, ordenado (dia0=passo1)", a2.ok && a2.snapshot.step_count === 2 && a2.snapshot.steps[0].offset_days === 0);
+
+    const bad = await core.addStep(repId, undefined, { offset_days: -1, message_text: "x" });
+    check("offset inválido rejeitado (ok:false)", !bad.ok);
+    const stillTwo = await core.showDraft(repId, undefined);
+    check("estado INALTERADO após mutação inválida (ainda 2)", stillTwo.ok && stillTwo.snapshot.step_count === 2);
+
+    const empty = await core.addStep(repId, undefined, { offset_days: 1, message_text: "" });
+    check("passo sem texto E sem mídia rejeitado", !empty.ok);
+
+    const e1 = await core.editStep(repId, undefined, 1, { message_text: "dia 0 editado" });
+    check("editStep passo 1 reflete", e1.ok && e1.snapshot.steps[0].message_text === "dia 0 editado");
+
+    const eBad = await core.editStep(repId, undefined, 99, { message_text: "z" });
+    check("editStep passo inexistente rejeitado", !eBad.ok);
+
+    const m1 = await core.setMeta(repId, undefined, { target: { contact_id: "ABCdef1234567890XYZ", contact_name: "Eliz" } });
+    check("setMeta alvo → whats_missing sem 'ALVO'", m1.ok && !m1.snapshot.whats_missing.some((w) => w.includes("ALVO")));
+
+    const r1 = await core.removeStep(repId, undefined, 1);
+    check("removeStep → 1 passo", r1.ok && r1.snapshot.step_count === 1);
+
+    // show_draft bate com o DB (re-leitura independente)
+    const { count } = await db.from("draft_steps").select("id", { count: "exact", head: true }).eq("draft_id", s0.ok ? s0.snapshot.draft_id : "");
+    const sd = await core.showDraft(repId, undefined);
+    check("show_draft === DB", sd.ok && sd.snapshot.step_count === (count ?? -1));
+
+    // audit gravou eventos
+    const { count: ev } = await db.from("task_events").select("id", { count: "exact", head: true }).eq("draft_id", s0.ok ? s0.snapshot.draft_id : "");
+    check("task_events append-only gravou", (ev ?? 0) >= 4);
+  } finally {
+    // cleanup: deletar a rep cascateia draft/steps/events
+    await db.from("rep_identities").delete().eq("id", repId);
+    console.log("  (cleanup: rep de teste removida)");
+  }
+
+  console.log(`\n=== RESULTADO: ${pass} passou, ${fail} falhou ===`);
+  process.exit(fail === 0 ? 0 : 1);
+}
+main().catch((e) => { console.error("ERRO:", e instanceof Error ? e.message : e); process.exit(1); });
