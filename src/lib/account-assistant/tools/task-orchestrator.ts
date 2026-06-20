@@ -20,6 +20,7 @@ import {
   removeStep,
   setMeta,
   resolveDraft,
+  resolveDraftAny,
   type DraftSnapshot,
 } from "../task-orchestrator/core";
 import { materializeDraft, getDraftProgress } from "../task-orchestrator/materializer";
@@ -279,7 +280,7 @@ const getTaskProgressTool: ToolEntry = {
     },
   },
   handler: async (ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> => {
-    const dws = await resolveDraft(ctx.rep.id, asStr(args.draft_id));
+    const dws = await resolveDraftAny(ctx.rep.id, asStr(args.draft_id));
     if (!dws) return err("Nenhum fluxo encontrado.");
     const res = await getDraftProgress(dws.draft.id);
     if (!res.ok) return err(res.error);

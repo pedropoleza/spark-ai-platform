@@ -107,6 +107,32 @@ export async function getActiveDraftForRep(
   return (data as TaskDraft) ?? null;
 }
 
+/**
+ * Rascunho mais recente do rep de QUALQUER status (exceto cancelled) — pra LEITURA
+ * (show_draft / get_task_progress) que precisa enxergar o fluxo já materializado.
+ * Mutators NÃO usam isto (eles exigem ativo via getActiveDraftForRep).
+ */
+export async function getLatestDraftForRep(
+  repId: string,
+  kind?: TaskKind,
+): Promise<TaskDraft | null> {
+  const db = createAdminClient();
+  let q = db
+    .from("task_drafts")
+    .select(DRAFT_COLS)
+    .eq("rep_id", repId)
+    .neq("status", "cancelled")
+    .order("updated_at", { ascending: false })
+    .limit(1);
+  if (kind) q = q.eq("kind", kind);
+  const { data, error } = await q.maybeSingle();
+  if (error) {
+    console.warn("[task-drafts] getLatestDraftForRep falhou:", error.message);
+    return null;
+  }
+  return (data as TaskDraft) ?? null;
+}
+
 /** Patch parcial do rascunho (status, title, meta, materialização). Checa error+affected. */
 export async function updateDraft(
   draftId: string,

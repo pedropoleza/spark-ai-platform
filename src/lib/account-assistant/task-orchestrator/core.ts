@@ -13,6 +13,7 @@ import {
   createDraft,
   getDraftWithSteps,
   getActiveDraftForRep,
+  getLatestDraftForRep,
   insertStep,
   updateStep,
   deleteStep,
@@ -118,6 +119,21 @@ export async function resolveDraft(
   const active = await getActiveDraftForRep(repId);
   if (!active) return null;
   return getDraftWithSteps(active.id);
+}
+
+/**
+ * Como resolveDraft mas inclui rascunhos já MATERIALIZADOS — pra LEITURA
+ * (show_draft / get_task_progress) depois do disparo. Os mutators continuam
+ * usando resolveDraft (só ativos) pra recusar edição de fluxo já disparado.
+ */
+export async function resolveDraftAny(
+  repId: string,
+  draftId: string | undefined,
+): Promise<DraftWithSteps | null> {
+  if (draftId) return getDraftWithSteps(draftId);
+  const latest = await getLatestDraftForRep(repId);
+  if (!latest) return null;
+  return getDraftWithSteps(latest.id);
 }
 
 // --- Mutações (cada uma devolve o snapshot recomputado) --------------------
@@ -291,7 +307,8 @@ export async function showDraft(
   repId: string,
   draftId: string | undefined,
 ): Promise<{ ok: true; snapshot: DraftSnapshot } | { ok: false; error: string }> {
-  const dws = await resolveDraft(repId, draftId);
+  // Leitura: enxerga também o fluxo já materializado (pra "me mostra o fluxo" pós-disparo).
+  const dws = await resolveDraftAny(repId, draftId);
   if (!dws) {
     return { ok: false, error: "Você ainda não tem nenhum fluxo em construção. Quer começar um?" };
   }
