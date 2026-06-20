@@ -19,8 +19,10 @@ import {
   editStep,
   removeStep,
   setMeta,
+  resolveDraft,
   type DraftSnapshot,
 } from "../task-orchestrator/core";
+import { materializeDraft, getDraftProgress } from "../task-orchestrator/materializer";
 import type { TaskKind } from "../task-orchestrator/config";
 
 function ok(snapshot: DraftSnapshot, extra?: Record<string, unknown>): ToolResult {
@@ -229,7 +231,63 @@ const setTaskMetaTool: ToolEntry = {
   },
 };
 
-/** Tools de MONTAGEM (F1). O materializador (commit_draft) entra na F2. */
+const commitDraftTool: ToolEntry = {
+  def: {
+    name: "commit_draft",
+    description:
+      "DISPARA o fluxo: agenda DE VERDADE todas as mensagens do rascunho pro contato alvo. Só chame quando o rep " +
+      "CONFIRMAR (a tool é de risco alto e exige confirmação). Depois de chamar, afirme ao rep SOMENTE o número " +
+      "que vier em 'count' (ex: 'agendei 8 mensagens') — NUNCA invente que agendou; se count vier 0 ou erro, diga " +
+      "que NÃO saiu. O fluxo precisa ter pelo menos 1 passo e um contato alvo (set_task_meta).",
+    risk: "high",
+    parameters: {
+      type: "object",
+      properties: { draft_id: { type: "string", description: "Opcional; usa o rascunho ativo se omitido." } },
+    },
+  },
+  handler: async (ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> => {
+    const dws = await resolveDraft(ctx.rep.id, asStr(args.draft_id));
+    if (!dws) return err("Nenhum rascunho ativo pra disparar.");
+    const res = await materializeDraft(ctx.rep.id, dws.draft.id, ctx.rep.timezone ?? null);
+    if (!res.ok) return err(res.error);
+    return {
+      status: "ok",
+      data: {
+        materialized: true,
+        count: res.count,
+        sequence_id: res.sequence_id,
+        first_at: res.first_at,
+        last_at: res.last_at,
+        // Frase honesta pronta — o bot deve refletir ESTE count.
+        confirmation: `Agendei ${res.count} mensagem(ns) pro contato. A 1ª sai ${res.first_at}; a última ${res.last_at}.`,
+      },
+    };
+  },
+};
+
+const getTaskProgressTool: ToolEntry = {
+  def: {
+    name: "get_task_progress",
+    description:
+      "Mostra o progresso REAL de um fluxo JÁ disparado (quantas mensagens já saíram, quantas faltam, quantas " +
+      "foram puladas porque o lead respondeu). Use quando o rep perguntar 'foram todas?', 'quantas já saíram?'. " +
+      "A resposta vem do banco — afirme só esses números.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: { draft_id: { type: "string", description: "Opcional; usa o rascunho ativo se omitido." } },
+    },
+  },
+  handler: async (ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> => {
+    const dws = await resolveDraft(ctx.rep.id, asStr(args.draft_id));
+    if (!dws) return err("Nenhum fluxo encontrado.");
+    const res = await getDraftProgress(dws.draft.id);
+    if (!res.ok) return err(res.error);
+    return { status: "ok", data: res };
+  },
+};
+
+/** Montagem (F1) + materialização honesta + progresso (F2). */
 export const TASK_ORCHESTRATOR_TOOLS: ToolEntry[] = [
   startTaskDraft,
   showDraftTool,
@@ -237,4 +295,6 @@ export const TASK_ORCHESTRATOR_TOOLS: ToolEntry[] = [
   editStepTool,
   removeStepTool,
   setTaskMetaTool,
+  commitDraftTool,
+  getTaskProgressTool,
 ];

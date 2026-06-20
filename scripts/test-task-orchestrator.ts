@@ -16,6 +16,7 @@ import { createAdminClient } from "../src/lib/supabase/admin";
 import { isValidSendTime, isValidOffsetDays } from "../src/lib/account-assistant/task-orchestrator/config";
 import { buildSnapshot } from "../src/lib/account-assistant/task-orchestrator/core";
 import * as core from "../src/lib/account-assistant/task-orchestrator/core";
+import { materializeDraft, getDraftProgress, computeScheduledAt } from "../src/lib/account-assistant/task-orchestrator/materializer";
 import type { DraftWithSteps } from "../src/lib/account-assistant/task-orchestrator/types";
 
 let pass = 0;
@@ -107,8 +108,41 @@ async function main() {
     check("show_draft === DB", sd.ok && sd.snapshot.step_count === (count ?? -1));
 
     // audit gravou eventos
-    const { count: ev } = await db.from("task_events").select("id", { count: "exact", head: true }).eq("draft_id", s0.ok ? s0.snapshot.draft_id : "");
+    const draftId = s0.ok ? s0.snapshot.draft_id : "";
+    const { count: ev } = await db.from("task_events").select("id", { count: "exact", head: true }).eq("draft_id", draftId);
     check("task_events append-only gravou", (ev ?? 0) >= 4);
+
+    console.log("\n=== F2: materialização honesta ===");
+    // scheduled_at tz-aware: Dia 2 às 07:30 SP deve cair ~07:30-03:00 = 10:30Z naquele dia
+    const sched = computeScheduledAt(2, "07:30", "America/Sao_Paulo", new Date("2026-06-20T12:00:00Z"));
+    check("computeScheduledAt Dia2 07:30 SP → 10:30Z", sched.toISOString().includes("T10:30"));
+
+    // o draft tem 1 passo + alvo (contact_id setado no setMeta acima) → materializa
+    const mat = await materializeDraft(repId, draftId, "America/Sao_Paulo");
+    check("materializeDraft ok, count REAL = 1", mat.ok && mat.count === 1);
+    const seqId = mat.ok ? mat.sequence_id : "";
+    const { count: msgCount } = await db.from("followup_messages").select("id", { count: "exact", head: true }).eq("sequence_id", seqId);
+    check("followup_messages tem 1 row (count===DB)", (msgCount ?? -1) === 1);
+    const { data: seqRow } = await db.from("followup_sequences").select("status, total_messages").eq("id", seqId).maybeSingle();
+    check("sequence status='scheduled' (runner pega)", seqRow?.status === "scheduled");
+
+    // draft promovido a materialized com count real
+    const { data: dRow } = await db.from("task_drafts").select("status, materialized_count").eq("id", draftId).maybeSingle();
+    check("draft status='materialized' + count=1", dRow?.status === "materialized" && dRow?.materialized_count === 1);
+
+    // NÃO materializa de novo (guard de status)
+    const mat2 = await materializeDraft(repId, draftId, "America/Sao_Paulo");
+    check("2ª materialização BLOQUEADA (não duplica)", !mat2.ok && mat2.count === 0);
+
+    // progresso real vem do DB
+    const prog = await getDraftProgress(draftId);
+    check("get_task_progress: total=1 pending=1", prog.ok && prog.total === 1 && prog.pending === 1);
+
+    // draft vazio → materialização recusada (honestidade: não diz 'agendado')
+    const emptyDraft = await core.startDraft(repId, LOC, null, { kind: "campaign", title: "vazio" });
+    const emptyId = emptyDraft.ok ? emptyDraft.snapshot.draft_id : "";
+    const matEmpty = await materializeDraft(repId, emptyId, null);
+    check("materializar fluxo VAZIO → erro, count 0", !matEmpty.ok && matEmpty.count === 0);
   } finally {
     // cleanup: deletar a rep cascateia draft/steps/events
     await db.from("rep_identities").delete().eq("id", repId);
