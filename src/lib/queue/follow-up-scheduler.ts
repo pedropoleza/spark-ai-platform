@@ -9,6 +9,7 @@ import { withRetry } from "@/lib/utils/retry";
 // queue-processor — se o histórico do Spark Leads falhar, o follow-up não pode
 // virar uma re-apresentação fria. Reconstrói do nosso DB.
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
+import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
 import { reportError } from "@/lib/admin-signals/report-error";
 import type { FollowUpConfig } from "@/types/agent";
 
@@ -251,24 +252,36 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         }
       }
 
-      // Verificar se o lead respondeu desde o agendamento (cancelar se sim)
+      // Verificar se o lead respondeu desde que o follow-up foi AGENDADO (cancelar se sim).
+      // Fix bug observado em prod 2026-06-21 (análise Marina): antes a âncora era
+      // `scheduled_at` (o horário FUTURO de disparo) → perdia a resposta que chegou
+      // ENTRE o agendamento e o disparo. Isso acontece muito no caso de COLISÃO:
+      // o lead responde, a SDR/outra automação atende, o nosso agente NÃO reprocessa
+      // (should_respond skip → scheduleFollowUps não roda → não cancela), e o
+      // follow-up velho dispara por cima da conversa viva ("sem pressa, me dá um
+      // toque" pra quem acabou de responder). Ancorando em `created_at`, qualquer
+      // inbound do lead depois que esta sequência foi criada cancela o toque.
       const { data: recentMessages } = await supabase
         .from("message_queue")
         .select("id")
         .eq("location_id", followUp.location_id)
         .eq("contact_id", followUp.contact_id)
         .eq("message_direction", "inbound")
-        .gt("received_at", followUp.scheduled_at)
+        .gt("received_at", followUp.created_at)
         .limit(1);
 
       if (recentMessages && recentMessages.length > 0) {
-        // Lead respondeu, cancelar todos os follow-ups pendentes
+        // Lead respondeu → cancelar TODA a sequência pendente deste contato (não só
+        // o toque atual). Fix 2026-06-21: antes só cancelava status="processing"
+        // (o atual), deixando os pending irmãos vivos pra reprocessar/atropelar nos
+        // próximos ticks. Um inbound novo re-agenda a sequência do zero quando o
+        // nosso agente processar o turno.
         await supabase
           .from("scheduled_followups")
           .update({ status: "cancelled" })
           .eq("agent_id", followUp.agent_id)
           .eq("contact_id", followUp.contact_id)
-          .eq("status", "processing");
+          .in("status", ["pending", "processing"]);
         continue;
       }
 
@@ -381,7 +394,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           convId
             ? withRetry(
                 () =>
-                  client.get<{ messages: { messages: { direction: string; body?: string; dateAdded: string; messageType?: string }[] } }>(
+                  client.get<{ messages: { messages: { direction: string; body?: string; dateAdded: string; messageType?: string; source?: string | null; userId?: string | null }[] } }>(
                     `/conversations/${convId}/messages`,
                     { locationId: followUp.location_id },
                   ),
@@ -423,6 +436,55 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             console.warn(
               `[FollowUp] F59 history fallback: ${dbTurns.length} turns do DB pra contact=${followUp.contact_id}`,
             );
+          }
+        }
+
+        // === Gate "1 DONO POR CONVERSA" (Fix prod 2026-06-21, análise Marina/colisão) ===
+        // Se o ÚLTIMO outbound da conversa NÃO foi nosso (a SDR humana ou outra
+        // automação assumiu o thread), NÃO dispara o follow-up por cima — recua e
+        // cancela a sequência (o lead tem 1 dono; um inbound novo re-agenda quando
+        // o nosso agente voltar a processar). Reusa a MESMA ladder do gate de inbound
+        // (classifyLastOutbound/F52) → comportamento idêntico e já validado em prod.
+        // GLOBAL + FAIL-OPEN: pra agente SEM sistema concorrente, o último outbound é
+        // sempre o nosso → o anti-eco bate → isHuman=false → NUNCA pula. Se o histórico
+        // do Spark Leads não carregar, segue normal (não silencia à toa).
+        if (historyResult.status === "fulfilled" && historyResult.value) {
+          const ghlMsgs = historyResult.value.messages?.messages || [];
+          const lastOutbound = ghlMsgs
+            .filter((m) => m.direction === "outbound")
+            .sort((a, b) => new Date(b.dateAdded).getTime() - new Date(a.dateAdded).getTime())[0];
+          if (lastOutbound) {
+            const { data: sentRows } = await supabase
+              .from("execution_log")
+              .select("action_payload")
+              .eq("location_id", followUp.location_id)
+              .eq("contact_id", followUp.contact_id)
+              .eq("action_type", "send_message")
+              .order("created_at", { ascending: false })
+              .limit(15);
+            const aiTexts = extractAiSentTexts(sentRows);
+            const { isHuman } = classifyLastOutbound({
+              lastOutbound: { body: lastOutbound.body, userId: lastOutbound.userId, source: lastOutbound.source },
+              aiTexts,
+            });
+            if (isHuman) {
+              await supabase
+                .from("scheduled_followups")
+                .update({ status: "cancelled" })
+                .eq("agent_id", followUp.agent_id)
+                .eq("contact_id", followUp.contact_id)
+                .in("status", ["pending", "processing"]);
+              await supabase.from("execution_log").insert({
+                agent_id: followUp.agent_id,
+                conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+                contact_id: followUp.contact_id,
+                location_id: followUp.location_id,
+                action_type: "followup_skipped",
+                action_payload: { attempt_number: followUp.attempt_number, reason: "another_owner_active" },
+                success: true,
+              });
+              continue;
+            }
           }
         }
 
