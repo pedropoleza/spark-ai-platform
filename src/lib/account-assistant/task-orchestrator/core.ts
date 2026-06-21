@@ -115,7 +115,12 @@ export async function resolveDraft(
   repId: string,
   draftId: string | undefined,
 ): Promise<DraftWithSteps | null> {
-  if (draftId) return getDraftWithSteps(draftId);
+  if (draftId) {
+    // IDOR guard (review 2026-06-21): draft_id EXPLÍCITO não pode mutar/ler draft
+    // de OUTRO rep. getDraftWithSteps busca só por id — filtra o dono aqui.
+    const dws = await getDraftWithSteps(draftId);
+    return dws && dws.draft.rep_id === repId ? dws : null;
+  }
   const active = await getActiveDraftForRep(repId);
   if (!active) return null;
   return getDraftWithSteps(active.id);
@@ -130,7 +135,11 @@ export async function resolveDraftAny(
   repId: string,
   draftId: string | undefined,
 ): Promise<DraftWithSteps | null> {
-  if (draftId) return getDraftWithSteps(draftId);
+  if (draftId) {
+    // IDOR guard (review 2026-06-21): mesmo nas LEITURAS, draft de outro rep não vaza.
+    const dws = await getDraftWithSteps(draftId);
+    return dws && dws.draft.rep_id === repId ? dws : null;
+  }
   const latest = await getLatestDraftForRep(repId);
   if (!latest) return null;
   return getDraftWithSteps(latest.id);

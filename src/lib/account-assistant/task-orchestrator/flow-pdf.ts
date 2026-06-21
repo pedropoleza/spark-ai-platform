@@ -10,6 +10,7 @@
  */
 import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import type { DraftSnapshot } from "./core";
 
 const PAGE_W = 595.28; // A4
@@ -116,11 +117,31 @@ export async function generateAndUploadFlowPdf(
   const { error: upErr } = await supabase.storage
     .from("agent-media")
     .upload(path, Buffer.from(bytes), { contentType: "application/pdf", upsert: false });
-  if (upErr) return { ok: false, error: `Falha ao salvar o PDF no storage: ${upErr.message}` };
+  if (upErr) {
+    // Signal (review 2026-06-21): "Bucket not found" = drift de migration (00116 nunca aplicada).
+    const bucketMissing = /bucket not found/i.test(upErr.message || "");
+    reportError({
+      title: bucketMissing ? "Task orchestrator PDF: bucket agent-media ausente (migration drift)" : "Task orchestrator PDF: upload falhou",
+      feature: "task-orchestrator-pdf",
+      severity: "medium",
+      error: upErr,
+      metadata: { location_id: locationId, rep_id: repId, path },
+    });
+    return { ok: false, error: `Falha ao salvar o PDF no storage: ${upErr.message}` };
+  }
 
   const TTL = 3600; // 1h — folga pra entrega não expirar (decisão F4)
   const { data: signed, error: sErr } = await supabase.storage.from("agent-media").createSignedUrl(path, TTL);
-  if (sErr || !signed?.signedUrl) return { ok: false, error: `PDF salvo mas falhou gerar o link: ${sErr?.message}` };
+  if (sErr || !signed?.signedUrl) {
+    reportError({
+      title: "Task orchestrator PDF: signed URL falhou",
+      feature: "task-orchestrator-pdf",
+      severity: "medium",
+      error: sErr ?? new Error("signed url vazia"),
+      metadata: { location_id: locationId, rep_id: repId, path },
+    });
+    return { ok: false, error: `PDF salvo mas falhou gerar o link: ${sErr?.message}` };
+  }
 
   return { ok: true, signed_url: signed.signedUrl, path, expires_in: TTL, bytes: bytes.length };
 }

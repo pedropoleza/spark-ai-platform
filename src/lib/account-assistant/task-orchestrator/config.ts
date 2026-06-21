@@ -22,6 +22,14 @@ export function isTaskOrchestratorEnabled(): boolean {
 /** Cap defensivo de passos por rascunho (sem clamp de 3 do followup; alto). */
 export const MAX_DRAFT_STEPS = 60;
 
+/**
+ * Caps do apply_flow_to_contacts (review 2026-06-21): teto anti-spam/ban/custo ao
+ * aplicar um template a N contatos de uma vez. Sem isso, fluxo de 60 passos × tag
+ * de 5000 contatos = 300k mensagens num loop. Pedro pediu "tag com cuidado".
+ */
+export const MAX_APPLY_CONTACTS = 200;
+export const MAX_APPLY_MESSAGES = 2000;
+
 /** Hora padrão de envio quando o passo não especifica send_time (local do rep). */
 export const DEFAULT_SEND_TIME = "09:00";
 

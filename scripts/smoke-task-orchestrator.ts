@@ -100,6 +100,10 @@ async function main() {
     }, ctx);
     check("apply a 2 contatos → succeeded=2, 4 msgs", apply.status === "ok" && (dataOf(apply).succeeded as number) === 2 && (dataOf(apply).total_messages as number) === 4);
 
+    console.log("\n=== H8: send_media_to_contact (risk:high) sem confirmação → BLOQUEADO ===");
+    const mediaNoConfirm = await executeTool("send_media_to_contact", { contact_id: "AAAA1111bbbb2222CCCC", media_url: "https://x.com/probe.pdf" }, ctx);
+    check("send_media SEM confirmação → BLOQUEADO (H8)", mediaNoConfirm.status === "error");
+
     console.log("\n=== Test-mode gate (não toca produção) ===");
     const ctxTest: ToolContext = { ...ctx, testSessionId: "smoke-test-session" };
     const mocked = await executeTool("add_step", { offset_days: 5, message_text: "x" }, ctxTest);

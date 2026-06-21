@@ -96,7 +96,7 @@ async function main() {
   check("tool: legenda LIMPA (sem URL na message)", (captured.body as { message?: string })?.message === "Segue o PDF do fluxo");
   captured = {};
   await sendTool!.handler(toolCtx, { contact_id: "AAAA1111bbbb2222CCCC", media_url: "https://x.com/f.pdf" });
-  check("tool: sem legenda → fallback usa a URL como message", (captured.body as { message?: string })?.message === "https://x.com/f.pdf");
+  check("tool: sem legenda → texto neutro (NUNCA a URL, que expira)", (captured.body as { message?: string })?.message === "Segue o arquivo 📎");
 
   // --- Integração no DB com rep descartável ---
   console.log("\n=== Integração DB (rep descartável) ===");
@@ -201,6 +201,42 @@ async function main() {
     check("progresso do template: total=4 pending=4", progT.ok && progT.total === 4 && progT.pending === 4);
     const { data: tRow } = await db.from("task_drafts").select("status").eq("id", tId).maybeSingle();
     check("template continua reusável (status != materialized)", tRow?.status === "building");
+
+    console.log("\n=== Review 2026-06-21: guardas dos fixes ===");
+
+    // IDOR: draft de OUTRO rep não vaza/muta (rep_id forçado nos resolvers)
+    const otherRep = "00000000-0000-0000-0000-000000000000";
+    const idorRead = await core.showDraft(otherRep, tId);
+    check("IDOR: showDraft de outro rep → recusado", !idorRead.ok);
+    const idorWrite = await core.addStep(otherRep, tId, { offset_days: 1, message_text: "hack" });
+    check("IDOR: mutator de outro rep → recusado", !idorWrite.ok);
+
+    // Idempotência: re-aplicar o MESMO template aos MESMOS contatos → 0 novos (dup skip)
+    const reapply = await applyFlowToContacts(repId, tId, [
+      { contact_id: "AAAA1111bbbb2222CCCC" },
+      { contact_id: "DDDD3333eeee4444FFFF" },
+    ], "America/New_York");
+    check("idempotência: re-aplicar aos mesmos → succeeded=0 (não duplica)", "succeeded" in reapply && reapply.succeeded === 0);
+
+    // Cap anti-spam: >MAX_APPLY_CONTACTS contatos → rejeitado no handler
+    const applyTool = TASK_ORCHESTRATOR_TOOLS.find((t) => t.def.name === "apply_flow_to_contacts");
+    const capCtx = { rep: { id: repId, timezone: null }, locationId: LOC, companyId: "c", ghlClient: null } as unknown as ToolContext;
+    const manyContacts = Array.from({ length: 201 }, (_, i) => ({ contact_id: "AAAA1111bbbb2222" + String(i).padStart(4, "0") }));
+    const capRes = await applyTool!.handler(capCtx, { draft_id: tId, contacts: manyContacts });
+    check("cap: >200 contatos → rejeitado", capRes.status === "error");
+
+    // Intra-day delay: 2 passos no MESMO dia/horário, 2º com +30s → scheduled_at espaçado.
+    // kind 'file_export' (livre) pra NÃO retomar o template followup_sequence ainda ativo (tId).
+    const idd = await core.startDraft(repId, LOC, null, { kind: "file_export", title: "Intra-day" });
+    const iddId = idd.ok ? idd.snapshot.draft_id : "";
+    await core.addStep(repId, iddId, { offset_days: 0, send_time: "06:00", message_text: "msg 1" });
+    await core.addStep(repId, iddId, { offset_days: 0, send_time: "06:00", intra_day_delay_s: 30, message_text: "msg 2" });
+    await core.setMeta(repId, iddId, { target: { contact_id: "EEEE5555ffff6666GGGG", contact_name: "Intra" } });
+    const matIdd = await materializeDraft(repId, iddId, "America/Sao_Paulo");
+    check("intra-day: materializou 2 msgs", matIdd.ok && matIdd.count === 2);
+    const { data: iddMsgs } = await db.from("followup_messages").select("scheduled_at").eq("sequence_id", matIdd.ok ? matIdd.sequence_id : "").order("scheduled_at");
+    const delta = iddMsgs && iddMsgs.length === 2 ? new Date(iddMsgs[1].scheduled_at).getTime() - new Date(iddMsgs[0].scheduled_at).getTime() : -1;
+    check("intra-day: 2ª msg +30s da 1ª (intra_day_delay_s aplicado)", delta === 30000);
   } finally {
     // cleanup: deletar a rep cascateia draft/steps/events
     await db.from("rep_identities").delete().eq("id", repId);

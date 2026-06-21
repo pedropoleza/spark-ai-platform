@@ -16,6 +16,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { getDraftWithSteps, transitionDraftStatus, updateDraft, insertTaskEvent } from "@/lib/repositories/task-drafts.repo";
 import type { DraftStep } from "./types";
 import { DEFAULT_SEND_TIME } from "./config";
@@ -93,9 +94,29 @@ export async function materializeSequenceForContact(
 ): Promise<SequenceResult> {
   const now = new Date();
   const ordered = opts.steps;
-  const schedules = ordered.map((s) => computeScheduledAt(s.offset_days, s.send_time, opts.tz, now));
+  const schedules = ordered.map((s) => {
+    const base = computeScheduledAt(s.offset_days, s.send_time, opts.tz, now);
+    // F3/review 2026-06-21: vários passos no MESMO dia (ex: Dia 0 = 3 msgs +30s do caso
+    // Jussara) são espaçados por intra_day_delay_s — antes era gravado mas IGNORADO aqui.
+    const delayMs = (s.intra_day_delay_s || 0) * 1000;
+    return delayMs > 0 ? new Date(base.getTime() + delayMs) : base;
+  });
   const firstAt = schedules.reduce((a, b) => (b < a ? b : a), schedules[0]);
   const lastAt = schedules.reduce((a, b) => (b > a ? b : a), schedules[0]);
+
+  // Idempotência (review 2026-06-21): não cria 2ª sequência pro MESMO (draft, contato)
+  // se já existe uma viva — re-aplicar o template (ou re-disparar) não duplica mensagens
+  // (o bulk tem UNIQUE(job_id,contact_id); aqui é por guard explícito). Fail-open no erro.
+  const { data: dup } = await supabase
+    .from("followup_sequences")
+    .select("id")
+    .eq("contact_id", opts.target.contact_id)
+    .eq("source_metadata->>draft_id", opts.draftId)
+    .not("status", "in", "(cancelled,skipped_reply,skipped_dnd,skipped_optout,failed)")
+    .limit(1);
+  if (dup && dup.length > 0) {
+    return { ok: false, error: "já existe uma sequência ativa pra esse contato nesse fluxo (não dupliquei)", count: 0 };
+  }
 
   const { data: seq, error: seqErr } = await supabase
     .from("followup_sequences")
@@ -123,6 +144,14 @@ export async function materializeSequenceForContact(
     .select("id")
     .single();
   if (seqErr || !seq) {
+    // Signal (review 2026-06-21): disparo de fluxo é caminho crítico — falha não pode ser muda.
+    reportError({
+      title: "Task orchestrator: criação de sequência falhou",
+      feature: "task-orchestrator",
+      severity: "high",
+      error: seqErr ?? new Error("insert followup_sequences sem retorno"),
+      metadata: { draft_id: opts.draftId, contact_id: opts.target.contact_id },
+    });
     return { ok: false, error: `erro ao criar sequência (${seqErr?.message || "?"})`, count: 0 };
   }
   const sequenceId = seq.id as string;
@@ -142,6 +171,14 @@ export async function materializeSequenceForContact(
     await supabase.from("followup_sequences").update({
       status: "cancelled", cancelled_at: now.toISOString(), cancelled_reason: "materialize_partial",
     }).eq("id", sequenceId);
+    // Signal (review 2026-06-21): rollback parcial é raro e crítico — avisa o operador.
+    reportError({
+      title: "Task orchestrator: materialização parcial revertida",
+      feature: "task-orchestrator",
+      severity: "high",
+      error: msgErr ?? new Error(`inseridas ${realCount}/${ordered.length} mensagens`),
+      metadata: { draft_id: opts.draftId, contact_id: opts.target.contact_id, inserted: realCount, expected: ordered.length, sequence_id: sequenceId },
+    });
     return { ok: false, error: `entraram ${realCount} de ${ordered.length} mensagens — revertido`, count: 0 };
   }
   return { ok: true, count: realCount, sequence_id: sequenceId, first_at: firstAt.toISOString(), last_at: lastAt.toISOString() };

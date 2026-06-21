@@ -27,7 +27,7 @@ import {
 } from "../task-orchestrator/core";
 import { materializeDraft, getDraftProgress, applyFlowToContacts, type ContactTarget } from "../task-orchestrator/materializer";
 import { generateAndUploadFlowPdf } from "../task-orchestrator/flow-pdf";
-import type { TaskKind } from "../task-orchestrator/config";
+import { MAX_APPLY_CONTACTS, MAX_APPLY_MESSAGES, type TaskKind } from "../task-orchestrator/config";
 
 function ok(snapshot: DraftSnapshot, extra?: Record<string, unknown>): ToolResult {
   return { status: "ok", data: { ...snapshot, ...(extra || {}) } };
@@ -351,10 +351,10 @@ const sendMediaToContactTool: ToolEntry = {
     if (!mediaUrl || !/^https?:\/\//.test(mediaUrl)) return err("media_url precisa ser uma URL http(s) válida.");
     const caption = asStr(args.caption) ?? "";
     // Probe F5 (prod 2026-06-21): o PDF chega como ANEXO NATIVO no WhatsApp via
-    // GHL→Stevo (abre direto). Então a legenda fica LIMPA — não despeja a URL
-    // assinada, que expira (o arquivo nativo no WhatsApp não) e poluiria a mensagem.
-    // Sem legenda, manda a própria URL como texto pra não ir mensagem vazia.
-    const finalCaption = caption ? caption : mediaUrl;
+    // GHL→Stevo (abre direto). Então a legenda fica LIMPA — NUNCA despeja a URL
+    // assinada (ela expira em 1h; o arquivo nativo no WhatsApp não). Sem legenda,
+    // usa um texto neutro — nunca o link (review 2026-06-21).
+    const finalCaption = caption || "Segue o arquivo 📎";
     const channel = ((asStr(args.channel) as GhlChannel) || "SMS") as GhlChannel;
     try {
       const r = await sendMediaToContact(ctx.ghlClient, contactId, mediaUrl, finalCaption, channel);
@@ -408,12 +408,23 @@ const applyFlowToContactsTool: ToolEntry = {
     if (!dws) return err("Nenhum fluxo encontrado pra aplicar.");
     const raw = Array.isArray(args.contacts) ? args.contacts : [];
     const contacts: ContactTarget[] = [];
+    let invalidCount = 0;
     for (const c of raw) {
       const o = (c || {}) as Record<string, unknown>;
       const id = asStr(o.contact_id);
-      if (id) contacts.push({ contact_id: id, contact_name: asStr(o.contact_name) ?? null, contact_phone: asStr(o.contact_phone) ?? null });
+      // validateGhlId devolve um erro (truthy) quando o id é inválido — descarta (review 2026-06-21).
+      if (!id || validateGhlId(id, "contact")) { invalidCount++; continue; }
+      contacts.push({ contact_id: id, contact_name: asStr(o.contact_name) ?? null, contact_phone: asStr(o.contact_phone) ?? null });
     }
-    if (contacts.length === 0) return err("Passe pelo menos 1 contato com contact_id (use search_contacts).");
+    if (contacts.length === 0) return err("Passe pelo menos 1 contato com contact_id VÁLIDO (use search_contacts/get_contacts_filtered).");
+    // Caps anti-spam/ban/custo (review 2026-06-21): teto de contatos e de mensagens totais.
+    if (contacts.length > MAX_APPLY_CONTACTS) {
+      return err(`São ${contacts.length} contatos — o limite por aplicação é ${MAX_APPLY_CONTACTS}. Fatie em lotes menores.`);
+    }
+    const totalMsgs = contacts.length * dws.steps.length;
+    if (totalMsgs > MAX_APPLY_MESSAGES) {
+      return err(`Isso geraria ${totalMsgs} mensagens (${contacts.length} contatos × ${dws.steps.length} passos) — o teto é ${MAX_APPLY_MESSAGES}. Reduza contatos ou passos.`);
+    }
     const res = await applyFlowToContacts(ctx.rep.id, dws.draft.id, contacts, ctx.rep.timezone ?? null);
     if ("error" in res) return err(res.error);
     return {
