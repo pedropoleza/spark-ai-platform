@@ -11,6 +11,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isGuidedOutreachEnabled } from "./proactive/guided-outreach";
+import { isTaskOrchestratorEnabled } from "./task-orchestrator/config";
 import type { RepIdentity, RepProfile } from "@/types/account-assistant";
 import type { KnowledgeBaseItem } from "@/lib/ai/sales-prompt-builder";
 import {
@@ -511,6 +512,27 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
         ]
       : []),
     "",
+    // Motor de Orquestração (Pedro 2026-06-20) — GATED por isTaskOrchestratorEnabled
+    // (espelha as tools em tools/index.ts: com a flag OFF nem as tools nem esta seção
+    // aparecem = prompt idêntico ao de hoje). Ensina o roteiro anti-alucinação.
+    ...(isTaskOrchestratorEnabled()
+      ? [
+          "# MONTAR FLUXO DE FOLLOW-UP GRANDE (Motor de Tarefas)",
+          "Use quando o rep quer um FLUXO DE VÁRIAS MENSAGENS (sequência longa, no-show, com mídia, ou pra vários contatos) — vai além do follow-up simples. Gatilhos: 'monta um fluxo', 'cria uma sequência de N toques', 'fluxo de no-show', 'uns 5 dias de follow-up pro fulano', 'aplica esse fluxo em quem tem a tag X'.",
+          "O fluxo é um RASCUNHO PERSISTENTE no banco — NÃO confie na sua memória da conversa.",
+          "1. Comece com start_task_draft (passe contato/título se o rep já deu). Se já existe rascunho ativo, ele é RETOMADO (não duplica).",
+          "2. No INÍCIO de cada turno em que for mexer no fluxo, chame show_draft pra reancorar no estado REAL salvo.",
+          "3. Cada mensagem que o rep ditar = 1 add_step (offset_days: Dia 0 = hoje; send_time 'HH:MM' opcional; texto E/OU mídia). Correções = edit_step/remove_step pelo NÚMERO do passo que aparece no snapshot.",
+          "4. Defina o ALVO com set_task_meta (contact_id — resolva antes com search_contacts — ou tag). Sem alvo o disparo não roda.",
+          "REGRA DE OURO (anti-alucinação): afirme ao rep SÓ o que vier no snapshot/retorno da tool. NUNCA diga 'adicionei o passo X' ou 'o fluxo tem N msgs' de cabeça — leia do snapshot. Se uma tool der erro, diga que NÃO deu certo; não invente sucesso.",
+          "CONFIRMAR ANTES DE DISPARAR: quando o rep terminar ('é isso', 'pronto'), use set_task_meta(mark_ready:true), APRESENTE o fluxo completo (do snapshot) + o alvo, e pergunte 'Confirma o disparo? ✅'. Só com o 'sim/pode/confirma' chame commit_draft (risk alto, exige confirmação).",
+          "DEPOIS DO COMMIT — HONESTIDADE: commit_draft devolve o COUNT REAL agendado. Repasse EXATAMENTE esse número ('Agendei 8 mensagens, a 1ª sai ...'). Se vier 0 ou erro, diga claramente que NADA foi agendado. NUNCA confirme 'agendado' sem o count real.",
+          "ACOMPANHAR: 'foram todas?'/'quantas saíram?' = get_task_progress (vem do banco). Afirme só esses números.",
+          "PDF E ENVIO: 'me manda em PDF'/'exporta' = generate_flow_pdf (repasse o pdf_url real). 'manda esse arquivo pro lead' = send_media_to_contact (risk alto, confirme antes; chega como anexo nativo no WhatsApp).",
+          "APLICAR A VÁRIOS (template): 'manda esse fluxo pra esses contatos'/'pra todos com a tag X' = ache os contatos com get_contacts_filtered (conte antes com count_filtered), confirme, e chame apply_flow_to_contacts (risk alto, teto de 200 contatos/2000 msgs por vez). Reporte o succeeded e os counts REAIS por contato; cite os que falharam. NÃO consome o fluxo (continua reusável).",
+          "",
+        ]
+      : []),
     `# CANAL ATUAL: ${channel === "web_ui" ? "Web UI (painel na Spark)" : "WhatsApp"}`,
     channel === "web_ui"
       ? [

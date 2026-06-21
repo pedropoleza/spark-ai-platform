@@ -4,6 +4,10 @@ import { reportError } from "@/lib/admin-signals/report-error";
 import {
   setTermsAccepted,
   setTermsRejected,
+  setGroupCampaignTermsAccepted,
+  setGroupCampaignTermsRejected,
+  setGroupCampaignTermsPending,
+  clearGroupCampaignTermsPending,
   setActiveLocation as repoSetActiveLocation,
   mergeRepProfile,
   updateRepById,
@@ -328,6 +332,28 @@ export async function acceptTerms(repId: string): Promise<void> {
  */
 export async function rejectTerms(repId: string): Promise<void> {
   await setTermsRejected(repId, new Date().toISOString());
+}
+
+// --- Terms PARTE 2 (campanha de grupo, 2026-06-18) -------------------------
+
+/** Aceita a Parte 2 (campanha de grupo). Limpa o pending. */
+export async function acceptGroupCampaignTerms(repId: string): Promise<void> {
+  await setGroupCampaignTermsAccepted(repId, new Date().toISOString());
+}
+
+/** Recusa a Parte 2. Limpa o pending. NÃO silencia o SparkBot. */
+export async function rejectGroupCampaignTerms(repId: string): Promise<void> {
+  await setGroupCampaignTermsRejected(repId, new Date().toISOString());
+}
+
+/** Marca que o rep entrou no fluxo de aceite da Parte 2 (a tool schedule chama). */
+export async function markGroupCampaignTermsPending(repId: string): Promise<void> {
+  await setGroupCampaignTermsPending(repId, new Date().toISOString());
+}
+
+/** Limpa o pending da Parte 2 sem registrar aceite/recusa (resposta ambígua). */
+export async function clearGroupCampaignTermsPendingState(repId: string): Promise<void> {
+  await clearGroupCampaignTermsPending(repId);
 }
 
 /** Seta active_location_id (quando rep escolhe qual operar). */

@@ -26,6 +26,7 @@ export async function GET() {
     has_ghl_webhook_secret: !!process.env.GHL_WEBHOOK_SECRET,
     AGENT_MOTOR_UNIFIED: process.env.AGENT_MOTOR_UNIFIED === "1",
     AGENT_ENTITLEMENTS_ENFORCED: process.env.AGENT_ENTITLEMENTS_ENFORCED === "1",
+    GROUP_CAMPAIGNS_ENABLED: process.env.GROUP_CAMPAIGNS_ENABLED === "1",
   };
 
   const [

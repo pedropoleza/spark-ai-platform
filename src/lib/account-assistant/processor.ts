@@ -17,9 +17,20 @@ import {
   buildTermsInteractive,
   TERMS_REJECTED_TEXT,
   parseTermsResponse,
+  buildGroupCampaignTermsInteractive,
+  GROUP_CAMPAIGN_TERMS_ACCEPTED_TEXT,
+  GROUP_CAMPAIGN_TERMS_REJECTED_TEXT,
 } from "./terms";
 import { buildOnboardingForWhatsApp } from "./onboarding";
-import { acceptTerms, rejectTerms, setActiveLocation, syncRepInternalFlag } from "./identity";
+import {
+  acceptTerms,
+  rejectTerms,
+  acceptGroupCampaignTerms,
+  rejectGroupCampaignTerms,
+  clearGroupCampaignTermsPendingState,
+  setActiveLocation,
+  syncRepInternalFlag,
+} from "./identity";
 import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1, type BuildPromptArgs } from "./prompt-builder";
 import { assembleSystemPrompt, isUnifiedMotorEnabled } from "@/lib/agent-platform/assembler";
 import { runWithTools, type LLMMessage } from "./llm-client";
@@ -175,6 +186,42 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       interactive: termsInteractive,
       should_send: true,
     };
+  }
+
+  // 1b. Termos PARTE 2 (campanha de grupo, 2026-06-18). Só ativa quando o rep
+  // ENTROU no fluxo de aceite (group_campaign_terms_pending_at setado pela tool
+  // `group_campaign` schedule) e ainda não aceitou. Determinístico — reusa
+  // parseTermsResponse. DIFERENÇA da Parte 1: reject NÃO silencia o SparkBot (só
+  // bloqueia campanha de grupo); e na resposta ambígua a gente LIMPA o pending e
+  // segue o fluxo normal (anti-trap: não prende o rep que mudou de assunto).
+  // Fix P1 review 2026-06-18: NÃO exigir !rejected_at. Reject de grupo é
+  // REVERSÍVEL (a copy promete "se mudar de ideia, é só falar") — se o rep
+  // recusou antes e agora re-tenta agendar, a tool re-marca pending e este gate
+  // PRECISA capturar o "aceito" mesmo com rejected_at setado, senão loop eterno.
+  // accept/reject limpam o pending → o gate não re-dispara após resolver.
+  if (rep.group_campaign_terms_pending_at && !rep.group_campaign_terms_accepted_at) {
+    const parsedGroup = parseTermsResponse(userText);
+    if (parsedGroup === "accept") {
+      await acceptGroupCampaignTerms(rep.id);
+      return { text: GROUP_CAMPAIGN_TERMS_ACCEPTED_TEXT, should_send: true };
+    }
+    if (parsedGroup === "reject") {
+      await rejectGroupCampaignTerms(rep.id);
+      return { text: GROUP_CAMPAIGN_TERMS_REJECTED_TEXT, should_send: true };
+    }
+    // Ambíguo: se o texto PARECE resposta aos termos (curto), reapresenta o
+    // botão; senão (rep mudou de assunto), limpa o pending e deixa fluir normal.
+    const looksLikeTermsReply = userText.trim().split(/\s+/).filter(Boolean).length <= 4;
+    if (looksLikeTermsReply) {
+      const groupTerms = buildGroupCampaignTermsInteractive();
+      return {
+        text: interactiveFallbackText(groupTerms),
+        interactive: groupTerms,
+        should_send: true,
+      };
+    }
+    await clearGroupCampaignTermsPendingState(rep.id);
+    // fall through — processa a mensagem normalmente
   }
 
   // 2. Resolver active_location_id

@@ -70,3 +70,65 @@ export async function getStevoInstance(
     instanceName: data.instance_name ?? null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Gate de instância DEDICADA (group campaigns, Pedro 2026-06-18)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resultado discriminado da resolução de instância pra CAMPANHA DE GRUPO. O
+ * gate anti-ban (risco sistêmico) exige instância `kind='dedicated'`: campanha de
+ * grupo NUNCA roda sobre o número compartilhado que carrega o DM de todos os reps
+ * (um ban derrubaria todo mundo). Os motivos de recusa permitem ao SparkBot dar o
+ * nudge certo (servidor dedicado) em vez de um erro seco.
+ */
+export type DedicatedStevoResult =
+  | { ok: true; instance: StevoInstanceResolved }
+  | { ok: false; reason: "no_instance" | "shared_only" | "misconfigured"; instanceName: string | null };
+
+/**
+ * Resolve a instância Stevo de uma LOCATION (não do hub) APENAS se ela for
+ * dedicada. Usada pelo gate de campanha em grupo. Diferente de getStevoInstance:
+ * (a) lê a coluna `kind`; (b) recusa explicitamente a compartilhada (com motivo);
+ * (c) não cai em fallback GHL (grupo não tem rota GHL).
+ *
+ * ⚠️ CHAVE: usa `hub_location_id` (nome legado da PK; uma row por location). O
+ * caller passa a `active_location_id` do rep (ctx.locationId). A row DEDICADA tem
+ * que ser provisionada com `hub_location_id = <active_location_id do rep>` — não
+ * a da agência/hub. Em rep multi-location, a instância dedicada só casa com a
+ * location ATIVA no momento. (Provisionamento manual segue esse contrato.)
+ *
+ * - sem registro pra essa location → { ok:false, reason:'no_instance' }
+ * - registro com kind != 'dedicated' → { ok:false, reason:'shared_only' }
+ * - kind='dedicated' mas SEM creds (server_url/token) → { ok:false, reason:'misconfigured' }
+ * - dedicada com creds → { ok:true, instance }
+ */
+export async function getStevoInstanceForRep(
+  locationId: string,
+): Promise<DedicatedStevoResult> {
+  if (!locationId) return { ok: false, reason: "no_instance", instanceName: null };
+  const db = createAdminClient();
+  const { data, error } = await db
+    .from("stevo_instances")
+    .select("server_url, instance_token, instance_name, kind")
+    .eq("hub_location_id", locationId)
+    .maybeSingle();
+  if (error || !data) return { ok: false, reason: "no_instance", instanceName: null };
+  const instanceName = data.instance_name ?? null;
+  if (data.kind !== "dedicated") {
+    return { ok: false, reason: "shared_only", instanceName };
+  }
+  // Dedicada porém sem credenciais = problema de provisionamento (não é "compre
+  // um servidor" — ele já tem um, só está mal configurado).
+  if (!data.server_url || !data.instance_token) {
+    return { ok: false, reason: "misconfigured", instanceName };
+  }
+  return {
+    ok: true,
+    instance: {
+      serverUrl: data.server_url,
+      instanceToken: data.instance_token,
+      instanceName,
+    },
+  };
+}

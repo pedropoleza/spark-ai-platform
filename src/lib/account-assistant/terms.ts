@@ -147,6 +147,59 @@ export function buildTermsInteractive(): {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Terms & Segurança PARTE 2 — Campanhas em GRUPO (Pedro 2026-06-18)
+// ---------------------------------------------------------------------------
+// 2º consentimento, pedido UMA vez antes da primeira campanha de grupo. Reusa o
+// MESMO parser (parseTermsResponse) — a semântica é a mesma (aceite/recusa por
+// botão+texto, anti-falso-positivo LGPD). Diferença de POLÍTICA: REJECT aqui NÃO
+// silencia o SparkBot (só bloqueia campanha de grupo). Copy aprovada pelo Pedro
+// (auto-aprovação 2026-06-18; ver _planning/group-campaigns-whatsapp/COPY.md).
+
+export const GROUP_CAMPAIGN_TERMS_TEXT = `📣 *Campanhas em grupos — antes de começar*
+
+Postar em grupos de WhatsApp é poderoso, mas vem com responsabilidade. Preciso do seu ok em 3 pontos pra liberar essa função pra você:
+
+1️⃣ *Risco de bloqueio do número.* Enviar muita mensagem, repetida ou pra muita gente de uma vez, faz o WhatsApp marcar o número como spam — e ele pode ser *bloqueado*. Eu trabalho pra reduzir isso (espaço os envios, varia o texto, alterna entre grupos), mas o risco nunca é zero. O número é seu; a decisão de disparar é sua.
+
+2️⃣ *Você é responsável pelo conteúdo.* Nada de promessa de retorno garantido, esquema de renda, corrente ou spam. Mensagem honesta e relevante pro grupo. Eu te aviso se um texto parecer arriscado, mas a palavra final — e a responsabilidade — é sua.
+
+3️⃣ *Servidor dedicado recomendado.* Pra proteger seu número, o ideal é rodar campanha de grupo num *número/servidor dedicado* (separado do seu WhatsApp pessoal). A gente tem um parceiro de proxy doméstico que oferece esse servidor dedicado — ajuda bastante a evitar bloqueio. Se quiser, eu falo com o suporte pra te montar um. 💪
+
+Topa seguir com essas condições?`;
+
+/** Mensagem após aceite da Parte 2. */
+export const GROUP_CAMPAIGN_TERMS_ACCEPTED_TEXT =
+  "Fechou! ✅ Campanhas em grupos liberadas pra você. Quando quiser, é só me dizer o grupo e a mensagem que eu cuido do resto.";
+
+/** Mensagem após recusa da Parte 2 (NÃO silencia o resto do SparkBot). */
+export const GROUP_CAMPAIGN_TERMS_REJECTED_TEXT =
+  "Sem problema! 👍 Sigo te ajudando com tudo o mais normalmente. Se mudar de ideia sobre campanhas em grupo, é só falar comigo.";
+
+/** Follow-up quando a resposta à Parte 2 não é clara. */
+export const GROUP_CAMPAIGN_TERMS_REMINDER_TEXT =
+  'Pra liberar campanhas em grupo, me confirma: responde "aceito" (ou "não" se preferir não usar agora).';
+
+/**
+ * Payload interativo da Parte 2 (corpo dos termos de grupo + botões). Ids
+ * próprios (`group_terms_*`) pra não colidir com a Parte 1. parseTermsResponse é
+ * reusado tal-qual (a extração de label cobre o sufixo de tap).
+ */
+export function buildGroupCampaignTermsInteractive(): {
+  kind: "buttons";
+  body: string;
+  options: { id: string; label: string }[];
+} {
+  return {
+    kind: "buttons",
+    body: GROUP_CAMPAIGN_TERMS_TEXT,
+    options: [
+      { id: "group_terms_accept", label: "Aceito ✅" },
+      { id: "group_terms_reject", label: "Agora não ❌" },
+    ],
+  };
+}
+
 /**
  * Mapa cidade-amigável pros IANA timezones mais comuns no mercado da Brazillionaires
  * (agentes brasileiros nos EUA). Fallback usa última parte do IANA.
