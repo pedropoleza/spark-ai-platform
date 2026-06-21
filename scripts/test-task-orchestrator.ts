@@ -16,7 +16,7 @@ import { createAdminClient } from "../src/lib/supabase/admin";
 import { isValidSendTime, isValidOffsetDays } from "../src/lib/account-assistant/task-orchestrator/config";
 import { buildSnapshot } from "../src/lib/account-assistant/task-orchestrator/core";
 import * as core from "../src/lib/account-assistant/task-orchestrator/core";
-import { materializeDraft, getDraftProgress, computeScheduledAt } from "../src/lib/account-assistant/task-orchestrator/materializer";
+import { materializeDraft, getDraftProgress, computeScheduledAt, applyFlowToContacts } from "../src/lib/account-assistant/task-orchestrator/materializer";
 import { renderFlowPdf, sanitizeForPdf } from "../src/lib/account-assistant/task-orchestrator/flow-pdf";
 import { sendMediaToContact } from "../src/lib/ghl/operations";
 import type { DraftWithSteps } from "../src/lib/account-assistant/task-orchestrator/types";
@@ -172,6 +172,22 @@ async function main() {
     const emptyId = emptyDraft.ok ? emptyDraft.snapshot.draft_id : "";
     const matEmpty = await materializeDraft(repId, emptyId, null);
     check("materializar fluxo VAZIO → erro, count 0", !matEmpty.ok && matEmpty.count === 0);
+
+    console.log("\n=== F6: aplicar fluxo a N contatos (template) ===");
+    const tmpl = await core.startDraft(repId, LOC, null, { kind: "followup_sequence", title: "Template no-show" });
+    const tId = tmpl.ok ? tmpl.snapshot.draft_id : "";
+    await core.addStep(repId, tId, { offset_days: 0, message_text: "passo A" });
+    await core.addStep(repId, tId, { offset_days: 2, message_text: "passo B" });
+    const applied = await applyFlowToContacts(repId, tId, [
+      { contact_id: "AAAA1111bbbb2222CCCC" },
+      { contact_id: "DDDD3333eeee4444FFFF", contact_name: "Lany" },
+    ], "America/New_York");
+    check("apply a 2 contatos → 2 sucessos", "succeeded" in applied && applied.succeeded === 2);
+    check("total_messages = 4 (2 passos × 2 contatos)", "total_messages" in applied && applied.total_messages === 4);
+    const progT = await getDraftProgress(tId);
+    check("progresso do template: total=4 pending=4", progT.ok && progT.total === 4 && progT.pending === 4);
+    const { data: tRow } = await db.from("task_drafts").select("status").eq("id", tId).maybeSingle();
+    check("template continua reusável (status != materialized)", tRow?.status === "building");
   } finally {
     // cleanup: deletar a rep cascateia draft/steps/events
     await db.from("rep_identities").delete().eq("id", repId);

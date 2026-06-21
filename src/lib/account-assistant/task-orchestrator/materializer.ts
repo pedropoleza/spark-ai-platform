@@ -1,5 +1,5 @@
 /**
- * Materializador atômico (Pedro 2026-06-20). Plano: EXECUCAO.md (F2 — P0 honestidade).
+ * Materializador atômico (Pedro 2026-06-20). Plano: EXECUCAO.md (F2 + F6).
  *
  * Transforma o rascunho (task_drafts/draft_steps) em DISPARO REAL e devolve o
  * COUNT REAL de mensagens inseridas — o bot só afirma "agendado" a partir DAQUI
@@ -9,15 +9,15 @@
  * followup_messages), NÃO bulk: um fluxo é N msgs pra 1 contato, e
  * bulk_message_recipients tem UNIQUE(job_id, contact_id) que bloqueia isso. O
  * followup-runner JÁ dispara followup_messages pending (status sequence
- * scheduled/running) com claim atômico + PAUSE-ON-REPLY embutido → reuso total,
- * zero runner novo, e o F3 (parar quando o lead responde) vem de graça.
+ * scheduled/running) com claim atômico + PAUSE-ON-REPLY embutido → reuso total.
  *
- * Honestidade: transição de status com guard (não materializa 2x); checa o error
- * do INSERT das mensagens; se falhar, marca a sequence cancelled + o draft failed
- * e devolve count 0 + erro. Nunca "agendado" sem rows.
+ * F6: a MESMA criação por-contato (materializeSequenceForContact) é reusada pra
+ * aplicar o fluxo a N contatos (template), sem consumir o rascunho.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getDraftWithSteps, transitionDraftStatus, updateDraft, insertTaskEvent } from "@/lib/repositories/task-drafts.repo";
+import type { DraftStep } from "./types";
 import { DEFAULT_SEND_TIME } from "./config";
 
 export type MaterializeResult =
@@ -52,20 +52,104 @@ export function computeScheduledAt(offsetDays: number, sendTime: string | null, 
   const hh = Math.min(23, Math.max(0, parseInt(hhRaw, 10) || 0));
   const mm = Math.min(59, Math.max(0, parseInt(mmRaw, 10) || 0));
   const target = zonedWallClockToUtc(y, m, d, hh, mm, tz);
-  // Se já passou (ex: Dia 0 com hora vencida), dispara agora — não espera 1 dia.
   return target.getTime() <= now.getTime() ? now : target;
 }
 
-/** Texto final do passo: anexa o link de mídia ao texto até a mídia nativa (F4) existir. */
+/** Texto final do passo: anexa o link de mídia ao texto até a mídia nativa (F4/F5) no runner. */
 function composeText(text: string, mediaUrl: string | null): string {
   const t = (text || "").trim();
   if (!mediaUrl) return t || "(sem texto)";
   return t ? `${t}\n${mediaUrl}` : mediaUrl;
 }
 
+export interface ContactTarget {
+  contact_id: string;
+  contact_name?: string | null;
+  contact_phone?: string | null;
+}
+
+export type SequenceResult =
+  | { ok: true; count: number; sequence_id: string; first_at: string; last_at: string }
+  | { ok: false; error: string; count: 0 };
+
 /**
- * Materializa 1 draft pra 1 contato. Idempotente via transição de status
- * (building/ready_for_review → materializing). Devolve count REAL.
+ * NÚCLEO reusado (F2 single + F6 N-contatos): cria 1 followup_sequence + N
+ * followup_messages pra UM contato e devolve o count REAL. Insert das mensagens
+ * checado; se falhar, cancela a sequence (rollback honesto). NÃO mexe no draft.
+ */
+export async function materializeSequenceForContact(
+  supabase: SupabaseClient,
+  opts: {
+    repId: string;
+    locationId: string;
+    agentId: string | null;
+    target: ContactTarget;
+    title: string | null;
+    steps: DraftStep[];
+    tz: string;
+    stopOnReply: boolean;
+    draftId: string;
+  },
+): Promise<SequenceResult> {
+  const now = new Date();
+  const ordered = opts.steps;
+  const schedules = ordered.map((s) => computeScheduledAt(s.offset_days, s.send_time, opts.tz, now));
+  const firstAt = schedules.reduce((a, b) => (b < a ? b : a), schedules[0]);
+  const lastAt = schedules.reduce((a, b) => (b > a ? b : a), schedules[0]);
+
+  const { data: seq, error: seqErr } = await supabase
+    .from("followup_sequences")
+    .insert({
+      rep_id: opts.repId,
+      location_id: opts.locationId,
+      agent_id: opts.agentId,
+      contact_id: opts.target.contact_id,
+      contact_name: opts.target.contact_name || null,
+      contact_phone: opts.target.contact_phone || null,
+      source: "chat",
+      source_metadata: { origin: "task_orchestrator", draft_id: opts.draftId },
+      goal: opts.title || "Fluxo de follow-up",
+      sequence_type: "custom",
+      approval_status: "approved",
+      approved_at: now.toISOString(),
+      approved_by_rep: true,
+      status: "scheduled",
+      started_at: now.toISOString(),
+      stop_on_reply: opts.stopOnReply,
+      total_messages: ordered.length,
+      scheduled_first_at: firstAt.toISOString(),
+      scheduled_last_at: lastAt.toISOString(),
+    })
+    .select("id")
+    .single();
+  if (seqErr || !seq) {
+    return { ok: false, error: `erro ao criar sequência (${seqErr?.message || "?"})`, count: 0 };
+  }
+  const sequenceId = seq.id as string;
+
+  const rows = ordered.map((s, i) => ({
+    sequence_id: sequenceId,
+    position: i + 1,
+    message_text: composeText(s.message_text, s.media_url),
+    scheduled_at: schedules[i].toISOString(),
+    status: "pending",
+    requires_final_check: false,
+  }));
+  const { data: insMsgs, error: msgErr } = await supabase.from("followup_messages").insert(rows).select("id");
+  const realCount = insMsgs?.length ?? 0;
+  if (msgErr || realCount !== ordered.length) {
+    // Rollback honesto: cancela a sequence (não fica meia-feita).
+    await supabase.from("followup_sequences").update({
+      status: "cancelled", cancelled_at: now.toISOString(), cancelled_reason: "materialize_partial",
+    }).eq("id", sequenceId);
+    return { ok: false, error: `entraram ${realCount} de ${ordered.length} mensagens — revertido`, count: 0 };
+  }
+  return { ok: true, count: realCount, sequence_id: sequenceId, first_at: firstAt.toISOString(), last_at: lastAt.toISOString() };
+}
+
+/**
+ * Materializa 1 draft pra o contato ALVO do próprio draft (meta.contact_id).
+ * Idempotente via transição de status (building/ready → materializing → materialized).
  */
 export async function materializeDraft(
   repId: string,
@@ -90,109 +174,113 @@ export async function materializeDraft(
     return { ok: false, error: "Esse fluxo já está sendo disparado ou já foi (não materializo de novo).", count: 0 };
   }
 
-  const tz = repTimezone || "America/New_York";
-  const now = new Date();
-  // Ordem canônica (offset_days, intra_day, position) — já vem ordenado do repo.
-  const ordered = dws.steps;
-  const schedules = ordered.map((s) => computeScheduledAt(s.offset_days, s.send_time, tz, now));
-  const firstAt = schedules.reduce((a, b) => (b < a ? b : a), schedules[0]);
-  const lastAt = schedules.reduce((a, b) => (b > a ? b : a), schedules[0]);
-  const stopOnReply = meta.stop_on_reply === false ? false : true;
-
-  // 1. Cria a sequence (status 'scheduled' → o followup-runner pega).
-  const { data: seq, error: seqErr } = await supabase
-    .from("followup_sequences")
-    .insert({
-      rep_id: repId,
-      location_id: dws.draft.location_id,
-      agent_id: dws.draft.agent_id,
-      contact_id: contactId,
-      contact_name: (meta.contact_name as string) || null,
-      contact_phone: (meta.contact_phone as string) || null,
-      source: "chat",
-      source_metadata: { origin: "task_orchestrator", draft_id: draftId },
-      goal: dws.draft.title || "Fluxo de follow-up",
-      sequence_type: "custom",
-      approval_status: "approved",
-      approved_at: now.toISOString(),
-      approved_by_rep: true,
-      status: "scheduled",
-      started_at: now.toISOString(),
-      stop_on_reply: stopOnReply,
-      total_messages: ordered.length,
-      scheduled_first_at: firstAt.toISOString(),
-      scheduled_last_at: lastAt.toISOString(),
-    })
-    .select("id")
-    .single();
-  if (seqErr || !seq) {
-    await transitionDraftStatus(draftId, ["materializing"], "failed");
-    await insertTaskEvent(draftId, "materialize_failed", { stage: "sequence", error: seqErr?.message });
-    return { ok: false, error: "Não consegui criar a sequência (erro no banco). NADA foi agendado.", count: 0 };
-  }
-  const sequenceId = seq.id as string;
-
-  // 2. Insere as N mensagens (count REAL = o que entrar).
-  const rows = ordered.map((s, i) => ({
-    sequence_id: sequenceId,
-    position: i + 1,
-    message_text: composeText(s.message_text, s.media_url),
-    scheduled_at: schedules[i].toISOString(),
-    status: "pending",
-    requires_final_check: false, // conteúdo é autoral do rep + já revisado na montagem
-  }));
-  const { data: insMsgs, error: msgErr } = await supabase
-    .from("followup_messages")
-    .insert(rows)
-    .select("id");
-  const realCount = insMsgs?.length ?? 0;
-
-  if (msgErr || realCount !== ordered.length) {
-    // Rollback honesto: cancela a sequence + marca draft failed. Bot NÃO diz "agendado".
-    await supabase.from("followup_sequences").update({ status: "cancelled", cancelled_at: now.toISOString(), cancelled_reason: "materialize_partial" }).eq("id", sequenceId);
-    await transitionDraftStatus(draftId, ["materializing"], "failed");
-    await insertTaskEvent(draftId, "materialize_failed", { stage: "messages", inserted: realCount, expected: ordered.length, error: msgErr?.message });
-    return {
-      ok: false,
-      error: `Falha ao agendar as mensagens (entraram ${realCount} de ${ordered.length}). Reverti tudo — NADA foi agendado.`,
-      count: 0,
-    };
-  }
-
-  // 3. Sucesso: promove o draft pra 'materialized' com o count REAL.
-  await transitionDraftStatus(draftId, ["materializing"], "materialized", {
-    materialized_count: realCount,
-    materialized_at: now.toISOString(),
+  const res = await materializeSequenceForContact(supabase, {
+    repId,
+    locationId: dws.draft.location_id,
+    agentId: dws.draft.agent_id,
+    target: { contact_id: contactId, contact_name: meta.contact_name as string, contact_phone: meta.contact_phone as string },
+    title: dws.draft.title,
+    steps: dws.steps,
+    tz: repTimezone || "America/New_York",
+    stopOnReply: meta.stop_on_reply !== false,
+    draftId,
   });
-  const newMeta = { ...meta, materialized_sequence_ids: [...((meta.materialized_sequence_ids as string[]) || []), sequenceId] };
-  await updateDraft(draftId, { meta: newMeta });
-  await insertTaskEvent(draftId, "committed", { sequence_id: sequenceId, count: realCount });
 
-  return { ok: true, count: realCount, sequence_id: sequenceId, first_at: firstAt.toISOString(), last_at: lastAt.toISOString() };
+  if (!res.ok) {
+    await transitionDraftStatus(draftId, ["materializing"], "failed");
+    await insertTaskEvent(draftId, "materialize_failed", { error: res.error });
+    return { ok: false, error: `Falha ao agendar: ${res.error}. NADA foi agendado.`, count: 0 };
+  }
+
+  await transitionDraftStatus(draftId, ["materializing"], "materialized", {
+    materialized_count: res.count,
+    materialized_at: new Date().toISOString(),
+  });
+  const newMeta = { ...meta, materialized_sequence_ids: [...((meta.materialized_sequence_ids as string[]) || []), res.sequence_id] };
+  await updateDraft(draftId, { meta: newMeta });
+  await insertTaskEvent(draftId, "committed", { sequence_id: res.sequence_id, count: res.count });
+  return { ok: true, count: res.count, sequence_id: res.sequence_id, first_at: res.first_at, last_at: res.last_at };
 }
 
-/** Progresso REAL de um draft materializado (lê o estado das followup_messages). */
+export interface ApplyResult {
+  ok: boolean;
+  total_contacts: number;
+  succeeded: number;
+  total_messages: number;
+  per_contact: Array<{ contact_id: string; ok: boolean; count: number; sequence_id?: string; error?: string }>;
+}
+
+/**
+ * F6 — aplica o fluxo (template) a N contatos: 1 followup_sequence por contato,
+ * reusando o núcleo. NÃO consome o rascunho (continua reusável). Count REAL por
+ * contato — o bot reporta exatamente quantos entraram em cada um.
+ */
+export async function applyFlowToContacts(
+  repId: string,
+  draftId: string,
+  contacts: ContactTarget[],
+  repTimezone: string | null,
+): Promise<{ ok: false; error: string } | ApplyResult> {
+  const supabase = createAdminClient();
+  const dws = await getDraftWithSteps(draftId);
+  if (!dws) return { ok: false, error: "Rascunho não encontrado." };
+  if (dws.draft.rep_id !== repId) return { ok: false, error: "Esse rascunho não é seu." };
+  if (dws.steps.length === 0) return { ok: false, error: "O fluxo está vazio — adicione passos antes de aplicar." };
+  const valid = contacts.filter((c) => c.contact_id);
+  if (valid.length === 0) return { ok: false, error: "Nenhum contato válido pra aplicar (faltou contact_id)." };
+
+  const tz = repTimezone || "America/New_York";
+  const stopOnReply = (dws.draft.meta as Record<string, unknown>)?.stop_on_reply !== false;
+  const per: ApplyResult["per_contact"] = [];
+  const seqIds: string[] = [];
+
+  for (const c of valid) {
+    const res = await materializeSequenceForContact(supabase, {
+      repId, locationId: dws.draft.location_id, agentId: dws.draft.agent_id,
+      target: c, title: dws.draft.title, steps: dws.steps, tz, stopOnReply, draftId,
+    });
+    if (res.ok) {
+      per.push({ contact_id: c.contact_id, ok: true, count: res.count, sequence_id: res.sequence_id });
+      seqIds.push(res.sequence_id);
+    } else {
+      per.push({ contact_id: c.contact_id, ok: false, count: 0, error: res.error });
+    }
+  }
+
+  // Append dos sequence_ids no meta (rastreável); NÃO transiciona status (reusável).
+  const meta = (dws.draft.meta || {}) as Record<string, unknown>;
+  const applied = [...((meta.applied_sequence_ids as string[]) || []), ...seqIds];
+  await updateDraft(draftId, { meta: { ...meta, applied_sequence_ids: applied } });
+  await insertTaskEvent(draftId, "applied_to_contacts", {
+    total: valid.length, succeeded: seqIds.length, sequence_ids: seqIds,
+  });
+
+  const succeeded = per.filter((p) => p.ok).length;
+  return {
+    ok: true,
+    total_contacts: valid.length,
+    succeeded,
+    total_messages: per.reduce((a, p) => a + p.count, 0),
+    per_contact: per,
+  };
+}
+
+/** Progresso REAL de um draft materializado/aplicado (lê o estado das followup_messages). */
 export async function getDraftProgress(
   draftId: string,
 ): Promise<{ ok: true; total: number; sent: number; pending: number; skipped: number; failed: number } | { ok: false; error: string }> {
   const supabase = createAdminClient();
   const dws = await getDraftWithSteps(draftId);
   if (!dws) return { ok: false, error: "Rascunho não encontrado." };
-  const seqIds = ((dws.draft.meta as Record<string, unknown>)?.materialized_sequence_ids as string[]) || [];
+  const meta = (dws.draft.meta as Record<string, unknown>) || {};
+  const seqIds = [
+    ...((meta.materialized_sequence_ids as string[]) || []),
+    ...((meta.applied_sequence_ids as string[]) || []),
+  ];
   if (seqIds.length === 0) return { ok: false, error: "Esse fluxo ainda não foi disparado (sem sequência materializada)." };
-  const { data, error } = await supabase
-    .from("followup_messages")
-    .select("status")
-    .in("sequence_id", seqIds);
+  const { data, error } = await supabase.from("followup_messages").select("status").in("sequence_id", seqIds);
   if (error) return { ok: false, error: "Erro ao ler o progresso." };
   const rows = data || [];
   const by = (st: string) => rows.filter((r) => r.status === st).length;
-  return {
-    ok: true,
-    total: rows.length,
-    sent: by("sent"),
-    pending: by("pending"),
-    skipped: by("skipped"),
-    failed: by("failed"),
-  };
+  return { ok: true, total: rows.length, sent: by("sent"), pending: by("pending"), skipped: by("skipped"), failed: by("failed") };
 }

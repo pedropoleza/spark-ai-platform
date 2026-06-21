@@ -25,7 +25,7 @@ import {
   buildSnapshot,
   type DraftSnapshot,
 } from "../task-orchestrator/core";
-import { materializeDraft, getDraftProgress } from "../task-orchestrator/materializer";
+import { materializeDraft, getDraftProgress, applyFlowToContacts, type ContactTarget } from "../task-orchestrator/materializer";
 import { generateAndUploadFlowPdf } from "../task-orchestrator/flow-pdf";
 import type { TaskKind } from "../task-orchestrator/config";
 
@@ -368,7 +368,65 @@ const sendMediaToContactTool: ToolEntry = {
   },
 };
 
-/** Montagem (F1) + materialização honesta + progresso (F2) + PDF (F4) + envio de arquivo (F5). */
+const applyFlowToContactsTool: ToolEntry = {
+  def: {
+    name: "apply_flow_to_contacts",
+    description:
+      "Aplica o MESMO fluxo (template) a VÁRIOS contatos de uma vez — cria uma sequência por contato. Use quando o " +
+      "rep disser 'manda esse fluxo pra esses contatos' / 'aplica nesses números' / 'pra todos com a tag X' (nesse " +
+      "caso, primeiro use get_contacts_filtered pra achar os contatos da tag, depois chame isto com os IDs). É risco " +
+      "alto: confirme antes. NÃO consome o fluxo (continua reusável). Reporte ao rep o 'succeeded' e os counts REAIS " +
+      "por contato que vierem no retorno — nunca invente.",
+    risk: "high",
+    parameters: {
+      type: "object",
+      required: ["contacts"],
+      properties: {
+        contacts: {
+          type: "array",
+          description: "Contatos alvo (cada um com contact_id; nome/telefone opcionais).",
+          items: {
+            type: "object",
+            required: ["contact_id"],
+            properties: {
+              contact_id: { type: "string" },
+              contact_name: { type: "string" },
+              contact_phone: { type: "string" },
+            },
+          },
+        },
+        draft_id: { type: "string", description: "Opcional; usa o fluxo ativo/recente se omitido." },
+      },
+    },
+  },
+  handler: async (ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> => {
+    const dws = await resolveDraftAny(ctx.rep.id, asStr(args.draft_id));
+    if (!dws) return err("Nenhum fluxo encontrado pra aplicar.");
+    const raw = Array.isArray(args.contacts) ? args.contacts : [];
+    const contacts: ContactTarget[] = [];
+    for (const c of raw) {
+      const o = (c || {}) as Record<string, unknown>;
+      const id = asStr(o.contact_id);
+      if (id) contacts.push({ contact_id: id, contact_name: asStr(o.contact_name) ?? null, contact_phone: asStr(o.contact_phone) ?? null });
+    }
+    if (contacts.length === 0) return err("Passe pelo menos 1 contato com contact_id (use search_contacts).");
+    const res = await applyFlowToContacts(ctx.rep.id, dws.draft.id, contacts, ctx.rep.timezone ?? null);
+    if ("error" in res) return err(res.error);
+    return {
+      status: "ok",
+      data: {
+        applied: true,
+        total_contacts: res.total_contacts,
+        succeeded: res.succeeded,
+        total_messages: res.total_messages,
+        per_contact: res.per_contact,
+        confirmation: `Apliquei o fluxo a ${res.succeeded}/${res.total_contacts} contato(s), ${res.total_messages} mensagem(ns) agendadas no total.`,
+      },
+    };
+  },
+};
+
+/** Montagem (F1) + materialização (F2) + progresso + PDF (F4) + envio (F5) + template N-contatos (F6). */
 export const TASK_ORCHESTRATOR_TOOLS: ToolEntry[] = [
   startTaskDraft,
   showDraftTool,
@@ -380,4 +438,5 @@ export const TASK_ORCHESTRATOR_TOOLS: ToolEntry[] = [
   getTaskProgressTool,
   generateFlowPdfTool,
   sendMediaToContactTool,
+  applyFlowToContactsTool,
 ];

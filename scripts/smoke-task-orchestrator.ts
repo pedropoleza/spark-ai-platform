@@ -87,6 +87,19 @@ async function main() {
     check("generate_flow_pdf → ok", pdf.status === "ok");
     check("pdf_url é link https assinado", /^https:\/\//.test(String(dataOf(pdf).pdf_url || "")));
 
+    console.log("\n=== F6: aplicar fluxo a N contatos (via executeTool + H8) ===");
+    const t2 = await executeTool("start_task_draft", { title: "Template smoke" }, ctx);
+    const tDraftId = (dataOf(t2).draft_id as string) || undefined;
+    await executeTool("add_step", { offset_days: 0, message_text: "A", draft_id: tDraftId }, ctx);
+    await executeTool("add_step", { offset_days: 1, message_text: "B", draft_id: tDraftId }, ctx);
+    const applyNoConfirm = await executeTool("apply_flow_to_contacts", { draft_id: tDraftId, contacts: [{ contact_id: "AAAA1111bbbb2222CCCC" }] }, ctx);
+    check("apply SEM confirmação → BLOQUEADO (H8)", applyNoConfirm.status === "error");
+    const apply = await executeTool("apply_flow_to_contacts", {
+      draft_id: tDraftId, confirmed_by_rep: true,
+      contacts: [{ contact_id: "AAAA1111bbbb2222CCCC" }, { contact_id: "DDDD3333eeee4444FFFF", contact_name: "Lany" }],
+    }, ctx);
+    check("apply a 2 contatos → succeeded=2, 4 msgs", apply.status === "ok" && (dataOf(apply).succeeded as number) === 2 && (dataOf(apply).total_messages as number) === 4);
+
     console.log("\n=== Test-mode gate (não toca produção) ===");
     const ctxTest: ToolContext = { ...ctx, testSessionId: "smoke-test-session" };
     const mocked = await executeTool("add_step", { offset_days: 5, message_text: "x" }, ctxTest);
