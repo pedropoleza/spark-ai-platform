@@ -82,6 +82,11 @@ async function main() {
     const prog = await executeTool("get_task_progress", {}, ctx);
     check("progresso total=2", (dataOf(prog).total as number) === 2);
 
+    console.log("\n=== F4: gerar PDF (upload real no bucket agent-media) ===");
+    const pdf = await executeTool("generate_flow_pdf", { confirmed_by_rep: true }, ctx);
+    check("generate_flow_pdf → ok", pdf.status === "ok");
+    check("pdf_url é link https assinado", /^https:\/\//.test(String(dataOf(pdf).pdf_url || "")));
+
     console.log("\n=== Test-mode gate (não toca produção) ===");
     const ctxTest: ToolContext = { ...ctx, testSessionId: "smoke-test-session" };
     const mocked = await executeTool("add_step", { offset_days: 5, message_text: "x" }, ctxTest);
@@ -89,8 +94,17 @@ async function main() {
     const readInTest = await executeTool("show_draft", {}, ctxTest);
     check("show_draft (safe) executa mesmo em test-mode", readInTest.status === "ok");
   } finally {
-    await db.from("rep_identities").delete().eq("id", (repRow as { id: string }).id);
-    console.log("  (cleanup: rep de smoke removida)");
+    const repId = (repRow as { id: string }).id;
+    // cleanup do storage: remove os PDFs de smoke do bucket
+    try {
+      const folder = `SMOKE_LOC/${repId}`;
+      const { data: files } = await db.storage.from("agent-media").list(folder);
+      if (files && files.length) {
+        await db.storage.from("agent-media").remove(files.map((f) => `${folder}/${f.name}`));
+      }
+    } catch { /* best-effort */ }
+    await db.from("rep_identities").delete().eq("id", repId);
+    console.log("  (cleanup: rep + PDFs de smoke removidos)");
   }
 
   console.log(`\n=== RESULTADO SMOKE: ${pass} passou, ${fail} falhou ===`);

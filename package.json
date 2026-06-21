@@ -35,6 +35,7 @@
     "next": "^15.5.18",
     "openai": "^6.33.0",
     "papaparse": "^5.5.3",
+    "pdf-lib": "^1.17.1",
     "qrcode": "^1.5.4",
     "react": "^18",
     "react-dom": "^18",

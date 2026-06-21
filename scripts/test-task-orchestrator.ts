@@ -17,6 +17,7 @@ import { isValidSendTime, isValidOffsetDays } from "../src/lib/account-assistant
 import { buildSnapshot } from "../src/lib/account-assistant/task-orchestrator/core";
 import * as core from "../src/lib/account-assistant/task-orchestrator/core";
 import { materializeDraft, getDraftProgress, computeScheduledAt } from "../src/lib/account-assistant/task-orchestrator/materializer";
+import { renderFlowPdf, sanitizeForPdf } from "../src/lib/account-assistant/task-orchestrator/flow-pdf";
 import type { DraftWithSteps } from "../src/lib/account-assistant/task-orchestrator/types";
 
 let pass = 0;
@@ -55,6 +56,22 @@ async function main() {
   check("day_label correto", snap.steps[1].day_label === "Dia 2");
   check("whats_missing aponta alvo faltando", snap.whats_missing.some((w) => w.includes("ALVO")));
   check("whats_missing aponta passo sem conteúdo", snap.whats_missing.some((w) => w.includes("Passo 2")));
+
+  console.log("\n=== F4: geração de PDF (render) ===");
+  check("sanitizeForPdf mantém acento, remove emoji", sanitizeForPdf("Olá ção 😊🙏") === "Olá ção ");
+  const pdfSnap = buildSnapshot({
+    draft: { id: "d2", rep_id: "r", location_id: "l", agent_id: null, kind: "followup_sequence",
+      status: "materialized", title: "Fluxo PDF ção", meta: { contact_name: "Eliz" }, materialized_job_id: null,
+      materialized_count: 2, materialized_at: null, created_at: "", updated_at: "" },
+    steps: [
+      fakeStep({ offset_days: 0, message_text: "Oi [nome], tudo bem? 😊 " + "palavra ".repeat(60) }),
+      fakeStep({ offset_days: 2, message_text: "Vídeo importante", media_url: "https://www.instagram.com/reel/" + "x".repeat(120) }),
+    ],
+  });
+  const pdfBytes = await renderFlowPdf(pdfSnap);
+  const header = String.fromCharCode(...pdfBytes.slice(0, 4));
+  check("PDF começa com %PDF", header === "%PDF");
+  check("PDF não-vazio (>800 bytes, multi-página/wrap)", pdfBytes.length > 800);
 
   // --- Integração no DB com rep descartável ---
   console.log("\n=== Integração DB (rep descartável) ===");

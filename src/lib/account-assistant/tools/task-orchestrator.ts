@@ -21,9 +21,11 @@ import {
   setMeta,
   resolveDraft,
   resolveDraftAny,
+  buildSnapshot,
   type DraftSnapshot,
 } from "../task-orchestrator/core";
 import { materializeDraft, getDraftProgress } from "../task-orchestrator/materializer";
+import { generateAndUploadFlowPdf } from "../task-orchestrator/flow-pdf";
 import type { TaskKind } from "../task-orchestrator/config";
 
 function ok(snapshot: DraftSnapshot, extra?: Record<string, unknown>): ToolResult {
@@ -288,7 +290,38 @@ const getTaskProgressTool: ToolEntry = {
   },
 };
 
-/** Montagem (F1) + materialização honesta + progresso (F2). */
+const generateFlowPdfTool: ToolEntry = {
+  def: {
+    name: "generate_flow_pdf",
+    description:
+      "Gera um PDF do fluxo (organizado por dia, com os textos e links de cada mensagem) e devolve a URL REAL do " +
+      "arquivo pra mandar/baixar. Use quando o rep pedir 'me manda em PDF', 'exporta o fluxo', 'manda um documento'. " +
+      "Afirme ao rep SOMENTE a URL que vier em 'pdf_url' — se vier erro, diga que não consegui gerar. Funciona com o " +
+      "fluxo em construção OU já disparado.",
+    risk: "medium",
+    parameters: {
+      type: "object",
+      properties: { draft_id: { type: "string", description: "Opcional; usa o fluxo ativo/recente se omitido." } },
+    },
+  },
+  handler: async (ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> => {
+    const dws = await resolveDraftAny(ctx.rep.id, asStr(args.draft_id));
+    if (!dws) return err("Nenhum fluxo encontrado pra gerar o PDF.");
+    const res = await generateAndUploadFlowPdf(buildSnapshot(dws), ctx.locationId, ctx.rep.id);
+    if (!res.ok) return err(res.error);
+    return {
+      status: "ok",
+      data: {
+        pdf_url: res.signed_url,
+        expires_in_seconds: res.expires_in,
+        bytes: res.bytes,
+        note: "Link assinado válido por 1h. Mande este link pro rep baixar o PDF.",
+      },
+    };
+  },
+};
+
+/** Montagem (F1) + materialização honesta + progresso (F2) + PDF (F4). */
 export const TASK_ORCHESTRATOR_TOOLS: ToolEntry[] = [
   startTaskDraft,
   showDraftTool,
@@ -298,4 +331,5 @@ export const TASK_ORCHESTRATOR_TOOLS: ToolEntry[] = [
   setTaskMetaTool,
   commitDraftTool,
   getTaskProgressTool,
+  generateFlowPdfTool,
 ];
