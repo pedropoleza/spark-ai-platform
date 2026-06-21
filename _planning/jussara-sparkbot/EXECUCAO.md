@@ -143,3 +143,28 @@ retorno de tool.**
 6. Spam/ban no cíclico 40d×7 contatos → tag-trigger manual/OFF até smoke.
 7. Bucket `agent-media` não existir em prod (só documentado) → verificar antes de F4.
 8. Escopo inflar ("motor de tudo") → MVP foca `followup_sequence` + `file_export`; `campaign`/custom depois.
+
+---
+
+## ✅ STATUS DE IMPLEMENTAÇÃO — F0→F6 COMPLETO (2026-06-20)
+
+Tudo na branch `feat/task-orchestrator`, atrás da flag **`TASK_ORCHESTRATOR_ENABLED` (default OFF / log-first)**. Cada fase commitada. Validação: **42 testes unitários + 17 smoke E2E (via `executeTool`) + tsc + `npm run build`** — todos verdes.
+
+| Fase | O quê | Status | Onde |
+|------|-------|--------|------|
+| F0 | Schema + flag | ✅ | migration `00115`, `config.ts`, `types.ts` |
+| F1 | Rascunho persistente + mutators determinísticos | ✅ | `core.ts`, `task-drafts.repo.ts`, 8 tools |
+| F2 | Materializador atômico honesto (count REAL) | ✅ | `materializer.ts` → `followup_sequences/messages` |
+| F3 | Pause-on-reply (reuso do followup-runner) | ✅ | de graça via materialização no followup |
+| F4 | Geração de PDF | ✅ | `flow-pdf.ts` (pdf-lib), bucket `agent-media` (migration `00116`), tool `generate_flow_pdf` |
+| F5 | Envio de arquivo on-demand | ✅ (código) | tool `send_media_to_contact` + `operations.sendMediaToContact` |
+| F6 | Template → N contatos | ✅ | `applyFlowToContacts`, tool `apply_flow_to_contacts` |
+
+**11 tools** registradas (gated): start_task_draft, show_draft, add_step, edit_step, remove_step, set_task_meta, commit_draft `[high]`, get_task_progress, generate_flow_pdf, send_media_to_contact `[high]`, apply_flow_to_contacts `[high]`.
+
+**Decisões resolvidas no build:** (2) cíclico = sequência finita de offsets no MVP ✅; (3) pause-on-reply só pausa futuros (handoff/notify é F37, separado) ✅; (4) tag-trigger AUTOMÁTICO fica FORA do MVP (aplicação explícita + H8) ✅; (5) TTL signed URL = 3600s + bucket `agent-media` CRIADO (migration 00116) ✅; (6) ordem F0→F6 cumprida ✅. Risco 4 (alucinação de count) mitigado por count real + audit; risco 5 (fonte TTF) resolvido usando Helvetica embutida do pdf-lib (cobre acentos PT-BR) + sanitização WinAnsi; risco 7 (bucket) resolvido pela 00116.
+
+### 👤 Pendente do Pedro (não bloqueia o build — bloqueia o GO-LIVE)
+1. **Probe do anexo nativo (risco 1, único unknown real):** mandar 1 PDF de teste por um contato real e confirmar se o WhatsApp via Stevo entrega como **arquivo nativo** ou só como **link no texto**. O código já manda o link no corpo como fallback de qualquer jeito. Define se "entrega de arquivo" fecha 100% pra lead-facing.
+2. **Validar 1 conversa real** com o LLM dirigindo as tools (montar um fluxo de ponta a ponta pelo chat) ANTES de ligar a flag — guard-rail do anti-pattern de paridade.
+3. Só então: `TASK_ORCHESTRATOR_ENABLED=1` em prod + avisar a Jussara.
