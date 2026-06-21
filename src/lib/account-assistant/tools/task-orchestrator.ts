@@ -328,8 +328,8 @@ const sendMediaToContactTool: ToolEntry = {
     description:
       "Envia um ARQUIVO/MÍDIA (PDF, imagem, vídeo) pra um CONTATO (lead) no Spark Leads — ex: mandar o PDF do fluxo, " +
       "um vídeo, uma imagem. Passe o contact_id do lead e a media_url (link público/assinado, ex: o pdf_url do " +
-      "generate_flow_pdf). É risco alto: confirme com o rep antes. O link sempre vai junto no texto (fallback caso " +
-      "o WhatsApp não mostre como anexo nativo).",
+      "generate_flow_pdf). O arquivo chega como ANEXO NATIVO no WhatsApp (abre direto, validado em prod). É risco " +
+      "alto: confirme com o rep antes.",
     risk: "high",
     parameters: {
       type: "object",
@@ -350,7 +350,11 @@ const sendMediaToContactTool: ToolEntry = {
     const mediaUrl = asStr(args.media_url);
     if (!mediaUrl || !/^https?:\/\//.test(mediaUrl)) return err("media_url precisa ser uma URL http(s) válida.");
     const caption = asStr(args.caption) ?? "";
-    const finalCaption = caption ? `${caption}\n${mediaUrl}` : mediaUrl; // link sempre junto (fallback)
+    // Probe F5 (prod 2026-06-21): o PDF chega como ANEXO NATIVO no WhatsApp via
+    // GHL→Stevo (abre direto). Então a legenda fica LIMPA — não despeja a URL
+    // assinada, que expira (o arquivo nativo no WhatsApp não) e poluiria a mensagem.
+    // Sem legenda, manda a própria URL como texto pra não ir mensagem vazia.
+    const finalCaption = caption ? caption : mediaUrl;
     const channel = ((asStr(args.channel) as GhlChannel) || "SMS") as GhlChannel;
     try {
       const r = await sendMediaToContact(ctx.ghlClient, contactId, mediaUrl, finalCaption, channel);
@@ -359,7 +363,7 @@ const sendMediaToContactTool: ToolEntry = {
         data: {
           sent: true,
           message_id: r.messageId ?? null,
-          note: "Enviado via attachments. Se o WhatsApp não exibir como arquivo nativo, o link no texto é o fallback.",
+          note: "Enviado como anexo nativo (validado em prod 2026-06-21) — o arquivo abre direto no WhatsApp.",
         },
       };
     } catch (e) {

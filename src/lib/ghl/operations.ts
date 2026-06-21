@@ -732,10 +732,11 @@ export async function sendMessageToContact(
  * pública/assinada acessível pelo GHL (ex: signed URL do bucket agent-media).
  * `channel` default 'SMS' (Stevo roteia pro WhatsApp).
  *
- * ⚠️ Se o anexo chega como ANEXO NATIVO no WhatsApp via SMS/Stevo, ou só como
- * caption/link, é o que o PROBE em prod (F5) confirma — o reaction-engine alerta
- * "SMS puro passa como caption". Por isso a `caption` SEMPRE carrega o link também
- * (fallback: sem anexo nativo, o lead ainda recebe o link).
+ * ✅ Probe F5 (prod 2026-06-21): o anexo CHEGA como arquivo nativo no WhatsApp por
+ * esta rota (GHL /conversations/messages → Stevo), mesmo com type "SMS" — abre
+ * direto. (A nota "SMS puro passa como caption" do reaction-engine vale pra rota
+ * Stevo DIRETA /send/text, que é text-only; NÃO pra esta.) Por isso o caller manda
+ * a `caption` LIMPA, sem despejar a URL assinada (que expira; o arquivo nativo não).
  */
 export async function sendMediaToContact(
   client: GHLClient,

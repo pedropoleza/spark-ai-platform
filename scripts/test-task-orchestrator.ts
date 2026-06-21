@@ -19,6 +19,8 @@ import * as core from "../src/lib/account-assistant/task-orchestrator/core";
 import { materializeDraft, getDraftProgress, computeScheduledAt, applyFlowToContacts } from "../src/lib/account-assistant/task-orchestrator/materializer";
 import { renderFlowPdf, sanitizeForPdf } from "../src/lib/account-assistant/task-orchestrator/flow-pdf";
 import { sendMediaToContact } from "../src/lib/ghl/operations";
+import { TASK_ORCHESTRATOR_TOOLS } from "../src/lib/account-assistant/tools/task-orchestrator";
+import type { ToolContext } from "../src/lib/account-assistant/tools/types";
 import type { DraftWithSteps } from "../src/lib/account-assistant/task-orchestrator/types";
 
 let pass = 0;
@@ -79,11 +81,22 @@ async function main() {
   const fakeClient = {
     post: async (path: string, body: Record<string, unknown>) => { captured = { path, body }; return { messageId: "fake-msg" }; },
   } as unknown as Parameters<typeof sendMediaToContact>[0];
-  await sendMediaToContact(fakeClient, "ABCdef1234567890XYZ", "https://x.com/f.pdf", "Segue o PDF\nhttps://x.com/f.pdf", "SMS");
+  await sendMediaToContact(fakeClient, "ABCdef1234567890XYZ", "https://x.com/f.pdf", "Segue o PDF", "SMS");
   check("POST em /conversations/messages", captured.path === "/conversations/messages");
   check("body com attachments:[url]", JSON.stringify((captured.body as { attachments?: string[] })?.attachments) === JSON.stringify(["https://x.com/f.pdf"]));
   check("type=SMS (Stevo→WhatsApp)", (captured.body as { type?: string })?.type === "SMS");
-  check("caption (message) carrega o link de fallback", String((captured.body as { message?: string })?.message || "").includes("https://x.com/f.pdf"));
+  check("helper repassa o message verbatim", (captured.body as { message?: string })?.message === "Segue o PDF");
+
+  // Probe F5 (prod 2026-06-21): anexo nativo funciona → a TOOL manda legenda LIMPA
+  // (sem despejar a URL assinada, que expira). Sem legenda, cai no fallback = a URL.
+  const sendTool = TASK_ORCHESTRATOR_TOOLS.find((t) => t.def.name === "send_media_to_contact");
+  const toolCtx = { rep: { id: "r" }, locationId: "l", companyId: "c", ghlClient: fakeClient } as unknown as ToolContext;
+  captured = {};
+  await sendTool!.handler(toolCtx, { contact_id: "AAAA1111bbbb2222CCCC", media_url: "https://x.com/f.pdf", caption: "Segue o PDF do fluxo" });
+  check("tool: legenda LIMPA (sem URL na message)", (captured.body as { message?: string })?.message === "Segue o PDF do fluxo");
+  captured = {};
+  await sendTool!.handler(toolCtx, { contact_id: "AAAA1111bbbb2222CCCC", media_url: "https://x.com/f.pdf" });
+  check("tool: sem legenda → fallback usa a URL como message", (captured.body as { message?: string })?.message === "https://x.com/f.pdf");
 
   // --- Integração no DB com rep descartável ---
   console.log("\n=== Integração DB (rep descartável) ===");
