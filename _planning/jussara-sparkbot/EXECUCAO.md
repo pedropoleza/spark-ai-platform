@@ -164,7 +164,9 @@ Tudo na branch `feat/task-orchestrator`, atrás da flag **`TASK_ORCHESTRATOR_ENA
 
 **Decisões resolvidas no build:** (2) cíclico = sequência finita de offsets no MVP ✅; (3) pause-on-reply só pausa futuros (handoff/notify é F37, separado) ✅; (4) tag-trigger AUTOMÁTICO fica FORA do MVP (aplicação explícita + H8) ✅; (5) TTL signed URL = 3600s + bucket `agent-media` CRIADO (migration 00116) ✅; (6) ordem F0→F6 cumprida ✅. Risco 4 (alucinação de count) mitigado por count real + audit; risco 5 (fonte TTF) resolvido usando Helvetica embutida do pdf-lib (cobre acentos PT-BR) + sanitização WinAnsi; risco 7 (bucket) resolvido pela 00116.
 
-### 👤 Pendente do Pedro (não bloqueia o build — bloqueia o GO-LIVE)
-1. **Probe do anexo nativo (risco 1, único unknown real):** mandar 1 PDF de teste por um contato real e confirmar se o WhatsApp via Stevo entrega como **arquivo nativo** ou só como **link no texto**. O código já manda o link no corpo como fallback de qualquer jeito. Define se "entrega de arquivo" fecha 100% pra lead-facing.
-2. **Validar 1 conversa real** com o LLM dirigindo as tools (montar um fluxo de ponta a ponta pelo chat) ANTES de ligar a flag — guard-rail do anti-pattern de paridade.
-3. Só então: `TASK_ORCHESTRATOR_ENABLED=1` em prod + avisar a Jussara.
+### ✅ Probe do anexo nativo — RESOLVIDO (prod 2026-06-21)
+Feito no número do próprio Pedro (+17867717077, contato da hub `RBFxlEQZobaDjlF2i5px`). **O PDF chega como ARQUIVO NATIVO abrível** no WhatsApp pela rota GHL `/conversations/messages` → Stevo, mesmo com `type:'SMS'`. As 2 mensagens discriminantes provaram: A (sem link, só attachment) → chegou arquivo; B (réplica de produção) → arquivo + link. A nota histórica "SMS puro passa como caption" vale só pra rota Stevo DIRETA (`/send/text`, text-only), não pra esta. **Consequência aplicada (commit `6d272fd`):** `send_media_to_contact` agora manda legenda LIMPA (a URL assinada expira; o arquivo nativo não). Pré-flight adversarial: workflow `f5-probe-preflight`; repro: `scripts/probe-f5-attachment.ts`.
+
+### 👤 Ainda pendente do Pedro (bloqueia o GO-LIVE)
+1. **Validar 1 conversa real** com o LLM dirigindo as tools (montar um fluxo de ponta a ponta pelo chat) — guard-rail do anti-pattern de paridade. Exige a flag ligada → é o passo 2.
+2. `TASK_ORCHESTRATOR_ENABLED=1` em prod (decisão do Pedro; outward-facing) + fazer o teste real (item 1) + avisar a Jussara.
