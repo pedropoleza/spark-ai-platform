@@ -167,6 +167,9 @@ Tudo na branch `feat/task-orchestrator`, atrás da flag **`TASK_ORCHESTRATOR_ENA
 ### ✅ Probe do anexo nativo — RESOLVIDO (prod 2026-06-21)
 Feito no número do próprio Pedro (+17867717077, contato da hub `RBFxlEQZobaDjlF2i5px`). **O PDF chega como ARQUIVO NATIVO abrível** no WhatsApp pela rota GHL `/conversations/messages` → Stevo, mesmo com `type:'SMS'`. As 2 mensagens discriminantes provaram: A (sem link, só attachment) → chegou arquivo; B (réplica de produção) → arquivo + link. A nota histórica "SMS puro passa como caption" vale só pra rota Stevo DIRETA (`/send/text`, text-only), não pra esta. **Consequência aplicada (commit `6d272fd`):** `send_media_to_contact` agora manda legenda LIMPA (a URL assinada expira; o arquivo nativo não). Pré-flight adversarial: workflow `f5-probe-preflight`; repro: `scripts/probe-f5-attachment.ts`.
 
+### ✅ E2E real em PROD — VALIDADO (2026-06-21)
+Rodado no número do Pedro pela cadeia inteira: `start_task_draft → set_task_meta → add_step → commit_draft` (via `executeTool`, caminho real do LLM) → **materialização com count REAL = 1** (bateu com o banco) → o **cron de produção `followup-runner` (30s, ativo)** pegou e **entregou no WhatsApp em ~12s** (`status=sent`, `ghl_message_id` real; sequence `completed`). H8 bloqueou o commit sem confirmação. Repro: `scripts/e2e-orchestrator-live.ts` (flag só no processo local, NÃO toca a Vercel). Prova mecânica: montagem honesta → materialização atômica → runner real → entrega.
+
 ### 👤 Ainda pendente do Pedro (bloqueia o GO-LIVE)
-1. **Validar 1 conversa real** com o LLM dirigindo as tools (montar um fluxo de ponta a ponta pelo chat) — guard-rail do anti-pattern de paridade. Exige a flag ligada → é o passo 2.
-2. `TASK_ORCHESTRATOR_ENABLED=1` em prod (decisão do Pedro; outward-facing) + fazer o teste real (item 1) + avisar a Jussara.
+1. **LLM dirigindo as tools** numa conversa real (a mecânica já está provada ponta-a-ponta; falta só ver o SparkBot deployado ESCOLHENDO as tools). Exige a flag ON em prod → é o passo 2.
+2. `TASK_ORCHESTRATOR_ENABLED=1` na Vercel (decisão do Pedro; outward-facing) → conversar 1× com o SparkBot montando um fluxo → avisar a Jussara.
