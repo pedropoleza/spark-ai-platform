@@ -18,6 +18,7 @@ import { buildSnapshot } from "../src/lib/account-assistant/task-orchestrator/co
 import * as core from "../src/lib/account-assistant/task-orchestrator/core";
 import { materializeDraft, getDraftProgress, computeScheduledAt } from "../src/lib/account-assistant/task-orchestrator/materializer";
 import { renderFlowPdf, sanitizeForPdf } from "../src/lib/account-assistant/task-orchestrator/flow-pdf";
+import { sendMediaToContact } from "../src/lib/ghl/operations";
 import type { DraftWithSteps } from "../src/lib/account-assistant/task-orchestrator/types";
 
 let pass = 0;
@@ -72,6 +73,17 @@ async function main() {
   const header = String.fromCharCode(...pdfBytes.slice(0, 4));
   check("PDF começa com %PDF", header === "%PDF");
   check("PDF não-vazio (>800 bytes, multi-página/wrap)", pdfBytes.length > 800);
+
+  console.log("\n=== F5: envio de mídia (payload shape, client falso) ===");
+  let captured: { path?: string; body?: Record<string, unknown> } = {};
+  const fakeClient = {
+    post: async (path: string, body: Record<string, unknown>) => { captured = { path, body }; return { messageId: "fake-msg" }; },
+  } as unknown as Parameters<typeof sendMediaToContact>[0];
+  await sendMediaToContact(fakeClient, "ABCdef1234567890XYZ", "https://x.com/f.pdf", "Segue o PDF\nhttps://x.com/f.pdf", "SMS");
+  check("POST em /conversations/messages", captured.path === "/conversations/messages");
+  check("body com attachments:[url]", JSON.stringify((captured.body as { attachments?: string[] })?.attachments) === JSON.stringify(["https://x.com/f.pdf"]));
+  check("type=SMS (Stevo→WhatsApp)", (captured.body as { type?: string })?.type === "SMS");
+  check("caption (message) carrega o link de fallback", String((captured.body as { message?: string })?.message || "").includes("https://x.com/f.pdf"));
 
   // --- Integração no DB com rep descartável ---
   console.log("\n=== Integração DB (rep descartável) ===");

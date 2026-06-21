@@ -10,8 +10,9 @@
  * REGRA pro LLM (reforçada nas descriptions): afirme ao rep SÓ o que vier no
  * snapshot retornado. Nunca diga "adicionei/o passo X é Y" de cabeça.
  */
-import type { ToolEntry, ToolContext } from "./types";
+import { type ToolEntry, type ToolContext, validateGhlId, ghlErrorToResult } from "./types";
 import type { ToolResult } from "@/types/account-assistant";
+import { sendMediaToContact, type GhlChannel } from "@/lib/ghl/operations";
 import {
   startDraft,
   showDraft,
@@ -321,7 +322,53 @@ const generateFlowPdfTool: ToolEntry = {
   },
 };
 
-/** Montagem (F1) + materialização honesta + progresso (F2) + PDF (F4). */
+const sendMediaToContactTool: ToolEntry = {
+  def: {
+    name: "send_media_to_contact",
+    description:
+      "Envia um ARQUIVO/MÍDIA (PDF, imagem, vídeo) pra um CONTATO (lead) no Spark Leads — ex: mandar o PDF do fluxo, " +
+      "um vídeo, uma imagem. Passe o contact_id do lead e a media_url (link público/assinado, ex: o pdf_url do " +
+      "generate_flow_pdf). É risco alto: confirme com o rep antes. O link sempre vai junto no texto (fallback caso " +
+      "o WhatsApp não mostre como anexo nativo).",
+    risk: "high",
+    parameters: {
+      type: "object",
+      required: ["contact_id", "media_url"],
+      properties: {
+        contact_id: { type: "string", description: "ID do contato (lead) no Spark Leads." },
+        media_url: { type: "string", description: "URL http(s) do arquivo (ex: pdf_url do generate_flow_pdf)." },
+        caption: { type: "string", description: "Texto que acompanha o arquivo (opcional)." },
+        channel: { type: "string", enum: ["SMS", "WhatsApp"], description: "Canal (default SMS → Stevo/WhatsApp)." },
+      },
+    },
+  },
+  handler: async (ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> => {
+    const contactId = asStr(args.contact_id);
+    if (!contactId) return err("contact_id obrigatório (use search_contacts pra achar o lead).");
+    const idErr = validateGhlId(contactId, "contact");
+    if (idErr) return idErr;
+    const mediaUrl = asStr(args.media_url);
+    if (!mediaUrl || !/^https?:\/\//.test(mediaUrl)) return err("media_url precisa ser uma URL http(s) válida.");
+    const caption = asStr(args.caption) ?? "";
+    const finalCaption = caption ? `${caption}\n${mediaUrl}` : mediaUrl; // link sempre junto (fallback)
+    const channel = ((asStr(args.channel) as GhlChannel) || "SMS") as GhlChannel;
+    try {
+      const r = await sendMediaToContact(ctx.ghlClient, contactId, mediaUrl, finalCaption, channel);
+      return {
+        status: "ok",
+        data: {
+          sent: true,
+          message_id: r.messageId ?? null,
+          note: "Enviado via attachments. Se o WhatsApp não exibir como arquivo nativo, o link no texto é o fallback.",
+        },
+      };
+    } catch (e) {
+      return ghlErrorToResult(e, "enviar mídia ao contato");
+    }
+  },
+};
+
+/** Montagem (F1) + materialização honesta + progresso (F2) + PDF (F4) + envio de arquivo (F5). */
 export const TASK_ORCHESTRATOR_TOOLS: ToolEntry[] = [
   startTaskDraft,
   showDraftTool,
@@ -332,4 +379,5 @@ export const TASK_ORCHESTRATOR_TOOLS: ToolEntry[] = [
   commitDraftTool,
   getTaskProgressTool,
   generateFlowPdfTool,
+  sendMediaToContactTool,
 ];

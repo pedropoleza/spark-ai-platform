@@ -725,6 +725,31 @@ export async function sendMessageToContact(
   );
 }
 
+/**
+ * Envia uma MÍDIA/arquivo (PDF, imagem, vídeo) a um contato via GHL
+ * /conversations/messages com `attachments:[url]` — mesma rota provada no
+ * reaction-engine `send_media` (versão on-demand). A `mediaUrl` tem que ser
+ * pública/assinada acessível pelo GHL (ex: signed URL do bucket agent-media).
+ * `channel` default 'SMS' (Stevo roteia pro WhatsApp).
+ *
+ * ⚠️ Se o anexo chega como ANEXO NATIVO no WhatsApp via SMS/Stevo, ou só como
+ * caption/link, é o que o PROBE em prod (F5) confirma — o reaction-engine alerta
+ * "SMS puro passa como caption". Por isso a `caption` SEMPRE carrega o link também
+ * (fallback: sem anexo nativo, o lead ainda recebe o link).
+ */
+export async function sendMediaToContact(
+  client: GHLClient,
+  contactId: string,
+  mediaUrl: string,
+  caption: string,
+  channel: GhlChannel = "SMS",
+): Promise<{ messageId?: string; conversationId?: string }> {
+  return client.post<{ messageId?: string; conversationId?: string }>(
+    "/conversations/messages",
+    { type: channel, contactId, message: caption, attachments: [mediaUrl] },
+  );
+}
+
 // =====================================================
 // Booking error detection (centralizada)
 // =====================================================
