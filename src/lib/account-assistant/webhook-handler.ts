@@ -301,14 +301,25 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     return;
   }
   if (!rep) {
-    // Rep não encontrado em location nenhuma (varredura OK). Pode ser rep com
-    // phone divergente no Spark Leads — sinal LOW (visível no painel, não
-    // empurra push) pra debug de onboarding.
+    // Rep não encontrado em location nenhuma (varredura OK). Causa comum: rep
+    // mandou de um número DIFERENTE do cadastrado no GHL user (caso Jussara
+    // 2026-06-19 — tinha 321, escreveu do 689) → bot mudo e ninguém percebe.
+    //
+    // Fix recorrência 2026-06-19: o título inclui o PHONE de propósito (quebra a
+    // regra "title estável" do reportError DE PROPÓSITO neste caso) → cada número
+    // não-cadastrado vira uma linha DISTINTA e ACIONÁVEL no /hub/admin/health, em
+    // vez de todos colapsarem num único LOW sem telefone (o que escondia o caso).
+    // severity 'medium' pra ficar visível no painel (não empurra push — número
+    // errado/spam não deve acordar ninguém). Admin vê o phone → corrige o GHL
+    // user (ou cria a rep) na hora. Volume baixo (número desconhecido é raro).
     reportError({
-      title: "SparkBot: número não cadastrado (rep não encontrado)",
+      title: `SparkBot: número não cadastrado — ${phone}`,
       feature: "sparkbot-webhook",
-      severity: "low",
-      description: "identifyRep varreu as locations e não achou esse phone em nenhum GHL user. Pode ser rep com phone divergente no Spark Leads.",
+      severity: "medium",
+      description:
+        `Rep mandou do número ${phone} mas identifyRep não achou esse phone em nenhum GHL user ` +
+        `(contato GHL: ${contactId}). Provável rep com número divergente: confira o GHL user dela e ` +
+        `atualize o phone pra este, ou crie/autorize a rep. Enquanto isso o bot respondeu "não cadastrado".`,
       metadata: { contact_id: contactId, phone },
     });
     await sendResponseToRep(
