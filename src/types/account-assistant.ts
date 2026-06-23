@@ -30,6 +30,15 @@ export interface RepProfile {
     emoji_usage?: "none" | "occasional";
     verbosity?: "brief" | "normal" | "detailed";
     /**
+     * Nome preferido do rep (fix caso Manuela 2026-06-23): o display_name vem do
+     * cadastro do GHL (single source of truth do CRM) e às vezes está errado
+     * (ex: "Manoela" em vez de "Manuela"). Quando o rep corrige como quer ser
+     * chamado, o bot persiste aqui via `set_rep_preferred_name` e passa a usar
+     * este nome no lugar do display_name. Mesmo padrão "GHL sugere, rep
+     * sobrescreve, persiste" que o timezone já usa.
+     */
+    preferred_name?: string;
+    /**
      * Agendamento V2 (Pedro 2026-05-22, D2): preferência de calendário/duração
      * pra agendar sem perguntar a cada vez. Resolução no prompt: nome dito >
      * esta pref > único calendário do rep. Setado via tool `set_scheduling_pref`

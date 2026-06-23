@@ -1123,6 +1123,41 @@ const createAppointment: ToolEntry = {
       assignedUserId = knownRepUserId;
     }
 
+    // Fix bug observado em prod 2026-06-23 (caso Manuela, P0): admin da location
+    // montando a agenda de OUTRA pessoa (ela admin, criando no "Carreira" da Ana
+    // Paula). O Spark Leads EXIGE que o assignee seja TEAM MEMBER do calendário —
+    // se atribuirmos ao próprio rep (que NÃO é membro daquele calendário), o GHL
+    // rejeita com 422 "user id not part of calendar team", e o bot traduzia isso
+    // pra "você não faz parte do time" (regra de USER COMUM, ERRADA pra admin) e
+    // ficava num bounce, chegando a ensinar a rep a se auto-adicionar. O gate
+    // repIsAdmin (D1) liberou o override mas NÃO consertava o assignee — por isso
+    // recorreu. Aqui: quando o rep é ADMIN e a reunião iria pro PRÓPRIO rep (ou
+    // sem assignee), e ele NÃO é membro do calendário-alvo, atribui ao DONO do
+    // calendário (1º team member). Rep comum NÃO entra aqui (segue restrito à
+    // própria agenda pelo gate de override). Best-effort: se a busca falhar, o
+    // fluxo segue e o catch genérico abaixo reporta.
+    const willAssignRep = !assignedUserId || assignedUserId === knownRepUserId;
+    if (repIsAdmin(ctx) && willAssignRep) {
+      try {
+        const calDet = await getCalendarDetails(ctx.ghlClient, calendarId);
+        const members = (calDet.calendar?.teamMembers || [])
+          .map((tm) => tm.userId)
+          .filter((id): id is string => !!id);
+        if (members.length > 0 && (!knownRepUserId || !members.includes(knownRepUserId))) {
+          // rep admin não é membro do calendário → atribui ao dono (team member).
+          assignedUserId = members[0];
+          console.warn(
+            `[create_appointment] admin ${ctx.rep.id} não é membro do calendar ${calendarId}; atribuindo ao dono ${members[0]} (loc ${ctx.locationId}).`,
+          );
+        }
+      } catch (e) {
+        console.warn(
+          "[create_appointment] resolução de assignee pro dono do calendar falhou (segue fluxo normal):",
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }
+
     // H26 (review 2026-05-14): auto-ativa overrideLocationConfig quando rep
     // especifica meeting location. Sem isso, GHL ignora silenciosamente
     // meetingLocationType/address e usa default do calendar — bug histórico.

@@ -750,6 +750,60 @@ const setVerbosityPreference: ToolEntry = {
   },
 };
 
+/**
+ * Nome preferido do rep (fix caso Manuela 2026-06-23). O display_name vem do
+ * cadastro do GHL e pode estar errado ("Manoela" em vez de "Manuela"). Quando o
+ * rep corrige, o bot persiste em rep_profile.preferences.preferred_name e passa
+ * a usar esse nome. Mesmo padrão de setVerbosityPreference.
+ */
+const setRepPreferredName: ToolEntry = {
+  def: {
+    name: "set_rep_preferred_name",
+    description:
+      "Salva como o rep quer ser chamado. Use SEMPRE que o rep corrigir o próprio nome — ex:\n" +
+      "- 'é Manuela, não Manoela' / 'meu nome é X' / 'pode me chamar de Y' / 'na verdade sou a Z'.\n\n" +
+      "Persiste em rep_profile.preferences.preferred_name. Daí pra frente, use ESSE nome (não o do cadastro). NUNCA insista num nome que o rep negou.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        preferred_name: {
+          type: "string",
+          description: "O nome correto/preferido do rep, como ele disse (ex: 'Manuela').",
+        },
+      },
+      required: ["preferred_name"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const preferredName = String(args.preferred_name || "").trim();
+    if (!preferredName || preferredName.length > 80) {
+      return { status: "error", message: "nome inválido", retryable: false };
+    }
+    const currentProfile = (ctx.rep.profile || {}) as Record<string, unknown>;
+    const currentPrefs = (currentProfile.preferences || {}) as Record<string, unknown>;
+    const newProfile = {
+      ...currentProfile,
+      preferences: { ...currentPrefs, preferred_name: preferredName },
+    };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await updateRepById(ctx.rep.id, { profile: newProfile as any, updated_at: new Date().toISOString() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { status: "error", message: `Falha ao salvar: ${msg}`, retryable: true };
+    }
+    ctx.rep.profile = newProfile as typeof ctx.rep.profile;
+    return {
+      status: "ok",
+      data: {
+        preferred_name: preferredName,
+        message: `Anotado — vou te chamar de ${preferredName} a partir de agora.`,
+      },
+    };
+  },
+};
+
 export const IDENTITY_TOOLS: ToolEntry[] = [
   confirmRepTimezone,
   listMyLocations,
@@ -761,4 +815,5 @@ export const IDENTITY_TOOLS: ToolEntry[] = [
   forgetRepAlias,
   listRepAliases,
   setVerbosityPreference,
+  setRepPreferredName,
 ];
