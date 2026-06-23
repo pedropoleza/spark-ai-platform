@@ -19,11 +19,11 @@ import type { ToolResult } from "@/types/account-assistant";
 const REP_USER = "RepGhlUser0000000001"; // ghl_user_id do rep na location ativa
 const LOC = "Loc00000000000000001";
 
-function ctxFor(isInternal: boolean): ToolContext {
+function ctxFor(isInternal: boolean, role?: string): ToolContext {
   return {
     rep: {
       is_internal: isInternal,
-      ghl_users: [{ location_id: LOC, ghl_user_id: REP_USER }],
+      ghl_users: [{ location_id: LOC, ghl_user_id: REP_USER, role: role ?? null }],
     },
     locationId: LOC,
     companyId: "Comp0000000000000001",
@@ -35,6 +35,7 @@ function ctxFor(isInternal: boolean): ToolContext {
 interface Case {
   name: string;
   internal: boolean;
+  role?: string; // role GHL na location ativa (ex: 'admin') — caso Manuela
   args: Record<string, unknown>;
   expectOk: boolean; // true = override liberado; false = bloqueado
   expectUsed?: string[]; // flags esperadas no body (quando ok)
@@ -102,12 +103,30 @@ const cases: Case[] = [
 
   // ── Admin → liberado em qualquer agenda ──
   {
-    name: "admin força slot na agenda de outro",
+    name: "admin (agência/is_internal) força slot na agenda de outro",
     internal: true,
     args: { assigned_user_id: "OtherGhlUser000000002", ignore_free_slot_validation: true },
     expectOk: true,
     expectUsed: ["ignore_free_slot_validation"],
     why: "is_internal → override liberado mesmo em agenda alheia",
+  },
+  {
+    name: "GHL-admin de cliente (não-agência) força slot na agenda de outro — caso Manuela",
+    internal: false,
+    role: "admin",
+    args: { assigned_user_id: "OtherGhlUser000000002", ignore_free_slot_validation: true },
+    expectOk: true,
+    expectUsed: ["ignore_free_slot_validation"],
+    why: "role GHL 'admin' na location → admin pode marcar/forçar em qualquer calendário (Pedro 2026-06-22)",
+  },
+  {
+    name: "GHL-admin de cliente pode não notificar cliente",
+    internal: false,
+    role: "admin",
+    args: { to_notify: false },
+    expectOk: true,
+    expectUsed: ["to_notify_false"],
+    why: "GHL-admin tem permissão client-facing também",
   },
 
   // ── to_notify:false (client-facing) → admin-only SEMPRE ──
@@ -142,7 +161,7 @@ let pass = 0;
 let fail = 0;
 
 for (const c of cases) {
-  const res = buildOverridePayload(ctxFor(c.internal), c.args);
+  const res = buildOverridePayload(ctxFor(c.internal, c.role), c.args);
   const gotOk = res.ok;
   let ok = gotOk === c.expectOk;
 
@@ -201,8 +220,8 @@ for (const c of rcases) {
 // Espelha o fluxo do handler: resolve assignee → fallback pro rep → gate.
 // null = bloqueio permitido; ToolResult de erro = barrado pelo gate self/admin.
 console.log("\n— block_calendar_slot (gate self/admin) —");
-function blockSlotGate(internal: boolean, assignedUserId: unknown): ToolResult | null {
-  const ctx = ctxFor(internal);
+function blockSlotGate(internal: boolean, assignedUserId: unknown, role?: string): ToolResult | null {
+  const ctx = ctxFor(internal, role);
   const resolved = resolveAssignedUserId(ctx, assignedUserId);
   if (!resolved.ok) return resolved.error;
   const targetUser = resolved.user_id || getRepGhlUserId(ctx);
@@ -214,6 +233,7 @@ function blockSlotGate(internal: boolean, assignedUserId: unknown): ToolResult |
 interface BCase {
   name: string;
   internal: boolean;
+  role?: string;
   assigned?: unknown;
   expectAllowed: boolean; // true = bloqueio permitido (gate retorna null)
   why: string;
@@ -247,15 +267,23 @@ const bcases: BCase[] = [
     why: "agenda alheia → admin-only (paridade D1)",
   },
   {
-    name: "admin bloqueia agenda de OUTRO user",
+    name: "admin (agência) bloqueia agenda de OUTRO user",
     internal: true,
     assigned: "OtherGhlUser000000002",
     expectAllowed: true,
     why: "is_internal → liberado em qualquer agenda",
   },
+  {
+    name: "GHL-admin de cliente bloqueia agenda de OUTRO user — caso Manuela",
+    internal: false,
+    role: "admin",
+    assigned: "OtherGhlUser000000002",
+    expectAllowed: true,
+    why: "role GHL 'admin' na location → liberado em qualquer agenda (Pedro 2026-06-22)",
+  },
 ];
 for (const c of bcases) {
-  const res = blockSlotGate(c.internal, c.assigned);
+  const res = blockSlotGate(c.internal, c.assigned, c.role);
   const allowed = res === null;
   if (allowed === c.expectAllowed) {
     pass++;

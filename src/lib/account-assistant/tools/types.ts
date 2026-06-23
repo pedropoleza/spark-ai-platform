@@ -100,6 +100,23 @@ export function getRepGhlUserId(ctx: ToolContext): string | undefined {
 }
 
 /**
+ * Rep é ADMIN pra fins de override de calendário? (Pedro 2026-06-22, caso Manuela)
+ *
+ * Vale: `is_internal` (time da AGÊNCIA — env phone / role agency* / 5+ users) OU
+ * role GHL **'admin'** na LOCATION ATIVA. Admin da location pode agendar/forçar em
+ * QUALQUER calendário dela (regra do GHL) — "só calendários que você participa" é
+ * a regra de USER comum. Antes o gate D1 olhava só is_internal → admin de CLIENTE
+ * (ex: Manuela, admin da própria location mas fora da agência) caía como user e era
+ * bloqueado de marcar/forçar na agenda de outra pessoa.
+ */
+export function repIsAdmin(ctx: ToolContext): boolean {
+  if (ctx.rep.is_internal) return true;
+  return ctx.rep.ghl_users.some(
+    (u) => u.location_id === ctx.locationId && String(u.role || "").toLowerCase() === "admin",
+  );
+}
+
+/**
  * Resolve `assigned_to` / `assigned_user_id` pra ghl_user_id real.
  *
  * Pedro 2026-05-14: criado pra cobrir 2 casos:

@@ -8,7 +8,7 @@
  */
 
 import type { ToolContext, ToolEntry } from "./types";
-import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult, resolveAssignedUserId } from "./types";
+import { validateGhlId, validateIso8601, getRepGhlUserId, repIsAdmin, ghlErrorToResult, resolveAssignedUserId } from "./types";
 import {
   listCalendars as ghlListCalendars,
   getCalendarFreeSlots,
@@ -65,8 +65,9 @@ export function resolveCalendarChoice(
 /**
  * H26 (review 2026-05-14): valida override flags ADMIN-ONLY pra appointments.
  *
- * Restrito a admin/internal team (ctx.rep.is_internal === true, populado por
- * H17 detectIsInternal — env phone, role agency*, ou 5+ ghl_users).
+ * Restrito a ADMIN — via repIsAdmin(ctx): is_internal (time da agência, H17) OU
+ * role GHL 'admin' na location ativa (Pedro 2026-06-22, caso Manuela: admin de
+ * cliente também pode forçar/marcar na agenda de outro user, regra do GHL).
  *
  * Flags cobertas (todas vão em POST/PUT /calendars/events/appointments):
  *  - ignoreFreeSlotValidation: fura slot bloqueado/conflict
@@ -96,7 +97,7 @@ export function buildOverridePayload(
     args.ignore_free_slot_validation === true || args.ignore_date_range === true;
   const wantsNoNotify = args.to_notify === false;
 
-  if (wantsNoNotify && !ctx.rep.is_internal) {
+  if (wantsNoNotify && !repIsAdmin(ctx)) {
     return {
       ok: false,
       error: {
@@ -108,7 +109,7 @@ export function buildOverridePayload(
       },
     };
   }
-  if (wantsSlotOverride && !ctx.rep.is_internal) {
+  if (wantsSlotOverride && !repIsAdmin(ctx)) {
     const repUserId = getRepGhlUserId(ctx);
     const raw = args.assigned_user_id ? String(args.assigned_user_id).trim() : "";
     const isSelfWord = /^(self|me|eu)$/i.test(raw);
@@ -1281,7 +1282,7 @@ export function checkBlockSlotPermission(
   ctx: ToolContext,
   targetUser: string,
 ): ToolResult | null {
-  if (targetUser !== getRepGhlUserId(ctx) && ctx.rep.is_internal !== true) {
+  if (targetUser !== getRepGhlUserId(ctx) && !repIsAdmin(ctx)) {
     return {
       status: "error",
       message:
