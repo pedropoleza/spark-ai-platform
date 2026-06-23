@@ -562,6 +562,20 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       },
     });
   }
+  // Anti-timeout silencioso (incidente Manuela 2026-06-22): o turno bateu no
+  // orçamento de wall-clock e devolveu fallback gracioso em vez de a lambda
+  // morrer calada (rep no silêncio). Signal medium pra VER quem está batendo —
+  // turno pesado demais (ex: criar 14 appointments de uma vez). O texto JÁ sai
+  // pro rep (result.text é não-vazio), isto é só observabilidade.
+  if (result.stopped_reason === "time_budget" && !input.testSessionId) {
+    reportError({
+      title: "SparkBot: turno parou por orçamento de tempo (anti-timeout)",
+      feature: "sparkbot-turn",
+      severity: "medium",
+      description: `Turno excedeu ~45s e devolveu fallback gracioso (${result.tool_calls.length} tools no turno). Provável tarefa pesada num único turno.`,
+      metadata: { rep_id: rep.id, location_id: activeLocationId, tools_in_turn: result.tool_calls.length },
+    });
+  }
   if (llmFailed && input.testSessionId) {
     const supabase2 = createAdminClient();
     const { data: lastAgentMsgs } = await supabase2

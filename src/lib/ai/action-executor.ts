@@ -222,6 +222,7 @@ async function executeAction(
               startTime: action.start_time,
               title: action.title || existingApptForBook.title,
             });
+            await tagBookedByAi(client, ctx.contactId); // tag interna (ver nota abaixo)
             break;
           } catch {
             try {
@@ -238,9 +239,12 @@ async function executeAction(
             locationId: ctx.locationId,
             contactId: ctx.contactId,
             startTime: action.start_time,
-            title: action.title || "Reuniao agendada via AI",
+            title: action.title || "Reunião agendada",
             meetingLocationType: "phone",
           });
+          // Tag interna "agendado pela ia" (Pedro 2026-06-22): rastreia no CRM que
+          // a IA agendou, SEM poluir o título/convite da reunião. Non-blocking.
+          await tagBookedByAi(client, ctx.contactId);
         } catch (bookingError) {
           // Re-classify slot/availability errors with an actionable message
           if (bookingError instanceof Error &&
@@ -286,7 +290,7 @@ async function executeAction(
             locationId: ctx.locationId,
             contactId: ctx.contactId,
             startTime: action.start_time,
-            title: targetTitle || "Reuniao reagendada via AI",
+            title: targetTitle || "Reunião reagendada",
             meetingLocationType: "phone",
           });
         } else {
@@ -329,6 +333,23 @@ async function executeAction(
 
     case "send_message":
       break;
+  }
+}
+
+/**
+ * Marca no CRM que o agendamento foi feito pela IA — tag INTERNA, não aparece no
+ * título/convite da reunião (Pedro 2026-06-22: tirou "via AI" do invite e pediu
+ * o rastro via tag na automação). Non-blocking: o booking já aconteceu; se a tag
+ * falhar, só loga (não derruba o fluxo).
+ */
+async function tagBookedByAi(client: GHLClient, contactId: string): Promise<void> {
+  try {
+    await addTagsToContact(client, contactId, ["agendado pela ia"]);
+  } catch (e) {
+    console.warn(
+      "[BookAppointment] falha ao adicionar tag 'agendado pela ia' (non-blocking):",
+      e instanceof Error ? e.message : e,
+    );
   }
 }
 

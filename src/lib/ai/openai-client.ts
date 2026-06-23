@@ -76,6 +76,37 @@ function supportsStructuredOutputs(model: string): boolean {
   return model.startsWith("gpt-4o") || model.startsWith("gpt-4.1") || model.startsWith("gpt-5");
 }
 
+/**
+ * Schema da TOOL pro structured output do Claude (Fix definitivo do parse-fail
+ * 2026-06-22). Clona o schema de resposta e RELAXA só o `message` pra aceitar
+ * string OU array de bolhas — o Claude manda multi-bubble e a gente preserva
+ * isso (o schema base tem message:string, certo pro OpenAI; aqui não). O resto do
+ * schema (anyOf das actions, union type:[string,null] do collected_data,
+ * additionalProperties:false) é JSON Schema padrão e o tool-use do Claude aceita.
+ * Não muta o original (clona via JSON).
+ *
+ * ⚠️ NÃO setar `strict:true` nesta tool. A chamada passa SÓ `responseSchema.schema`
+ * (o `strict:true` de buildResponseJsonSchema fica de fora de propósito), então a
+ * tool roda NON-STRICT = o input_schema é GUIA best-effort, não grammar rígido. É
+ * justamente isso que faz o `anyOf` das actions + `type:["string","null"]` do
+ * collected_data serem aceitos sem 400. Se alguém mover `strict:true` pra dentro,
+ * o grammar-constrained sampling recusa `anyOf` em array items → 400 → o fail-open
+ * salva (cai no texto+repair), mas o tier estruturado degrada em SILÊNCIO pra
+ * sempre. O sinal de reportError no fallback (processWithClaude) pega esse regime.
+ */
+function buildClaudeToolSchema(schema: unknown): Record<string, unknown> {
+  const clone = JSON.parse(JSON.stringify(schema)) as Record<string, unknown>;
+  const props = clone.properties as Record<string, { description?: string }> | undefined;
+  if (props && props.message) {
+    props.message = {
+      anyOf: [{ type: "string" }, { type: "array", items: { type: "string" }, minItems: 1 }],
+      description: props.message.description || "Resposta ao lead (1 ou mais bolhas). Nunca vazio.",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+  }
+  return clone;
+}
+
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
@@ -359,19 +390,87 @@ async function processWithClaude(
   // + futuro structured outputs (output_config.format, GA no Sonnet 4.6) — este
   // último precisa validar a compat do schema (union type:["string","null"]).
 
-  const response = await client.messages.create({
-    model: input.model,
-    max_tokens: 2500,
-    system: [
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      { type: "text", text: input.systemPrompt, cache_control: { type: "ephemeral" } } as any,
-    ],
-    messages,
-    temperature: 0.8,
-  });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const systemBlocks: any[] = [
+    { type: "text", text: input.systemPrompt, cache_control: { type: "ephemeral" } },
+  ];
 
-  const textBlock = response.content.find((b) => b.type === "text");
-  const responseText = textBlock && "text" in textBlock ? textBlock.text : "";
+  // === STRUCTURED OUTPUT VIA TOOL-USE (Fix definitivo do parse-fail 2026-06-22) ===
+  // Força o Claude a devolver o JSON como INPUT de uma tool → o SDK entrega já
+  // PARSEADO (zero parse de texto = zero "Desculpa, tive um problema técnico").
+  // Vale pra TODOS os agentes lead-facing no Claude (Marina/Bianca/Jussara/etc).
+  // FAIL-OPEN TOTAL: se a tool for rejeitada (400/schema) ou não vier o bloco
+  // tool_use, cai no path de texto + repair (o comportamento de hoje) — nunca
+  // fica pior que antes. Flag CLAUDE_STRUCTURED_OUTPUT=0 desliga sem deploy.
+  const useClaudeTool = process.env.CLAUDE_STRUCTURED_OUTPUT !== "0" && !!input.responseSchema;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let response: any = null;
+  let toolJson: string | null = null;
+  if (useClaudeTool) {
+    try {
+      const r = await client.messages.create({
+        model: input.model,
+        max_tokens: 2500,
+        system: systemBlocks,
+        messages,
+        temperature: 0.8,
+        tools: [
+          {
+            name: "agent_response",
+            description: "Devolve a SUA resposta estruturada ao lead neste turno.",
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            input_schema: buildClaudeToolSchema(input.responseSchema!.schema) as any,
+          },
+        ],
+        tool_choice: { type: "tool", name: "agent_response" },
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tu = r.content.find((b: any) => b.type === "tool_use");
+      if (tu && "input" in tu) {
+        toolJson = JSON.stringify(tu.input); // já é objeto válido → stringify nunca falha
+        response = r;
+      } else {
+        response = null; // sem tool_use (inesperado com forced) → fallback texto
+      }
+    } catch (e) {
+      console.warn(
+        `[Claude structured] tool-use falhou (${input.model}), fallback p/ texto+repair:`,
+        e instanceof Error ? e.message : e,
+      );
+      response = null;
+    }
+  }
+
+  // Path de texto (comportamento atual + repair em parseAIResponse) — fail-open.
+  if (!response) {
+    // Observabilidade (review adversarial 2026-06-22): se o tool-use foi FORÇADO
+    // (useClaudeTool) mas caiu aqui, houve falha/ausência do tool_use. Pontual =
+    // ok (fail-open absorve). SISTEMÁTICO (schema rejeitado por mudança de API/SDK
+    // ou data_field com char proibido) = 2 chamadas Claude por tier = CUSTO
+    // DOBRADO em silêncio. reportError dedupa por título → vira 1 sinal com
+    // occurrence_count crescente; severity medium só empurra push em volume, e o
+    // Pedro pode bater o kill-switch CLAUDE_STRUCTURED_OUTPUT=0 antes da fatura.
+    if (useClaudeTool) {
+      reportError({
+        title: "Claude structured output: tool-use caindo no fallback de texto",
+        feature: "openai-client",
+        severity: "medium",
+        metadata: { model: input.model },
+      });
+    }
+    response = await client.messages.create({
+      model: input.model,
+      max_tokens: 2500,
+      system: systemBlocks,
+      messages,
+      temperature: 0.8,
+    });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const textBlock = response.content.find((b: any) => b.type === "text");
+  // toolJson (já parseado) tem precedência; senão usa o texto cru (que vai pro repair).
+  const responseText = toolJson ?? (textBlock && "text" in textBlock ? textBlock.text : "");
   if (!responseText) return { success: false, response: null, error: "Resposta vazia do Claude" };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -392,7 +491,7 @@ async function processWithClaude(
     cachedTokens,
     cacheCreationTokens,
     startTime,
-    false,
+    Boolean(toolJson), // structured via tool-use? (só pra log/telemetria)
     input.priorTurnCount,
   );
 }
@@ -482,6 +581,34 @@ function escapeControlCharsInStrings(s: string): string {
   return out;
 }
 
+/** Remove vírgula sobrando antes de } ou ] (erro comum de LLM). Só-tolerância. */
+function stripTrailingCommas(s: string): string {
+  return s.replace(/,(\s*[}\]])/g, "$1");
+}
+
+/**
+ * Fecha chaves/colchetes faltando quando o modelo TRUNCA o JSON (output cortado).
+ * Conta { [ fora de string e apenda os fechamentos que faltam — só APENDA, nunca
+ * remove, então não corrompe um JSON já balanceado.
+ */
+function balanceBraces(s: string): string {
+  let curly = 0, square = 0, inStr = false, esc = false;
+  for (const ch of s) {
+    if (esc) { esc = false; continue; }
+    if (ch === "\\") { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === "{") curly++;
+    else if (ch === "}") curly--;
+    else if (ch === "[") square++;
+    else if (ch === "]") square--;
+  }
+  let out = s;
+  while (square-- > 0) out += "]";
+  while (curly-- > 0) out += "}";
+  return out;
+}
+
 function parseAIResponse(text: string): AIResponse | null {
   try {
     let cleaned = text.trim();
@@ -503,10 +630,20 @@ function parseAIResponse(text: string): AIResponse | null {
     try {
       parsed = JSON.parse(cleaned);
     } catch {
-      // Repair (Fix 2026-06-17): o Claude às vezes deixa quebra de linha/tab
-      // CRUA dentro de uma string (JSON inválido). Escapa só os caracteres de
-      // controle DENTRO de strings e tenta de novo, antes de cair no fallback.
-      parsed = JSON.parse(escapeControlCharsInStrings(cleaned));
+      // Repair em CASCATA (Fix parse-fail observado em prod 2026-06-22, caso
+      // Jussara: o bot caía em "Desculpa, tive um problema técnico" ao coletar o
+      // nome). O Claude (sem structured outputs) às vezes deixa control-char cru,
+      // vírgula sobrando OU trunca o JSON. Tenta reparos progressivos — todos só
+      // tornam o parse MAIS tolerante, nunca alteram um JSON já válido — antes de
+      // cair no fallback genérico. (Fix anterior 2026-06-17 só cobria control-char.)
+      const base = escapeControlCharsInStrings(cleaned);
+      const attempts = [base, stripTrailingCommas(base), balanceBraces(stripTrailingCommas(base))];
+      let repaired: unknown;
+      for (const a of attempts) {
+        try { repaired = JSON.parse(a); break; } catch { /* tenta o próximo reparo */ }
+      }
+      if (repaired === undefined) throw new Error("json unrepairable após cascata de repair");
+      parsed = repaired;
     }
 
     let message: string | string[] = "";

@@ -15,6 +15,15 @@ const FALLBACK_MODEL = "gpt-4.1";
 // (rep manda 1 msg com N ações, bot executa em chain no mesmo turn).
 const MAX_ITERATIONS = 10;
 
+// Anti-timeout silencioso (incidente Manuela 2026-06-22): o endpoint tem
+// maxDuration=60s. Um turno com MUITAS tool calls lentas (ex: criar 14
+// appointments com validação de slot no GHL) estoura os 60s DENTRO de uma
+// iteração → a Vercel mata a lambda → NENHUM catch roda → rep fica no silêncio
+// total (sem resposta, sem signal). Orçamento de wall-clock: ao se aproximar do
+// limite, PARAMOS e devolvemos um fallback gracioso (stopped_reason time_budget)
+// — deixando ~15s de folga pro coherence/billing/envio depois do loop.
+const TURN_BUDGET_MS = 45_000;
+
 // H1 (review 2026-04-28): no stress test, 6 de 7 falhas conversacionais
 // (hallucinations, compliance flexível) ocorreram em GPT-4.1 fallback —
 // nenhuma em Claude. Pra Sparkbot, queries de compliance/UW/produto NLG
@@ -138,7 +147,7 @@ export interface RunWithToolsOutput {
    */
   cache_creation_tokens?: number;
   iterations: number;
-  stopped_reason: "end_turn" | "max_iterations" | "error";
+  stopped_reason: "end_turn" | "max_iterations" | "error" | "time_budget";
   /** Erro do modelo primário, se houve fallback. Ajuda debug Claude vs OpenAI. */
   primary_error?: string;
   /** Erro do secundário Claude, se também falhou e caiu pra OpenAI. */
@@ -363,7 +372,22 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
   let totalCachedTokens = 0;
   let totalCacheCreationTokens = 0;
 
+  // Orçamento de tempo (anti-timeout silencioso) — ver TURN_BUDGET_MS.
+  const budgetStart = Date.now();
+  const budgetReturn = (iters: number): RunWithToolsOutput => ({
+    text: "Tô levando tempo demais pra fazer tudo isso de uma vez e precisei parar pra não travar. Me confirma o que ainda falta que eu sigo daí 👍",
+    tool_calls,
+    model_used: input.model,
+    prompt_tokens: totalPromptTokens,
+    completion_tokens: totalCompletionTokens,
+    cached_tokens: totalCachedTokens,
+    cache_creation_tokens: totalCacheCreationTokens,
+    iterations: iters,
+    stopped_reason: "time_budget",
+  });
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    if (Date.now() - budgetStart > TURN_BUDGET_MS) return budgetReturn(i);
     let response;
     try {
       // Fix Track 12 M1 (review 2026-05-05): aplica cache_control no ÚLTIMO
@@ -479,6 +503,9 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
 
     const toolResults: AnthropicToolResultBlock[] = [];
     for (const tu of toolUses) {
+      // Anti-timeout: se o lote de tools (ex: 14 appointments) já estourou o
+      // orçamento, para AQUI com fallback gracioso em vez de a lambda morrer.
+      if (Date.now() - budgetStart > TURN_BUDGET_MS) return budgetReturn(i);
       try {
         const result = await input.executor(tu.name, tu.input);
         tool_calls.push({ name: tu.name, input: tu.input, result });
@@ -567,7 +594,21 @@ async function runWithOpenAI(input: RunWithToolsInput & { model: string }): Prom
   let totalCompletionTokens = 0;
   let totalCachedTokens = 0;
 
+  // Orçamento de tempo (anti-timeout silencioso) — ver TURN_BUDGET_MS.
+  const budgetStart = Date.now();
+  const budgetReturn = (iters: number): RunWithToolsOutput => ({
+    text: "Tô levando tempo demais pra fazer tudo isso de uma vez e precisei parar pra não travar. Me confirma o que ainda falta que eu sigo daí 👍",
+    tool_calls,
+    model_used: input.model,
+    prompt_tokens: totalPromptTokens,
+    completion_tokens: totalCompletionTokens,
+    cached_tokens: totalCachedTokens,
+    iterations: iters,
+    stopped_reason: "time_budget",
+  });
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    if (Date.now() - budgetStart > TURN_BUDGET_MS) return budgetReturn(i);
     const completion = await client.chat.completions.create({
       model: input.model,
       messages,
@@ -611,6 +652,7 @@ async function runWithOpenAI(input: RunWithToolsInput & { model: string }): Prom
     // Executa tool calls
     for (const tc of msg.tool_calls) {
       if (tc.type !== "function") continue;
+      if (Date.now() - budgetStart > TURN_BUDGET_MS) return budgetReturn(i);
       const args: Record<string, unknown> = (() => {
         try { return JSON.parse(tc.function.arguments); } catch { return {}; }
       })();
