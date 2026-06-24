@@ -132,14 +132,18 @@ export function buildOnboardingMessage(humanLocation: string | null): string {
  * `terms_accept`/`terms_reject`. No WhatsApp vira botão; em canal sem interativo
  * (ou flag off) o caller usa o texto-fallback (termos + opções numeradas).
  */
-export function buildTermsInteractive(): {
+// Humanização (estudo 2026-06-24, fix 1.9): quando o rep já mandou um PEDIDO
+// real (não só "oi"), o gate passa um `ackPrefix` reconhecendo a intenção pra o
+// paredão de termos não soar como se estivesse ignorando ele (caso Matheus:
+// tentou marcar Zoom 4× e levou o bloco de termos 4× sem reconhecimento).
+export function buildTermsInteractive(ackPrefix?: string): {
   kind: "buttons";
   body: string;
   options: { id: string; label: string }[];
 } {
   return {
     kind: "buttons",
-    body: TERMS_OF_USE_TEXT,
+    body: ackPrefix ? `${ackPrefix}\n\n${TERMS_OF_USE_TEXT}` : TERMS_OF_USE_TEXT,
     options: [
       { id: "terms_accept", label: "Aceito ✅" },
       { id: "terms_reject", label: "Não aceito ❌" },

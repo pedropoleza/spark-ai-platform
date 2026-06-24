@@ -1071,6 +1071,14 @@ function buildMemorySection(profile: RepProfile): string {
     }
     hasContent = true;
   }
+  // Humanização (fix 1.6): este rep força slot bloqueado toda vez (calendário
+  // cheio de blocks de propósito). Não transforme o bloqueio num ritual.
+  if (sched?.auto_force_slot) {
+    lines.push(
+      `- Agendamento: este rep marca em cima de horários "bloqueados" na PRÓPRIA agenda o tempo todo (calendário lotado de propósito). NÃO pergunte "confirmar mesmo assim?" pra slot bloqueado na agenda DELE — marque direto (com ignore_free_slot_validation) e avise passivo no fim ("Marcado terça 18h ✅ — tava em cima de outro compromisso teu"). Só pare e pergunte se for agenda de OUTRA pessoa.`,
+    );
+    hasContent = true;
+  }
   if (profile.habits?.active_hours?.length) {
     lines.push(`- Horários ativos: ${profile.habits.active_hours.join(", ")}.`);
     hasContent = true;
