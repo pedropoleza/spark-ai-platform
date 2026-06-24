@@ -49,6 +49,16 @@ export interface RepProfile {
       default_calendar_id?: string;
       default_calendar_name?: string;
       default_duration_min?: number;
+      /**
+       * Humanização (estudo 2026-06-24, fix 1.6): reps cujo calendário vive
+       * "bloqueado" (blocks/demos de propósito) forçam slot TODA vez — o
+       * "confirmar mesmo assim?" vira ritual sem sentido (atrito #1 do
+       * agendamento). `force_slot_count` conta forças confirmadas na própria
+       * agenda; ao bater o threshold, `auto_force_slot` liga e o bot passa a
+       * agendar direto + avisar passivo, sem o passo extra. Reversível.
+       */
+      force_slot_count?: number;
+      auto_force_slot?: boolean;
     };
   };
   habits?: {

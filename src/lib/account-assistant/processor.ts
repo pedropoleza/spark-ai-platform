@@ -180,7 +180,17 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     // nunca é silenciado por engano. No WhatsApp vira botão; em canal sem
     // interativo o text-fallback traz termos + opções numeradas. Aceite por tap
     // OU "aceito" digitado.
-    const termsInteractive = buildTermsInteractive();
+    // Humanização (estudo 2026-06-24, fix 1.9): se o rep mandou um PEDIDO real
+    // (não só "oi"/"tudo bem"), reconhece a intenção antes do paredão de termos
+    // pra não soar que ignorou ele (caso Matheus: tentou marcar Zoom 4× e levou
+    // o bloco 4× sem reconhecimento, desistiu).
+    const normReq = userText.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+    const GREETINGS = ["oi", "ola", "opa", "eai", "e ai", "bom dia", "boa tarde", "boa noite", "tudo bem", "tudo bom", "teste", "test", "hi", "hello", "ok", "blz", "beleza"];
+    const looksLikeRequest = normReq.length > 6 && !GREETINGS.includes(normReq);
+    const ackPrefix = looksLikeRequest
+      ? "Opa, já vi que você quer começar a usar! 🙌 Eu já te ajudo com isso — só preciso que aceite os termos rapidinho aqui embaixo 👇"
+      : undefined;
+    const termsInteractive = buildTermsInteractive(ackPrefix);
     return {
       text: interactiveFallbackText(termsInteractive),
       interactive: termsInteractive,

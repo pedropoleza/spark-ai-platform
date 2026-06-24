@@ -53,6 +53,15 @@ export interface TurnContextState {
     timestamp: string;
   };
   /**
+   * Detector de RAJADA (humanização 2026-06-24, fix 1.5): conta writes
+   * consecutivos da MESMA tool (ex: Gustavo colando 4-5 create_note seguidas,
+   * Cintia ~7 cobranças iguais). Quando o count >=3, o prompt orienta a
+   * confirmar curto e NÃO oferecer next-step a cada item (o "quer follow-up?"
+   * em rajada é o tique mais robótico). Backstop determinístico da regra de
+   * prompt (1.3) — não depende do LLM perceber a rajada sozinho.
+   */
+  consecutive_writes?: { tool: string; count: number };
+  /**
    * Loop detection (4.1 Pedro 2026-05-16): conta quantas vezes bot fez
    * mesma pergunta semântica na sessão. Quando >=2, prompt orienta
    * "PARE de re-perguntar, assume escolha anterior". Caso Gustavo
@@ -182,6 +191,12 @@ export function registerWrite(
     ...write,
     timestamp: new Date().toISOString(),
   };
+  // Rajada (fix 1.5): mesma tool de novo → incrementa; tool diferente → reseta.
+  if (state.consecutive_writes && state.consecutive_writes.tool === write.tool) {
+    state.consecutive_writes.count += 1;
+  } else {
+    state.consecutive_writes = { tool: write.tool, count: 1 };
+  }
 }
 
 /**
@@ -391,6 +406,16 @@ export function renderTurnContextForPrompt(state: TurnContextState): string {
     lines.push(
       `**Última write:** ${state.last_write.tool} → ${state.last_write.entity_type} ${state.last_write.entity_id.slice(0, 8)}...` +
         (state.last_write.label ? ` (${state.last_write.label})` : ""),
+    );
+  }
+
+  // Rajada (fix 1.5): backstop determinístico contra o tique de oferecer
+  // next-step a cada item quando o rep está numa rajada (Gustavo 4-5 notas,
+  // Cintia ~7 cobranças). Surfaceia o sinal pro LLM confirmar curto e parar.
+  if (state.consecutive_writes && state.consecutive_writes.count >= 3) {
+    lines.push("");
+    lines.push(
+      `⚡ **MODO RAJADA:** o rep já fez ${state.consecutive_writes.count}× \`${state.consecutive_writes.tool}\` seguidas — ele está num despejo em série. Confirme cada uma CURTO (ex: "Salvo." / "Feito.") e NÃO ofereça next-step ("quer follow-up?", "mais alguma coisa?") a cada item — isso vira tique robótico. Só ofereça algo no fim, se ele parar.`,
     );
   }
 

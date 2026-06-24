@@ -32,9 +32,16 @@ function getSchedulingPref(ctx: ToolContext): {
   default_calendar_id?: string;
   default_calendar_name?: string;
   default_duration_min?: number;
+  force_slot_count?: number;
+  auto_force_slot?: boolean;
 } {
   return ctx.rep.profile?.preferences?.scheduling || {};
 }
+
+// Humanização (estudo 2026-06-24, fix 1.6): nº de forças confirmadas na própria
+// agenda antes de o bot parar de perguntar "confirmar mesmo assim?" e passar a
+// agendar direto (avisando passivo).
+const FORCE_SLOT_LEARN_THRESHOLD = 5;
 
 /**
  * Resolve qual calendário usar pra agendar SEM perguntar (parte code-side da
@@ -1251,6 +1258,41 @@ const createAppointment: ToolEntry = {
           learnedDefaultCalendar = { id: calendarId, name: calName };
         } catch (e) {
           console.warn("[create_appointment] auto-learn calendário falhou:", e instanceof Error ? e.message : e);
+        }
+      }
+
+      // Humanização (estudo 2026-06-24, fix 1.6): aprende que ESTE rep força slot
+      // bloqueado na PRÓPRIA agenda toda vez (calendário cheio de blocks de
+      // propósito — atrito #1 do agendamento, caso Pedro/Daniely). Conta forças
+      // confirmadas; ao bater o threshold, liga auto_force_slot pra o bot parar
+      // de perguntar "confirmar mesmo assim?" e agendar direto, avisando passivo.
+      // Só conta force de slot na PRÓPRIA agenda (assignee final = o rep) — não
+      // conta admin forçando em calendário alheio.
+      const forcedOwnAgenda =
+        args.ignore_free_slot_validation === true &&
+        (!assignedUserId || assignedUserId === knownRepUserId);
+      if (forcedOwnAgenda && apptId && !ctx.rep.profile?.preferences?.scheduling?.auto_force_slot) {
+        try {
+          const cp = (ctx.rep.profile || {}) as Record<string, unknown>;
+          const cpp = (cp.preferences || {}) as Record<string, unknown>;
+          const cps = (cpp.scheduling || {}) as Record<string, unknown>;
+          const nextCount = (Number(cps.force_slot_count) || 0) + 1;
+          const reached = nextCount >= FORCE_SLOT_LEARN_THRESHOLD;
+          const newProfile = {
+            ...cp,
+            preferences: {
+              ...cpp,
+              scheduling: { ...cps, force_slot_count: nextCount, ...(reached ? { auto_force_slot: true } : {}) },
+            },
+          };
+          await updateRepById(ctx.rep.id, {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            profile: newProfile as any,
+            updated_at: new Date().toISOString(),
+          });
+          ctx.rep.profile = newProfile as typeof ctx.rep.profile;
+        } catch (e) {
+          console.warn("[create_appointment] auto-learn force-slot falhou:", e instanceof Error ? e.message : e);
         }
       }
 
