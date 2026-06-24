@@ -49,6 +49,11 @@ export interface RunSparkbotTurnInput {
       };
   model?: string;
   fallbackModel?: string | null;
+  /**
+   * F4 (cost-reduction 2026-06): TTL do cache do prefixo estável. "1h" só pro inbound
+   * (gap 5-60min lucra); proativo omite → "5m" default. Repassado pro runWithTools.
+   */
+  cacheTtl?: "5m" | "1h";
 }
 
 /**
@@ -111,7 +116,7 @@ function stableArgs(args: unknown): string {
 export async function runSparkbotTurn(
   input: RunSparkbotTurnInput,
 ): Promise<RunWithToolsOutput> {
-  const { systemPrompt, messages, toolCtx, toolSelection, model, fallbackModel } = input;
+  const { systemPrompt, messages, toolCtx, toolSelection, model, fallbackModel, cacheTtl } = input;
 
   const tools =
     toolSelection.kind === "all"
@@ -154,5 +159,6 @@ export async function runSparkbotTurn(
     executor: dedupExecutor,
     model,
     fallbackModel,
+    cacheTtl,
   });
 }
