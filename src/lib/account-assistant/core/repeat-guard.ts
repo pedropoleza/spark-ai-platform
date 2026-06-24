@@ -59,9 +59,12 @@ export function isNearDuplicate(a: string, b: string): boolean {
  * PRÓPRIO bot no histórico? Retorna a msg ecoada (pra logar) ou null.
  *
  * Olha só mensagens do assistant com content string (texto que o rep viu).
- * lookback=2 cobre o padrão A-B-A (volta pra mesma msg depois de uma diferente).
+ * lookback=5 (estudo 2026-06-24, fix 2.2): lookback=2 só pegava o A-B-A imediato;
+ * o caso Leidi/Daniely teve o MESMO "Confirma?" re-perguntado 4× espalhado por
+ * vários turnos e horas — os ecos caíam fora da janela de 2. Janela maior pega
+ * o loop disperso sem matar acks curtos (protegidos por MIN_REPEAT_LEN).
  */
-export function findBotEcho(currentText: string, history: LLMMessage[], lookback = 2): string | null {
+export function findBotEcho(currentText: string, history: LLMMessage[], lookback = 5): string | null {
   if (!currentText || normalizeForRepeat(currentText).length < MIN_REPEAT_LEN) return null;
   const assistantTexts = history
     .filter((m) => m.role === "assistant" && typeof m.content === "string")

@@ -93,8 +93,14 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
   },
   {
     family: "message",
-    regex: /\b(mensagem|msg|whatsapp|sms|email|mensagens|msgs)\s+(enviad[ao]|mandad[ao]|dispar[aá]d[ao]|agendad[ao]|cancelad[ao])s?\b|\b(mandei|enviei|disparei|despachei)\s+(a\s+|o\s+)?(mensagem|msg|whatsapp|sms|email|texto)\b/i,
-    satisfying_tools: ["send_message_to_contact", "schedule_message_to_contact", "schedule_bulk_message", "cancel_scheduled_message", "pause_bulk_message", "resume_bulk_message", "cancel_bulk_message"],
+    // regex pega também "N mensagens agendadas" — frase exata da falsa
+    // confirmação da Jussara (estudo 2026-06-24, fix 2.1). commit_draft /
+    // apply_flow_to_contacts / send_media_to_contact (orquestrador H41) agora
+    // contam como tools satisfatórias — antes a frase casava a regex mas o gate
+    // não conhecia a tool do fluxo, e o "8 mensagens agendadas ✅" escapava da
+    // rede anti-alucinação.
+    regex: /\b(mensagem|msg|whatsapp|sms|email|mensagens|msgs|fluxo|sequ[eê]ncia)\s+(enviad[ao]|mandad[ao]|dispar[aá]d[ao]|agendad[ao]|cancelad[ao]|criad[ao])s?\b|\b(mandei|enviei|disparei|despachei|agendei)\s+(a\s+|o\s+|as\s+|os\s+)?(mensagem|msg|whatsapp|sms|email|texto|mensagens|fluxo|sequ[eê]ncia)\b/i,
+    satisfying_tools: ["send_message_to_contact", "schedule_message_to_contact", "schedule_bulk_message", "cancel_scheduled_message", "pause_bulk_message", "resume_bulk_message", "cancel_bulk_message", "commit_draft", "apply_flow_to_contacts", "send_media_to_contact"],
   },
   {
     family: "contact",

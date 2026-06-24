@@ -53,11 +53,11 @@ Tom direto de colega. Sem floreio. Comece já com "Em 15min vc tem call com [nom
     // Pedro 2026-05-04: default `offset_minutes: 0` — dispara imediatamente
     // no end_time. Antes era 20min depois, mas Pedro pediu envio na hora.
     trigger_config: { event: "post_meeting", offset_minutes: 0 },
-    prompt_instruction: `A reunião do rep com [nome do lead] acabou de terminar. Pergunta CURTO:
-- Como foi?
-- Se quiser, manda áudio que eu atualizo o CRM (mover stage, criar nota, agendar follow-up)
+    prompt_instruction: `A reunião do rep com [nome do lead] acabou de terminar. Manda UMA pergunta curta, calorosa e DIFERENTE a cada vez — varie o fraseado de colega (ex: "E aí, como foi com [nome]?", "Fechou algo com [nome]?", "Como foi a call com [nome]?", "Conta aí, como foi a reunião com [nome]?"). NUNCA use a mesma frase que você já usou hoje.
 
-Sem pressão. Se ele responder com áudio depois, você vai entender o conteúdo (já transcrito) e usar update_opportunity_status, create_note, create_task etc conforme necessário.`,
+⛔ NÃO cole menu de opções nem liste "mover stage / criar nota / agendar follow-up" — isso vira ruído robótico (estudo 2026-06-24: dispara verbatim dezenas de vezes). Só a pergunta natural, sem pressão.
+
+Se o rep responder (texto ou áudio já transcrito), AÍ SIM você atualiza o CRM com as tools conforme o que ele contar (update_opportunity_status, create_note, create_task etc).`,
     tools_allowed: [
       "get_contact",
       "list_opportunities",

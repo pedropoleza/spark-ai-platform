@@ -22,13 +22,18 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+// Humanização (estudo 2026-06-24, fix 1.1): o tom anterior ("⚠️ Último aviso:
+// vou pausar") foi o pior ofensor de naturalidade em 7/7 segmentos — soava
+// ameaça colada na saudação. Reescrito pra registro de colega; mantém a
+// INTENÇÃO (avisar de leve antes de dar um tempo nos automáticos) sem o tom
+// burocrático/ameaçador.
 const WARN_SOFT_PREFIX =
-  "⚠️ Tô percebendo que você não tá respondendo as mensagens recentes. " +
-  "É importante interagir aqui pra evitar bloqueio do WhatsApp.\n\n";
+  "Opa, tô te vendo meio sumido por aqui hoje 👀 quando puder me dá um oi — " +
+  "só pra eu saber que tá tudo certo.\n\n";
 
 const WARN_HARD_PREFIX =
-  "⚠️ Último aviso: se você não responder esta mensagem, vou pausar " +
-  "os automáticos até você falar comigo de novo.\n\n";
+  "Se não rolar resposta hoje eu dou um tempo nos lembretes automáticos pra " +
+  "não te encher 🙏 quando quiser retomar, é só me chamar.\n\n";
 
 export type SilenceDecision =
   | { canSend: true; warningPrefix: string | null; nextCounter: number; markWarned: boolean }
