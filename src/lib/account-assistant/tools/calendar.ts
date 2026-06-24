@@ -1701,6 +1701,196 @@ const setSchedulingPref: ToolEntry = {
   },
 };
 
+/**
+ * Criação em LOTE de appointments (fix caso Manuela 2026-06-23). O bot travava
+ * ao criar 14 reuniões de uma vez porque CADA create_appointment era um
+ * round-trip separado do LLM (14× inferência + tool) → estourava os 60s da
+ * lambda → silêncio total. Aqui: UMA tool call cria N reuniões num loop
+ * server-side (1 round-trip do LLM, ~N chamadas GHL sequenciais), com orçamento
+ * de tempo (devolve PARCIAL + os que faltaram, em vez de morrer mudo). Reusa
+ * toda a resolução de assignee/override/dono-do-calendário do single
+ * (calculada UMA vez pro lote inteiro). risk:high → exige confirmação (H8).
+ */
+const MAX_BATCH_APPOINTMENTS = 30;
+const BATCH_TIME_BUDGET_MS = 40_000; // folga pros 60s da lambda
+
+const createAppointmentsBatch: ToolEntry = {
+  def: {
+    name: "create_appointments_batch",
+    description:
+      "⚠️ AGENDA VÁRIAS reuniões de uma vez no MESMO calendário. Use SEMPRE que o rep pedir 3+ reuniões num único pedido (ex: 'marca essas 14 reuniões: ...') — NÃO chame create_appointment N vezes em sequência, isso TRAVA (caso Manuela). " +
+      "Cada item: contact_id + start_time + end_time (ISO 8601 COM offset de fuso) + title opcional. Máx 30 por lote. " +
+      "Confirme com o rep ANTES, mostrando a lista com dia-da-semana + data + hora COM fuso explícito (regra da seção AGENDAR). Override admin (slot bloqueado / min-notice / sem notificação) aplica a TODOS os itens. " +
+      "Retorna quantas criou, quais falharam (com motivo), e — se faltar tempo — quais NÃO foram tentadas (aí você confirma e segue num 2º lote). NUNCA diga 'criei todas' sem olhar created_count vs total no resultado.",
+    risk: "high",
+    parameters: {
+      type: "object",
+      properties: {
+        calendar_id: { type: "string" },
+        appointments: {
+          type: "array",
+          description: "Lista de reuniões a criar (máx 30). Todas no mesmo calendar_id.",
+          items: {
+            type: "object",
+            properties: {
+              contact_id: { type: "string" },
+              start_time: { type: "string", description: "ISO 8601 com offset de fuso (ex: 2026-06-30T14:00:00-04:00)" },
+              end_time: { type: "string", description: "ISO 8601 com offset de fuso" },
+              title: { type: "string" },
+            },
+            required: ["contact_id", "start_time", "end_time"],
+          },
+        },
+        assigned_user_id: {
+          type: "string",
+          description: "OPCIONAL. Igual ao create_appointment — aplica a todos. Pra admin marcando no calendário de OUTRA pessoa, o sistema já resolve o dono automaticamente.",
+        },
+        ignore_free_slot_validation: { type: "boolean", description: "OPCIONAL (admin only). Força slot bloqueado em TODOS os itens." },
+        ignore_date_range: { type: "boolean", description: "OPCIONAL (admin only). Pula min-notice em TODOS." },
+        to_notify: { type: "boolean", description: "OPCIONAL (admin only, default true). false = NÃO notifica os clientes." },
+      },
+      required: ["calendar_id", "appointments"],
+    },
+  },
+  handler: async (ctx, args) => {
+    const calendarId = String(args.calendar_id || "");
+    const calInvalid = validateGhlId(calendarId, "calendar");
+    if (calInvalid) return calInvalid;
+
+    const rawItems = Array.isArray(args.appointments) ? args.appointments : [];
+    if (rawItems.length === 0) {
+      return { status: "error", message: "Nenhuma reunião na lista.", retryable: false };
+    }
+    if (rawItems.length > MAX_BATCH_APPOINTMENTS) {
+      return {
+        status: "error",
+        message: `Máximo ${MAX_BATCH_APPOINTMENTS} reuniões por lote (vieram ${rawItems.length}). Divida em lotes menores.`,
+        retryable: false,
+      };
+    }
+
+    // Gate de override UMA vez (mesma flag pra todos os itens).
+    const overrideResult = buildOverridePayload(ctx, args);
+    if (!overrideResult.ok) return overrideResult.error;
+
+    // Resolve assignee UMA vez pro lote.
+    const resolvedUser = resolveAssignedUserId(ctx, args.assigned_user_id);
+    if (!resolvedUser.ok) return resolvedUser.error;
+    let assignedUserId = resolvedUser.user_id;
+    const knownRepUserId = getRepGhlUserId(ctx);
+    const wantsSlotOverride =
+      args.ignore_free_slot_validation === true || args.ignore_date_range === true;
+    if (wantsSlotOverride && !assignedUserId && knownRepUserId) {
+      assignedUserId = knownRepUserId;
+    }
+
+    // Resolução admin→dono do calendário UMA vez (mesmo fix do single — caso
+    // Manuela: admin montando agenda de outra pessoa precisa atribuir ao dono).
+    const willAssignRep = !assignedUserId || assignedUserId === knownRepUserId;
+    if (repIsAdmin(ctx) && willAssignRep) {
+      try {
+        const calDet = await getCalendarDetails(ctx.ghlClient, calendarId);
+        const members = (calDet.calendar?.teamMembers || [])
+          .map((tm) => tm.userId)
+          .filter((id): id is string => !!id);
+        if (members.length > 0 && (!knownRepUserId || !members.includes(knownRepUserId))) {
+          assignedUserId = members[0];
+        }
+      } catch (e) {
+        console.warn(
+          "[create_appointments_batch] resolução de assignee pro dono falhou (segue):",
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }
+
+    const created: Array<{ contact_id: string; appointment_id: string }> = [];
+    const failed: Array<{ contact_id: string; error: string }> = [];
+    const notAttempted: string[] = [];
+    const startedAt = Date.now();
+
+    for (let i = 0; i < rawItems.length; i++) {
+      const it = (rawItems[i] || {}) as Record<string, unknown>;
+      const contactId = String(it.contact_id || "");
+      // Orçamento de tempo: se já passou do budget, marca o RESTO como
+      // não-tentado e devolve parcial (em vez de estourar a lambda mudo).
+      if (Date.now() - startedAt > BATCH_TIME_BUDGET_MS) {
+        notAttempted.push(contactId || `item_${i + 1}`);
+        continue;
+      }
+      const cInvalid = validateGhlId(contactId, "contact");
+      if (cInvalid) {
+        failed.push({ contact_id: contactId || `item_${i + 1}`, error: "contact_id inválido" });
+        continue;
+      }
+      const startStr = String(it.start_time || "");
+      const endStr = String(it.end_time || "");
+      if (validateIso8601(startStr, "start_time") || validateIso8601(endStr, "end_time")) {
+        failed.push({ contact_id: contactId, error: "start_time/end_time inválido (precisa ISO 8601 com fuso)" });
+        continue;
+      }
+      try {
+        const body: Record<string, unknown> = {
+          calendarId,
+          contactId,
+          locationId: ctx.locationId,
+          startTime: new Date(startStr).toISOString(),
+          endTime: new Date(endStr).toISOString(),
+          ...(it.title ? { title: String(it.title) } : {}),
+          ...(assignedUserId ? { assignedUserId } : {}),
+          ...overrideResult.body,
+        };
+        const res = await ghlCreateAppointment(ctx.ghlClient, body);
+        const apptId = res.id || res.appointment?.id;
+        if (apptId) created.push({ contact_id: contactId, appointment_id: apptId });
+        else failed.push({ contact_id: contactId, error: "Spark Leads não retornou appointment_id" });
+      } catch (e) {
+        failed.push({ contact_id: contactId, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    // Auditoria do override admin (igual ao single, fingerprint estável).
+    if (overrideResult.used.length > 0 && created.length > 0) {
+      recordSignalAsync({
+        type: "idea",
+        title: `Calendar override admin batch (${overrideResult.used.sort().join("+")})`,
+        description: `Admin usou override em create_appointments_batch: ${overrideResult.used.join(", ")} (${created.length} criadas)`,
+        severity: "low",
+        source: "bot_auto",
+        metadata: {
+          tool: "create_appointments_batch",
+          rep_id: ctx.rep.id,
+          rep_phone: ctx.rep.phone,
+          location_id: ctx.locationId,
+          calendar_id: calendarId,
+          created: created.length,
+          override_flags_used: overrideResult.used,
+        },
+      });
+    }
+
+    return {
+      status: "ok",
+      data: {
+        total: rawItems.length,
+        created_count: created.length,
+        failed_count: failed.length,
+        not_attempted_count: notAttempted.length,
+        created,
+        failed,
+        not_attempted: notAttempted,
+        assigned_to: assignedUserId || null,
+        summary:
+          `${created.length}/${rawItems.length} criadas` +
+          (failed.length ? `, ${failed.length} falharam` : "") +
+          (notAttempted.length
+            ? `, ${notAttempted.length} não tentadas (faltou tempo — confirme e me peça pra seguir o 2º lote)`
+            : ""),
+      },
+    };
+  },
+};
+
 export const CALENDAR_TOOLS: ToolEntry[] = [
   listAppointments,
   listCalendars,
@@ -1708,6 +1898,7 @@ export const CALENDAR_TOOLS: ToolEntry[] = [
   listMyFreeSlots,
   getAppointment,
   createAppointment,
+  createAppointmentsBatch,
   updateAppointment,
   deleteAppointment,
   blockCalendarSlot,
