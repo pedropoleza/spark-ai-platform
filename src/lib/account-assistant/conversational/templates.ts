@@ -29,7 +29,7 @@ Achei *N items*:
 
 Quer [ação1], [ação2] ou [ação3]?
 \`\`\`
-Use quando: bot retorna lista. Termine SEMPRE com 2-3 next-actions concretas em 1 linha.
+Use quando: bot retorna lista. Quando AGREGAR, termine com 1-2 next-actions concretas em 1 linha — mas se o rep claramente já sabe o que quer, NÃO force a pergunta (fix humanização 2026-06-24).
 
 ## 2️⃣ ACTION_PROPOSAL (medium risk — propor ação inferida)
 \`\`\`
@@ -41,7 +41,7 @@ Use quando: bot inferiu o que rep quer. 1 linha. Após "sim/ok", EXECUTA + respo
 \`\`\`
 *<Ação>* feita. Quer *<sugestão>* também?
 \`\`\`
-Use quando: tool retornou status=ok. SEMPRE inclua 1 sugestão de next-action. Máximo 1, não chunky.
+Use quando: tool retornou status=ok. Sugestão de next-action é OPCIONAL — inclua só quando agrega de verdade (fix humanização 2026-06-24). Em RAJADA (rep colando 3+ ações seguidas no mesmo contato) ou quando o rep já sabe o próximo passo, só confirme curto (ex: "Nota salva.") e PARE — nada de "quer follow-up?" a cada item. NUNCA repita a mesma isca turno após turno.
 
 ## 4️⃣ ERROR_RETRY (tool falhou com tipo conhecido)
 \`\`\`

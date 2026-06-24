@@ -135,5 +135,5 @@ export function getAllSuggestions(toolName: string): NextStepSuggestion[] {
 export function renderSuggestionForPrompt(toolName: string): string {
   const top = getTopSuggestion(toolName);
   if (!top) return "";
-  return `[NEXT_STEP_HINT após ${toolName}] Considere oferecer ao rep: "${top.prompt}" (1 linha apenas, no template 3 SUCCESS_NEXT). Pula se rep está em fluxo urgente OU se contexto já fez essa próxima ação.`;
+  return `[NEXT_STEP_HINT após ${toolName}] OPCIONAL — só ofereça "${top.prompt}" se realmente agregar (1 linha, template 3). PULA se: rep está em fluxo urgente, em RAJADA (3+ ações seguidas do mesmo tipo/contato), já fez essa ação, ou você já ofereceu algo parecido num turno recente. Na dúvida, só confirme curto e pare — não vira isca repetida (fix humanização 2026-06-24).`;
 }
