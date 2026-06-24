@@ -82,7 +82,9 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
   {
     family: "reminder",
     regex: /\blembrete\s+(agendado|marcado|criado|salvo|cancelado|removido)s?\b/i,
-    satisfying_tools: ["schedule_reminder", "schedule_recurring_reminder", "cancel_reminder"],
+    // schedule_recurring_reminder NÃO existe (fix 2026-06-23): recorrência é o
+    // PARÂMETRO `recurrence` de schedule_reminder, não uma tool separada.
+    satisfying_tools: ["schedule_reminder", "cancel_reminder"],
   },
   {
     family: "appointment",
