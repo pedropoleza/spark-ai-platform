@@ -407,26 +407,39 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     loadKbItems(),
   ]);
 
-  const systemPrompt = [
-    buildSparkbotSystemPrompt({
-      rep,
-      locationName: location.location_name || activeLocationId,
-      locationTimezone: tz,
-      locale,
-      confirmationMode:
-        (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
-        "high_only",
-      carrierOverview,
-      customInstructions: agentConfig?.custom_instructions ?? null,
-      kbInstructions: agentConfig?.knowledge_base_instructions ?? null,
-      kbItems,
-      tones: {
-        creativity: agentConfig?.tone_creativity ?? null,
-        formality: agentConfig?.tone_formality ?? null,
-        naturalness: agentConfig?.tone_naturalness ?? null,
-        aggressiveness: agentConfig?.tone_aggressiveness ?? null,
-      },
-    }),
+  // F2 (cost-reduction 2026-06): o system do proativo deixa de ser POLUÍDO pelo suffix volátil.
+  // Antes "# MODO PROATIVO" + rule.prompt_instruction (que no briefing embute o JSON do dia) era
+  // concatenado AQUI no system → prefixo ÚNICO por regra/dia = cache=0 (medido: Resumo matinal
+  // read 0%, tudo write nunca relido). Agora o system vira o prefixo ESTÁVEL do SparkBot (o
+  // suffix+JSON vão pra user message). GANHO GARANTIDO: para de escrever ~36K de prefixo
+  // descartável por disparo. Compartilhar cache-read COM o inbound do mesmo rep é ganho EXTRA e
+  // CONDICIONAL (mesmo modelo + mesmo set de tools + mesmo locationName/channel) — hoje o set de
+  // tools ainda diverge (proativo=subset, inbound=all): esse share só fecha com F8 (Fase 2).
+  // Proativo NÃO seta cacheTtl → fica 5m (disparo one-shot; 1h seria write 2x de custo puro).
+  const systemPrompt = buildSparkbotSystemPrompt({
+    rep,
+    locationName: location.location_name || activeLocationId,
+    locationTimezone: tz,
+    locale,
+    confirmationMode:
+      (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
+      "high_only",
+    carrierOverview,
+    customInstructions: agentConfig?.custom_instructions ?? null,
+    kbInstructions: agentConfig?.knowledge_base_instructions ?? null,
+    kbItems,
+    tones: {
+      creativity: agentConfig?.tone_creativity ?? null,
+      formality: agentConfig?.tone_formality ?? null,
+      naturalness: agentConfig?.tone_naturalness ?? null,
+      aggressiveness: agentConfig?.tone_aggressiveness ?? null,
+    },
+  });
+
+  // O suffix volátil do modo proativo + a instrução da regra + o JSON do disparo vão na
+  // user message (não-cacheada) — mesmas strings verbatim de antes (parity de comportamento).
+  const runtimeContext = [
+    buildSparkbotRuntimeContext({ locationTimezone: tz, locale }),
     "",
     "# MODO PROATIVO ATIVADO",
     `Você está iniciando uma conversa proativamente (não foi o rep que pediu — você está agindo por conta própria pra ajudar).`,
@@ -440,10 +453,6 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     "- Seja extremamente conciso — resposta curta, sem floreio.",
     "- Use as tools necessárias pra coletar contexto antes de escrever a msg final.",
     "- Se não houver dado relevante (ex: rep não tem appointments hoje), diga isso de forma curta em vez de inventar.",
-  ].join("\n");
-
-  const runtimeContext = [
-    buildSparkbotRuntimeContext({ locationTimezone: tz, locale }),
     "",
     "## Contexto deste disparo",
     JSON.stringify(contextData, null, 2),

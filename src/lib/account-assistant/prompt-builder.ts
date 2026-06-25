@@ -87,7 +87,9 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     rep, locationName, locationTimezone, locale, confirmationMode, carrierOverview,
     channel = "whatsapp",
     customInstructions, kbInstructions, kbItems, tones,
-    conversationalLayer,
+    // F1 (cost-reduction 2026-06): conversationalLayer NÃO é mais lido aqui — os blocos
+    // voláteis foram movidos pro runtime context (user message). Fica em BuildPromptArgs
+    // pra não quebrar a assinatura/paridade, mas o system não depende mais dele.
   } = args;
   // Fix observado em prod 2026-05-03: o texto pra medium_and_high antes
   // dizia que medium "executa E informa 'feito'" — isso conflitava com o
@@ -868,17 +870,11 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "Se aparecer '# ⏰ SILENCE GAP DETECTADO' no contexto, siga as instruções desse bloco.",
     "Reconheça o gap ANTES de processar msg atual. NÃO finja que nada aconteceu (caso Gustavo: bot voltou frio após 5h, rep perguntou 'Você está funcionando?').",
     "",
-    // Bloco dinâmico do turn (cada turn diferente — vem após o cache)
-    conversationalLayer?.repStyleHint || "",
-    conversationalLayer?.smartDefaultsBlock || "",
-    conversationalLayer?.turnContextBlock || "",
-    // 4.3 Pedro 2026-05-16: silence recovery (só aparece se gap >30min detectado)
-    conversationalLayer?.silenceRecoveryBlock || "",
-    conversationalLayer?.verbosityPref === "brief"
-      ? "[VERBOSITY: brief] Rep prefere respostas CURTAS (1-2 frases max). Vai direto à ação, sem floreio."
-      : conversationalLayer?.verbosityPref === "detailed"
-        ? "[VERBOSITY: detailed] Rep prefere respostas DETALHADAS (até 6-8 frases + contexto). Pode incluir 2 sugestões de next-step."
-        : "",
+    // F1 (cost-reduction 2026-06): os blocos voláteis por-turno (repStyleHint,
+    // smartDefaultsBlock, turnContextBlock, silenceRecoveryBlock, verbosityPref) FORAM
+    // movidos pro runtime context (user message, NÃO-cacheada) em
+    // buildSparkbotRuntimeContext. Aqui dentro eles re-escreviam o prefixo de ~22K tok
+    // TODO turno (cache-write 1.25x em vez de cache-read 0.1x = ~$142/mês). Ver PLANO Fase 1.
   ]
     .filter(Boolean)
     .join("\n");
@@ -1135,6 +1131,18 @@ export function buildSparkbotRuntimeContext(args: {
   locationTimezone: string;
   locale: "pt-BR" | "en-US";
   channel?: "whatsapp" | "web_ui";
+  /**
+   * F1 (cost-reduction 2026-06): blocos voláteis por-turno (H29/H30/H31 + 4.3) movidos
+   * do system prompt pra cá. Vão na user message (não-cacheada), então mudam todo turno
+   * sem re-escrever o prefixo cacheado de ~22K tok. Mesmas strings verbatim de antes.
+   */
+  conversationalLayer?: {
+    repStyleHint?: string;
+    smartDefaultsBlock?: string;
+    turnContextBlock?: string;
+    verbosityPref?: "brief" | "normal" | "detailed";
+    silenceRecoveryBlock?: string;
+  };
 }): string {
   const now = new Date();
   const dateStr = now.toLocaleString(args.locale, {
@@ -1153,12 +1161,24 @@ export function buildSparkbotRuntimeContext(args: {
   // ISO local = instant adjusted pro offset, formato sem Z
   const localIso = new Date(now.getTime() + offsetMs).toISOString().replace("Z", offsetStr);
 
+  // F1 (cost-reduction 2026-06): os 5 blocos voláteis vêm DEPOIS do contexto de data/canal,
+  // na user message não-cacheada. Mesmas strings que estavam no system (parity de comportamento).
+  const cl = args.conversationalLayer;
   return [
     `[Agora: ${dateStr} (${args.locationTimezone}, offset ${offsetStr})]`,
     `[ISO agora: ${localIso}]`,
     `[Canal atual: ${args.channel || "whatsapp"}]`,
     `[Ao criar task com due_at, use ISO 8601 com offset ${offsetStr}. Ex: segunda-feira 10h seria calculado a partir deste momento e emitido como AAAA-MM-DDT10:00:00${offsetStr}]`,
-  ].join("\n");
+    cl?.repStyleHint || "",
+    cl?.smartDefaultsBlock || "",
+    cl?.turnContextBlock || "",
+    cl?.silenceRecoveryBlock || "",
+    cl?.verbosityPref === "brief"
+      ? "[VERBOSITY: brief] Rep prefere respostas CURTAS (1-2 frases max). Vai direto à ação, sem floreio."
+      : cl?.verbosityPref === "detailed"
+        ? "[VERBOSITY: detailed] Rep prefere respostas DETALHADAS (até 6-8 frases + contexto). Pode incluir 2 sugestões de next-step."
+        : "",
+  ].filter(Boolean).join("\n");
 }
 
 /** Calcula offset do timezone pra a data especificada (em ms, positivo = leste de UTC). */

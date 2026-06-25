@@ -126,6 +126,13 @@ export interface RunWithToolsInput {
    * Se não-Claude, ainda tenta. Se vazio/null, mantém Haiku 4.5.
    */
   fallbackModel?: string | null;
+  /**
+   * F4 (cost-reduction 2026-06): TTL do cache do prefixo estável (tools+system).
+   * "1h" só pro INBOUND (reps com gap 5-60min entre turnos — ~10% medido — lucram ao
+   * reler em vez de re-escrever). Proativo/briefing NÃO seta → fica "5m" (default): são
+   * disparos one-shot raramente relidos, onde o write 2x do 1h seria custo puro. Default "5m".
+   */
+  cacheTtl?: "5m" | "1h";
 }
 
 export interface RunWithToolsOutput {
@@ -360,6 +367,40 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
     content: typeof m.content === "string" ? m.content : (m.content as AnthropicBlock[]),
   }));
 
+  // F3 (cost-reduction 2026-06): 3º cache breakpoint no FIM do histórico estável.
+  // Marca o ÚLTIMO bloco do PENÚLTIMO message (a última msg estável do histórico; o último
+  // message é a user message volátil do turno atual). Sem isto o histórico vinha DEPOIS dos 2
+  // markers (tools+system) e não cacheava. Ganho REAL = o PREFIXO-COMUM do histórico entre
+  // turnos consecutivos (o histórico cresce/desloca, então casa só até onde os bytes batem —
+  // NÃO o histórico inteiro). Oportunístico, mas de graça (sobrava breakpoint).
+  // Aplicado UMA VEZ aqui, ANTES do loop — NUNCA dentro: senão, após os push de tool_use/
+  // tool_result, o marker pularia de posição e o prefixo cacheado mudaria a cada iteração.
+  // TTL default (5min): o histórico cresce todo turno, não compensa o write 2x do 1h aqui.
+  // Breakpoints ativos: tools[último] + system + este penúltimo-message = 3 de 4 (sobra 1).
+  if (messages.length >= 2) {
+    const penIdx = messages.length - 2;
+    const pen = messages[penIdx];
+    const blocks: AnthropicBlock[] =
+      typeof pen.content === "string"
+        ? [{ type: "text", text: pen.content }]
+        : [...pen.content];
+    if (blocks.length > 0) {
+      const last = blocks[blocks.length - 1];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      blocks[blocks.length - 1] = { ...last, cache_control: { type: "ephemeral" } } as any;
+      messages[penIdx] = { ...pen, content: blocks };
+    }
+  }
+
+  // F4 (cost-reduction 2026-06): TTL do cache do PREFIXO estável (tools+system). 1h só no
+  // inbound (cacheTtl="1h" setado pelo processor) — net-positivo pros ~10% de turnos com gap
+  // 5-60min. Proativo/briefing fica no default 5m (one-shot, raramente relido → 1h seria
+  // write 2x de custo puro). O breakpoint do histórico (F3) fica SEMPRE em 5m (muda todo turno).
+  const stablePrefixCache =
+    input.cacheTtl === "1h"
+      ? ({ type: "ephemeral", ttl: "1h" } as const)
+      : ({ type: "ephemeral" } as const);
+
   const tools = input.tools.map((t) => ({
     name: t.name,
     description: t.description,
@@ -398,7 +439,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
       const toolsWithCache: any = Array.isArray(tools) && tools.length > 0
         ? tools.map((t, idx) =>
             idx === tools.length - 1
-              ? { ...t, cache_control: { type: "ephemeral" } }
+              ? { ...t, cache_control: stablePrefixCache }
               : t,
           )
         : tools;
@@ -407,7 +448,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
         max_tokens: 2500,
         system: [
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          { type: "text", text: input.systemPrompt, cache_control: { type: "ephemeral" } } as any,
+          { type: "text", text: input.systemPrompt, cache_control: stablePrefixCache } as any,
         ],
         tools: toolsWithCache,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

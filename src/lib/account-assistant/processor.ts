@@ -483,6 +483,10 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     locationTimezone: timezone,
     locale,
     channel,
+    // F1 (cost-reduction 2026-06): os blocos voláteis vão pela user message (não-cacheada),
+    // não mais pelo system prompt. Reusa o objeto já montado em sparkbotPromptArgs (o system
+    // ignora esse campo agora). Mantém o prefixo cacheado byte-estável por-conversa.
+    conversationalLayer: sparkbotPromptArgs.conversationalLayer,
   });
 
   // Constrói user message (pode ter imagem anexada)
@@ -545,6 +549,9 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     },
     model: input.config.ai_model,
     fallbackModel: input.config.fallback_model,
+    // F4 (cost-reduction 2026-06): só o inbound usa TTL 1h no prefixo cacheado — os ~10% de
+    // turnos com gap 5-60min releem em vez de re-escrever. Proativo fica no default 5m.
+    cacheTtl: "1h",
   });
 
   // 5b. Detectar falhas consecutivas de LLM (parse error / max iterations).
@@ -997,7 +1004,11 @@ function buildUserMessage(input: RepInput, runtimeContext: string): LLMMessage {
       "RECHAMAR import_contacts_from_data com o mapping correto — é idempotente " +
       "(Spark Leads faz dedup por phone/email), só cria as notas que faltaram.",
     );
-    return { role: "user", content: lines.join("\n") };
+    // F1 (cost-reduction 2026-06): prefixa o runtimeContext (header) também no turno tabular.
+    // Antes os blocos voláteis (turnContext/verbosity/silence) vinham via system (sempre
+    // enviado); agora vêm pelo header — sem isto, turno de planilha perderia esse contexto
+    // (e de quebra ganha o [Agora/ISO/offset] que antes faltava no caminho tabular).
+    return { role: "user", content: `${header}${lines.join("\n")}` };
   }
   // image — multimodal content
   const match = input.base64_data_uri.match(/^data:(image\/\w+);base64,(.+)$/);
