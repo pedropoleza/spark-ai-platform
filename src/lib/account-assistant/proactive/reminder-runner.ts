@@ -35,7 +35,16 @@ interface ScheduledTaskRow {
   rep_id: string;
   location_id: string;
   task_type: string;
-  task_payload: { message?: string; title?: string; test_session_id?: string | null };
+  task_payload: {
+    message?: string;
+    title?: string;
+    test_session_id?: string | null;
+    // F1 (contact-resolution 2026-06): contato referenciado pelo lembrete (gravado por
+    // task-reminders.ts a partir de TaskEvent.contactId). Propagado pra metadata da msg
+    // proativa → o turno inbound seguinte herda de QUEM se fala, sem re-buscar do zero.
+    contact_id?: string;
+    contact_name?: string;
+  };
   next_run_at: string;
   cron_expr: string | null;
   status: string;
@@ -258,6 +267,10 @@ async function deliverReminderWeb(
       reminder_id: task.id,
       task_type: task.task_type,
       source: "scheduled_reminder",
+      // F1 (contact-resolution 2026-06): herança de contexto — leva o contato do lembrete
+      // pra metadata da msg; o "contato em foco" do inbound (F3) lê daqui.
+      ...(task.task_payload?.contact_id ? { contact_id: task.task_payload.contact_id } : {}),
+      ...(task.task_payload?.contact_name ? { contact_name: task.task_payload.contact_name } : {}),
     },
   });
 }
@@ -283,6 +296,12 @@ async function deliverReminderWhatsapp(
     source: "scheduled_reminder",
     reminderId: task.id,
     kind: task.task_type,
+    // F1 (contact-resolution 2026-06): propaga o contato do lembrete pra metadata da msg
+    // (slot extraMetadata já existe em whatsapp-delivery.ts) → herança no inbound (F3).
+    extraMetadata: {
+      ...(task.task_payload?.contact_id ? { contact_id: task.task_payload.contact_id } : {}),
+      ...(task.task_payload?.contact_name ? { contact_name: task.task_payload.contact_name } : {}),
+    },
   });
 }
 

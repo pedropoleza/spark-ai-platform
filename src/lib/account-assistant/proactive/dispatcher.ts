@@ -567,6 +567,18 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
         target_id: targetId,
         model: llmResult.model_used,
         tools: llmResult.tool_calls.map((t) => t.name),
+        // F8 (contact-resolution 2026-06): chave PADRONIZADA contact_id/contact_name pro
+        // "contato em foco" (F3) herdar. Só de campo EXPLÍCITO de contato no contextData
+        // (triggers de task/appointment/followup) — NÃO usa target_id cru (ambíguo, pode
+        // não ser contato) nem o rep.id (esse é o próprio rep, não o contato discutido).
+        ...(() => {
+          const cid = contextData.contact_id ?? contextData.contactId;
+          const cname = contextData.contact_name ?? contextData.contactName;
+          return {
+            ...(typeof cid === "string" && cid && cid !== rep.id ? { contact_id: cid } : {}),
+            ...(typeof cname === "string" && cname ? { contact_name: cname } : {}),
+          };
+        })(),
       },
     });
     // Conta o silêncio só se o proativo chegou no WhatsApp (fallback web não

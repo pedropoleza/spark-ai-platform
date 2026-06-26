@@ -5,7 +5,6 @@
 import type { ToolEntry } from "./types";
 import { validateGhlId, ghlErrorToResult, getRepGhlUserId } from "./types";
 import {
-  searchContactsList as ghlSearchContactsList,
   getContact as ghlGetContact,
   createContact as ghlCreateContact,
   updateContact as ghlUpdateContact,
@@ -16,6 +15,8 @@ import {
 } from "@/lib/ghl/operations";
 import { executeContactsFilter, type FilterExpression } from "../filter-engine";
 import { normalizePhone, resolveLocationDefaultCountry } from "../identity";
+// F5/F6 (contact-resolution 2026-06): resolver fuzzy + telefone + score (substitui o GET cru).
+import { resolveContact } from "../contact-resolver";
 
 const searchContacts: ToolEntry = {
   def: {
@@ -47,38 +48,51 @@ const searchContacts: ToolEntry = {
       return { status: "error", message: "Passe pelo menos um filtro: query, tag ou assigned_to_me", retryable: false };
     }
 
-    // Fast path GET /contacts/?query= pra busca simples (sem tag, sem assigned_to).
-    // GET endpoint não pagina mas é mais rápido pra lookup de 1 contato específico
-    // (que é 90% dos casos antes de ação CRUD). Mantido aqui no wrapper —
-    // engine ainda não usa GET (só POST V2) e GET é faster pra single lookup.
+    // F5/F6 (contact-resolution 2026-06): busca simples (só query) passa pelo RESOLVER —
+    // escada de variantes de nome (completo→primeiro→último) + telefone normalizado +
+    // ranking fuzzy por score/recência. Substitui o GET single-term cru que falhava em
+    // "Fernanda Lira" (caso âncora: contato existe como "fernanada lira", typo no cadastro).
+    // Devolve match_score + best_match + confidence pra o bot decidir (auto-confirma/lista),
+    // em vez do "não achei" terminal. Ver _planning/sparkbot-contact-resolution-2026-06/.
     if (query && !tag && !assignedToMe) {
-      type ContactItem = {
-        id: string;
-        firstName?: string; lastName?: string; contactName?: string; name?: string;
-        email?: string; phone?: string;
-        tags?: string[]; lastActivity?: string;
-      };
       try {
-        const res = await ghlSearchContactsList(ctx.ghlClient, ctx.locationId, query, Math.min(cap, 100)) as { contacts?: ContactItem[] };
-        const contacts = (res.contacts || []).slice(0, cap);
-        if (contacts.length === 0) {
-          return { status: "not_found", message: `Nenhum contato encontrado pra "${query}"` };
+        const defaultCountry = await resolveLocationDefaultCountry(ctx.locationId);
+        const result = await resolveContact(ctx.ghlClient, ctx.locationId, query, {
+          defaultCountry,
+          limit: Math.min(cap, 50),
+        });
+        if (!result.best || result.alternatives.length === 0) {
+          return { status: "not_found", message: `Nenhum contato encontrado pra "${query}" (tentei variações de nome e de telefone).` };
         }
+        // F7 (hardening pós-review): score = similaridade PURA; gap só vale com ≥2 candidatos
+        // (sole → gap=0). 'high' = dominante OU único-forte (bot confirma inline + segue);
+        // 'needs_confirm' = 1 decente mas não certíssimo (bot pergunta "é a Fulana?" antes);
+        // 'ambiguous' = 2+ colados (lista); 'low' = fraco (trata como não-achei).
+        const confidence =
+          result.alternatives.length >= 2 && result.gap < 0.12 && result.score >= 0.6
+            ? "ambiguous"
+            : result.score >= 0.9 && (result.sole || result.gap >= 0.15)
+              ? "high"
+              : result.score >= 0.7
+                ? "needs_confirm"
+                : "low";
         return {
           status: "ok",
           data: {
-            contacts: contacts.map((c) => ({
+            contacts: result.alternatives.map((c) => ({
               id: c.id,
-              name: c.contactName || c.name || [c.firstName, c.lastName].filter(Boolean).join(" ") || "(sem nome)",
-              email: c.email || null,
-              phone: c.phone || null,
-              tags: c.tags || [],
-              last_activity: c.lastActivity || null,
+              name: c.name,
+              email: c.email,
+              phone: c.phone,
+              tags: c.tags,
+              last_activity: c.last_activity,
+              match_score: c.score,
             })),
-            complete: contacts.length < cap,
-            total_returned: contacts.length,
-            pages_fetched: 1,
-            method: "GET (fast path)",
+            best_match: { id: result.best.id, name: result.best.name, score: result.score, gap: result.gap },
+            confidence,
+            complete: true,
+            total_returned: result.alternatives.length,
+            method: `resolver (${result.method})`,
           },
         };
       } catch (err) {
