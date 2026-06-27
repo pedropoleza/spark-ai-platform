@@ -10,6 +10,13 @@
 import { GHLClient } from "@/lib/ghl/client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { createAdminClient } from "@/lib/supabase/admin";
+// F3/F10 (contact-resolution 2026-06): "contato em foco" + buffer de contatos recentes.
+import {
+  getActiveContactContext,
+  renderContactInFocusBlock,
+  readRecentContacts,
+  recordRecentContact,
+} from "./contact-resolver";
 import type { RepIdentity, RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import {
@@ -53,7 +60,6 @@ import {
   renderSmartDefaultsForPrompt,
   createTurnContext,
   renderTurnContextForPrompt,
-  autoRegisterFromToolResult,
   detectSilenceGap,
   renderSilenceRecoveryForPrompt,
   type TurnContextState,
@@ -396,27 +402,11 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // bot ver "entidades já resolvidas" e evitar re-buscar (caso Gustavo:
   // bot perguntando "qual contato?" depois de já ter achado).
   const turnContextState: TurnContextState = createTurnContext();
-  try {
-    const recentTurns = (input.conversationHistory || []).slice(-6);
-    for (const turn of recentTurns) {
-      // Parse tool_calls embebidos no content (formato OpenAI compatível)
-      // Não-fatal: se falhar parse, ignora.
-      if (turn.role !== "assistant") continue;
-      // Histórico nosso guarda tool_calls como metadata? Vou tentar via
-      // regex simples no content (pode ser melhorado V2)
-      const calls = (turn as { tool_calls?: Array<{ name?: string; result?: unknown }> }).tool_calls;
-      if (Array.isArray(calls)) {
-        for (const tc of calls) {
-          if (tc.name && tc.result) {
-            const resultData = (tc.result as { data?: unknown }).data || tc.result;
-            autoRegisterFromToolResult(turnContextState, tc.name, resultData);
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.warn("[processor] turn-context populate failed (non-fatal):", err);
-  }
+  // F11 (contact-resolution 2026-06): removido o seed cross-turn dead-code que iterava
+  // turn.tool_calls — o loader de histórico (webhook-handler.ts:762-768) NUNCA popula esse
+  // campo (sempre undefined), então era no-op silencioso. A herança de contato real agora vem
+  // do "contato em foco" (F3) + recent_contacts (F10). turnContextState segue criado vazio
+  // (consumido pelos detectores de loop/rajada do turno atual, não do histórico).
   const verbosityPref = (rep.profile?.preferences as { verbosity?: "brief" | "normal" | "detailed" } | undefined)?.verbosity;
 
   // 4.3 Pedro 2026-05-16: detecta silence gap. Lê últimas 4 msgs do rep
@@ -479,7 +469,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     ? assembleSystemPrompt({ templateKey: "sparkbot", audience: "rep", sparkbotArgs: sparkbotPromptArgs })
     : buildSparkbotSystemPrompt(sparkbotPromptArgs);
 
-  const runtimeContext = buildSparkbotRuntimeContext({
+  let runtimeContext = buildSparkbotRuntimeContext({
     locationTimezone: timezone,
     locale,
     channel,
@@ -488,6 +478,21 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     // ignora esse campo agora). Mantém o prefixo cacheado byte-estável por-conversa.
     conversationalLayer: sparkbotPromptArgs.conversationalLayer,
   });
+
+  // F3 (contact-resolution 2026-06): "CONTATO EM FOCO" — herda o contact_id de um proativo
+  // recente (F1/F8) ou de contatos resolvidos no chat (F10), pra o bot NÃO re-buscar do zero
+  // quando o rep responde "marca o follow-up dele" (caso Fernanda). Pista que se re-valida,
+  // nunca id cego. Vai no runtime context (user message, não-cacheada) → não mexe no cache (H44).
+  try {
+    const activeContact = await getActiveContactContext(supabase, rep.id, {
+      activeLocationId,
+      recentContacts: readRecentContacts(rep.profile),
+    });
+    const focusBlock = renderContactInFocusBlock(activeContact);
+    if (focusBlock) runtimeContext = `${runtimeContext}\n\n${focusBlock}`;
+  } catch (err) {
+    console.warn("[processor] contato-em-foco (F3) falhou (não-fatal):", err);
+  }
 
   // Constrói user message (pode ter imagem anexada)
   const userMessage: LLMMessage = buildUserMessage(input.input, runtimeContext);
@@ -553,6 +558,42 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     // turnos com gap 5-60min releem em vez de re-escrever. Proativo fica no default 5m.
     cacheTtl: "1h",
   });
+
+  // F10 (contact-resolution 2026-06): registra contatos resolvidos NESTE turno no buffer
+  // recent_contacts (rep_identities.profile) → o "contato em foco" (F3) os herda no próximo
+  // turno (caso "achei o Pedro agora; marca reunião com ele"). Best-effort, não-fatal.
+  try {
+    for (const tc of result.tool_calls) {
+      const r = tc.result as { status?: string; data?: Record<string, unknown> } | undefined;
+      if (!r || r.status === "error") continue;
+      const d = r.data || {};
+      const input = (tc.input || {}) as Record<string, unknown>;
+      const fn = input.firstName ?? input.first_name;
+      const ln = input.lastName ?? input.last_name;
+      const nameFromInput =
+        (typeof input.name === "string" && input.name) ||
+        [fn, ln].filter((x): x is string => typeof x === "string" && !!x).join(" ") ||
+        undefined;
+      let resolved: { id: string; name?: string } | null = null;
+      // Cada tool devolve um SHAPE diferente (revisado contra o código real de contacts.ts):
+      if (tc.name === "search_contacts" && d.confidence === "high" && d.best_match) {
+        const bm = d.best_match as { id?: string; name?: string };
+        if (bm.id) resolved = { id: bm.id, name: bm.name };
+      } else if (tc.name === "create_contact") {
+        const id = (d.contact_id || (d.contact as { id?: string } | undefined)?.id) as string | undefined;
+        if (id) resolved = { id, name: nameFromInput };
+      } else if (tc.name === "get_contact") {
+        const c = (d.contact || {}) as { id?: string; name?: string; contactName?: string; firstName?: string; lastName?: string };
+        if (c.id) resolved = { id: String(c.id), name: c.name || c.contactName || [c.firstName, c.lastName].filter(Boolean).join(" ") || undefined };
+      } else if (tc.name === "update_contact") {
+        const id = typeof input.contact_id === "string" ? input.contact_id : undefined;
+        if (id) resolved = { id, name: nameFromInput };
+      }
+      if (resolved) await recordRecentContact(supabase, rep.id, resolved);
+    }
+  } catch (err) {
+    console.warn("[processor] recent_contacts (F10) falhou (não-fatal):", err);
+  }
 
   // 5b. Detectar falhas consecutivas de LLM (parse error / max iterations).
   // Igual o sales tem em ai_paused_reason. Pra Sparkbot, conta turns

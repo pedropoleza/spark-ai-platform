@@ -26,6 +26,8 @@ import type { PlanInstruction } from "./compiler";
 import { compile } from "./compiler";
 import { resolveAliases } from "./resolvers";
 import { auditFilterExecution } from "./audit";
+// F9 (contact-resolution 2026-06): match de texto sem acento ("Bárbara"≡"Barbara").
+import { deburr } from "../contact-resolver/normalize";
 
 const PAGE_SIZE = 100;
 
@@ -540,30 +542,32 @@ function evalConditionClient(
   switch (cond.op) {
     case "exists": return fieldValue !== null && fieldValue !== undefined && fieldValue !== "";
     case "not_exists": return fieldValue === null || fieldValue === undefined || fieldValue === "";
-    case "eq": return String(fieldValue ?? "").toLowerCase() === String(cond.value ?? "").toLowerCase();
-    case "neq": return String(fieldValue ?? "").toLowerCase() !== String(cond.value ?? "").toLowerCase();
+    // F9 (contact-resolution 2026-06): deburr() = sem-acento + lowercase nos DOIS lados.
+    case "eq": return deburr(fieldValue) === deburr(cond.value);
+    case "neq": return deburr(fieldValue) !== deburr(cond.value);
     case "contains":
       if (Array.isArray(fieldValue)) {
-        return fieldValue.some((v) => String(v).toLowerCase().includes(String(cond.value).toLowerCase()));
+        return fieldValue.some((v) => deburr(v).includes(deburr(cond.value)));
       }
-      return String(fieldValue ?? "").toLowerCase().includes(String(cond.value ?? "").toLowerCase());
+      return deburr(fieldValue).includes(deburr(cond.value));
     case "not_contains":
       if (Array.isArray(fieldValue)) {
-        return !fieldValue.some((v) => String(v).toLowerCase().includes(String(cond.value).toLowerCase()));
+        return !fieldValue.some((v) => deburr(v).includes(deburr(cond.value)));
       }
-      return !String(fieldValue ?? "").toLowerCase().includes(String(cond.value ?? "").toLowerCase());
+      return !deburr(fieldValue).includes(deburr(cond.value));
     case "starts_with":
-      return String(fieldValue ?? "").toLowerCase().startsWith(String(cond.value ?? "").toLowerCase());
+      return deburr(fieldValue).startsWith(deburr(cond.value));
     case "ends_with":
-      return String(fieldValue ?? "").toLowerCase().endsWith(String(cond.value ?? "").toLowerCase());
+      return deburr(fieldValue).endsWith(deburr(cond.value));
     case "in":
       if (Array.isArray(cond.value)) {
-        return cond.value.some((v) => String(v).toLowerCase() === String(fieldValue ?? "").toLowerCase());
+        return cond.value.some((v) => deburr(v) === deburr(fieldValue));
       }
       return false;
     case "not_in":
+      // F9: complemento lógico do `in` — também usa deburr (sem-acento) nos dois lados.
       if (Array.isArray(cond.value)) {
-        return !cond.value.some((v) => String(v).toLowerCase() === String(fieldValue ?? "").toLowerCase());
+        return !cond.value.some((v) => deburr(v) === deburr(fieldValue));
       }
       return true;
     case "gt": return Number(fieldValue) > Number(cond.value);
