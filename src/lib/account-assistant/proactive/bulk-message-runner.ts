@@ -74,6 +74,9 @@ interface BulkRecipientRow {
   // H46: recipient é contato-grupo (email @g.us). Decide pular opt-out/DND/cooldown/
   // assign pelo FATO, não pelo rótulo job.target_type. Vem do claim (RETURNS SETOF).
   is_group?: boolean | null;
+  // H46: pause POR-GRUPO (cockpit). Não-NULL = não envia (claim 00121 já pula; o
+  // loop reverte como safety-net). Vem do claim (RETURNS SETOF).
+  paused_at?: string | null;
 }
 
 interface BulkJobRow {
@@ -256,6 +259,18 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
     // recipients pending originais voltam a ser claim normalmente.
     if (job.status !== "running") {
       await markRecipientSkipped(recipient.id, `job_status_${job.status}_race`);
+      skipped++;
+      continue;
+    }
+
+    // H46: pause POR-GRUPO (cockpit). Recipient pausado não envia — reverte pra
+    // pending pra o resume re-claimar quando paused_at voltar a NULL. Safety-net:
+    // com a RPC 00121 aplicada nem é reivindicado; isto cobre o gap pré-00121.
+    if (recipient.paused_at) {
+      await supabase
+        .from("bulk_message_recipients")
+        .update({ status: "pending" })
+        .eq("id", recipient.id);
       skipped++;
       continue;
     }
@@ -496,6 +511,7 @@ async function legacyClaimWithClientSort(
     .from("bulk_message_recipients")
     .select("id, scheduled_at, status, bulk_message_jobs!inner(priority, status)")
     .eq("status", "pending")
+    .is("paused_at", null) // H46: fallback legado também pula pausados
     .lte("scheduled_at", nowIso)
     .order("scheduled_at", { ascending: true })
     .limit(FALLBACK_CANDIDATE_BUFFER);
