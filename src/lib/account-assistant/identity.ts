@@ -167,10 +167,29 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null | "
     if (existing) return existing as RepIdentity;
   }
 
-  // 2. Primeira interação — procura o phone em todas as locations cadastradas
-  const { data: locations } = await supabase
-    .from("locations")
-    .select("location_id, company_id, location_name");
+  // 2. Primeira interação — procura o phone nas locations cadastradas.
+  type LocationRow = {
+    location_id: string;
+    company_id: string;
+    location_name: string | null;
+    deauthorized_at?: string | null;
+  };
+  // Skip-inactive (2026-06-27): seleciona deauthorized_at; se a coluna ainda não
+  // existe (migration 00118 não aplicada), degrada pro select de hoje (varre todas).
+  let locations: LocationRow[] | null;
+  {
+    const r = await supabase
+      .from("locations")
+      .select("location_id, company_id, location_name, deauthorized_at");
+    if (r.error) {
+      const r2 = await supabase
+        .from("locations")
+        .select("location_id, company_id, location_name");
+      locations = (r2.data as LocationRow[] | null) ?? null;
+    } else {
+      locations = (r.data as LocationRow[] | null) ?? null;
+    }
+  }
 
   if (!locations || locations.length === 0) return null;
 
@@ -192,19 +211,53 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null | "
   // aqui (lookup local no passo 1). Agora roda em LOTES PARALELOS — cabe em poucos
   // segundos. Ordem preservada (displayName/repTimezone = 1º match em ordem de
   // location, idêntico ao sequencial anterior).
-  // Conta locations que ERRARAM a varredura (vs. as que varreram OK e só não
-  // tinham o phone). Distingue "rep não existe" de "varredura quebrou" (token
-  // caído). NB: ~metade das ~120 locations vivem inativas e SEMPRE erram o mint
-  // de token — por isso só tratamos como falha técnica se 100% erraram (ver
-  // branch matches.length===0 abaixo). Ver [[sparkbot-new-rep-scaling]].
-  let scanErrors = 0;
+  // Skip-inactive (2026-06-27, follow-up [[sparkbot-new-rep-scaling]]): ~metade das
+  // ~130 locations vivem inativas/desautorizadas e SEMPRE erram o mint de token,
+  // gastando slot da varredura à toa. Marcamos `locations.deauthorized_at` quando o
+  // erro é de location-fora (texto PERSISTENTE, ver classifyScanError) e PULAMOS
+  // essas por 7d (re-check pega reativação). NUNCA marcamos 401/403 genérico: num
+  // apagão de company-token TODAS dariam 401 e marcaríamos o mundo como inativo
+  // (= onboarding mudo). Pular uma location de fato inativa não perde rep — o mint
+  // falharia e não dá pra ler os users dela de qualquer jeito.
+  const DEAUTH_RECHECK_MS = 7 * 24 * 60 * 60 * 1000;
+  const nowMs = Date.now();
+  const classifyScanError = (err: unknown): "deauth" | "technical" => {
+    const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+    if (
+      msg.includes("is not active") ||
+      msg.includes("does not have access") ||
+      msg.includes("location not found") ||
+      msg.includes("invalid locationid")
+    ) {
+      return "deauth";
+    }
+    return "technical";
+  };
+
+  // Elegíveis = nunca marcadas OU marcadas há mais de 7d (re-check). O resto pula.
+  const toScan = locations.filter((l) => {
+    if (!l.deauthorized_at) return true;
+    const t = Date.parse(l.deauthorized_at);
+    return Number.isNaN(t) || nowMs - t >= DEAUTH_RECHECK_MS;
+  });
+  const skippedInactive = locations.length - toScan.length;
+  if (skippedInactive > 0) {
+    console.log(`[identity] scan ${toScan.length}/${locations.length} locations (puladas ${skippedInactive} inativas <7d)`);
+  }
+
+  // techErrors = falha técnica (timeout/5xx/429/401 de apagão) — sinaliza apagão.
+  // deauthThisPass = locations que erraram por estar fora → marcar. reactivated =
+  // antes-marcadas que voltaram a varrer OK → limpar a marca.
+  let techErrors = 0;
+  const deauthThisPass: string[] = [];
+  const reactivated: string[] = [];
   const SCAN_CONCURRENCY = 20;
   const scanLocation = async (
-    loc: (typeof locations)[number],
-  ): Promise<{ found: Array<{ link: GHLUserLink; name: string; tz: string | null }>; errored: boolean }> => {
+    loc: LocationRow,
+  ): Promise<{ found: Array<{ link: GHLUserLink; name: string; tz: string | null }>; errorKind: "none" | "deauth" | "technical" }> => {
     try {
       const client = new GHLClient(loc.company_id, loc.location_id);
-      // GHL API: GET /users/search (V2) ou /users/ com filtro de phone
+      // GHL API: GET /users/ filtrando por location
       const res = await client.get<{
         users?: Array<{
           id: string;
@@ -233,42 +286,68 @@ export async function identifyRep(phone: string): Promise<RepIdentity | null | "
           });
         }
       }
-      return { found: out, errored: false };
+      return { found: out, errorKind: "none" };
     } catch (err) {
-      console.warn(`[identity] failed to search users in location ${loc.location_id}:`, err instanceof Error ? err.message : err);
-      // Continua pras outras locations — falha parcial não deve bloquear
-      return { found: [], errored: true };
+      const kind = classifyScanError(err);
+      console.warn(`[identity] scan falhou em ${loc.location_id} (${kind}):`, err instanceof Error ? err.message : err);
+      // Falha parcial não bloqueia as outras locations.
+      return { found: [], errorKind: kind };
     }
   };
 
-  for (let i = 0; i < locations.length; i += SCAN_CONCURRENCY) {
-    const batchResults = await Promise.all(locations.slice(i, i + SCAN_CONCURRENCY).map(scanLocation));
-    for (const res of batchResults) {
-      if (res.errored) scanErrors++;
+  for (let i = 0; i < toScan.length; i += SCAN_CONCURRENCY) {
+    const batch = toScan.slice(i, i + SCAN_CONCURRENCY);
+    const batchResults = await Promise.all(batch.map(scanLocation));
+    batchResults.forEach((res, j) => {
+      const loc = batch[j];
+      if (res.errorKind === "technical") techErrors++;
+      else if (res.errorKind === "deauth") deauthThisPass.push(loc.location_id);
+      else if (loc.deauthorized_at) reactivated.push(loc.location_id); // varreu OK uma antes-marcada → reativou
       for (const m of res.found) {
         matches.push(m.link);
         if (!displayName && m.name) displayName = m.name;
         if (!repTimezone && m.tz) repTimezone = m.tz;
       }
-    }
+    });
+  }
+
+  // Persiste (des)autorização — best-effort (otimização do próximo scan, não
+  // correção). Falha aqui (ex: coluna ausente pré-00118) é inofensiva: ignoramos.
+  if (deauthThisPass.length) {
+    await supabase
+      .from("locations")
+      .update({ deauthorized_at: new Date(nowMs).toISOString() })
+      .in("location_id", deauthThisPass);
+  }
+  if (reactivated.length) {
+    await supabase.from("locations").update({ deauthorized_at: null }).in("location_id", reactivated);
   }
 
   if (matches.length === 0) {
     // Fix bug observado em prod 2026-06-16 (onboarding mudo): distingue "rep
-    // genuinamente não é user em nenhuma location" (null → "não cadastrado")
-    // de "a varredura QUEBROU em TODAS" (token GHL caído → "scan_failed"). No
-    // 2º caso, dizer "não cadastrado" é mentira que ESCONDE um apagão. Como
-    // ~metade das locations vivem inativas e sempre erram, só é falha técnica
-    // se 100% erraram (inclui as ativas) — aí é sistêmico de verdade.
-    if (locations.length > 0 && scanErrors === locations.length) {
+    // genuinamente não é user em nenhuma location" (null → "não cadastrado") de "a
+    // varredura QUEBROU tecnicamente em TODAS as ativas" (token GHL caído →
+    // "scan_failed"). Dizer "não cadastrado" num apagão é mentira que o ESCONDE.
+    // As inativas (deauth/puladas) NÃO contam — só falha técnica das que deveriam
+    // responder. okScans = quantas varreram OK (acharam ou não o phone). Exige
+    // techErrors>0 pra não disparar quando o cenário é "todas inativas" (esperado).
+    const okScans = toScan.length - techErrors - deauthThisPass.length;
+    if (okScans === 0 && techErrors > 0) {
       reportError({
         title: "SparkBot: varredura de identificação de rep falhou 100%",
         feature: "sparkbot-identify-rep",
         severity: "critical",
         description:
-          `identifyRep não conseguiu varrer NENHUMA das ${locations.length} locations (todas erraram) ` +
-          `ao procurar o phone. Provável apagão de token GHL — onboarding de rep novo está MUDO.`,
-        metadata: { phone, locations_total: locations.length, scan_errors: scanErrors },
+          `identifyRep não conseguiu varrer NENHUMA das ${toScan.length} locations ativas ` +
+          `(todas erraram tecnicamente) ao procurar o phone. Provável apagão de token GHL — ` +
+          `onboarding de rep novo está MUDO.`,
+        metadata: {
+          phone,
+          locations_total: locations.length,
+          scanned: toScan.length,
+          tech_errors: techErrors,
+          skipped_inactive: skippedInactive + deauthThisPass.length,
+        },
       });
       return "scan_failed";
     }
