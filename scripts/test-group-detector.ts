@@ -24,6 +24,8 @@ ok("DM individual @s.whatsapp.net → null", extractGroupJid("5511999@s.whatsapp
 ok("DM @c.us → null", extractGroupJid("5511999@c.us") === null);
 ok("email pessoa → null", extractGroupJid("john.doe@gmail.com") === null);
 ok("anti '@g.us.evil.com' (âncora $)", extractGroupJid("12345@g.us.evil.com") === null);
+ok("anti '@g.usuario.com' (review F2 — não silencia bot)", extractGroupJid("joao@g.usuario.com") === null);
+ok("…e detectGroupContact não cacheia '@g.usuario.com'", detectGroupContact({ email: "joao@g.usuario.com" }).reason !== "email_jid");
 ok("vazio → null", extractGroupJid("") === null);
 ok("null → null", extractGroupJid(null) === null);
 

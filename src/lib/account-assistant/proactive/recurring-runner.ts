@@ -65,8 +65,10 @@ interface RecurringRow {
   next_run_at: string | null;
   per_run_cap: number;
   // Group campaigns (00113): 'groups' posta nos group_targets em vez de filtrar contatos.
+  // H46: shape novo {contact_id, name, jid} (contact_id = ID GHL real do contato-grupo);
+  // contact_id opcional só p/ tolerar rows legadas H40 (que nunca rodaram em prod).
   target_type?: "contacts" | "groups" | null;
-  group_targets?: Array<{ jid: string; name: string }> | null;
+  group_targets?: Array<{ contact_id?: string; jid: string; name: string }> | null;
 }
 
 export async function processRecurringTick(): Promise<RecurringTickResult> {
@@ -268,9 +270,13 @@ async function fireRecurringCampaign(row: RecurringRow): Promise<FireOutcome> {
     }
     const gRows = groups.map((g, i) => ({
       job_id: gJob.id,
-      contact_id: g.jid,
+      // H46: contact_id = ID GHL REAL do contato-grupo (entrega via /conversations/messages).
+      // Fallback p/ jid só p/ rows legadas H40 (inexistentes em prod). is_group=true faz o
+      // runner pular opt-out/DND/cooldown/assign E os caps anti-ban contarem (F2).
+      contact_id: g.contact_id || g.jid,
       contact_name: g.name,
       contact_phone: null,
+      is_group: true,
       target_jid: g.jid,
       group_name: g.name,
       scheduled_at: scheduledAts[i].toISOString(),
