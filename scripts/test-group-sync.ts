@@ -6,7 +6,10 @@ import {
   isGroupCacheStale,
   groupUpsertFromContact,
   matchGroupByName,
+  mapContactsToGroupRows,
+  resolveFromList,
 } from "../src/lib/account-assistant/group-contacts/sync";
+import { clampGroupInterval } from "../src/lib/account-assistant/group-campaigns/config";
 import type { ContactResult } from "../src/lib/account-assistant/filter-engine/types";
 import type { GroupContactRow } from "../src/lib/repositories/group-contacts.repo";
 
@@ -56,6 +59,29 @@ ok("ambíguo: 'Vendas' (c3+c4) → null", matchGroupByName(groups, "Vendas") ===
 ok("por JID literal: '444@g.us' → c4", matchGroupByName(groups, "444@g.us")?.contact_id === "c4");
 ok("inexistente → null", matchGroupByName(groups, "Não Existe XYZ") === null);
 ok("vazio → null", matchGroupByName(groups, "  ") === null);
+
+console.log("\n=== mapContactsToGroupRows (dedup por jid — review F1) ===");
+const dupA: ContactResult = { id: "A1", name: "Grupo X", email: "999@g.us", phone: null, tags: [] };
+const dupB: ContactResult = { id: "A2", name: "Grupo X duplicado", email: "999@g.us", phone: null, tags: [] };
+const mapped = mapContactsToGroupRows([dupA, dupB, person], "L");
+ok("2 contatos mesmo JID → 1 linha (mantém o 1º id)", mapped.length === 1 && mapped[0].contact_id === "A1");
+ok("pessoa normal não entra no map", mapped.every((r) => r.contact_id !== "P1"));
+ok("map vazio quando 0 grupos", mapContactsToGroupRows([person], "L").length === 0);
+
+console.log("\n=== resolveFromList (puro) ===");
+ok("'all' → todos", resolveFromList(groups, ["all"]).targets.length === 4);
+ok("nome único → 1 target", resolveFromList(groups, ["Massachusetts"]).targets.length === 1);
+const rf = resolveFromList(groups, ["Brasileiros", "Inexistente XYZ"]);
+ok("parcial: 1 achado + 1 notFound", rf.targets.length === 1 && rf.notFound.length === 1);
+const tagged: GroupContactRow[] = [{ ...mk("t1", "Tag Group", "t1@g.us"), tags: ["grupos disparo - matheus"] }, mk("t2", "Outro", "t2@g.us")];
+ok("'all' + tag filtra por tag", resolveFromList(tagged, ["all"], { groupTag: "matheus" }).targets.length === 1);
+
+console.log("\n=== clampGroupInterval (teto do CHECK ≤600 — review F1) ===");
+ok("teto: 900 → 600", clampGroupInterval(900) === 600);
+ok("teto: 1800 → 600", clampGroupInterval(1800) === 600);
+ok("piso: 60 → 180", clampGroupInterval(60) === 180);
+ok("válido no meio: 300 → 300", clampGroupInterval(300) === 300);
+ok("inválido → default 300", clampGroupInterval("xyz") === 300);
 
 console.log(`\n=== RESULTADO: ${pass} pass / ${fail} fail ===`);
 process.exit(fail === 0 ? 0 : 1);

@@ -61,6 +61,13 @@ export const GROUP_INTERVAL_SECONDS_DEFAULT = 300; // 5 min
 /** Piso do intervalo (s) — nunca espaçar menos que isto. 3x o piso do DM. */
 export const GROUP_INTERVAL_FLOOR_SECONDS = 180; // 3 min
 
+/**
+ * Teto do intervalo (s). Alinhado ao CHECK de `bulk_message_jobs.interval_seconds`
+ * (>=30 AND <=600, migration 00050) — sem isto, "posta a cada 15min" (900) estoura
+ * o CHECK no INSERT (23514) e o agendamento falha silencioso.
+ */
+export const GROUP_INTERVAL_CEIL_SECONDS = 600; // 10 min
+
 /** Jitter PADRÃO (s) somado/subtraído ao intervalo (humaniza o pacing). */
 export const GROUP_JITTER_SECONDS_DEFAULT = 60;
 
@@ -72,11 +79,11 @@ export const GROUP_MAX_VARIATIONS = 5;
 
 // --- Helpers puros (testáveis) ---------------------------------------------
 
-/** Clampa o intervalo informado ao piso anti-ban; default se inválido. */
+/** Clampa o intervalo ao [piso anti-ban, teto do CHECK]; default se inválido. */
 export function clampGroupInterval(raw: unknown): number {
   const n = typeof raw === "number" ? raw : Number(raw);
   if (!Number.isFinite(n) || n <= 0) return GROUP_INTERVAL_SECONDS_DEFAULT;
-  return Math.max(GROUP_INTERVAL_FLOOR_SECONDS, Math.round(n));
+  return Math.min(GROUP_INTERVAL_CEIL_SECONDS, Math.max(GROUP_INTERVAL_FLOOR_SECONDS, Math.round(n)));
 }
 
 /** "07:30" → cron "30 7 * * *". null se inválido. */

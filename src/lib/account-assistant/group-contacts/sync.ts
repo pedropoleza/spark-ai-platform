@@ -129,6 +129,25 @@ async function ensureLocationSynced(ctx: ToolContext): Promise<void> {
   }
 }
 
+/**
+ * ContactResult[] → linhas do cache, **dedup por JID** (a UNIQUE(location_id,jid) da
+ * 00119 exige; 2 contatos GHL pro mesmo grupo → mantém o 1º). PURO/testável.
+ */
+export function mapContactsToGroupRows(
+  items: ContactResult[],
+  locationId: string,
+): GroupContactUpsert[] {
+  const seenJid = new Set<string>();
+  const rows: GroupContactUpsert[] = [];
+  for (const c of items) {
+    const r = groupUpsertFromContact(c, locationId);
+    if (!r || seenJid.has(r.jid)) continue;
+    seenJid.add(r.jid);
+    rows.push(r);
+  }
+  return rows;
+}
+
 /** Descobre os contatos-grupo da location via GHL e materializa no cache. */
 export async function syncGroupContacts(
   ctx: ToolContext,
@@ -149,11 +168,26 @@ export async function syncGroupContacts(
     if (result.status !== "ok") {
       return { ok: false, count: 0, error: result.message || "filter falhou" };
     }
-    const rows = (result.items || [])
-      .map((c) => groupUpsertFromContact(c, ctx.locationId))
-      .filter((r): r is GroupContactUpsert => r !== null);
+    const rows = mapContactsToGroupRows(result.items || [], ctx.locationId);
 
-    await upsertGroupContacts(rows);
+    // Guard anti-wipe: pull 'ok' mas vazio pode ser transiente (lag de índice do GHL
+    // logo após uma escrita). Se já HAVIA grupos no cache, NÃO arquiva tudo — espera
+    // o próximo sync confirmar (senão o rep fica com 0 grupos por um turno).
+    if (rows.length === 0) {
+      const fresh = await getGroupContactsFreshness(ctx.locationId);
+      if (fresh.count > 0) {
+        console.warn(
+          `[group-sync] pull vazio com ${fresh.count} no cache (${ctx.locationId}) — suspeito transiente, não arquiva.`,
+        );
+        return { ok: true, count: 0, truncated: result.hit_safety_cap };
+      }
+    }
+
+    const up = await upsertGroupContacts(rows);
+    if (!up.ok) {
+      // NÃO arquiva se a gravação falhou (senão zera o cache MENTINDO sucesso).
+      return { ok: false, count: 0, error: up.error };
+    }
     await archiveMissingGroupContacts(ctx.locationId, rows.map((r) => r.contact_id));
     if (result.hit_safety_cap) {
       console.warn(`[group-sync] hit cap em ${ctx.locationId} — grupos podem faltar (${rows.length} achados)`);
@@ -178,18 +212,12 @@ export async function getGroupContacts(
   return listActiveGroupContacts(ctx.locationId);
 }
 
-/**
- * Resolve os alvos pedidos pelo rep → `{contact_id, jid, name}[]` + nomes não-achados.
- * Modos: ['all'] (todos, ou da tag), JIDs/nomes literais.
- */
-export async function resolveGroupTargets(
-  ctx: ToolContext,
-  names: string[],
+/** Resolve nomes/['all'] contra UMA lista de grupos. PURO/testável. */
+export function resolveFromList(
+  all: GroupContactRow[],
+  cleaned: string[],
   opts?: { groupTag?: string | null },
-): Promise<{ targets: GroupTarget[]; notFound: string[] }> {
-  const all = await getGroupContacts(ctx);
-
-  const cleaned = (names || []).map((n) => String(n || "").trim()).filter(Boolean);
+): { targets: GroupTarget[]; notFound: string[] } {
   if (cleaned.length === 1 && ALL_RE.test(cleaned[0])) {
     let list = all;
     if (opts?.groupTag) {
@@ -198,7 +226,6 @@ export async function resolveGroupTargets(
     }
     return { targets: list.map(toTarget), notFound: [] };
   }
-
   const targets: GroupTarget[] = [];
   const notFound: string[] = [];
   const seen = new Set<string>();
@@ -212,4 +239,24 @@ export async function resolveGroupTargets(
     }
   }
   return { targets, notFound };
+}
+
+/**
+ * Resolve os alvos pedidos pelo rep → `{contact_id, jid, name}[]` + nomes não-achados.
+ * Modos: ['all'] (todos, ou da tag), nomes/JIDs literais. Se algum nome NÃO casa, faz
+ * 1 re-sync forçado e re-tenta (cobre "rep acabou de criar/entrar num grupo" vs TTL 6h).
+ */
+export async function resolveGroupTargets(
+  ctx: ToolContext,
+  names: string[],
+  opts?: { groupTag?: string | null },
+): Promise<{ targets: GroupTarget[]; notFound: string[] }> {
+  const cleaned = (names || []).map((n) => String(n || "").trim()).filter(Boolean);
+  const all = await getGroupContacts(ctx);
+  let res = resolveFromList(all, cleaned, opts);
+  if (res.notFound.length > 0) {
+    const refreshed = await getGroupContacts(ctx, { forceRefresh: true });
+    res = resolveFromList(refreshed, cleaned, opts);
+  }
+  return res;
 }

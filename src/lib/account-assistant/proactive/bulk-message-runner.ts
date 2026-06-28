@@ -265,7 +265,9 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
     // a partir de `oc.respect_working_hours` (nome legado no schema do
     // outreach_config). Semanticamente o usuário pede "respeitar
     // horários" — qualquer um dos 2 configs do agente vale.
-    if (job.respect_quiet_hours) {
+    // H46: contato-grupo NUNCA é bloqueado por horário (o rep escolheu o horário do
+    // post) — por is_group (FATO), não pelo rótulo, pra cobrir job misto futuro.
+    if (!recipient.is_group && job.respect_quiet_hours) {
       const blocked = await isInBlockedHours(job.agent_id);
       if (blocked.blocked) {
         // Volta pra pending, próximo tick re-tenta. Loop até sair do bloqueio.
