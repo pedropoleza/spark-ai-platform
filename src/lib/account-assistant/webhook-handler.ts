@@ -21,6 +21,7 @@ import {
 } from "./webhook/dedup-guard";
 import type { RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
+import { isGroupCampaignsV2Enabled } from "./group-campaigns/config";
 
 const SPARKBOT_HISTORY_TURNS = 30;
 
@@ -70,6 +71,26 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   // próximo tick.
   // Async/silent — não bloqueia processamento do inbound se falhar.
   if (contactId) {
+    // H46: um MEMBRO postando num GRUPO chega como inbound no CONTATO-GRUPO. NÃO pode
+    // marcar opt-out (zeraria a campanha inteira), pausar sequência, rastrear variante,
+    // nem disparar o bot. Gate determinístico via cache group_contacts (sem GHL call no
+    // hot path). Só com a feature ligada (flag OFF = comportamento idêntico; e mesmo se
+    // um opt-out vazasse, o runner já pula opt-out por is_group). Fail-soft (erro→segue).
+    if (isGroupCampaignsV2Enabled()) {
+      try {
+        const { isCachedGroupContact } = await import("@/lib/repositories/group-contacts.repo");
+        if (await isCachedGroupContact(hubLocationId, contactId)) {
+          console.log(`[Sparkbot] inbound de contato-grupo ${contactId} — ignorado (sem opt-out/pause/resposta).`);
+          return;
+        }
+      } catch (err) {
+        console.warn(
+          "[Sparkbot] gate de contato-grupo falhou (segue normal):",
+          err instanceof Error ? err.message.slice(0, 120) : err,
+        );
+      }
+    }
+
     (async () => {
       try {
         const { onContactInboundReceived } = await import("./followup/sequence-monitor");

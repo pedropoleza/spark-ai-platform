@@ -43,6 +43,7 @@ import {
   resolveGroupTargets,
   type GroupTarget,
 } from "@/lib/account-assistant/group-contacts/sync";
+import { checkGroupDailyCaps } from "@/lib/account-assistant/group-campaigns/caps";
 import { computeBatchedScheduledAts } from "./bulk-delivery-strategy";
 
 // ---------------------------------------------------------------------------
@@ -311,6 +312,17 @@ async function scheduleGroupCampaign(
     };
   }
   const capped = targets.slice(0, GROUP_MAX_GROUPS_PER_CAMPAIGN);
+
+  // Gate 3: caps anti-ban ENFORÇADOS (decisão Pedro #1: número de grupo = o do DM →
+  // ban derruba o copiloto; os caps diários são a mitigação real, não decorativos).
+  const capCheck = await checkGroupDailyCaps(
+    createAdminClient(),
+    ctx.locationId,
+    capped.map((t) => t.contact_id),
+  );
+  if (!capCheck.ok) {
+    return { status: "error", retryable: false, code: `group_cap_${capCheck.reason}`, message: capCheck.message };
+  }
 
   const recurrence = (args.recurrence as Record<string, unknown> | undefined) || undefined;
   const isRecurring =

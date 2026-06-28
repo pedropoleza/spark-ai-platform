@@ -168,7 +168,7 @@ Postar em grupos de WhatsApp é poderoso, mas vem com responsabilidade. Preciso 
 
 2️⃣ *Você é responsável pelo conteúdo.* Nada de promessa de retorno garantido, esquema de renda, corrente ou spam. Mensagem honesta e relevante pro grupo. Eu te aviso se um texto parecer arriscado, mas a palavra final — e a responsabilidade — é sua.
 
-3️⃣ *Servidor dedicado recomendado.* Pra proteger seu número, o ideal é rodar campanha de grupo num *número/servidor dedicado* (separado do seu WhatsApp pessoal). A gente tem um parceiro de proxy doméstico que oferece esse servidor dedicado — ajuda bastante a evitar bloqueio. Se quiser, eu falo com o suporte pra te montar um. 💪
+3️⃣ *O número usado é o da sua conta.* As campanhas saem pelo MESMO número que você usa comigo. Se o WhatsApp bloquear por excesso, *você perde os dois* — as campanhas E a nossa conversa. Por isso eu *limito* grupos e mensagens por dia e *espaço* os envios, pra te proteger. Pra volume grande, o ideal é um *número separado só pra campanhas* (a gente tem um parceiro que monta) — mas não é obrigatório pra começar. 💪
 
 Topa seguir com essas condições?`;
 

@@ -90,6 +90,28 @@ export async function archiveMissingGroupContacts(
   if (error) console.warn("[group-contacts.repo] archive falhou:", error.message);
 }
 
+/**
+ * É um contato-grupo cacheado (ativo) nesta location? (H46: gate de inbound —
+ * membro postando no grupo NÃO pode marcar opt-out/pausar/disparar o bot.)
+ * Fail-soft: erro → false (trata como contato normal, não bloqueia o rep).
+ */
+export async function isCachedGroupContact(
+  locationId: string,
+  contactId: string,
+): Promise<boolean> {
+  if (!locationId || !contactId) return false;
+  const db = createAdminClient();
+  const { data, error } = await db
+    .from("group_contacts")
+    .select("id")
+    .eq("location_id", locationId)
+    .eq("contact_id", contactId)
+    .eq("is_archived", false)
+    .maybeSingle();
+  if (error) return false;
+  return !!data;
+}
+
 /** Frescor do cache: nº de ativos + o last_synced_at mais recente (pra decidir re-sync). */
 export async function getGroupContactsFreshness(
   locationId: string,
