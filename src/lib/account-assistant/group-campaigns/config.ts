@@ -13,11 +13,47 @@
  * grupos; a variação de texto reduz detecção de padrão.
  */
 
-/** Feature ligada? Default OFF (log-first). Espelha isEntitlementsEnforced. */
-export function isGroupCampaignsEnabled(): boolean {
-  const v = (process.env.GROUP_CAMPAIGNS_ENABLED || "").toLowerCase();
+function envOn(name: string): boolean {
+  const v = (process.env[name] || "").toLowerCase();
   return v === "1" || v === "on" || v === "true";
 }
+
+/** Feature LEGADA (H40, direto-Stevo). Default OFF. Retirada na fase F5 do H46. */
+export function isGroupCampaignsEnabled(): boolean {
+  return envOn("GROUP_CAMPAIGNS_ENABLED");
+}
+
+/**
+ * H46 — Campanhas em Grupo V2 (grupos = contatos GHL). Flag NOVA, separada da
+ * legada. Default OFF / log-first: com OFF as tools V2 não se registram e o prompt
+ * é idêntico ao de hoje. Gateia tools + seção de prompt + caps.
+ */
+export function isGroupCampaignsV2Enabled(): boolean {
+  return envOn("GROUP_CAMPAIGNS_V2");
+}
+
+/**
+ * H46 — Captura/biblioteca de mídia do rep (rep manda áudio/imagem/doc → guarda →
+ * dispara). Flag separada (a captura inbound pode ligar antes do outbound). OFF.
+ */
+export function isRepMediaEnabled(): boolean {
+  return envOn("REP_MEDIA_ENABLED");
+}
+
+// --- Caps anti-ban ENFORÇADOS (H46, decisão Pedro #1) -----------------------
+// O número que entrega no grupo é o MESMO do DM do SparkBot (sem instância
+// dedicada). Logo o ban derruba o copiloto — esses caps NÃO são decorativos:
+// são enforçados por query real (recipients sent hoje) no schedule/recurring.
+// Conservadores de propósito; o rep é avisado nos Termos (ponto 3).
+
+/** Máximo de grupos distintos que recebem disparo por dia, por location. */
+export const GROUP_MAX_GROUPS_PER_DAY = 10;
+
+/** Máximo de mensagens pro MESMO grupo por dia. */
+export const GROUP_MAX_MSGS_PER_GROUP_PER_DAY = 2;
+
+/** Teto total de mensagens de grupo por dia, por location. */
+export const GROUP_MAX_MSGS_PER_DAY_TOTAL = 20;
 
 /** Intervalo PADRÃO entre posts em grupos diferentes (s). Conservador. */
 export const GROUP_INTERVAL_SECONDS_DEFAULT = 300; // 5 min
