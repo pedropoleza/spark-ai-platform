@@ -25,7 +25,13 @@
   - ⚠️ DÍVIDA p/ F5: `recurring-runner` (branch groups) lê `group_targets[].jid` (shape velho) **E** monta recipients SEM `is_group` nem `contact_id` real → trocar p/ `contact_id: g.contact_id` + `is_group: true` (espelhar o schedule). Flag OFF (RECURRING+V2) até F5, sem risco.
 
 **✅ F1 COMPLETO (código+review)** — 7 commits, detector 26/26 · sync 29/29 · H40 43/43 · tsc limpo. Falta só o E2E ao vivo (gated pelo Pedro).
-- [ ] **F2** Blindagem inbound (gate @g.us no webhook) + caps anti-ban enforçados + Termos ponto 3
+- [x] **F2** Blindagem inbound + caps anti-ban + Termos ponto 3 — commit
+  - [x] Gate @g.us no `webhook-handler` (early-return antes de opt-out/pause/variant/resposta) via cache + flag V2 + fail-soft; helper `isCachedGroupContact`
+  - [x] Caps enforçados `caps.ts` (evaluateGroupCaps puro 8/8 + checkGroupDailyCaps 2-query fail-open) wired no schedule
+  - [x] Termos ponto 3 reescrito (número=DM, ban derruba os dois)
+  - [x] review adversarial do F2 (1f location-mismatch = CLEAN) → 1 HIGH + 1 LOW corrigidos: recurring-runner puxado pro modelo H46 (resolve a dívida do F5!) + regressão @g.usuario.com
+
+**✅ F2 COMPLETO (código+review)** — detector 28/28 · caps 8/8 · sync 29/29 · H40 43/43 · tsc limpo. (recurring-runner shape JÁ resolvido aqui → F5 fica só com anti-contaminação + retirada H40 + paridade.)
 - [ ] **F3** Cockpit por-grupo (00122; scheduled_by_group/edit_message/reschedule/pause-por-grupo via paused_at)
 - [ ] **F4** Pipeline de mídia (00120+00121; persistRepMedia, recent-media, runners mandam attachments, materializer copia media_id; áudio .wav + transcode)
 - [ ] **F5** Recorrência por-grupo + anti-contaminação (not_contains @g.us lead-facing) + retirada do H40 + paridade + reescrever test-group-campaign.ts
