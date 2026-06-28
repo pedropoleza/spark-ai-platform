@@ -68,10 +68,12 @@ interface BulkRecipientRow {
   // V2 multi-segmento (H28): texto final JÁ interpolado por recipient (filter-engine
   // na criação do job). Tem prioridade sobre o template do job — enviar verbatim.
   personalized_message?: string | null;
-  // Group campaigns (00113, 2026-06-18): JID do grupo destino quando o job é
-  // target_type='groups'. NULL pra contatos. group_name é só pra log.
+  // Group campaigns: target_jid/group_name = audit do grupo. NULL pra contatos.
   target_jid?: string | null;
   group_name?: string | null;
+  // H46: recipient é contato-grupo (email @g.us). Decide pular opt-out/DND/cooldown/
+  // assign pelo FATO, não pelo rótulo job.target_type. Vem do claim (RETURNS SETOF).
+  is_group?: boolean | null;
 }
 
 interface BulkJobRow {
@@ -206,7 +208,7 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
     const byLoc = new Map<string, string[]>(); // location_id → contact_ids
     for (const r of claimed) {
       const job = jobsById.get(r.job_id);
-      if (!job) continue;
+      if (!job || r.is_group) continue; // H46: contato-grupo não tem opt-out
       const arr = byLoc.get(job.location_id) || [];
       arr.push(r.contact_id);
       byLoc.set(job.location_id, arr);
@@ -232,9 +234,10 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
     }
     touchedJobIds.add(job.id);
 
-    // Etapa 4.8: skip opt-outs (set pre-computado acima). NÃO se aplica a grupos
-    // (opt-out é por phone de contato individual; contact_id de grupo é um JID).
-    if (job.target_type !== "groups") {
+    // Etapa 4.8: skip opt-outs (set pre-computado acima). H46: NÃO se aplica a
+    // contato-grupo (um grupo não "opta por sair"). Decidido por is_group, não pelo
+    // rótulo target_type — protege campanha mista.
+    if (!recipient.is_group) {
       const optedSet = optedOutByLocation.get(job.location_id);
       if (optedSet?.has(recipient.contact_id)) {
         await markRecipientSkipped(recipient.id, "contact_opted_out");
@@ -318,9 +321,9 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
         })
         .eq("id", recipient.id);
       // F3.2 Pedro 2026-05-16: registra cooldown pra preview futuro avisar
-      // duplicação. Async/silent — não bloqueia se falhar. NÃO pra grupos
-      // (cooldown é por contato; contact_id de grupo é um JID, não polui).
-      if (job.target_type !== "groups") {
+      // duplicação. Async/silent — não bloqueia se falhar. H46: NÃO pra
+      // contato-grupo (cooldown é por contato individual; decidido por is_group).
+      if (!recipient.is_group) {
         try {
           const { recordContactBulkSent } = await import("@/lib/account-assistant/tools/bulk-messages");
           await recordContactBulkSent(recipient.contact_id, job.location_id, job.id);
@@ -731,12 +734,9 @@ async function sendToContact(
   recipient: BulkRecipientRow,
   message: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  // Group campaigns (00113): grupo NÃO é endereçável por contactId/GHL — vai por
-  // JID via Stevo. Intercepta no TOPO (antes de montar GHLClient/assignedTo, que
-  // são conceitos de contato) e devolve o MESMO shape { ok; error? } pro loop.
-  if (job.target_type === "groups") {
-    return await sendToGroup(job, recipient, message);
-  }
+  // H46: grupo é um CONTATO GHL (contact_id real, is_group=true) — vai pela MESMA
+  // rota de contato abaixo. Sem ramo Stevo. O que muda (pular assign/opt-out/DND) é
+  // decidido por recipient.is_group, não pelo rótulo job.target_type.
   try {
     const supabase = createAdminClient();
     const { data: location } = await supabase
@@ -750,31 +750,33 @@ async function sendToContact(
     const ghlClient = new GHLClient(location.company_id, job.location_id);
     const ghlType = job.delivery_channel === "whatsapp_api" ? "WhatsApp" : "SMS";
 
-    // Fix Pedro 2026-05-06: PROTOCOLO PADRÃO — antes de QUALQUER send,
-    // garante que assignedTo é o rep que criou o job. Em contas com
-    // múltiplas instâncias WhatsApp ativas, GHL roteia outbound baseado
-    // no assignedTo do contato. Sem isso, mensagem em massa pode sair
-    // pelo número de outro rep da agency, confundindo recipientes.
-    try {
-      const { data: rep } = await supabase
-        .from("rep_identities")
-        .select("ghl_users")
-        .eq("id", job.rep_id)
-        .maybeSingle();
-      const repGhlUserId = (
-        (rep?.ghl_users as Array<{ ghl_user_id: string; location_id: string }>) || []
-      ).find((u) => u.location_id === job.location_id)?.ghl_user_id;
-      if (repGhlUserId) {
-        const { ensureContactAssignedTo } = await import("@/lib/ghl/operations");
-        await ensureContactAssignedTo(ghlClient, recipient.contact_id, repGhlUserId);
+    // Fix Pedro 2026-05-06: PROTOCOLO PADRÃO — antes de QUALQUER send, garante que
+    // assignedTo é o rep que criou o job (GHL roteia outbound pelo assignedTo do
+    // contato em contas com múltiplas instâncias WhatsApp).
+    // H46: PULAR p/ contato-grupo — o contato-grupo já vem com o assignedTo certo
+    // (criado pela integração do Stevo); sobrescrever poderia trocar o número que
+    // entrega. O número é o do DM por construção (decisão Pedro #1).
+    if (!recipient.is_group) {
+      try {
+        const { data: rep } = await supabase
+          .from("rep_identities")
+          .select("ghl_users")
+          .eq("id", job.rep_id)
+          .maybeSingle();
+        const repGhlUserId = (
+          (rep?.ghl_users as Array<{ ghl_user_id: string; location_id: string }>) || []
+        ).find((u) => u.location_id === job.location_id)?.ghl_user_id;
+        if (repGhlUserId) {
+          const { ensureContactAssignedTo } = await import("@/lib/ghl/operations");
+          await ensureContactAssignedTo(ghlClient, recipient.contact_id, repGhlUserId);
+        }
+      } catch (assignErr) {
+        // Não fatal — segue.
+        console.warn(
+          `[bulk-runner] assignedTo update falhou pra contact=${recipient.contact_id}:`,
+          assignErr instanceof Error ? assignErr.message.slice(0, 100) : assignErr,
+        );
       }
-    } catch (assignErr) {
-      // Não fatal — segue. (Pra recipient com 100s/1000s de msgs, esse
-      // hit no GHL é aceitável: 1 extra GET + ocasional PUT por contato.)
-      console.warn(
-        `[bulk-runner] assignedTo update falhou pra contact=${recipient.contact_id}:`,
-        assignErr instanceof Error ? assignErr.message.slice(0, 100) : assignErr,
-      );
     }
 
     // Fix HIGH-H6 (deep audit 2026-05-06): fallback automático WhatsApp API
@@ -809,46 +811,6 @@ async function sendToContact(
       }
       throw err;
     }
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: errMsg.slice(0, 500) };
-  }
-}
-
-/**
- * Envio a GRUPO de WhatsApp (group campaigns, 00113). Resolve a instância Stevo
- * DEDICADA da location do job (gate anti-ban: NUNCA a compartilhada) e posta o
- * texto no JID via /send/text. Devolve o MESMO shape { ok; error? } de
- * sendToContact pra o loop principal gravar sent/failed sem mudança.
- *
- * O texto já chega pronto (snapshot personalized_message — a variação anti-ban é
- * aplicada no AGENDAMENTO, não aqui). Não interpola nem re-varia.
- */
-async function sendToGroup(
-  job: BulkJobRow,
-  recipient: BulkRecipientRow,
-  message: string,
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const jid = (recipient.target_jid || recipient.contact_id || "").trim();
-    if (!/@g\.us$/i.test(jid)) {
-      return { ok: false, error: `JID de grupo inválido (${jid.slice(0, 40)})` };
-    }
-    const { getStevoInstanceForRep } = await import("@/lib/repositories/stevo-instances.repo");
-    const inst = await getStevoInstanceForRep(job.location_id);
-    if (!inst.ok) {
-      // Defense-in-depth: schedule já exigiu dedicada, mas pode ter mudado.
-      const reasonMsg =
-        inst.reason === "no_instance"
-          ? "instância Stevo não encontrada pra essa location"
-          : inst.reason === "misconfigured"
-            ? "instância dedicada sem credenciais (provisionamento incompleto)"
-            : "instância Stevo não é dedicada (campanha de grupo bloqueada)";
-      return { ok: false, error: reasonMsg };
-    }
-    const { sendGroupText } = await import("@/lib/account-assistant/webhook/stevo-groups");
-    const r = await sendGroupText(inst.instance.serverUrl, inst.instance.instanceToken, jid, message);
-    return { ok: r.ok, error: r.error };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     return { ok: false, error: errMsg.slice(0, 500) };
