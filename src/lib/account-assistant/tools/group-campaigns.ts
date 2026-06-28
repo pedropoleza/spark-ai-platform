@@ -93,6 +93,7 @@ const groupCampaignInfo: ToolEntry = {
       "• 'list_groups' — lista seus grupos de WhatsApp (aparecem como contato no Spark Leads; o nome termina em 'GRUPO').\n" +
       "• 'preview' — simula uma campanha ANTES de agendar: grupos-alvo, prévia da mensagem, aviso de spam e tempo estimado. NÃO envia. Passe groups[] + message.\n" +
       "• 'list_campaigns' — campanhas de grupo ativas/recentes do rep.\n" +
+      "• 'scheduled_by_group' — o que está PROGRAMADO em cada grupo (posts pendentes c/ horário + texto + recorrências). Passe group (opcional) p/ 1 grupo só. Use ANTES de editar/reagendar/pausar (pega os ids reais aqui).\n" +
       "Use SEMPRE list_groups/preview antes de chamar group_campaign action:'schedule'.",
     risk: "safe",
     parameters: {
@@ -100,9 +101,10 @@ const groupCampaignInfo: ToolEntry = {
       properties: {
         action: {
           type: "string",
-          enum: ["list_groups", "preview", "list_campaigns"],
+          enum: ["list_groups", "preview", "list_campaigns", "scheduled_by_group"],
           description: "Qual consulta fazer.",
         },
+        group: { type: "string", description: "Nome de 1 grupo (scheduled_by_group). Omita pra ver todos." },
         groups: {
           type: "array",
           items: { type: "string" },
@@ -121,6 +123,9 @@ const groupCampaignInfo: ToolEntry = {
     const action = String(args.action || "");
 
     if (action === "list_campaigns") return listGroupCampaigns(ctx);
+    if (action === "scheduled_by_group") {
+      return scheduledByGroup(ctx, args.group ? String(args.group).trim() || undefined : undefined);
+    }
 
     // Descobre os grupos da location: cache group_contacts (sync se stale).
     const groups = await getGroupContacts(ctx);
@@ -163,17 +168,24 @@ const groupCampaign: ToolEntry = {
     description:
       "📣 AÇÃO em campanhas de GRUPO de WhatsApp (exige confirmação). action:\n" +
       "• 'schedule' — agenda o disparo. Passe groups[] (nomes dos grupos ou ['all']) + message. Opcional: variations[] (textos alternativos anti-spam), recurrence {daily_time:'07:30'} ou {cron} pra repetir todo dia, start_at (ISO) pra one-shot futuro, interval_seconds.\n" +
-      "• 'pause' / 'resume' / 'cancel' — controla as campanhas de grupo do rep (pause/cancel também seguram as recorrentes).\n" +
-      "REGRAS: exige aceite dos Termos de campanha de grupo; as campanhas saem pelo MESMO número que você usa comigo (um bloqueio derruba os dois — por isso eu limito e espaço os envios e vario o texto). Sempre faça preview antes.",
+      "• 'edit_message' — troca o texto de UM post pendente (recipient_id + new_message; pegue o id no group_campaign_info scheduled_by_group).\n" +
+      "• 'reschedule' — muda o horário de um post (recipient_id + new_time ISO) OU de uma recorrência (recurring_id + new_time 'HH:MM').\n" +
+      "• 'pause' / 'resume' / 'cancel' — controla as campanhas de grupo. Passe group (nome) pra mexer SÓ NAQUELE grupo; sem group, vale pra TODAS (pause/cancel também seguram as recorrentes).\n" +
+      "REGRAS: exige aceite dos Termos de campanha de grupo; as campanhas saem pelo MESMO número que você usa comigo (um bloqueio derruba os dois — por isso eu limito e espaço os envios e vario o texto). Sempre faça preview antes; e scheduled_by_group ANTES de editar/reagendar/pausar (pega os ids reais).",
     risk: "high",
     parameters: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["schedule", "pause", "resume", "cancel"],
+          enum: ["schedule", "edit_message", "reschedule", "pause", "resume", "cancel"],
           description: "O que fazer.",
         },
+        group: { type: "string", description: "Nome de 1 grupo — escopa pause/resume/cancel SÓ nele." },
+        recipient_id: { type: "string", description: "ID de UM post pendente (de scheduled_by_group) — edit_message/reschedule." },
+        recurring_id: { type: "string", description: "ID de uma recorrência (de scheduled_by_group) — reschedule." },
+        new_message: { type: "string", description: "Texto novo do post (edit_message)." },
+        new_time: { type: "string", description: "Novo horário: ISO 8601 (post) ou 'HH:MM' (recorrência) — reschedule." },
         groups: {
           type: "array",
           items: { type: "string" },
@@ -205,10 +217,12 @@ const groupCampaign: ToolEntry = {
   },
   handler: async (ctx, args): Promise<ToolResult> => {
     const action = String(args.action || "");
-    if (action === "pause") return pauseGroupCampaigns(ctx);
-    if (action === "resume") return resumeGroupCampaigns(ctx);
-    if (action === "cancel") return cancelGroupCampaigns(ctx);
     if (action === "schedule") return scheduleGroupCampaign(ctx, args);
+    if (action === "edit_message") return editGroupMessage(ctx, args);
+    if (action === "reschedule") return rescheduleGroup(ctx, args);
+    if (action === "pause") return pauseGroupCampaigns(ctx, args);
+    if (action === "resume") return resumeGroupCampaigns(ctx, args);
+    if (action === "cancel") return cancelGroupCampaigns(ctx, args);
     return { status: "error", retryable: false, message: `action desconhecida: ${action}` };
   },
 };
@@ -544,9 +558,292 @@ async function listGroupCampaigns(ctx: ToolContext): Promise<ToolResult> {
   };
 }
 
+// --- Cockpit: ver / editar / reagendar (H46/F3) ----------------------------
+
+/** "O que está programado em cada grupo" (req #1 do Pedro). Opcional: 1 grupo. */
+async function scheduledByGroup(ctx: ToolContext, groupName?: string): Promise<ToolResult> {
+  const supabase = createAdminClient();
+  let filterContactId: string | null = null;
+  let filterLabel: string | null = null;
+  if (groupName) {
+    const { targets } = await resolveGroupTargets(ctx, [groupName]);
+    if (targets.length === 0) {
+      return { status: "not_found", message: `Não achei o grupo "${groupName}". Use list_groups pros nomes exatos.` };
+    }
+    filterContactId = targets[0].contact_id;
+    filterLabel = targets[0].name;
+  }
+
+  const { data: jobs } = await supabase
+    .from("bulk_message_jobs")
+    .select("id, message_template")
+    .eq("rep_id", ctx.rep.id)
+    .eq("location_id", ctx.locationId)
+    .eq("target_type", "groups")
+    .in("status", ["running", "paused"]);
+  const jobIds = (jobs || []).map((j) => j.id as string);
+  const tmplByJob = new Map<string, string>((jobs || []).map((j) => [j.id as string, j.message_template as string]));
+
+  type Post = { recipient_id: string; scheduled_at: string; paused: boolean; text_preview: string };
+  const byGroup = new Map<string, { contact_id: string; name: string; posts: Post[] }>();
+  if (jobIds.length) {
+    let q = supabase
+      .from("bulk_message_recipients")
+      .select("id, contact_id, group_name, scheduled_at, paused_at, personalized_message, job_id")
+      .in("job_id", jobIds)
+      .eq("is_group", true)
+      .eq("status", "pending")
+      .order("scheduled_at", { ascending: true });
+    if (filterContactId) q = q.eq("contact_id", filterContactId);
+    const { data: recs } = await q;
+    for (const r of (recs || []) as Array<Record<string, unknown>>) {
+      const cid = String(r.contact_id);
+      const name = (r.group_name as string) || filterLabel || cid;
+      if (!byGroup.has(cid)) byGroup.set(cid, { contact_id: cid, name, posts: [] });
+      byGroup.get(cid)!.posts.push({
+        recipient_id: String(r.id),
+        scheduled_at: String(r.scheduled_at),
+        paused: !!r.paused_at,
+        text_preview: String((r.personalized_message as string) || tmplByJob.get(String(r.job_id)) || "").slice(0, 120),
+      });
+    }
+  }
+
+  const { data: recurring } = await supabase
+    .from("recurring_campaigns")
+    .select("id, label, cron_expression, timezone, enabled, next_run_at, group_targets")
+    .eq("rep_id", ctx.rep.id)
+    .eq("location_id", ctx.locationId)
+    .eq("target_type", "groups")
+    .order("created_at", { ascending: false });
+  const recurrences = (recurring || [])
+    .filter((rc) => {
+      if (!filterContactId) return true;
+      const tg = (rc.group_targets as Array<{ contact_id?: string }>) || [];
+      return tg.some((t) => t.contact_id === filterContactId);
+    })
+    .map((rc) => ({
+      recurring_id: rc.id,
+      label: rc.label,
+      cron: rc.cron_expression,
+      timezone: rc.timezone,
+      enabled: rc.enabled,
+      next_run_at: rc.next_run_at,
+    }));
+
+  const groups = [...byGroup.values()];
+  const totalPosts = groups.reduce((a, g) => a + g.posts.length, 0);
+  return {
+    status: "ok",
+    data: {
+      scope: groupName ? `grupo "${filterLabel}"` : "todos os grupos",
+      groups: groups.map((g) => ({ group: g.name, contact_id: g.contact_id, pending_posts: g.posts.length, posts: g.posts })),
+      recurrences,
+      message:
+        totalPosts === 0 && recurrences.length === 0
+          ? groupName
+            ? `Nada programado pro grupo "${filterLabel}".`
+            : "Você não tem nada programado em grupos agora."
+          : `Programado: ${totalPosts} post(s) pendente(s) em ${groups.length} grupo(s)` +
+            (recurrences.length ? ` + ${recurrences.length} recorrência(s).` : "."),
+    },
+  };
+}
+
+/** Resolve a row do recipient + valida que o job é do rep (anti-IDOR). */
+async function loadOwnedRecipient(
+  ctx: ToolContext,
+  recipientId: string,
+): Promise<{ ok: true; status: string; group_name: string | null; edit_count: number } | { ok: false; result: ToolResult }> {
+  const supabase = createAdminClient();
+  const { data: rec } = await supabase
+    .from("bulk_message_recipients")
+    .select("id, status, edit_count, group_name, job:bulk_message_jobs(rep_id, location_id)")
+    .eq("id", recipientId)
+    .maybeSingle();
+  if (!rec) {
+    return { ok: false, result: { status: "not_found", message: "Não achei esse post. Use scheduled_by_group pra ver os ids atuais." } };
+  }
+  const j = rec.job as { rep_id?: string; location_id?: string } | Array<{ rep_id?: string; location_id?: string }> | null;
+  const job = Array.isArray(j) ? j[0] : j;
+  if (!job || job.rep_id !== ctx.rep.id || job.location_id !== ctx.locationId) {
+    return { ok: false, result: { status: "error", retryable: false, message: "Esse post não é seu." } };
+  }
+  return { ok: true, status: String(rec.status), group_name: (rec.group_name as string) ?? null, edit_count: Number(rec.edit_count) || 0 };
+}
+
+/** Editar o texto de um post pendente (req #1 "editar a mensagem"). */
+async function editGroupMessage(ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> {
+  const recipientId = String(args.recipient_id || "").trim();
+  const newMessage = String(args.new_message || "").trim();
+  if (!recipientId || !newMessage) {
+    return { status: "error", retryable: false, message: "Pra editar eu preciso de recipient_id (do scheduled_by_group) e new_message." };
+  }
+  if (scoreSpamRisk(newMessage).block) {
+    return {
+      status: "error",
+      retryable: false,
+      code: "group_spam_blocked",
+      message: "🚫 Esse texto novo tem o padrão que derruba número (promessa garantida + urgência + link). Reescreve sem a promessa de ganho.",
+    };
+  }
+  const owned = await loadOwnedRecipient(ctx, recipientId);
+  if (!owned.ok) return owned.result;
+  if (owned.status !== "pending") {
+    return { status: "error", retryable: false, message: "Esse post já saiu (ou foi cancelado) — não dá pra editar. Posso agendar um novo." };
+  }
+  const supabase = createAdminClient();
+  const { data: updated, error } = await supabase
+    .from("bulk_message_recipients")
+    .update({ personalized_message: newMessage, edited_at: new Date().toISOString(), edit_count: owned.edit_count + 1 })
+    .eq("id", recipientId)
+    .eq("status", "pending")
+    .select("id");
+  if (error) return { status: "error", retryable: true, message: `Não consegui editar (${error.message.slice(0, 120)}).` };
+  if (!updated || updated.length === 0) {
+    return { status: "error", retryable: false, message: "Esse post acabou de sair — não deu pra editar a tempo." };
+  }
+  return { status: "ok", data: { recipient_id: recipientId, group: owned.group_name, message: `✅ Troquei o texto do post no grupo *${owned.group_name || "—"}*.` } };
+}
+
+/** Reagendar: 1 post (recipient_id + ISO) OU uma recorrência (recurring_id + HH:MM/cron). */
+async function rescheduleGroup(ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> {
+  const recipientId = args.recipient_id ? String(args.recipient_id).trim() : "";
+  const recurringId = args.recurring_id ? String(args.recurring_id).trim() : "";
+  const newTime = String(args.new_time || "").trim();
+  if (!newTime) return { status: "error", retryable: false, message: "Pra reagendar me diz o novo horário (new_time)." };
+  const supabase = createAdminClient();
+
+  if (recipientId) {
+    const iso = new Date(newTime);
+    if (isNaN(iso.getTime())) {
+      return { status: "error", retryable: false, message: `Horário inválido: ${newTime}. Use ISO (ex: 2026-07-01T14:30:00-04:00).` };
+    }
+    if (iso.getTime() < Date.now() - 60_000) {
+      return { status: "error", retryable: false, message: "Esse horário já passou. Me dá um horário futuro." };
+    }
+    const owned = await loadOwnedRecipient(ctx, recipientId);
+    if (!owned.ok) return owned.result;
+    if (owned.status !== "pending") return { status: "error", retryable: false, message: "Esse post já saiu — não dá pra reagendar." };
+    const { data: updated } = await supabase
+      .from("bulk_message_recipients")
+      .update({ scheduled_at: iso.toISOString() })
+      .eq("id", recipientId)
+      .eq("status", "pending")
+      .select("id");
+    if (!updated || updated.length === 0) return { status: "error", retryable: false, message: "Não deu pra reagendar (post já saiu)." };
+    return { status: "ok", data: { recipient_id: recipientId, new_time: iso.toISOString(), message: `✅ Reagendei o post do grupo *${owned.group_name || "—"}*.` } };
+  }
+
+  if (recurringId) {
+    const cron = /^\d{1,2}:\d{2}$/.test(newTime) ? dailyTimeToCron(newTime) : newTime;
+    if (!cron) return { status: "error", retryable: false, message: "Horário de recorrência inválido. Use 'HH:MM' (ex: 08:00)." };
+    const { data: rc } = await supabase
+      .from("recurring_campaigns")
+      .select("id, rep_id, location_id, timezone")
+      .eq("id", recurringId)
+      .maybeSingle();
+    if (!rc) return { status: "not_found", message: "Não achei essa recorrência." };
+    if (rc.rep_id !== ctx.rep.id || rc.location_id !== ctx.locationId) {
+      return { status: "error", retryable: false, message: "Essa recorrência não é sua." };
+    }
+    let nextRunAt: string | null = null;
+    try {
+      const { computeNextRunAt } = await import("@/lib/account-assistant/proactive/cron-evaluator");
+      const next = computeNextRunAt(cron, rc.timezone || ctx.rep.timezone || "America/New_York", new Date());
+      nextRunAt = next ? next.toISOString() : null;
+    } catch {
+      nextRunAt = null;
+    }
+    if (!nextRunAt) return { status: "error", retryable: false, message: `Não consegui interpretar o horário (${cron}).` };
+    const { error } = await supabase
+      .from("recurring_campaigns")
+      .update({ cron_expression: cron, next_run_at: nextRunAt })
+      .eq("id", recurringId);
+    if (error) return { status: "error", retryable: true, message: `Não consegui reagendar (${error.message.slice(0, 120)}).` };
+    return {
+      status: "ok",
+      data: {
+        recurring_id: recurringId,
+        cron,
+        next_run_at: nextRunAt,
+        message: `✅ Pronto — a recorrência passa a rodar no novo horário (${newTime}) a partir da próxima vez. Os posts de HOJE que já estavam agendados seguem no horário antigo.`,
+      },
+    };
+  }
+
+  return { status: "error", retryable: false, message: "Me diz o que reagendar: recipient_id (1 post) ou recurring_id (uma recorrência) — pega do scheduled_by_group." };
+}
+
+/** Resolve os job ids de grupo ativos do rep. */
+async function activeGroupJobIds(ctx: ToolContext): Promise<string[]> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("bulk_message_jobs")
+    .select("id")
+    .eq("rep_id", ctx.rep.id)
+    .eq("location_id", ctx.locationId)
+    .eq("target_type", "groups")
+    .in("status", ["running", "paused"]);
+  return (data || []).map((j) => j.id as string);
+}
+
+/** Pausa/retoma/cancela os posts pendentes de UM grupo (escopo granular). */
+async function scopeOneGroup(
+  ctx: ToolContext,
+  groupName: string,
+  op: "pause" | "resume" | "cancel",
+): Promise<ToolResult> {
+  const { targets } = await resolveGroupTargets(ctx, [groupName]);
+  if (targets.length === 0) {
+    return { status: "not_found", message: `Não achei o grupo "${groupName}". Use list_groups pros nomes exatos.` };
+  }
+  const { contact_id: cid, name } = targets[0];
+  const jobIds = await activeGroupJobIds(ctx);
+  if (jobIds.length === 0) return { status: "ok", data: { message: `Não tinha campanha de grupo ativa pra "${name}".` } };
+  const supabase = createAdminClient();
+
+  if (op === "pause") {
+    const { data: upd } = await supabase
+      .from("bulk_message_recipients")
+      .update({ paused_at: new Date().toISOString() })
+      .in("job_id", jobIds)
+      .eq("contact_id", cid)
+      .eq("status", "pending")
+      .is("paused_at", null)
+      .select("id");
+    const n = (upd || []).length;
+    return { status: "ok", data: { group: name, paused_posts: n, message: n ? `⏸ Pausei ${n} post(s) no grupo *${name}*. "retoma o grupo ${name}" pra voltar.` : `Não tinha post pendente no grupo *${name}* pra pausar.` } };
+  }
+  if (op === "resume") {
+    const { data: upd } = await supabase
+      .from("bulk_message_recipients")
+      .update({ paused_at: null })
+      .in("job_id", jobIds)
+      .eq("contact_id", cid)
+      .eq("status", "pending")
+      .not("paused_at", "is", null)
+      .select("id");
+    const n = (upd || []).length;
+    return { status: "ok", data: { group: name, resumed_posts: n, message: n ? `▶️ Retomei ${n} post(s) no grupo *${name}*.` : `Não tinha post pausado no grupo *${name}*.` } };
+  }
+  // cancel
+  const { data: upd } = await supabase
+    .from("bulk_message_recipients")
+    .update({ status: "cancelled", error_message: "cancelado por grupo pelo rep" })
+    .in("job_id", jobIds)
+    .eq("contact_id", cid)
+    .eq("status", "pending")
+    .select("id");
+  const n = (upd || []).length;
+  return { status: "ok", data: { group: name, cancelled_posts: n, message: n ? `❌ Cancelei ${n} post(s) pendente(s) no grupo *${name}*. (Já enviados ficam.)` : `Não tinha post pendente no grupo *${name}* pra cancelar.` } };
+}
+
 // --- Tripé pausa/retoma/cancela (group-scoped) -----------------------------
 
-async function pauseGroupCampaigns(ctx: ToolContext): Promise<ToolResult> {
+async function pauseGroupCampaigns(ctx: ToolContext, args: Record<string, unknown> = {}): Promise<ToolResult> {
+  const groupName = args.group ? String(args.group).trim() : "";
+  if (groupName) return scopeOneGroup(ctx, groupName, "pause");
   const supabase = createAdminClient();
   const { data: jobs } = await supabase
     .from("bulk_message_jobs")
@@ -585,7 +882,9 @@ async function pauseGroupCampaigns(ctx: ToolContext): Promise<ToolResult> {
   };
 }
 
-async function resumeGroupCampaigns(ctx: ToolContext): Promise<ToolResult> {
+async function resumeGroupCampaigns(ctx: ToolContext, args: Record<string, unknown> = {}): Promise<ToolResult> {
+  const groupName = args.group ? String(args.group).trim() : "";
+  if (groupName) return scopeOneGroup(ctx, groupName, "resume");
   const supabase = createAdminClient();
   const { data: jobs } = await supabase
     .from("bulk_message_jobs")
@@ -641,7 +940,9 @@ async function resumeGroupCampaigns(ctx: ToolContext): Promise<ToolResult> {
   };
 }
 
-async function cancelGroupCampaigns(ctx: ToolContext): Promise<ToolResult> {
+async function cancelGroupCampaigns(ctx: ToolContext, args: Record<string, unknown> = {}): Promise<ToolResult> {
+  const groupName = args.group ? String(args.group).trim() : "";
+  if (groupName) return scopeOneGroup(ctx, groupName, "cancel");
   const supabase = createAdminClient();
   const { data: jobs } = await supabase
     .from("bulk_message_jobs")
