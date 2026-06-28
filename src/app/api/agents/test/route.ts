@@ -442,6 +442,8 @@ export async function POST(request: NextRequest) {
             calendarId: config.calendar_id || undefined,
             skipSendMessage: true,
             testMode: true,
+            requireContactBeforeBooking: !!config.post_booking?.require_contact_before_booking,
+            collectedData: result.response?.collected_data || {},
           });
         } catch (error) {
           console.error("[Test ExecuteActions] Falha em background:", error instanceof Error ? error.message : error);

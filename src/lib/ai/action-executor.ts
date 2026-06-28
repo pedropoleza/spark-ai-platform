@@ -38,6 +38,24 @@ interface ExecutionContext {
   calendarId?: string;         // Calendar ID do config (overrides o que a IA manda)
   skipSendMessage?: boolean;
   testMode?: boolean;
+  // Gate contact-first (caso Marina, pós-stress 2026-06-28): quando true e sem
+  // WhatsApp/telefone em collectedData, dropa book_appointment (sem appointment
+  // real prematuro). Derivado de post_booking.require_contact_before_booking.
+  requireContactBeforeBooking?: boolean;
+  collectedData?: Record<string, string>;
+}
+
+// Detecta um canal de contato (WhatsApp/telefone) já coletado — usado pelo gate
+// de booking contact-first. >=6 chars evita tratar "sim"/"ok" como telefone.
+function hasCollectedContact(data?: Record<string, string>): boolean {
+  if (!data) return false;
+  const keys = ["whatsapp", "whats", "phone", "telefone", "celular", "cell", "tel"];
+  return Object.entries(data).some(
+    ([k, v]) =>
+      typeof v === "string" &&
+      v.replace(/\D/g, "").length >= 6 &&
+      keys.some((kk) => k.toLowerCase().includes(kk))
+  );
 }
 
 // Mapeia canal para o "type" da API de mensagens do GHL
@@ -105,9 +123,20 @@ export async function executeActions(
 
   if (!ctx.skipSendMessage && messages.length > 0) {
     try {
+      // Gate contact-first disparou: troca a confirmação (potencialmente falsa) do
+      // LLM por um pedido de WhatsApp, em vez de "não consegui agendar".
+      const isBookGateBlocked = actionsFailed && failedActionError.includes("BOOK_GATE_NO_CONTACT");
       // Se agendamento falhou, avisar o lead. Detection centralizada em lib/ghl/operations.ts.
-      const isBookingError = actionsFailed && isBookingConflictError(failedActionError);
-      if (isBookingError) {
+      const isBookingError = !isBookGateBlocked && actionsFailed && isBookingConflictError(failedActionError);
+      if (isBookGateBlocked) {
+        const askMsg = "Boa! Pra eu confirmar teu lugar no encontro, me passa teu WhatsApp por aqui? 😊";
+        await client.post("/conversations/messages", {
+          type: messageType,
+          contactId: ctx.contactId,
+          message: askMsg,
+        });
+        await logExecution(supabase, ctx, "book_blocked_no_contact", { message: askMsg });
+      } else if (isBookingError) {
         const errorMsg = "Desculpa, nao consegui agendar nesse horario. Posso sugerir outro?";
         await client.post("/conversations/messages", {
           type: messageType,
@@ -208,6 +237,14 @@ async function executeAction(
       break;
 
     case "book_appointment": {
+      // Gate determinístico contact-first (caso Marina, pós-stress 2026-06-28):
+      // sem WhatsApp/telefone coletado, NÃO cria appointment real — o LLM às vezes
+      // "soft-booka" na escolha do dia antes de coletar o contato (booking_order
+      // 25% no stress test). Bloqueia o booking irreversível no CRM; o handler de
+      // mensagem troca a confirmação falsa por um pedido de WhatsApp.
+      if (ctx.requireContactBeforeBooking && !hasCollectedContact(ctx.collectedData)) {
+        throw new Error("BOOK_GATE_NO_CONTACT");
+      }
       const bookCalendarId = ctx.calendarId || action.calendar_id;
       if (!bookCalendarId) {
         throw new Error("Calendario nao configurado — agendamento impossivel");

@@ -1227,6 +1227,11 @@ async function processGroup(
     conversationId: group.conversationId,
     channel: group.channel,
     calendarId: config.calendar_id || undefined,
+    // Gate contact-first (caso Marina): bloqueia book_appointment sem WhatsApp.
+    // Mescla o coletado acumulado + o desta resposta (LLM pode coletar e agendar
+    // no mesmo turno).
+    requireContactBeforeBooking: !!config.post_booking?.require_contact_before_booking,
+    collectedData: { ...collectedData, ...(aiResult.response.collected_data || {}) },
   });
 
   // 9. Sincronizar dados coletados pela IA de volta pro GHL
