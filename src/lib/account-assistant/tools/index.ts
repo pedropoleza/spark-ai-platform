@@ -37,9 +37,9 @@ import { FOLLOWUP_TOOLS } from "./followup";
 import { PRESENTATION_TOOLS } from "./presentation";
 import { GUIDED_OUTREACH_TOOLS } from "./guided-outreach-tools";
 import { isGuidedOutreachEnabled } from "../proactive/guided-outreach";
-// Group campaigns (Pedro 2026-06-18): campanhas em grupos de WhatsApp via Stevo.
+// Group campaigns V2 (H46, 2026-06-28): grupos = contatos GHL (envio via rota de contato).
 import { GROUP_CAMPAIGN_TOOLS } from "./group-campaigns";
-import { isGroupCampaignsEnabled } from "../group-campaigns/config";
+import { isGroupCampaignsV2Enabled } from "../group-campaigns/config";
 // Task orchestrator (Pedro 2026-06-20): rascunho persistente de fluxos N-etapas (anti-alucinação).
 import { TASK_ORCHESTRATOR_TOOLS } from "./task-orchestrator";
 import { isTaskOrchestratorEnabled } from "../task-orchestrator/config";
@@ -66,8 +66,8 @@ const ALL_ENTRIES: ToolEntry[] = [
   ...PRESENTATION_TOOLS,
   // Gated: só expõe as tools do acompanhamento guiado quando a feature tá ligada.
   ...(isGuidedOutreachEnabled() ? GUIDED_OUTREACH_TOOLS : []),
-  // Gated: campanhas em grupo só aparecem com GROUP_CAMPAIGNS_ENABLED (default OFF).
-  ...(isGroupCampaignsEnabled() ? GROUP_CAMPAIGN_TOOLS : []),
+  // Gated: campanhas em grupo V2 só aparecem com GROUP_CAMPAIGNS_V2 (default OFF).
+  ...(isGroupCampaignsV2Enabled() ? GROUP_CAMPAIGN_TOOLS : []),
   // Gated: orquestrador de tarefas (montagem de fluxo) com TASK_ORCHESTRATOR_ENABLED (default OFF).
   ...(isTaskOrchestratorEnabled() ? TASK_ORCHESTRATOR_TOOLS : []),
 ];

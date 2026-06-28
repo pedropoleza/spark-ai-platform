@@ -1,20 +1,24 @@
 /**
- * Campanhas em GRUPOS de WhatsApp — multitool do SparkBot (Pedro 2026-06-18).
+ * Campanhas em GRUPOS de WhatsApp V2 — multitool do SparkBot (H46, 2026-06-28).
  *
- * DUAS tools (o gate H8/test-mode é POR-tool, então a divisão é por risco):
- *  - `group_campaign_info` (risk:safe) — read-only: list_groups, group_members,
- *    preview, list_campaigns. Roda mesmo em test-mode (preserva exploração).
+ * MODELO (correção do H40): um grupo É um CONTATO no Spark Leads/GHL (email = JID
+ * @g.us, nome termina "GRUPO"). O disparo vai pela MESMA rota de contato
+ * (/conversations/messages) — sem Stevo direto, sem instância dedicada. O
+ * contact_id do contato-grupo É o endereço de envio. Descoberta/cache em
+ * `group-contacts/` (detector + sync). Ver _planning/group-campaigns-v2-contatos/.
+ *
+ * DUAS tools (gate H8/test-mode por-tool):
+ *  - `group_campaign_info` (risk:safe) — read-only: list_groups, preview, list_campaigns.
  *  - `group_campaign` (risk:high) — write: schedule, pause, resume, cancel.
- *    Exige confirmed_by_rep (gate H8) + vira mock em test-mode (não dispara).
  *
- * Reuso máximo do motor Bulk V2: job target_type='groups' + N recipients (1 por
- * grupo, contact_id=JID) + pacing (computeBatchedScheduledAts) + o runner já
- * roteia pro sendGroupText. A variação anti-ban reusa o variator do runner
- * (variation_mode='light') ou textos explícitos do rep (personalized_message).
+ * Reuso do motor Bulk V2: job target_type='groups' (RÓTULO de telemetria) + N
+ * recipients (1 por grupo, contact_id = ID GHL real, is_group=true). O runner
+ * entrega via a rota de contato normal (sem ramo Stevo) e pula opt-out/DND/assign
+ * por is_group. Variação anti-ban: variation_mode='light' ou textos explícitos.
  *
- * Gates: (1) flag GROUP_CAMPAIGNS_ENABLED (registro), (2) instância DEDICADA
- * (anti-ban sistêmico), (3) Terms & Segurança PARTE 2 (consentimento), (4) spam
- * advisor (bloqueio duro só em score extremo), (5) announce-only (warn).
+ * Gates: (1) flag GROUP_CAMPAIGNS_V2 (registro), (2) Terms & Segurança PARTE 2
+ * (consentimento; o número é o do DM — ban derruba os dois, ver Termos ponto 3),
+ * (3) spam advisor (bloqueio duro só em score extremo).
  *
  * Regra inviolável: strings user-facing dizem "Spark Leads"/"SparkBot".
  */
@@ -22,11 +26,6 @@
 import type { ToolContext, ToolEntry } from "./types";
 import type { ToolResult } from "@/types/account-assistant";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { listStevoGroups, type StevoGroup } from "@/lib/account-assistant/webhook/stevo-groups";
-import {
-  getStevoInstanceForRep,
-  type StevoInstanceResolved,
-} from "@/lib/repositories/stevo-instances.repo";
 import { markGroupCampaignTermsPending } from "@/lib/account-assistant/identity";
 import { GROUP_CAMPAIGN_TERMS_TEXT } from "@/lib/account-assistant/terms";
 import { scoreSpamRisk } from "@/lib/account-assistant/group-campaigns/spam-advisor";
@@ -40,52 +39,15 @@ import {
   dailyTimeToCron,
 } from "@/lib/account-assistant/group-campaigns/config";
 import {
-  ENABLE_GROUP_VIEW_TUTORIAL,
-  DEDICATED_SERVER_NUDGE,
-} from "@/lib/account-assistant/group-campaigns/copy";
+  getGroupContacts,
+  resolveGroupTargets,
+  type GroupTarget,
+} from "@/lib/account-assistant/group-contacts/sync";
 import { computeBatchedScheduledAts } from "./bulk-delivery-strategy";
 
 // ---------------------------------------------------------------------------
-// Helpers de gate (compartilhados por info.preview e group_campaign.schedule)
+// Helpers de gate
 // ---------------------------------------------------------------------------
-
-type DedicatedOk = { ok: true; instance: StevoInstanceResolved };
-type DedicatedErr = { ok: false; result: ToolResult };
-
-/**
- * Resolve a instância Stevo DEDICADA da location do rep. Erro → ToolResult com o
- * nudge certo (tutorial de sync vs servidor dedicado). NÃO cai em fallback GHL.
- */
-async function resolveDedicated(ctx: ToolContext): Promise<DedicatedOk | DedicatedErr> {
-  const inst = await getStevoInstanceForRep(ctx.locationId);
-  if (inst.ok) return { ok: true, instance: inst.instance };
-  // misconfigured = já tem instância dedicada, mas sem credenciais (problema de
-  // provisionamento da agência) → mensagem diferente do nudge "compre servidor".
-  if (inst.reason === "misconfigured") {
-    return {
-      ok: false,
-      result: {
-        status: "error",
-        retryable: false,
-        code: "group_instance_misconfigured",
-        message:
-          "Seu número dedicado está conectado mas sem as credenciais completas pra postar em grupo. " +
-          "Vou sinalizar pro suporte ajustar — me chama de novo em seguida. 🛠️",
-      },
-    };
-  }
-  // shared_only OU no_instance → nudge de servidor dedicado (campanha de grupo
-  // NÃO pode rodar na número compartilhada do SparkBot).
-  return {
-    ok: false,
-    result: {
-      status: "error",
-      retryable: false,
-      code: "group_no_dedicated_instance",
-      message: DEDICATED_SERVER_NUDGE,
-    },
-  };
-}
 
 /**
  * Gate de Terms PARTE 2. Se o rep ainda não aceitou (e não é internal), marca
@@ -106,41 +68,11 @@ async function checkGroupTermsGate(ctx: ToolContext): Promise<ToolResult | null>
   };
 }
 
-/** Resolve a lista de grupos a partir de nomes/JIDs/'all'. */
-function resolveGroups(
-  all: StevoGroup[],
-  input: string[],
-): { matched: StevoGroup[]; notFound: string[] } {
-  const wantsAll = input.some((s) => {
-    const q = s.trim().toLowerCase();
-    return q === "all" || q === "todos" || q === "todos os grupos";
-  });
-  if (wantsAll) return { matched: all, notFound: [] };
-
-  const matched: StevoGroup[] = [];
-  const notFound: string[] = [];
-  const seen = new Set<string>();
-  for (const raw of input) {
-    const q = (raw || "").trim();
-    if (!q) continue;
-    let g: StevoGroup | undefined;
-    if (/@g\.us$/i.test(q)) {
-      g = all.find((x) => x.jid === q);
-    } else {
-      const ql = q.toLowerCase();
-      g = all.find((x) => x.name.toLowerCase() === ql) || all.find((x) => x.name.toLowerCase().includes(ql));
-    }
-    if (g) {
-      if (!seen.has(g.jid)) {
-        matched.push(g);
-        seen.add(g.jid);
-      }
-    } else {
-      notFound.push(q);
-    }
-  }
-  return { matched, notFound };
-}
+/** Mensagem quando não há contato-grupo cadastrado na location. */
+const NO_GROUPS_MESSAGE =
+  "Não achei nenhum grupo cadastrado como contato aqui. Os grupos aparecem no Spark Leads " +
+  "como contatos (nome termina em \"GRUPO\", e-mail é o ID do grupo) quando a integração do " +
+  "WhatsApp sincroniza. Se você acabou de criar/entrar num grupo, me dá um instante e tenta de novo.";
 
 function asStringArray(v: unknown): string[] {
   if (Array.isArray(v)) return v.map((x) => String(x)).filter((s) => s.trim().length > 0);
@@ -157,8 +89,7 @@ const groupCampaignInfo: ToolEntry = {
     name: "group_campaign_info",
     description:
       "📋 Consulta (read-only) de campanhas em GRUPOS de WhatsApp. action:\n" +
-      "• 'list_groups' — lista os grupos de WhatsApp do número do rep (nome, nº de membros, se é só-admin).\n" +
-      "• 'group_members' — membros de 1 grupo (passe group: nome ou JID).\n" +
+      "• 'list_groups' — lista seus grupos de WhatsApp (aparecem como contato no Spark Leads; o nome termina em 'GRUPO').\n" +
       "• 'preview' — simula uma campanha ANTES de agendar: grupos-alvo, prévia da mensagem, aviso de spam e tempo estimado. NÃO envia. Passe groups[] + message.\n" +
       "• 'list_campaigns' — campanhas de grupo ativas/recentes do rep.\n" +
       "Use SEMPRE list_groups/preview antes de chamar group_campaign action:'schedule'.",
@@ -168,14 +99,13 @@ const groupCampaignInfo: ToolEntry = {
       properties: {
         action: {
           type: "string",
-          enum: ["list_groups", "group_members", "preview", "list_campaigns"],
+          enum: ["list_groups", "preview", "list_campaigns"],
           description: "Qual consulta fazer.",
         },
-        group: { type: "string", description: "Nome ou JID de 1 grupo (group_members)." },
         groups: {
           type: "array",
           items: { type: "string" },
-          description: "Nomes/JIDs dos grupos-alvo, ou ['all'] (preview).",
+          description: "Nomes dos grupos-alvo, ou ['all'] (preview).",
         },
         message: { type: "string", description: "Texto da campanha (preview)." },
         interval_seconds: {
@@ -189,79 +119,36 @@ const groupCampaignInfo: ToolEntry = {
   handler: async (ctx, args): Promise<ToolResult> => {
     const action = String(args.action || "");
 
-    // list_campaigns não precisa de instância (lê o DB).
-    if (action === "list_campaigns") {
-      return listGroupCampaigns(ctx);
-    }
+    if (action === "list_campaigns") return listGroupCampaigns(ctx);
 
-    const dedicated = await resolveDedicated(ctx);
-    if (!dedicated.ok) return dedicated.result;
-
-    const listed = await listStevoGroups(
-      dedicated.instance.serverUrl,
-      dedicated.instance.instanceToken,
-    );
-    if (!listed.ok) {
-      return {
-        status: "error",
-        retryable: true,
-        message: `Não consegui listar os grupos agora (${listed.error}). Tenta de novo em instantes.`,
-      };
-    }
-    if (listed.groups.length === 0) {
-      return {
-        status: "ok",
-        data: { groups: [], message: ENABLE_GROUP_VIEW_TUTORIAL },
-      };
+    // Descobre os grupos da location: cache group_contacts (sync se stale).
+    const groups = await getGroupContacts(ctx);
+    if (groups.length === 0) {
+      return { status: "ok", data: { groups: [], message: NO_GROUPS_MESSAGE } };
     }
 
     if (action === "list_groups") {
       return {
         status: "ok",
         data: {
-          count: listed.groups.length,
-          groups: listed.groups.map((g) => ({
-            name: g.name,
+          count: groups.length,
+          groups: groups.map((g) => ({
+            name: g.group_name || g.jid,
+            contact_id: g.contact_id,
             jid: g.jid,
-            members: g.participantCount,
-            admin_only: g.isAnnounce,
           })),
-          message: `Você tem ${listed.groups.length} grupo(s). Me diz qual(is) e o que postar.`,
+          message: `Você tem ${groups.length} grupo(s). Me diz qual(is) e o que postar.`,
         },
       };
     }
 
-    if (action === "group_members") {
-      const q = String(args.group || "").trim();
-      const { matched, notFound } = resolveGroups(listed.groups, q ? [q] : []);
-      if (matched.length === 0) {
-        return {
-          status: "not_found",
-          message: `Não achei o grupo "${q}". Use list_groups pra ver os nomes exatos.`,
-        };
-      }
-      const g = matched[0];
-      return {
-        status: "ok",
-        data: {
-          group: g.name,
-          jid: g.jid,
-          members_total: g.participantCount,
-          admin_only: g.isAnnounce,
-          members: g.participants.slice(0, 200).map((p) => ({
-            phone: p.phone,
-            is_admin: p.isAdmin,
-          })),
-          notFound,
-        },
-      };
-    }
+    if (action === "preview") return previewGroupCampaign(ctx, args);
 
-    if (action === "preview") {
-      return previewGroupCampaign(ctx, listed.groups, args);
-    }
-
-    return { status: "error", retryable: false, message: `action desconhecida: ${action}` };
+    return {
+      status: "error",
+      retryable: false,
+      message: `action desconhecida: ${action} (use list_groups, preview ou list_campaigns).`,
+    };
   },
 };
 
@@ -274,9 +161,9 @@ const groupCampaign: ToolEntry = {
     name: "group_campaign",
     description:
       "📣 AÇÃO em campanhas de GRUPO de WhatsApp (exige confirmação). action:\n" +
-      "• 'schedule' — agenda o disparo. Passe groups[] (nomes/JIDs ou ['all']) + message. Opcional: variations[] (textos alternativos anti-spam), recurrence {daily_time:'07:30'} ou {cron} pra repetir todo dia, start_at (ISO) pra one-shot futuro, interval_seconds.\n" +
+      "• 'schedule' — agenda o disparo. Passe groups[] (nomes dos grupos ou ['all']) + message. Opcional: variations[] (textos alternativos anti-spam), recurrence {daily_time:'07:30'} ou {cron} pra repetir todo dia, start_at (ISO) pra one-shot futuro, interval_seconds.\n" +
       "• 'pause' / 'resume' / 'cancel' — controla as campanhas de grupo do rep (pause/cancel também seguram as recorrentes).\n" +
-      "REGRAS: só roda em número DEDICADO; exige aceite dos Termos de campanha de grupo; eu espaço os envios e vario o texto pra reduzir risco de bloqueio. Sempre faça preview antes.",
+      "REGRAS: exige aceite dos Termos de campanha de grupo; as campanhas saem pelo MESMO número que você usa comigo (um bloqueio derruba os dois — por isso eu limito e espaço os envios e vario o texto). Sempre faça preview antes.",
     risk: "high",
     parameters: {
       type: "object",
@@ -289,7 +176,7 @@ const groupCampaign: ToolEntry = {
         groups: {
           type: "array",
           items: { type: "string" },
-          description: "Nomes/JIDs dos grupos-alvo, ou ['all'] (schedule).",
+          description: "Nomes dos grupos-alvo, ou ['all'] (schedule).",
         },
         message: { type: "string", description: "Texto do post (schedule)." },
         variations: {
@@ -331,7 +218,6 @@ const groupCampaign: ToolEntry = {
 
 async function previewGroupCampaign(
   ctx: ToolContext,
-  allGroups: StevoGroup[],
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const groupsInput = asStringArray(args.groups);
@@ -340,28 +226,27 @@ async function previewGroupCampaign(
     return {
       status: "error",
       retryable: false,
-      message: "Pra preview eu preciso de groups[] (nomes/JIDs ou ['all']) e message.",
+      message: "Pra preview eu preciso de groups[] (nomes dos grupos ou ['all']) e message.",
     };
   }
-  const { matched, notFound } = resolveGroups(allGroups, groupsInput);
-  if (matched.length === 0) {
+  const { targets, notFound } = await resolveGroupTargets(ctx, groupsInput);
+  if (targets.length === 0) {
     return {
       status: "not_found",
       message: `Não casei nenhum grupo com ${JSON.stringify(groupsInput)}. Use list_groups pros nomes exatos.`,
     };
   }
-  const capped = matched.slice(0, GROUP_MAX_GROUPS_PER_CAMPAIGN);
+  const capped = targets.slice(0, GROUP_MAX_GROUPS_PER_CAMPAIGN);
   const interval = clampGroupInterval(args.interval_seconds);
   const spam = scoreSpamRisk(message);
-  const announce = capped.filter((g) => g.isAnnounce);
   const etaMin = Math.round(((capped.length - 1) * interval) / 60);
 
   return {
     status: "ok",
     data: {
-      groups: capped.map((g) => ({ name: g.name, members: g.participantCount, admin_only: g.isAnnounce })),
+      groups: capped.map((g) => ({ name: g.name })),
       group_count: capped.length,
-      dropped_over_cap: matched.length > capped.length ? matched.length - capped.length : 0,
+      dropped_over_cap: targets.length > capped.length ? targets.length - capped.length : 0,
       not_found: notFound,
       message_preview: message,
       interval_seconds: interval,
@@ -369,15 +254,12 @@ async function previewGroupCampaign(
       spam_level: spam.level,
       spam_hits: spam.hits,
       spam_block: spam.block,
-      announce_only_groups: announce.map((g) => g.name),
       message:
         `Prévia: vou postar em ${capped.length} grupo(s), 1 a cada ~${Math.round(interval / 60)}min ` +
         `(termina em ~${etaMin}min).` +
         (spam.block ? " ⛔ O texto tem risco ALTO de bloqueio — preciso que reescreva antes." : "") +
         (!spam.block && spam.level !== "low" ? " ⚠️ O texto tem alguns gatilhos de spam — considere suavizar." : "") +
-        (announce.length > 0
-          ? ` ⚠️ ${announce.length} grupo(s) são só-admin (${announce.map((g) => g.name).join(", ")}) — só sai se você for admin.`
-          : ""),
+        (notFound.length > 0 ? ` (Não achei: ${notFound.join(", ")}.)` : ""),
     },
   };
 }
@@ -390,10 +272,6 @@ async function scheduleGroupCampaign(
   const termsGate = await checkGroupTermsGate(ctx);
   if (termsGate) return termsGate;
 
-  // Gate 2: instância dedicada.
-  const dedicated = await resolveDedicated(ctx);
-  if (!dedicated.ok) return dedicated.result;
-
   // Inputs.
   const groupsInput = asStringArray(args.groups);
   const message = String(args.message || "").trim();
@@ -401,16 +279,15 @@ async function scheduleGroupCampaign(
     return {
       status: "error",
       retryable: false,
-      message: "Pra agendar eu preciso de groups[] (nomes/JIDs ou ['all']) e message.",
+      message: "Pra agendar eu preciso de groups[] (nomes dos grupos ou ['all']) e message.",
     };
   }
   const variations = asStringArray(args.variations).slice(0, GROUP_MAX_VARIATIONS);
   const interval = clampGroupInterval(args.interval_seconds);
 
-  // Gate 4: spam advisor (bloqueio duro só em extremo).
+  // Gate 2: spam advisor (bloqueio duro só em extremo).
   for (const t of [message, ...variations]) {
-    const s = scoreSpamRisk(t);
-    if (s.block) {
+    if (scoreSpamRisk(t).block) {
       return {
         status: "error",
         retryable: false,
@@ -422,45 +299,37 @@ async function scheduleGroupCampaign(
     }
   }
 
-  // Resolve grupos.
-  const listed = await listStevoGroups(
-    dedicated.instance.serverUrl,
-    dedicated.instance.instanceToken,
-  );
-  if (!listed.ok) {
-    return { status: "error", retryable: true, message: `Não consegui ler seus grupos agora (${listed.error}).` };
-  }
-  if (listed.groups.length === 0) {
-    return { status: "ok", data: { message: ENABLE_GROUP_VIEW_TUTORIAL } };
-  }
-  const { matched, notFound } = resolveGroups(listed.groups, groupsInput);
-  if (matched.length === 0) {
+  // Resolve grupos → contatos REAIS (contact_id GHL, não JID).
+  const { targets, notFound } = await resolveGroupTargets(ctx, groupsInput);
+  if (targets.length === 0) {
     return {
       status: "not_found",
-      message: `Não casei nenhum grupo com ${JSON.stringify(groupsInput)}. Use group_campaign_info list_groups.`,
+      message:
+        notFound.length > 0
+          ? `Não casei nenhum grupo com ${JSON.stringify(notFound)}. Use group_campaign_info list_groups.`
+          : NO_GROUPS_MESSAGE,
     };
   }
-  const capped = matched.slice(0, GROUP_MAX_GROUPS_PER_CAMPAIGN);
-  const announce = capped.filter((g) => g.isAnnounce).map((g) => g.name);
+  const capped = targets.slice(0, GROUP_MAX_GROUPS_PER_CAMPAIGN);
 
   const recurrence = (args.recurrence as Record<string, unknown> | undefined) || undefined;
   const isRecurring =
     !!recurrence && (typeof recurrence.daily_time === "string" || typeof recurrence.cron === "string");
 
   if (isRecurring) {
-    return scheduleRecurringGroup(ctx, capped, message, recurrence!, { announce, notFound });
+    return scheduleRecurringGroup(ctx, capped, message, recurrence!, { notFound });
   }
-  return scheduleOneShotGroup(ctx, capped, message, variations, interval, args, { announce, notFound });
+  return scheduleOneShotGroup(ctx, capped, message, variations, interval, args, { notFound });
 }
 
 async function scheduleOneShotGroup(
   ctx: ToolContext,
-  groups: StevoGroup[],
+  groups: GroupTarget[],
   message: string,
   variations: string[],
   interval: number,
   args: Record<string, unknown>,
-  warn: { announce: string[]; notFound: string[] },
+  warn: { notFound: string[] },
 ): Promise<ToolResult> {
   const supabase = createAdminClient();
   const baseStart = args.start_at ? new Date(String(args.start_at)) : new Date();
@@ -484,7 +353,7 @@ async function scheduleOneShotGroup(
       rep_id: ctx.rep.id,
       location_id: ctx.locationId,
       agent_id: null,
-      filter_config: { type: "groups", version: 1, group_count: groups.length },
+      filter_config: { type: "groups", version: 2, group_count: groups.length },
       message_template: message,
       variation_mode: useExplicit ? "none" : "light",
       interval_seconds: interval,
@@ -506,10 +375,11 @@ async function scheduleOneShotGroup(
 
   const rows = groups.map((g, i) => ({
     job_id: job.id,
-    contact_id: g.jid, // JID satisfaz UNIQUE(job_id,contact_id) (1 grupo 1x/job)
+    contact_id: g.contact_id, // ID GHL REAL do contato-grupo (endereço /conversations/messages)
     contact_name: g.name,
     contact_phone: null,
-    target_jid: g.jid,
+    is_group: true, // runner pula opt-out/DND/assign por isto (não pelo target_type)
+    target_jid: g.jid, // só audit/diagnóstico
     group_name: g.name,
     scheduled_at: scheduledAts[i].toISOString(),
     personalized_message: useExplicit ? pool[i % pool.length] : null,
@@ -533,12 +403,10 @@ async function scheduleOneShotGroup(
       interval_seconds: interval,
       eta_minutes: etaMin,
       not_found: warn.notFound,
-      announce_only_groups: warn.announce,
       message:
         `✅ Agendado! Vou postar em ${groups.length} grupo(s), 1 a cada ~${Math.round(interval / 60)}min ` +
         `(termina em ~${etaMin}min)` +
         (useExplicit ? ` com ${variations.length} variação(ões) alternando.` : ` variando o texto automaticamente.`) +
-        (warn.announce.length > 0 ? ` ⚠️ Só-admin (pode não sair): ${warn.announce.join(", ")}.` : "") +
         (warn.notFound.length > 0 ? ` (Não achei: ${warn.notFound.join(", ")}.)` : "") +
         ` Pode pausar/cancelar quando quiser.`,
     },
@@ -547,10 +415,10 @@ async function scheduleOneShotGroup(
 
 async function scheduleRecurringGroup(
   ctx: ToolContext,
-  groups: StevoGroup[],
+  groups: GroupTarget[],
   message: string,
   recurrence: Record<string, unknown>,
-  warn: { announce: string[]; notFound: string[] },
+  warn: { notFound: string[] },
 ): Promise<ToolResult> {
   const supabase = createAdminClient();
   const cron =
@@ -596,7 +464,8 @@ async function scheduleRecurringGroup(
       enabled: true,
       per_run_cap: groups.length,
       target_type: "groups",
-      group_targets: groups.map((g) => ({ jid: g.jid, name: g.name })),
+      // H46: contact_id REAL (não JID) — o recurring-runner monta recipients por contato.
+      group_targets: groups.map((g) => ({ contact_id: g.contact_id, name: g.name, jid: g.jid })),
       next_run_at: nextRunAt,
     })
     .select("id")
@@ -614,11 +483,9 @@ async function scheduleRecurringGroup(
       timezone: tz,
       next_run_at: nextRunAt,
       not_found: warn.notFound,
-      announce_only_groups: warn.announce,
       message:
         `✅ Recorrência criada! Vou postar em ${groups.length} grupo(s) todo dia (${String(recurrence.daily_time || cron)}), ` +
         `espaçando os envios pra reduzir risco de bloqueio.` +
-        (warn.announce.length > 0 ? ` ⚠️ Só-admin: ${warn.announce.join(", ")}.` : "") +
         (warn.notFound.length > 0 ? ` (Não achei: ${warn.notFound.join(", ")}.)` : "") +
         ` Pra parar, é só pedir "pausa as campanhas de grupo".`,
     },
