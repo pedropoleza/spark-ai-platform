@@ -23,6 +23,7 @@ import type {
 } from "@/types/agent";
 import { GHLClient } from "@/lib/ghl/client";
 import { matchTextOp, type TextOp } from "@/lib/account-assistant/filter-engine/text-ops";
+import { deburr } from "@/lib/account-assistant/contact-resolver/normalize";
 
 export interface TargetingMatch {
   ok: boolean;
@@ -121,9 +122,10 @@ function evalLeaf(
   switch (rule.type) {
     case "tag": {
       if (!rule.tag) return "neutral";
-      // case-insensitive + trim (GHL normaliza tags pra lowercase).
-      const want = rule.tag.trim().toLowerCase();
-      const tags = extractTags(contact).map((t) => t.trim().toLowerCase());
+      // case-insensitive + trim + acento-insensível (F9 follow-up 2026-06-27):
+      // deburr nos dois lados → tag salva "Líder" casa o "lider" do GHL e vice-versa.
+      const want = deburr(rule.tag);
+      const tags = extractTags(contact).map((t) => deburr(t));
       return tags.includes(want) ? "match" : "no_match";
     }
     case "custom_field": {
@@ -133,8 +135,8 @@ function evalLeaf(
         // Sem valor esperado = só precisa existir / ser não-vazio.
         return value ? "match" : "no_match";
       }
-      return value.trim().toLowerCase() ===
-        rule.custom_field_value.trim().toLowerCase()
+      // deburr nos dois lados (F9 follow-up): "São Paulo" salvo casa "Sao Paulo" no CRM.
+      return deburr(value) === deburr(rule.custom_field_value)
         ? "match"
         : "no_match";
     }

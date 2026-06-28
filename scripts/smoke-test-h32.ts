@@ -52,7 +52,6 @@ import {
   recordQuestion,
   questionCount,
   recordBulkChoice,
-  autoRegisterFromToolResult,
   renderTurnContextForPrompt,
 } from "@/lib/account-assistant/conversational/turn-context";
 import {
@@ -691,19 +690,6 @@ async function main() {
     return {
       passed: s.bulk_session_state?.warm_status === "warm",
       detail: `state=${JSON.stringify(s.bulk_session_state)}`,
-    };
-  });
-
-  await run("J", "J2 autoRegisterFromToolResult com preview fake", async () => {
-    const s = createTurnContext();
-    autoRegisterFromToolResult(s, "preview_bulk_message_v2", {
-      total_contacts: 42,
-      list_temperature: "cold",
-    });
-    const bs = s.bulk_session_state;
-    return {
-      passed: bs?.last_preview_total_contacts === 42 && bs?.warm_status === "cold",
-      detail: `state=${JSON.stringify(bs)}`,
     };
   });
 

@@ -104,7 +104,12 @@ export function renderContactInFocusBlock(ctx: ActiveContactContext): string {
 
 /**
  * F10: registra um contato resolvido no ring buffer rep_identities.profile.recent_contacts.
- * Best-effort: lê o profile, prepende (dedupe por id), capa em RECENT_CAP, grava. Fail-soft.
+ * Best-effort, fail-soft (erro nunca quebra o turno).
+ *
+ * Follow-up F10 (2026-06-27): grava via RPC ATÔMICA `append_recent_contact` (migration 00117)
+ * pra eliminar o race do read-modify-write — 2 turnos paralelos do mesmo rep sobrescreviam o
+ * buffer (o 2º UPDATE matava o 1º). Se a função ainda não existe no ambiente (staging sem a
+ * migration), cai no caminho antigo (não-atômico, mas = comportamento de hoje).
  */
 export async function recordRecentContact(
   supabase: SupabaseClient,
@@ -113,11 +118,24 @@ export async function recordRecentContact(
   source: FocusContact["source"] = "tool_result",
 ): Promise<void> {
   if (!contact?.id) return;
+  const entry = { id: contact.id, name: contact.name || null, source, last_ref_at: new Date().toISOString() };
+  try {
+    const { error } = await supabase.rpc("append_recent_contact", {
+      p_rep_id: repId,
+      p_entry: entry,
+      p_cap: RECENT_CAP,
+    });
+    if (!error) return;
+    // PGRST202 = função inexistente no schema cache → tenta o fallback. Qualquer
+    // outro erro (ex: permissão) é fail-soft: não insiste com o caminho não-atômico.
+    if (error.code !== "PGRST202") return;
+  } catch {
+    // erro de transporte → tenta o fallback abaixo
+  }
   try {
     const r = await supabase.from("rep_identities").select("profile").eq("id", repId).single();
     const profile = ((r.data?.profile as Record<string, unknown>) || {}) as Record<string, unknown>;
     const prev = Array.isArray(profile.recent_contacts) ? (profile.recent_contacts as Array<Record<string, unknown>>) : [];
-    const entry = { id: contact.id, name: contact.name || null, source, last_ref_at: new Date().toISOString() };
     const next = [entry, ...prev.filter((c) => c && c.id !== contact.id)].slice(0, RECENT_CAP);
     await supabase
       .from("rep_identities")

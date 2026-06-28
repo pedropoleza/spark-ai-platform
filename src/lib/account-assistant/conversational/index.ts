@@ -19,7 +19,6 @@ export {
   recordQuestion,
   questionCount,
   recordBulkChoice,
-  autoRegisterFromToolResult,
   renderTurnContextForPrompt,
 } from "./turn-context";
 export type { TurnContextState, ResolvedEntity } from "./turn-context";

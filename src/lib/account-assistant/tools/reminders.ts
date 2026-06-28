@@ -55,6 +55,16 @@ const scheduleReminder: ToolEntry = {
           description:
             "Onde entregar o lembrete. 'whatsapp' = WhatsApp do rep (default p/ requests vindos do WhatsApp). 'web_ui' = só no painel do Spark Leads (computador). 'both' = nos dois lugares. Pra requests vindos do Web UI, PERGUNTE ao rep antes de chamar.",
         },
+        contact_id: {
+          type: "string",
+          description:
+            "OPCIONAL. Se o lembrete é SOBRE um contato específico ('me lembra de ligar pra Fernanda às 15h'), passe o id REAL do contato — vindo de get_contact/search_contacts ou do bloco CONTATO EM CONTEXTO já validado. NUNCA invente um id. Quando o lembrete disparar, o SparkBot já vem com esse contato em contexto (não te faz re-procurar).",
+        },
+        contact_name: {
+          type: "string",
+          description:
+            "OPCIONAL. Nome do contato do contact_id (só passe junto com contact_id). Usado pra herança e pra confirmar inline ('lembrete sobre a Fernanda').",
+        },
       },
       required: ["message", "remind_at"],
     },
@@ -84,6 +94,19 @@ const scheduleReminder: ToolEntry = {
     const title = args.title
       ? String(args.title).slice(0, 100)
       : message.slice(0, 40) + (message.length > 40 ? "…" : "");
+
+    // Follow-up H45/F10 (2026-06-27): captura o contato em contexto pro lembrete
+    // HERDAR quem é quando disparar (o reminder-runner já propaga
+    // task_payload.contact_id/contact_name pra metadata da entrega → vira "contato
+    // em foco" no próximo turno). id em formato inválido = ignora (é PISTA, não
+    // requisito — nunca bloqueia o lembrete). name só viaja junto de um id válido.
+    const contactIdRaw = args.contact_id ? String(args.contact_id).trim() : "";
+    const reminderContactId =
+      contactIdRaw && !validateGhlId(contactIdRaw, "contact_id") ? contactIdRaw : null;
+    const reminderContactName =
+      reminderContactId && args.contact_name
+        ? String(args.contact_name).trim().slice(0, 120) || null
+        : null;
 
     // delivery_channel: respeita o que LLM passou; senão DEFAULT inteligente
     // baseado em qual canal o rep efetivamente usa.
@@ -166,6 +189,8 @@ const scheduleReminder: ToolEntry = {
           title,
           source: "rep_request",
           test_session_id: ctx.testSessionId || null,
+          ...(reminderContactId ? { contact_id: reminderContactId } : {}),
+          ...(reminderContactName ? { contact_name: reminderContactName } : {}),
         },
         next_run_at: isoRemind,
         cron_expr: recurrence,

@@ -26,8 +26,13 @@ const MAX_REGEX_LEN = 200;
 
 function norm(s: unknown, caseSensitive: boolean): string {
   const v = typeof s === "string" ? s : String(s ?? "");
-  const trimmed = v.trim();
-  return caseSensitive ? trimmed : trimmed.toLowerCase();
+  // F9 follow-up (2026-06-27): tira ACENTO (NFD strip) além de trim/lower, pra o
+  // targeting por mensagem ficar acento-insensível — "São Paulo" casa "Sao Paulo",
+  // "atenção" casa "atencao". Simétrico (needle e texto passam aqui), então só
+  // afrouxa em acento, nunca em case. `matches_regex` NÃO usa norm de propósito
+  // (testa o texto cru) — regex é o pattern literal do rep.
+  const stripped = v.normalize("NFD").replace(/\p{Diacritic}/gu, "").trim();
+  return caseSensitive ? stripped : stripped.toLowerCase();
 }
 
 /**

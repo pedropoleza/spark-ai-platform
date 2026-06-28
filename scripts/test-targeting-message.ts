@@ -133,5 +133,27 @@ ok("ativa NÃO afrouxa perfil: tag ausente E (msg neutra) → block",
 ok("sem conversationActive = legado (message não bate → block)",
   evaluateTargetingSet(msgSet, contact, opps, { messageText: "bom dia" }) === false);
 
+console.log("\n=== acento-insensível (F9 follow-up 2026-06-27) ===");
+// deburr nos 2 lados: needle com acento casa texto sem acento e vice-versa.
+ok("contains: texto 'orcamento' vs needle 'orçamento' → match",
+  matchTextOp("contains", "quero um orcamento", "orçamento") === true);
+ok("contains: texto 'orçamento' vs needle 'orcamento' → match",
+  matchTextOp("contains", "quero um orçamento", "orcamento") === true);
+ok("eq: 'sao paulo' vs 'São Paulo' → match", matchTextOp("eq", "sao paulo", "São Paulo") === true);
+ok("in: needle 'atenção' casa texto 'atencao'", matchTextOp("in", "preciso de atencao", ["atenção"]) === true);
+// tag + custom_field via avaliador: regra sem acento casa atributo com acento no CRM.
+const accentContact = {
+  tags: ["Líder", "São Paulo"],
+  customFields: [{ key: "cidade", value: "Brasília" }],
+};
+const evalAccent = (rules: TargetingRule[]) => {
+  const set = normalizeTargeting(rules);
+  return set ? evaluateTargetingSet(set, accentContact, [], {}) : true;
+};
+ok("tag: regra 'lider' casa tag 'Líder'", evalAccent([leaf({ type: "tag", tag: "lider" })]) === true);
+ok("tag: regra 'Sao Paulo' casa tag 'São Paulo'", evalAccent([leaf({ type: "tag", tag: "Sao Paulo" })]) === true);
+ok("custom_field: 'Brasilia' casa 'Brasília'",
+  evalAccent([leaf({ type: "custom_field", custom_field_key: "cidade", custom_field_value: "Brasilia" })]) === true);
+
 console.log(`\n=== RESULTADO: ${pass} pass / ${fail} fail ===`);
 process.exit(fail === 0 ? 0 : 1);
