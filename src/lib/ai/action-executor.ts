@@ -1,6 +1,7 @@
 import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { resolveMeetingLocation } from "@/lib/queue/meeting-links";
 import {
   addTagsToContact,
   removeTagsFromContact,
@@ -211,6 +212,10 @@ async function executeAction(
       if (!bookCalendarId) {
         throw new Error("Calendario nao configurado — agendamento impossivel");
       }
+      // Link da reunião por calendário (caso Marina 2026-06-28): quando o calendário
+      // tem link configurado, injeta address+override; senão null = mantém o default
+      // histórico ("phone"), sem afetar outros agentes lead-facing.
+      const meetingLoc = resolveMeetingLocation(bookCalendarId);
       if (bookCalendarId && action.start_time) {
         const existingApptForBook = await findExistingAppointment(client, ctx.contactId, ctx.locationId);
 
@@ -221,6 +226,7 @@ async function executeAction(
               calendarId: bookCalendarId,
               startTime: action.start_time,
               title: action.title || existingApptForBook.title,
+              ...(meetingLoc ?? {}),
             });
             await tagBookedByAi(client, ctx.contactId); // tag interna (ver nota abaixo)
             break;
@@ -240,7 +246,7 @@ async function executeAction(
             contactId: ctx.contactId,
             startTime: action.start_time,
             title: action.title || "Reunião agendada",
-            meetingLocationType: "phone",
+            ...(meetingLoc ?? { meetingLocationType: "phone" }),
           });
           // Tag interna "agendado pela ia" (Pedro 2026-06-22): rastreia no CRM que
           // a IA agendou, SEM poluir o título/convite da reunião. Non-blocking.
@@ -291,7 +297,7 @@ async function executeAction(
             contactId: ctx.contactId,
             startTime: action.start_time,
             title: targetTitle || "Reunião reagendada",
-            meetingLocationType: "phone",
+            ...(resolveMeetingLocation(ctx.calendarId || targetCalId) ?? { meetingLocationType: "phone" }),
           });
         } else {
           await client.post("/calendars/events/appointments", {
@@ -300,7 +306,7 @@ async function executeAction(
             contactId: ctx.contactId,
             startTime: action.start_time,
             title: "Reuniao agendada via AI",
-            meetingLocationType: "phone",
+            ...(resolveMeetingLocation(action.calendar_id) ?? { meetingLocationType: "phone" }),
           });
         }
       }

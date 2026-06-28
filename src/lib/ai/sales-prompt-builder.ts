@@ -66,6 +66,14 @@ export interface PromptContext {
    * voltar com horários em vez de inventar ou assumir disponibilidade.
    */
   slotsUnavailable?: boolean;
+  /**
+   * true quando o fetch de slots TEVE SUCESSO mas voltou VAZIO (0 dias) — ex:
+   * a agenda está cheia/bloqueada na janela. Distinto de slotsUnavailable (falha
+   * de fetch) e de "nunca consultado". Sem isso, agenda 100% bloqueada caía no
+   * bloco "AGENDA AINDA NÃO CONSULTADA" e a IA prometia "já te volto com horário"
+   * (stalling). Caso Marina (Pedro 2026-06-28): ela bloqueia dias no GHL.
+   */
+  slotsEmpty?: boolean;
   feedback?: FeedbackItem[];
   knowledgeBase?: KnowledgeBaseItem[];
   /**
@@ -269,8 +277,16 @@ NÃO invente horários. NÃO inclua action book_appointment neste turno.`);
 Agora no timezone do lead: ${currentTime}
 ${ctx.availableSlots}
 
-Ao PROPOR, ofereça 2 opções ESPAÇADAS (ex: uma mais cedo e uma mais tarde, ou manhã e tarde) — nunca duas coladas tipo "11:30 ou 12:00".
+Ao PROPOR, ofereça 2 opções ESPAÇADAS da lista (datas OU horários diferentes) — nunca duas coladas tipo "11:30 ou 12:00". Se a lista só tiver 1 opção, ofereça 1 (não invente uma segunda).
 Se o lead perguntar "qual o último horário?" ou um horário específico, responda SEMPRE com base na lista acima (ela já mostra o último horário real de cada dia). Nunca diga que um horário não existe sem checar a lista.`);
+    } else if (ctx.slotsEmpty) {
+      // Agenda CONSULTADA com sucesso porém SEM dias livres (cheia/bloqueada) —
+      // anti-stalling (Pedro 2026-06-28): sem isto caía no bloco "AGENDA AINDA
+      // NÃO CONSULTADA" e a IA prometia "já te volto com horário". Aqui ela é
+      // honesta: não há vaga, registra interesse, NÃO promete voltar com horário.
+      parts.push(`### SEM HORÁRIOS DISPONÍVEIS NO PERÍODO
+A agenda foi consultada e NÃO há dias/horários livres nos próximos dias (cheia ou bloqueada).
+NÃO invente horário e NÃO diga que vai "checar e te voltar". Seja honesto: no momento não há vaga aberta. Ofereça registrar o interesse e avisar quando abrir nova data — sem prometer um horário específico. NÃO inclua action book_appointment neste turno.`);
     } else {
       // F24 BUG-1 fix (Pedro 2026-05-28 smoke): quando NEM slots NEM
       // slotsUnavailable foram passados, prompt antigo deixava vácuo →
@@ -439,7 +455,21 @@ function buildObjectiveSection(ctx: PromptContext): string {
   const flexNote = !isRecruitment ? `
 Se durante a conversa o lead demonstrar que já está pronto para agendar (mesmo antes de coletar todos os dados), adapte-se e proponha horários.` : "";
 
-  const goldenRule = isRecruitment ? `
+  // Caso Marina (Pedro 2026-06-28): quando o agente exige contato antes de
+  // agendar, o goldenRule vira "contact-first" — para de qualificar (mantém a
+  // anti-over-qualificação) mas NÃO agenda na simples escolha do dia: coleta
+  // WhatsApp + confirma primeiro. Ausente/false = goldenRule agressivo de antes
+  // (parity p/ outros agentes de recrutamento).
+  const requireContactFirst = !!ctx.config.post_booking?.require_contact_before_booking;
+  const goldenRule = !isRecruitment
+    ? ""
+    : requireContactFirst
+      ? `
+
+REGRA DE OURO (PRIORIDADE MAXIMA):
+Quando o lead aceitar/escolher um horario, PARE de qualificar e va pro agendamento — MAS, ANTES de agendar, colete o contato necessario (WhatsApp) e confirme. SO ENTAO inclua a action book_appointment.
+NUNCA inclua book_appointment na simples aceitacao/escolha do dia (sem WhatsApp + confirmacao). Nao re-qualifique.`
+      : `
 
 REGRA DE OURO (PRIORIDADE MAXIMA):
 Quando o lead demonstrar QUALQUER sinal de interesse ou aceite ("sim", "quero", "pode ser", "claro", "ta bom", "ok", "topas", "vamos", "quero saber mais", "me interessei"):
@@ -447,7 +477,7 @@ Quando o lead demonstrar QUALQUER sinal de interesse ou aceite ("sim", "quero", 
 → Va direto para o agendamento
 → Nao mande explicacoes, nao mande resumo, nao faca mais perguntas
 → Inclua a action book_appointment
-Esta regra tem PRIORIDADE sobre a coleta de dados. Mesmo que faltem campos, AGENDE.` : "";
+Esta regra tem PRIORIDADE sobre a coleta de dados. Mesmo que faltem campos, AGENDE.`;
 
   switch (ctx.config.objective) {
     case "qualification_only":
@@ -459,7 +489,7 @@ NAO tente agendar. Apos coletar tudo, defina conversation_status = "qualified".$
       return `## OBJETIVO
 1. Qualificar o lead coletando as informacoes listadas abaixo
 2. Apos coletar os dados OBRIGATORIOS, agendar reuniao/ligacao
-${isRecruitment ? "Voce precisa de NO MAXIMO 3 informacoes antes de convidar pro agendamento: estado, o que a pessoa faz, e um gancho/motivacao. Isso e TUDO. Nao aprofunde mais." : "Primeiro colete, depois agende."} Ao agendar com sucesso, defina conversation_status = "booked".${goldenRule}${flexNote}`;
+${isRecruitment ? "Colete apenas os dados OBRIGATORIOS listados abaixo antes de convidar pro agendamento. Nao aprofunde alem deles (nao puxe pergunta que nao seja um campo obrigatorio — ex: nao pergunte profissao se ela nao for obrigatoria)." : "Primeiro colete, depois agende."} Ao agendar com sucesso, defina conversation_status = "booked".${goldenRule}${flexNote}`;
 
     case "booking_only":
       return `## OBJETIVO
@@ -791,7 +821,7 @@ FLUXO DE AGENDAMENTO (rapido e fluido):
 - Exemplo COM lista disponível: "Tenho horario amanha as 11 AM ou 2 PM ${tzLabel}, qual vc prefere?" (horários reais da seção)
 - Exemplo SEM lista disponível: "Qual dia e turno (manhã/tarde) funciona melhor pra vc? Deixa eu confirmar a agenda e te volto com horários."
 - NAO faca perguntas extras antes de propor (timezone, disponibilidade, etc)
-- Se o lead escolher um horario, agende IMEDIATAMENTE com a action book_appointment
+- Quando o lead escolher um horario, agende com a action book_appointment assim que tiver os dados necessarios — se suas instrucoes especificas pedirem coletar contato e confirmar ANTES de agendar, faca isso primeiro (nada de soft-booking na simples escolha do horario)
 - Se o horario pedido nao esta disponivel, diga e proponha os mais proximos da lista
 - NUNCA invente horarios que nao estao na lista
 

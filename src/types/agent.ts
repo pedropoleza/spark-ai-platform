@@ -97,6 +97,11 @@ export interface PostBookingConfig {
   behavior: PostBookingBehavior;
   handoff_message: string;          // mensagem ao passar para humano
   allow_reschedule: boolean;        // permite reagendamento
+  // Caso Marina (Pedro 2026-06-28): quando true, o agente de recrutamento NÃO
+  // agenda na simples aceitação/escolha de horário — coleta o contato (WhatsApp)
+  // e confirma ANTES de emitir book_appointment (sem soft-booking). Gateia o
+  // "goldenRule" do buildObjectiveSection. Ausente/false = comportamento atual.
+  require_contact_before_booking?: boolean;
 }
 
 export type AgentIdentityMode = "assistant" | "human";

@@ -947,6 +947,9 @@ async function processGroup(
     timezone: locationTz,
     availableSlots,
     slotsUnavailable: slotsFetchFailed,
+    // Agenda consultada OK porém sem dias livres (cheia/bloqueada) → branch
+    // anti-stalling no buildRuntimeContext (Pedro 2026-06-28).
+    slotsEmpty: shouldFetchSlots && !slotsFetchFailed && availableSlots.trim() === "",
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     priorTurnCount: conversationTurns.length,
