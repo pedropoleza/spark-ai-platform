@@ -18,7 +18,7 @@ import { insertRepMedia } from "@/lib/repositories/rep-media.repo";
 const BUCKET = "agent-media";
 const MAX_BYTES = 20 * 1024 * 1024; // 20MB (bucket 25, WhatsApp ~16)
 
-function extFromMime(mime: string, fallbackName?: string): string {
+export function extFromMime(mime: string, fallbackName?: string): string {
   const m = (mime || "").toLowerCase();
   if (m.includes("png")) return "png";
   if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
@@ -30,7 +30,7 @@ function extFromMime(mime: string, fallbackName?: string): string {
   return "bin";
 }
 
-function dataUriToBuffer(dataUri: string): { mime: string; bytes: Buffer } | null {
+export function dataUriToBuffer(dataUri: string): { mime: string; bytes: Buffer } | null {
   const m = /^data:([^;]+);base64,([A-Za-z0-9+/=]+)$/.exec((dataUri || "").trim());
   if (!m) return null;
   try {
@@ -50,6 +50,13 @@ async function fetchBytes(url: string, mime?: string): Promise<{ mime: string; b
     }
     const r = await fetch(url, { signal: AbortSignal.timeout(20000) });
     if (!r.ok) return null;
+    // Aborta cedo se o tamanho declarado já estoura o limite (evita inflar a memória
+    // do lambda baixando um arquivo grande pra só depois descartar).
+    const declared = Number(r.headers.get("content-length") || 0);
+    if (declared > MAX_BYTES) {
+      console.warn(`[rep-media] content-length ${declared}B > limite — não baixa.`);
+      return null;
+    }
     const bytes = Buffer.from(await r.arrayBuffer());
     return { mime: mime || r.headers.get("content-type") || "application/octet-stream", bytes };
   } catch (e) {

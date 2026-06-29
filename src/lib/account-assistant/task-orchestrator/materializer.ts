@@ -159,16 +159,10 @@ export async function materializeSequenceForContact(
   const rows = ordered.map((s, i) => ({
     sequence_id: sequenceId,
     position: i + 1,
-    // H46/F4: com media_id (asset rep_media) o texto fica LIMPO e o runner manda anexo
-    // nativo (resolve signed URL no envio). Sem media_id, mantém o legado (media_url no
-    // texto) pra não quebrar o fluxo de PDF do orquestrador. As colunas media_id/
-    // media_type só entram no INSERT quando há media_id — senão referenciá-las quebra
-    // o insert onde a 00123 ainda não foi aplicada (paridade pré-migration).
-    message_text: s.media_id ? (s.message_text || "").trim() || "(sem texto)" : composeText(s.message_text, s.media_url),
+    message_text: composeText(s.message_text, s.media_url),
     scheduled_at: schedules[i].toISOString(),
     status: "pending",
     requires_final_check: false,
-    ...(s.media_id ? { media_id: s.media_id, media_type: s.media_type ?? null } : {}),
   }));
   const { data: insMsgs, error: msgErr } = await supabase.from("followup_messages").insert(rows).select("id");
   const realCount = insMsgs?.length ?? 0;
