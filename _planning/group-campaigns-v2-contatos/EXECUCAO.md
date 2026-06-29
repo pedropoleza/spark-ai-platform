@@ -39,7 +39,16 @@
   - NOTA: numeração corrigida — F3 usou 00120/00121; F4 usa 00122 (rep_media) + 00123 (media cols).
 
 **✅ F3 COMPLETO (código+review+build)** — next build 67/67 · tsc · detector 28/28 · caps 8/8 · sync 29/29 · H40 43/43.
-- [ ] **F4** Pipeline de mídia (00120+00121; persistRepMedia, recent-media, runners mandam attachments, materializer copia media_id; áudio .wav + transcode)
+- [x] **F4** Pipeline de mídia (IMAGEM/DOC) — commits F4.1/F4.2/F4.3 + review fixes
+  - [x] migrations **00122** rep_media (tabela, RLS) + **00123** media_id/media_type em followup_messages/bulk_message_recipients
+  - [x] captura inbound `rep-media/capture.ts` (imagem via base64, doc via re-fetch SSRF+content-length+20MB cap, fail-soft) + hook no webhook (gated/fire-and-forget) + repo
+  - [x] `recent-media.ts` no contexto (gated, anti-alucinação media_id) + `list_rep_media` tool
+  - [x] outbound: bulk-runner + followup-runner resolvem signed URL (600s) → attachments quando media_id; schedule aceita media_id (valida ownership, one-shot); followup select DEFENSIVO pré-00123
+  - [x] review adversarial (paridade/IDOR/SSRF/caption CLEAN) → limpou dead code do orquestrador + content-length + test-rep-media 13/13
+  - ⚠️ **ÁUDIO .wav: DEFERIDO** — aguarda decisão do Pedro (ffmpeg-static ~70MB vs upload .wav vs formato original) + probe ao vivo.
+  - FOLLOW-UP: integração task-orchestrator (draft_steps.media_id + add_step) não-wired (caminho via bulk é o LIVE).
+
+**✅ F4 IMAGEM/DOC COMPLETO (código+review+build)** — next build ✓ · orquestrador 50/50 · rep-media 13/13 · detector 28/28 · caps 8/8 · sync 29/29 · H40 43/43.
 - [ ] **F5** Recorrência por-grupo + anti-contaminação (not_contains @g.us lead-facing) + retirada do H40 + paridade + reescrever test-group-campaign.ts
 
 ## Probes ao vivo (precisam do "pode" do Pedro — mandam msg real)
