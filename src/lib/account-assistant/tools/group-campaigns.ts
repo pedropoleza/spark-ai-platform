@@ -192,6 +192,11 @@ const groupCampaign: ToolEntry = {
           description: "Nomes dos grupos-alvo, ou ['all'] (schedule).",
         },
         message: { type: "string", description: "Texto do post (schedule)." },
+        media_id: {
+          type: "string",
+          description:
+            "OPCIONAL (schedule). Anexa um ARQUIVO ao post — use o media_id EXATO das MÍDIAS RECENTES DO REP (imagem/doc que o rep te mandou). NUNCA invente. Só one-shot por agora.",
+        },
         variations: {
           type: "array",
           items: { type: "string" },
@@ -342,10 +347,33 @@ async function scheduleGroupCampaign(
   const isRecurring =
     !!recurrence && (typeof recurrence.daily_time === "string" || typeof recurrence.cron === "string");
 
+  // H46/F4: anexo opcional (só one-shot por agora). Valida que o asset é do rep.
+  let media: { mediaId: string; mediaType: string | null } | null = null;
+  const rawMediaId = args.media_id ? String(args.media_id).trim() : "";
+  if (rawMediaId) {
+    if (isRecurring) {
+      return {
+        status: "error",
+        retryable: false,
+        message: "Anexar arquivo em campanha RECORRENTE ainda não dá — por agora só em disparo único (hoje ou uma data). Quer assim?",
+      };
+    }
+    const { getRepMediaById } = await import("@/lib/repositories/rep-media.repo");
+    const asset = await getRepMediaById(ctx.rep.id, rawMediaId);
+    if (!asset) {
+      return {
+        status: "error",
+        retryable: false,
+        message: "Não achei esse arquivo na sua biblioteca. Me reenvia a mídia, ou confirma qual é (uso o media_id das MÍDIAS RECENTES).",
+      };
+    }
+    media = { mediaId: asset.id, mediaType: asset.media_kind };
+  }
+
   if (isRecurring) {
     return scheduleRecurringGroup(ctx, capped, message, recurrence!, { notFound });
   }
-  return scheduleOneShotGroup(ctx, capped, message, variations, interval, args, { notFound });
+  return scheduleOneShotGroup(ctx, capped, message, variations, interval, args, { notFound }, media);
 }
 
 async function scheduleOneShotGroup(
@@ -356,6 +384,7 @@ async function scheduleOneShotGroup(
   interval: number,
   args: Record<string, unknown>,
   warn: { notFound: string[] },
+  media: { mediaId: string; mediaType: string | null } | null = null,
 ): Promise<ToolResult> {
   const supabase = createAdminClient();
   const baseStart = args.start_at ? new Date(String(args.start_at)) : new Date();
@@ -410,6 +439,7 @@ async function scheduleOneShotGroup(
     scheduled_at: scheduledAts[i].toISOString(),
     personalized_message: useExplicit ? pool[i % pool.length] : null,
     status: "pending",
+    ...(media ? { media_id: media.mediaId, media_type: media.mediaType } : {}), // H46/F4 anexo
   }));
   const { error: recErr } = await supabase.from("bulk_message_recipients").insert(rows);
   if (recErr) {

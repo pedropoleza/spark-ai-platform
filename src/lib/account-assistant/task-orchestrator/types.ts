@@ -32,6 +32,10 @@ export interface DraftStep {
   intra_day_delay_s: number;
   message_text: string;
   media_url: string | null;
+  // H46/F4: asset rep_media (preferido vs media_url crua, que expira). O materializer
+  // copia media_id pro followup_messages e o runner resolve a signed URL no envio.
+  // Opcional: a coluna (00123) pode não existir ainda + tolera literais sem o campo.
+  media_id?: string | null;
   media_type: string | null;
   send_condition: string | null;
   created_at: string;

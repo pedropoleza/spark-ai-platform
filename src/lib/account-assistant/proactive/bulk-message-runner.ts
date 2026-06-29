@@ -77,6 +77,8 @@ interface BulkRecipientRow {
   // H46: pause POR-GRUPO (cockpit). Não-NULL = não envia (claim 00121 já pula; o
   // loop reverte como safety-net). Vem do claim (RETURNS SETOF).
   paused_at?: string | null;
+  // H46/F4: asset rep_media a anexar (signed URL resolvida no envio). Vem do claim.
+  media_id?: string | null;
 }
 
 interface BulkJobRow {
@@ -802,6 +804,30 @@ async function sendToContact(
       }
     }
 
+    // H46/F4: se o recipient tem media_id, resolve a signed URL NO ENVIO (TTL curto,
+    // nunca persistida) e manda como anexo nativo (mesma rota provada no H41).
+    let attachmentUrl: string | null = null;
+    if (recipient.media_id) {
+      try {
+        const { getRepMediaById, touchRepMediaUsed } = await import("@/lib/repositories/rep-media.repo");
+        const asset = await getRepMediaById(job.rep_id, recipient.media_id);
+        if (asset) {
+          const { data: signed } = await supabase.storage
+            .from("agent-media")
+            .createSignedUrl(asset.storage_path, 600);
+          if (signed?.signedUrl) {
+            attachmentUrl = signed.signedUrl;
+            void touchRepMediaUsed(asset.id);
+          }
+        }
+      } catch (mediaErr) {
+        console.warn(
+          `[bulk-runner] signed URL p/ media ${recipient.media_id} falhou (segue só texto):`,
+          mediaErr instanceof Error ? mediaErr.message.slice(0, 100) : mediaErr,
+        );
+      }
+    }
+
     // Fix HIGH-H6 (deep audit 2026-05-06): fallback automático WhatsApp API
     // → SMS quando sub-account não tem subscription Meta. Antes, jobs em
     // bulk com delivery_channel='whatsapp_api' falhavam recipient-a-recipient
@@ -812,6 +838,7 @@ async function sendToContact(
         type: ch,
         contactId: recipient.contact_id,
         message,
+        ...(attachmentUrl ? { attachments: [attachmentUrl] } : {}),
       });
     try {
       await trySend(ghlType);

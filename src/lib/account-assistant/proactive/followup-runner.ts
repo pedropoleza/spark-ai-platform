@@ -46,15 +46,28 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
 
   // 1. Claim atomic — só pega msgs cuja sequence está em 'scheduled' ou 'running'
   //    (drafts não saem; paused/cancelled também não)
-  const { data: candidates } = await supabase
-    .from("followup_messages")
-    .select(
-      "id, sequence_id, position, message_text, scheduled_at, status, requires_final_check, followup_sequences!inner(status, contact_id, contact_phone, location_id, rep_id, agent_id, delivery_channel, stop_on_reply, started_at)",
-    )
-    .eq("status", "pending")
-    .lte("scheduled_at", nowIso)
-    .order("scheduled_at", { ascending: true })
-    .limit(MAX_PER_TICK * 2);
+  // H46/F4: select defensivo — media_id/media_type podem não existir ainda (00123
+  // não aplicada) e o followup-runner roda em prod SEM gate; sem o fallback, o select
+  // quebraria e nenhum follow-up sairia. Tenta com as colunas; cai pro sem-mídia no erro.
+  const SEQ_EMBED =
+    "followup_sequences!inner(status, contact_id, contact_phone, location_id, rep_id, agent_id, delivery_channel, stop_on_reply, started_at)";
+  const runCandidatesQuery = (cols: string) =>
+    supabase
+      .from("followup_messages")
+      .select(cols)
+      .eq("status", "pending")
+      .lte("scheduled_at", nowIso)
+      .order("scheduled_at", { ascending: true })
+      .limit(MAX_PER_TICK * 2);
+  let candResp = await runCandidatesQuery(
+    `id, sequence_id, position, message_text, media_id, media_type, scheduled_at, status, requires_final_check, ${SEQ_EMBED}`,
+  );
+  if (candResp.error) {
+    candResp = await runCandidatesQuery(
+      `id, sequence_id, position, message_text, scheduled_at, status, requires_final_check, ${SEQ_EMBED}`,
+    );
+  }
+  const candidates = (candResp.data ?? null) as unknown as Array<Record<string, unknown>> | null;
 
   if (!candidates || candidates.length === 0) return result;
 
@@ -75,6 +88,7 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
     sequence_id: string;
     position: number;
     message_text: string;
+    media_id: string | null;
     scheduled_at: string;
     status: string;
     requires_final_check: boolean;
@@ -93,6 +107,7 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
       sequence_id: raw.sequence_id as string,
       position: raw.position as number,
       message_text: raw.message_text as string,
+      media_id: (raw.media_id as string | null) ?? null,
       scheduled_at: raw.scheduled_at as string,
       status: raw.status as string,
       requires_final_check: (raw.requires_final_check as boolean | null) ?? true,
@@ -256,6 +271,8 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
         contact_id: seqInfo.contact_id,
         delivery_channel: seqInfo.delivery_channel,
         message: cand.message_text,
+        media_id: cand.media_id,
+        rep_id: seqInfo.rep_id,
       });
 
       if (sendResult.ok) {
@@ -333,6 +350,8 @@ interface SendInput {
   contact_id: string;
   delivery_channel: string;
   message: string;
+  media_id?: string | null;
+  rep_id?: string | null;
 }
 
 async function sendFollowupMessage(input: SendInput): Promise<{
@@ -352,11 +371,35 @@ async function sendFollowupMessage(input: SendInput): Promise<{
     const client = new GHLClient(location.company_id, input.location_id);
     const ghlType = input.delivery_channel === "whatsapp_api" ? "WhatsApp" : "SMS";
 
+    // H46/F4: anexo do asset rep_media (signed URL resolvida no envio, TTL curto).
+    let attachmentUrl: string | null = null;
+    if (input.media_id && input.rep_id) {
+      try {
+        const { getRepMediaById, touchRepMediaUsed } = await import("@/lib/repositories/rep-media.repo");
+        const asset = await getRepMediaById(input.rep_id, input.media_id);
+        if (asset) {
+          const { data: signed } = await supabase.storage
+            .from("agent-media")
+            .createSignedUrl(asset.storage_path, 600);
+          if (signed?.signedUrl) {
+            attachmentUrl = signed.signedUrl;
+            void touchRepMediaUsed(asset.id);
+          }
+        }
+      } catch (mediaErr) {
+        console.warn(
+          `[followup-runner] signed URL p/ media ${input.media_id} falhou (segue só texto):`,
+          mediaErr instanceof Error ? mediaErr.message.slice(0, 100) : mediaErr,
+        );
+      }
+    }
+
     const trySend = async (ch: string) =>
       client.post<{ messageId?: string }>("/conversations/messages", {
         type: ch,
         contactId: input.contact_id,
         message: input.message,
+        ...(attachmentUrl ? { attachments: [attachmentUrl] } : {}),
       });
 
     try {

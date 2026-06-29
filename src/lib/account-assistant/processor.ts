@@ -39,6 +39,7 @@ import {
   syncRepInternalFlag,
 } from "./identity";
 import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1, type BuildPromptArgs } from "./prompt-builder";
+import { isRepMediaEnabled } from "./group-campaigns/config";
 import { assembleSystemPrompt, isUnifiedMotorEnabled } from "@/lib/agent-platform/assembler";
 import { runWithTools, type LLMMessage } from "./llm-client";
 import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
@@ -492,6 +493,18 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     if (focusBlock) runtimeContext = `${runtimeContext}\n\n${focusBlock}`;
   } catch (err) {
     console.warn("[processor] contato-em-foco (F3) falhou (não-fatal):", err);
+  }
+
+  // H46/F4: mídias recentes do rep no contexto (pista validável, media_id real,
+  // espelha o "contato em foco"). GATED por REP_MEDIA_ENABLED (OFF = prompt idêntico).
+  if (isRepMediaEnabled()) {
+    try {
+      const { getRecentRepMedia, renderRecentMediaBlock } = await import("./rep-media/recent-media");
+      const mediaBlock = renderRecentMediaBlock(await getRecentRepMedia(rep.id, { limit: 5 }));
+      if (mediaBlock) runtimeContext = `${runtimeContext}\n\n${mediaBlock}`;
+    } catch (err) {
+      console.warn("[processor] mídias recentes (F4) falhou (não-fatal):", err);
+    }
   }
 
   // Constrói user message (pode ter imagem anexada)
