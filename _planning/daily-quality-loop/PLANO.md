@@ -3,8 +3,8 @@
 > Pedro 2026-06-29. Todo dia: olhar erros/sinais/reports/ideias → escolher **1** melhoria de QUALIDADE de alto ROI → implementar de um jeito que **só melhore e nunca piore** (reversível + testes + paridade). **Sem features novas** — só qualidade: confiabilidade, naturalidade, observabilidade, correção de bug.
 
 ## Rotina diária (cada iteração)
-1. **Coletar (read-only):** `admin_signals` (48h, status open, por severidade×ocorrência); saúde do inbound (`sparkbot_messages` role=user, 2h/24h); trackers — "não achei" (H45), falsas confirmações/coherence, fallback gpt-4.1, cache (H44); ideias (`admin_signals` type=idea + `_planning`).
-2. **Triar:** separar **RUÍDO** (esperado/super-sensível) de **REAL** (acionável). Anti-feature: só qualidade.
+1. **Coletar sinais (read-only):** `admin_signals` (48h, status open, por severidade×ocorrência); saúde do inbound (`sparkbot_messages` role=user, 2h/24h); trackers — "não achei" (H45), falsas confirmações/coherence, fallback gpt-4.1, cache (H44); ideias (`admin_signals` type=idea + `_planning`).
+1b. **LER as conversas reais da semana (não só os sinais) — caça a "erros NÃO computados":** puxar `sparkbot_messages` (role user+agent) dos últimos 7 dias, agrupado por (rep, conversa), em ordem cronológica, e LER de verdade (em lotes; no volume atual cabe — ~centenas de msgs/semana). Procurar problemas que **nenhum detector pegou**: tom robótico/cerimonioso, contexto de contato errado, **confirmação falsa que não tripou o coherence-gate** ("agendei/anotei" sem tool), intenção mal-entendida, agendamento errado (dia/hora/fuso), repetição, bot pedindo dado que já tinha, "não sei/não consigo" indevido, resposta fora de escopo. **Cruzar:** conversa COM problema mas SEM sinal = o gap mais valioso. Para cada achado: anota o trecho (rep, horário, msg) na fila.
 3. **Escolher 1** (alto ROI, baixo risco, reversível). O resto vai pra fila.
 4. **Planejar com rede de segurança:** flag/gate quando tocar comportamento; testes (tsc + parity + unit/stress da área); rollback claro.
 5. **Implementar** (mudança de comportamento exige aprovação) → rodar TODOS os guards → commit em branch.
@@ -17,6 +17,7 @@
 - Reversível: branch + commit isolado; **nunca `--no-verify`**.
 - Se não houver melhoria CLARA e segura no dia → **não mexer** (no-op > regressão).
 - Mudança de observabilidade (o que vira sinal/log) ≠ mudança de runtime do bot → risco baixo, mas ainda testar.
+- **Fechar o gap de detecção:** quando a leitura das conversas (1b) achar uma CLASSE de erro que nenhum detector pega, o ideal é não só corrigir o caso, mas **adicionar/ajustar um detector** (coherence-gate, repeat-guard, signal novo) pra que essa classe vire "computada" e o loop dos próximos dias a pegue sozinho. Detector novo entra como sinal (não muda o runtime do bot) → baixo risco.
 
 ## Fila priorizada (atualizada a cada iteração)
 1. **[iter-1, em curso]** Reduzir ruído de observabilidade (painel afogado) — ver abaixo.
