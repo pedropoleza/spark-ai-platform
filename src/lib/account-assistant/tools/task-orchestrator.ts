@@ -134,7 +134,7 @@ const addStepTool: ToolEntry = {
       intra_day_delay_s: asInt(args.intra_day_delay_s),
       send_condition: asStr(args.send_condition) ?? null,
     });
-    return res.ok ? ok(res.snapshot) : err(res.error);
+    return res.ok ? ok(res.snapshot, res.note ? { note: res.note } : undefined) : err(res.error);
   },
 };
 

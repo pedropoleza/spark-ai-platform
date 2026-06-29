@@ -218,6 +218,21 @@ export async function addStep(
     return { ok: false, error: `Limite de ${MAX_DRAFT_STEPS} passos atingido neste fluxo.` };
   }
 
+  // Anti-duplicata suave (Fix caso Jussara 2026-06-29): passo com texto idêntico
+  // (normalizado) a um já existente quase sempre é engano — a Jussara teve 3 passos
+  // "reforçar a aplicação" iguais saindo pro lead. NÃO bloqueia (repetir pode ser
+  // proposital), mas devolve uma NOTE pro bot confirmar com o rep antes de seguir.
+  let dupNote: string | undefined;
+  if (hasText) {
+    const norm = (t: string) => t.trim().toLowerCase().replace(/\s+/g, " ");
+    const incoming = norm(input.message_text!);
+    if (incoming && dws.steps.some((s) => norm(s.message_text) === incoming)) {
+      dupNote =
+        "atenção: o texto desse passo é IGUAL ao de um passo que já existe no fluxo. " +
+        "Cada toque costuma variar a mensagem — confirme com o rep se a repetição é proposital antes de seguir.";
+    }
+  }
+
   const step = await insertStep(dws.draft.id, {
     offset_days: input.offset_days ?? 0,
     send_time: input.send_time ?? null,
@@ -235,7 +250,7 @@ export async function addStep(
   });
   await updateDraft(dws.draft.id, {}); // bump updated_at
   const fresh = await getDraftWithSteps(dws.draft.id);
-  return { ok: true, snapshot: buildSnapshot(fresh!) };
+  return { ok: true, snapshot: buildSnapshot(fresh!), note: dupNote };
 }
 
 /** Mapeia step_number (1-based no snapshot) → o step real (ordem canônica). */
