@@ -21,7 +21,7 @@ import {
 } from "./webhook/dedup-guard";
 import type { RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
-import { isGroupCampaignsV2Enabled } from "./group-campaigns/config";
+import { isGroupCampaignsV2Enabled, isRepMediaEnabled } from "./group-campaigns/config";
 
 const SPARKBOT_HISTORY_TURNS = 30;
 
@@ -846,6 +846,22 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
       return;
     }
     console.warn("[Sparkbot] sparkbot_messages insert (user) failed:", insertResult.error.message);
+  }
+
+  // H46/F4: guarda a mídia do turno (imagem/doc) na biblioteca do rep (rep_media)
+  // pra disparo futuro nos grupos. Best-effort/fire-and-forget, gated por
+  // REP_MEDIA_ENABLED (OFF = nada muda). Áudio fica de fora (decisão Pedro: .wav).
+  if (isRepMediaEnabled() && (repInput.kind === "image" || repInput.kind === "document")) {
+    const mediaInput = repInput;
+    const attachmentsForMedia = mediaAttachmentsForCheck;
+    void (async () => {
+      try {
+        const { persistRepMedia } = await import("./rep-media/capture");
+        await persistRepMedia({ repId: rep.id, hubLocationId, repInput: mediaInput, mediaAttachments: attachmentsForMedia });
+      } catch (err) {
+        console.warn("[Sparkbot] persistRepMedia falhou:", err instanceof Error ? err.message.slice(0, 120) : err);
+      }
+    })();
   }
 
   // Silence reset (fix audit Phase 3): qualquer inbound do rep limpa
