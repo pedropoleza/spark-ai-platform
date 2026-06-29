@@ -18,6 +18,8 @@ export interface TaskDraft {
   materialized_job_id: string | null;
   materialized_count: number | null;
   materialized_at: string | null;
+  /** Biblioteca de fluxos (00117): set = template salvo/reutilizável; null = não salvo. */
+  saved_at: string | null;
   created_at: string;
   updated_at: string;
 }

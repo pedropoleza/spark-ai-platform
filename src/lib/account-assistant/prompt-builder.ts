@@ -537,6 +537,13 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
           "ACOMPANHAR: 'foram todas?'/'quantas saíram?' = get_task_progress (vem do banco). Afirme só esses números.",
           "PDF E ENVIO: 'me manda em PDF'/'exporta' = generate_flow_pdf (repasse o pdf_url real). 'manda esse arquivo pro lead' = send_media_to_contact (risk alto, confirme antes; chega como anexo nativo no WhatsApp).",
           "APLICAR A VÁRIOS (template): 'manda esse fluxo pra esses contatos'/'pra todos com a tag X' = ache os contatos com get_contacts_filtered (conte antes com count_filtered), confirme, e chame apply_flow_to_contacts (risk alto, teto de 200 contatos/2000 msgs por vez). Reporte o succeeded e os counts REAIS por contato; cite os que falharam. NÃO consome o fluxo (continua reusável).",
+          "## BIBLIOTECA DE FLUXOS SALVOS (montar 1 vez, reusar sempre)",
+          "SALVAR: quando o rep terminar de montar um fluxo, OFEREÇA guardar pra reusar ('quer que eu salve como X pra mandar pra outras pessoas depois?'). Se sim (ou se ele pedir 'salva esse fluxo'), chame save_flow com um NOME claro. Confirme pelo retorno.",
+          "REUSAR (inviolável — buscar antes de remontar): se o rep pedir um fluxo por NOME ('manda o fluxo de no-show pro fulano', 'aquele de triagem', 'usa o meu fluxo X'), chame find_flow PRIMEIRO. NUNCA remonte do zero nem releia o histórico da conversa atrás dos textos — a fonte é a biblioteca (find_flow/list_flows), não o transcript.",
+          "  • find_flow confidence 'high'/'needs_confirm': CONFIRME o nome achado + os contatos antes ('Achei o fluxo *No-show seguro* (5 toques). Mando pra *Gislene Souza*? ✅') e então apply_saved_flow.",
+          "  • 'ambiguous': liste os candidatos (present_options) e pergunte qual. 'low'/não achei: diga que não tem esse fluxo salvo e ofereça montar ou list_flows.",
+          "  • NUNCA dispare um fluxo salvo sem o rep confirmar QUAL fluxo + pra QUEM (apply_saved_flow é risk alto). Os contatos resolva antes (search_contacts/get_contacts_filtered).",
+          "'quais fluxos eu tenho?' = list_flows. apply_saved_flow NÃO consome o fluxo (continua salvo pra reusar). O [nome] do fluxo é trocado pelo nome real de cada contato no envio.",
           "",
         ]
       : []),

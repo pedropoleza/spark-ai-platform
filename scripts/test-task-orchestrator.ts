@@ -15,6 +15,8 @@ config({ path: resolve(__dirname, "..", ".env.local") });
 import { createAdminClient } from "../src/lib/supabase/admin";
 import { isValidSendTime, isValidOffsetDays } from "../src/lib/account-assistant/task-orchestrator/config";
 import { interpolateContactName, firstNameOf, hasNamePlaceholder } from "../src/lib/account-assistant/task-orchestrator/interpolate";
+import { rankSavedFlows } from "../src/lib/account-assistant/task-orchestrator/flow-resolver";
+import { markFlowSaved, listSavedFlows, type SavedFlowRow } from "../src/lib/repositories/task-drafts.repo";
 import { buildSnapshot } from "../src/lib/account-assistant/task-orchestrator/core";
 import * as core from "../src/lib/account-assistant/task-orchestrator/core";
 import { materializeDraft, getDraftProgress, computeScheduledAt, applyFlowToContacts } from "../src/lib/account-assistant/task-orchestrator/materializer";
@@ -63,6 +65,23 @@ async function main() {
   check("NÃO toca em {tags[0]} / {custom.slug}", interpolateContactName("seu {custom.cidade} e {tags[0]}", "Bia") === "seu {custom.cidade} e {tags[0]}");
   check("hasNamePlaceholder detecta", hasNamePlaceholder("Oi [nome]") && !hasNamePlaceholder("Oi Bia"));
   check("hasNamePlaceholder é stateless (2x seguidas)", hasNamePlaceholder("Oi [nome]") && hasNamePlaceholder("Oi [nome]"));
+
+  console.log("\n=== F7: resolver de fluxo salvo (rankSavedFlows, puro) ===");
+  const mkFlow = (title: string, steps = 3): SavedFlowRow => ({ draft_id: title.toLowerCase().replace(/\s+/g, "-"), title, step_count: steps, saved_at: "", created_at: "" });
+  const lib = [mkFlow("Fluxo no-show seguro", 5), mkFlow("Aniversário cliente"), mkFlow("Boas-vindas lead")];
+  const rNoShow = rankSavedFlows("no-show", lib);
+  check("acha 'no-show' com confidence high", rNoShow.confidence === "high" && rNoShow.best?.title === "Fluxo no-show seguro");
+  check("best traz step_count", rNoShow.best?.step_count === 5);
+  const rTypo = rankSavedFlows("noshow", lib);
+  check("tolera typo 'noshow'", rTypo.best?.title === "Fluxo no-show seguro");
+  const rAcc = rankSavedFlows("aniversario", lib); // sem acento
+  check("tolera falta de acento 'aniversario'", rAcc.best?.title === "Aniversário cliente");
+  const rLow = rankSavedFlows("cobrança fiscal xyz", lib);
+  check("query sem match → low / sem best", rLow.confidence === "low" && rLow.best === null);
+  const ambLib = [mkFlow("Fluxo no-show seguro"), mkFlow("Fluxo no-show college")];
+  const rAmb = rankSavedFlows("no-show", ambLib);
+  check("2 fluxos 'no-show' → ambiguous", rAmb.confidence === "ambiguous" && rAmb.candidates.length === 2);
+  check("rank vazio → low", rankSavedFlows("qualquer", []).confidence === "low");
 
   console.log("\n=== buildSnapshot (mock) ===");
   const snap = buildSnapshot({
@@ -276,6 +295,37 @@ async function main() {
     const { data: iddMsgs } = await db.from("followup_messages").select("scheduled_at").eq("sequence_id", matIdd.ok ? matIdd.sequence_id : "").order("scheduled_at");
     const delta = iddMsgs && iddMsgs.length === 2 ? new Date(iddMsgs[1].scheduled_at).getTime() - new Date(iddMsgs[0].scheduled_at).getTime() : -1;
     check("intra-day: 2ª msg +30s da 1ª (intra_day_delay_s aplicado)", delta === 30000);
+
+    // F7 por último: cria fluxos salvos (não polui as retomadas por-kind acima).
+    console.log("\n=== F7: biblioteca de fluxos salvos (round-trip DB) ===");
+    // Salva o template do F6 na biblioteca com um nome
+    const saved = await markFlowSaved(tId, repId, "No-show seguro de vida");
+    check("markFlowSaved → 1 afetado", saved.ok && saved.affected === 1);
+    const savedOther = await markFlowSaved(tId, "00000000-0000-0000-0000-000000000000", "hack");
+    check("markFlowSaved de outro rep → 0 afetado (escopo)", savedOther.affected === 0);
+    // Lista a biblioteca
+    const myFlows = await listSavedFlows(repId);
+    check("listSavedFlows traz o fluxo salvo + step_count", myFlows.length === 1 && myFlows[0].title === "No-show seguro de vida" && myFlows[0].step_count === 2);
+    // Resolve por nome (fuzzy) sobre a biblioteca real
+    const resolved = rankSavedFlows("no show", myFlows);
+    check("resolveFlow acha 'no show' → high + flow certo", resolved.confidence === "high" && resolved.best?.draft_id === tId);
+    // Aplica o fluxo salvo via a TOOL (apply_saved_flow) por flow_query
+    const applySaved = TASK_ORCHESTRATOR_TOOLS.find((t) => t.def.name === "apply_saved_flow");
+    const savedCtx = { rep: { id: repId, timezone: null }, locationId: LOC, companyId: "c", ghlClient: null } as unknown as ToolContext;
+    const applyByName = await applySaved!.handler(savedCtx, { flow_query: "no-show", contacts: [{ contact_id: "HHHH7777iiii8888JJJJ", contact_name: "Gislene Souza" }] });
+    check("apply_saved_flow por nome → aplicou", applyByName.status === "ok" && (applyByName.data as { applied?: boolean }).applied === true);
+    check("apply_saved_flow reporta o nome do fluxo", (applyByName.data as { flow_name?: string }).flow_name === "No-show seguro de vida");
+    // [nome] interpolado no fluxo salvo aplicado
+    const gisSeq = ((applyByName.data as { per_contact?: Array<{ contact_id: string; sequence_id?: string }> }).per_contact || [])[0]?.sequence_id ?? "";
+    const { data: gisMsgs } = await db.from("followup_messages").select("message_text").eq("sequence_id", gisSeq).order("position");
+    check("fluxo salvo: [nome] → 'Gislene' no envio", !!gisMsgs && gisMsgs[0].message_text === "Oi Gislene! passo A");
+    // Ambíguo NÃO aplica (devolve candidatos): cria um 2º fluxo salvo "No-show ..."
+    const amb = await core.startDraft(repId, LOC, null, { kind: "file_export", title: "No-show college" });
+    const ambId = amb.ok ? amb.snapshot.draft_id : "";
+    await core.addStep(repId, ambId, { offset_days: 0, message_text: "oi" });
+    await markFlowSaved(ambId, repId, "No-show college");
+    const applyAmb = await applySaved!.handler(savedCtx, { flow_query: "no-show", contacts: [{ contact_id: "HHHH7777iiii8888JJJJ" }] });
+    check("apply_saved_flow ambíguo → NÃO aplica, pede desambiguação", (applyAmb.data as { needs_disambiguation?: boolean })?.needs_disambiguation === true);
   } finally {
     // cleanup: deletar a rep cascateia draft/steps/events
     await db.from("rep_identities").delete().eq("id", repId);
