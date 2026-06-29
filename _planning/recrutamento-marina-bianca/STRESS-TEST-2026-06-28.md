@@ -59,6 +59,39 @@ A compliance "dura" e os pedidos diretos da Marina (profissão/National Life/lin
 2. **Prompt** (apply-marina, <8000 chars): tom de agendamento menos agressivo (oferta→escolha→WhatsApp→confirma→agenda; proíbe "garanto/fechado/seu lugar" antes do WhatsApp); escassez SÓ a soft aprovada (bane "te garanto a vaga"/"única vaga"); cap rígido (1 reoferta após pedido de espaço, depois recua); permit in_process/sem → cortesia, NUNCA empurra/pendura o encontro, nunca enumera visto; fuso = "8pm horário de NY (ET)", só converte com certeza, ET = 8pm (nunca 7pm); identidade nunca "pessoa real", repetiu → 1 deflexão + handoff; "encontro" nunca "turma"; ban duro de nomear empresa (National Life/Five Rings).
 3. **Re-stress-test** das 210 (após reset 6pm ET) p/ confirmar que os números caíram ANTES do deploy.
 
+## Re-testes (rodada 2 e 3) — comparativo
+
+Rodada 2 = pós gate determinístico + 1º endurecimento. Rodada 3 = pós 3 fixes finais (tz/National Life/nome). R3 parou em 184/210 (runtime do workflow instável — agreguei os juízes direto dos transcripts em disco; amostra cheia, probe-outer cobre tudo).
+
+| Regra | R1 (116) | R2 (210) | R3 (184) | Leitura |
+|---|---|---|---|---|
+| booking_order | 25% | 8.6% | 8.7% | ⬇️⬇️ gate determinístico + ordem |
+| cap_insistencia | 19% | 10.5% | 10.3% | ⬇️ plateau (teimosia Sonnet) |
+| no_fabricated_scarcity | 15% | 8.6% | 6.5% | ⬇️ |
+| permit_no_ssn | 14% | 4.8% | 4.3% | ⬇️⬇️ (matei o dangle do prompt) |
+| consistency | 14% | 11% | 13% | ➡️ plateau (rótulo de data + ripple tz) |
+| only_listed_days | 12% | 7.1% | 1.1% | ⬇️⬇️ (tirei "normalmente seg/ter/qui") |
+| identity_rule | 11% | 6.7% | 9.2% | ⚠️ "pessoa real" teima (~4/184) |
+| tz_correct | 6% | 6.7% | 6.5% | ⚠️ agora ~SÓ Arizona (no-DST) + conversão-correta-punida; "7pm pra ET" SUMIU |
+| encontro_not_turma | 6% | 0.5% | 1.1% | ✅ |
+| **no_national_life** | 1.7% | 2.9% | **0%** | ✅✅ ban de nomear empresa |
+| no_profession | 1.7% | 0.5% | 1.1% | ✅ |
+| link_rule | 1.7% | 0% | 0% | ✅ |
+| income_zero_number | 1.7% | 0% | 1.1% | ✅ |
+| time_8pm | 0.9% | 0.95% | 0% | ✅ |
+| persona_isabella | 0% | 0.5% | 0.5% | ✅ |
+| alucinação de nome (gap) | — | 6 casos | 3 casos | ⬇️ (proibido deduzir do email) |
+
+Fail global: R1 47% → R2 35% → R3 33%. As quedas grandes foram nos itens que a Marina reclamou + compliance dura. O que sobra é **polish** (identity "pessoa real", consistency de rótulo, cap) + **nicho** (Arizona).
+
+## VEREDITO FINAL: GO para deploy MONITORADO
+
+- **Crítico/compliance resolvido:** renda zero-número, link/`{{}}`, SSN, profissão, National Life (0%), 8pm — tudo ~0-1%. + **gate determinístico** impede o booking real prematuro INDEPENDENTE do LLM (cobre o pior dano).
+- **Tudo que a Marina pediu:** disponibilidade real, 8pm (sem 9pm), sem National Life, sem profissão, ordem do booking — resolvido ou quase.
+- **Residuais aceitáveis p/ agente já supervisionado:** identity "pessoa real" ~4/184 (nuance de persona, não é risco legal/safety), consistency 13% (rótulo de data, parte artefato de sim), cap 10% (over-insistência mais branda), tz-Arizona ~3% (estado de pouquíssimos leads BR). Teste é PIOR-CASO (adversarial + Sonnet instruído a deslizar) — prod tende a ser melhor.
+
+**Opcional (near-zero, retorno decrescente):** 1 rodada extra mirando "pessoa real" (tirar "real" da persona_description) + Arizona. Não bloqueia.
+
 ## Limitações do teste (corrigir no re-run)
 - Juiz não recebia a **lista literal** de dias → inflou `only_listed_days`. Passar `availableDays` explícito ao juiz.
 - `fetch_failed` "prometer voltar" é legítimo (≠ stall) → ajustar a regra `empty_no_stall` p/ só punir invenção de dia.
