@@ -14,6 +14,7 @@ config({ path: resolve(__dirname, "..", ".env.local") });
 
 import { createAdminClient } from "../src/lib/supabase/admin";
 import { isValidSendTime, isValidOffsetDays } from "../src/lib/account-assistant/task-orchestrator/config";
+import { interpolateContactName, firstNameOf, hasNamePlaceholder } from "../src/lib/account-assistant/task-orchestrator/interpolate";
 import { buildSnapshot } from "../src/lib/account-assistant/task-orchestrator/core";
 import * as core from "../src/lib/account-assistant/task-orchestrator/core";
 import { materializeDraft, getDraftProgress, computeScheduledAt, applyFlowToContacts } from "../src/lib/account-assistant/task-orchestrator/materializer";
@@ -47,6 +48,21 @@ async function main() {
   check("offset_days -1 inválido", !isValidOffsetDays(-1));
   check("offset_days 2.5 inválido", !isValidOffsetDays(2.5));
   check("offset_days 400 inválido", !isValidOffsetDays(400));
+
+  console.log("\n=== Interpolação de [nome] (Fix caso Jussara 2026-06-29) ===");
+  check("firstNameOf pega 1º nome", firstNameOf("Matheus Albuquerque") === "Matheus");
+  check("firstNameOf vazio → ''", firstNameOf(null) === "" && firstNameOf("  ") === "");
+  check("[nome] vira primeiro nome", interpolateContactName("Oi [nome], tudo bem?", "Matheus Albuquerque") === "Oi Matheus, tudo bem?");
+  check("{nome} também", interpolateContactName("Oi {nome}!", "Lunna") === "Oi Lunna!");
+  check("{first_name} / {primeiro_nome} também", interpolateContactName("{first_name} e {primeiro_nome}", "Ana Paula") === "Ana e Ana");
+  check("case-insensitive [NOME]", interpolateContactName("Oi [NOME]", "Bia") === "Oi Bia");
+  check("sem placeholder → inalterado", interpolateContactName("Oi, tudo bem?", "Bia") === "Oi, tudo bem?");
+  check("idempotente (texto já interpolado)", interpolateContactName("Oi Matheus, tudo bem?", "Matheus") === "Oi Matheus, tudo bem?");
+  check("sem nome → remove placeholder + limpa pontuação", interpolateContactName("Oi, [nome]?", null) === "Oi?");
+  check("sem nome no meio → limpa", interpolateContactName("Olá [nome], bem-vindo!", "") === "Olá, bem-vindo!");
+  check("NÃO toca em {tags[0]} / {custom.slug}", interpolateContactName("seu {custom.cidade} e {tags[0]}", "Bia") === "seu {custom.cidade} e {tags[0]}");
+  check("hasNamePlaceholder detecta", hasNamePlaceholder("Oi [nome]") && !hasNamePlaceholder("Oi Bia"));
+  check("hasNamePlaceholder é stateless (2x seguidas)", hasNamePlaceholder("Oi [nome]") && hasNamePlaceholder("Oi [nome]"));
 
   console.log("\n=== buildSnapshot (mock) ===");
   const snap = buildSnapshot({
@@ -186,17 +202,40 @@ async function main() {
     const matEmpty = await materializeDraft(repId, emptyId, null);
     check("materializar fluxo VAZIO → erro, count 0", !matEmpty.ok && matEmpty.count === 0);
 
+    // Fix caso Jussara 2026-06-29: o [nome] do passo vira o nome REAL do contato no
+    // followup_messages (antes saía "[nome]" cru). Round-trip no DB.
+    const nameDraft = await core.startDraft(repId, LOC, null, { kind: "campaign", title: "Nome" });
+    const nameId = nameDraft.ok ? nameDraft.snapshot.draft_id : "";
+    await core.addStep(repId, nameId, { offset_days: 0, message_text: "Oi [nome], tudo bem?" });
+    // guard anti-duplicata: 2º passo com texto IGUAL → vem com note (não bloqueia)
+    const dupStep = await core.addStep(repId, nameId, { offset_days: 1, message_text: "Oi [nome], tudo bem?" });
+    check("add_step duplicado → ok COM note de aviso", dupStep.ok && !!dupStep.note);
+    await core.setMeta(repId, nameId, { target: { contact_id: "NAME1111bbbb2222CCCC", contact_name: "Matheus Albuquerque" } });
+    const matName = await materializeDraft(repId, nameId, "America/New_York");
+    check("materializou fluxo com [nome]", matName.ok && matName.count === 2);
+    const { data: nameMsgs } = await db.from("followup_messages").select("message_text").eq("sequence_id", matName.ok ? matName.sequence_id : "").order("position");
+    check("[nome] → 'Matheus' no DB (não sai cru)", !!nameMsgs && nameMsgs[0].message_text === "Oi Matheus, tudo bem?");
+    check("nenhum placeholder [nome] cru no DB", !!nameMsgs && nameMsgs.every((m) => !hasNamePlaceholder(m.message_text)));
+
     console.log("\n=== F6: aplicar fluxo a N contatos (template) ===");
     const tmpl = await core.startDraft(repId, LOC, null, { kind: "followup_sequence", title: "Template no-show" });
     const tId = tmpl.ok ? tmpl.snapshot.draft_id : "";
-    await core.addStep(repId, tId, { offset_days: 0, message_text: "passo A" });
+    await core.addStep(repId, tId, { offset_days: 0, message_text: "Oi [nome]! passo A" });
     await core.addStep(repId, tId, { offset_days: 2, message_text: "passo B" });
     const applied = await applyFlowToContacts(repId, tId, [
-      { contact_id: "AAAA1111bbbb2222CCCC" },
+      { contact_id: "AAAA1111bbbb2222CCCC" }, // sem nome → placeholder removido
       { contact_id: "DDDD3333eeee4444FFFF", contact_name: "Lany" },
     ], "America/New_York");
     check("apply a 2 contatos → 2 sucessos", "succeeded" in applied && applied.succeeded === 2);
     check("total_messages = 4 (2 passos × 2 contatos)", "total_messages" in applied && applied.total_messages === 4);
+    // [nome] interpolado POR-CONTATO: cada sequência usa o nome do SEU contato.
+    const perContact = "per_contact" in applied ? applied.per_contact : [];
+    const seqLany = perContact.find((p) => p.contact_id === "DDDD3333eeee4444FFFF")?.sequence_id ?? "";
+    const seqNoName = perContact.find((p) => p.contact_id === "AAAA1111bbbb2222CCCC")?.sequence_id ?? "";
+    const { data: lanyMsgs } = await db.from("followup_messages").select("message_text").eq("sequence_id", seqLany).order("position");
+    const { data: noNameMsgs } = await db.from("followup_messages").select("message_text").eq("sequence_id", seqNoName).order("position");
+    check("apply: [nome] → 'Lany' na sequência da Lany", !!lanyMsgs && lanyMsgs[0].message_text === "Oi Lany! passo A");
+    check("apply: sem nome → placeholder removido ('Oi! passo A')", !!noNameMsgs && noNameMsgs[0].message_text === "Oi! passo A");
     const progT = await getDraftProgress(tId);
     check("progresso do template: total=4 pending=4", progT.ok && progT.total === 4 && progT.pending === 4);
     const { data: tRow } = await db.from("task_drafts").select("status").eq("id", tId).maybeSingle();

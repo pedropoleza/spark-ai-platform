@@ -20,6 +20,7 @@ import { reportError } from "@/lib/admin-signals/report-error";
 import { getDraftWithSteps, transitionDraftStatus, updateDraft, insertTaskEvent } from "@/lib/repositories/task-drafts.repo";
 import type { DraftStep } from "./types";
 import { DEFAULT_SEND_TIME } from "./config";
+import { interpolateContactName } from "./interpolate";
 
 export type MaterializeResult =
   | { ok: true; count: number; sequence_id: string; first_at: string; last_at: string }
@@ -159,7 +160,11 @@ export async function materializeSequenceForContact(
   const rows = ordered.map((s, i) => ({
     sequence_id: sequenceId,
     position: i + 1,
-    message_text: composeText(s.message_text, s.media_url),
+    // Fix prod 2026-06-29 (caso Jussara): interpola o [nome] pelo primeiro nome do
+    // contato ANTES de gravar (a tool add_step promete o placeholder, mas a troca
+    // nunca existia → o lead recebia "[nome]" cru). Por-contato: no apply a N, cada
+    // sequência usa o nome do SEU contato.
+    message_text: composeText(interpolateContactName(s.message_text, opts.target.contact_name), s.media_url),
     scheduled_at: schedules[i].toISOString(),
     status: "pending",
     requires_final_check: false,
