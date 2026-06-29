@@ -836,6 +836,17 @@ async function scopeOneGroup(
     .eq("status", "pending")
     .select("id");
   const n = (upd || []).length;
+  // H46: se esse era o último grupo pendente do job, ele ficaria 'running' órfão (o
+  // runner nunca mais o reivindica → counters/conclusão nunca atualizam). Refresca os
+  // jobs tocados (promove a 'completed' quando pending+sending==0).
+  if (n > 0) {
+    try {
+      const { refreshJobCounters } = await import("@/lib/account-assistant/proactive/bulk-message-runner");
+      await Promise.all(jobIds.map((jid) => refreshJobCounters(jid, { supabase })));
+    } catch (e) {
+      console.warn("[group-cockpit] refreshJobCounters falhou:", e instanceof Error ? e.message : e);
+    }
+  }
   return { status: "ok", data: { group: name, cancelled_posts: n, message: n ? `❌ Cancelei ${n} post(s) pendente(s) no grupo *${name}*. (Já enviados ficam.)` : `Não tinha post pendente no grupo *${name}* pra cancelar.` } };
 }
 
@@ -927,15 +938,39 @@ async function resumeGroupCampaigns(ctx: ToolContext, args: Record<string, unkno
       recCount++;
     }
   }
+  // H46: "retoma tudo" também limpa pausas POR-GRUPO (paused_at) — senão um grupo
+  // pausado individualmente ficaria preso em silêncio mesmo após o resume geral.
+  let unpausedPosts = 0;
+  const { data: allJobs } = await supabase
+    .from("bulk_message_jobs")
+    .select("id")
+    .eq("rep_id", ctx.rep.id)
+    .eq("location_id", ctx.locationId)
+    .eq("target_type", "groups")
+    .in("status", ["running", "paused"]);
+  const allJobIds = (allJobs || []).map((j) => j.id);
+  if (allJobIds.length > 0) {
+    const { data: upd } = await supabase
+      .from("bulk_message_recipients")
+      .update({ paused_at: null })
+      .in("job_id", allJobIds)
+      .eq("status", "pending")
+      .not("paused_at", "is", null)
+      .select("id");
+    unpausedPosts = (upd || []).length;
+  }
   return {
     status: "ok",
     data: {
       resumed_jobs: jobIds.length,
       resumed_recurring: recCount,
+      resumed_group_posts: unpausedPosts,
       message:
-        jobIds.length + recCount === 0
+        jobIds.length + recCount + unpausedPosts === 0
           ? "Não tinha campanha de grupo pausada."
-          : `▶️ Retomei ${jobIds.length} disparo(s) e ${recCount} recorrência(s) de grupo.`,
+          : `▶️ Retomei ${jobIds.length} disparo(s)` +
+            (unpausedPosts ? ` + ${unpausedPosts} post(s) de grupo pausados individualmente` : "") +
+            ` e ${recCount} recorrência(s) de grupo.`,
     },
   };
 }

@@ -263,13 +263,18 @@ export async function fireBulkRecipients(): Promise<BulkRunResult> {
       continue;
     }
 
-    // H46: pause POR-GRUPO (cockpit). Recipient pausado não envia — reverte pra
-    // pending pra o resume re-claimar quando paused_at voltar a NULL. Safety-net:
-    // com a RPC 00121 aplicada nem é reivindicado; isto cobre o gap pré-00121.
+    // H46: pause POR-GRUPO (cockpit). Recipient pausado não envia. Reverte pra
+    // pending + LIMPA o claim (resume re-claima quando paused_at voltar a NULL).
+    // Safety-net: com a RPC 00121 aplicada o claim nem reivindica pausado e isto
+    // nunca dispara; cobre só o gap "00120 aplicada + 00121 não". Nesse gap a RPC
+    // velha re-reivindicaria todo tick (loop pending→sending→pending, que o C4 baniu
+    // pro job-pause) — aceito por ser janela estreita: correção > custo (NÃO enviar
+    // um post que o rep pausou). Aplicar a 00121 fecha o loop. (O fallback legado já
+    // filtra paused_at, então o loop só existe com a RPC velha presente.)
     if (recipient.paused_at) {
       await supabase
         .from("bulk_message_recipients")
-        .update({ status: "pending" })
+        .update({ status: "pending", claim_token: null, claimed_at: null })
         .eq("id", recipient.id);
       skipped++;
       continue;
