@@ -32,7 +32,13 @@
   - [x] review adversarial do F2 (1f location-mismatch = CLEAN) → 1 HIGH + 1 LOW corrigidos: recurring-runner puxado pro modelo H46 (resolve a dívida do F5!) + regressão @g.usuario.com
 
 **✅ F2 COMPLETO (código+review)** — detector 28/28 · caps 8/8 · sync 29/29 · H40 43/43 · tsc limpo. (recurring-runner shape JÁ resolvido aqui → F5 fica só com anti-contaminação + retirada H40 + paridade.)
-- [ ] **F3** Cockpit por-grupo (00122; scheduled_by_group/edit_message/reschedule/pause-por-grupo via paused_at)
+- [x] **F3** Cockpit por-grupo — commits F3.1 (infra) + F3.2 (cockpit) + review fixes
+  - [x] migrations **00120** (paused_at/edited_at/edit_count + índice) + **00121** (claim RPC exige paused_at IS NULL) + runner safety-net
+  - [x] `scheduled_by_group` (ver), `edit_message`, `reschedule` (post ISO / recorrência HH:MM), pause/resume/cancel com escopo `group` (scopeOneGroup via paused_at)
+  - [x] review adversarial (anti-IDOR + 00121 CLEAN) → 3 fixes: safety-net limpa claim, resume-all limpa paused_at, cancel-por-grupo refresca counters
+  - NOTA: numeração corrigida — F3 usou 00120/00121; F4 usa 00122 (rep_media) + 00123 (media cols).
+
+**✅ F3 COMPLETO (código+review+build)** — next build 67/67 · tsc · detector 28/28 · caps 8/8 · sync 29/29 · H40 43/43.
 - [ ] **F4** Pipeline de mídia (00120+00121; persistRepMedia, recent-media, runners mandam attachments, materializer copia media_id; áudio .wav + transcode)
 - [ ] **F5** Recorrência por-grupo + anti-contaminação (not_contains @g.us lead-facing) + retirada do H40 + paridade + reescrever test-group-campaign.ts
 
