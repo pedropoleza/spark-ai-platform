@@ -326,6 +326,10 @@ async function main() {
     await markFlowSaved(ambId, repId, "No-show college");
     const applyAmb = await applySaved!.handler(savedCtx, { flow_query: "no-show", contacts: [{ contact_id: "HHHH7777iiii8888JJJJ" }] });
     check("apply_saved_flow ambíguo → NÃO aplica, pede desambiguação", (applyAmb.data as { needs_disambiguation?: boolean })?.needs_disambiguation === true);
+    // Guard: template SALVO (tId, agora saved) NÃO é retomado como rascunho ativo
+    // (senão start_task_draft editaria a biblioteca). Deve criar um fluxo FRESH.
+    const freshAfterSave = await core.startDraft(repId, LOC, null, { kind: "followup_sequence", title: "Fluxo novo pós-save" });
+    check("start_task_draft NÃO retoma template salvo (cria fresh)", freshAfterSave.ok && freshAfterSave.snapshot.draft_id !== tId && !freshAfterSave.note);
   } finally {
     // cleanup: deletar a rep cascateia draft/steps/events
     await db.from("rep_identities").delete().eq("id", repId);

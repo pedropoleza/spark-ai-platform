@@ -96,6 +96,10 @@ export async function getActiveDraftForRep(
     .select(DRAFT_COLS)
     .eq("rep_id", repId)
     .in("status", ["building", "ready_for_review"])
+    // Biblioteca (00117): um template SALVO não é o "rascunho ativo" — senão um
+    // start_task_draft retomaria o template e o editaria (corromperia a biblioteca).
+    // Pra mexer num salvo, o caller passa draft_id explícito.
+    .is("saved_at", null)
     .order("updated_at", { ascending: false })
     .limit(1);
   if (kind) q = q.eq("kind", kind);
