@@ -144,6 +144,10 @@ export interface AgentConfig {
   deactivation_rules: DeactivationRule[];
   handoff_messages: HandoffMessage[];
   auto_pause_on_human_message: boolean;
+  // Palavras/termos PROIBIDOS na saída lead-facing — bloqueio determinístico
+  // (caso Marina 2026-07-01: nunca citar "National Life"/"Five Rings"). O
+  // sanitizador (outbound-sanitizer.ts) redige antes de enviar. Vazio = no-op.
+  forbidden_terms?: string[];
   // Media features
   enable_audio_transcription?: boolean;
   enable_image_analysis?: boolean;

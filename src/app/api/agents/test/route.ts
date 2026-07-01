@@ -9,6 +9,7 @@ import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import { withRetry } from "@/lib/utils/retry";
 import { executeActions } from "@/lib/ai/action-executor";
+import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 
 /**
  * POST /api/agents/test
@@ -444,6 +445,7 @@ export async function POST(request: NextRequest) {
             testMode: true,
             requireContactBeforeBooking: !!config.post_booking?.require_contact_before_booking,
             collectedData: result.response?.collected_data || {},
+            forbiddenTerms: resolveForbiddenTerms(agent_id, config.forbidden_terms),
           });
         } catch (error) {
           console.error("[Test ExecuteActions] Falha em background:", error instanceof Error ? error.message : error);

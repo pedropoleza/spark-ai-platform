@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import { buildFollowUpPrompt } from "@/lib/ai/sales-prompt-builder";
+import { sanitizeOutbound, resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { processWithAI } from "@/lib/ai/openai-client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { withRetry } from "@/lib/utils/retry";
@@ -559,13 +560,17 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           // MORTO e o bot mandava "Pode me contar mais?" pra quem recusou/adiou.
           const decidedNoSend = /\[\[\s*NAO_ENVIAR\s*\]\]/i.test(msgText);
           if (!decidedNoSend && msgText.trim()) {
+            // Bloqueio determinístico de termos proibidos (caso Marina) no follow-up.
+            const san = sanitizeOutbound([msgText.trim()], resolveForbiddenTerms(followUp.agent_id, config.forbidden_terms));
+            const finalMsg = san.messages.join("\n\n");
+            if (san.redacted) console.warn("[Sanitizer/followup] Redacted:", san.hits.join(", "));
             await client.post("/conversations/messages", {
               type: outboundType,
               contactId: followUp.contact_id,
-              message: msgText.trim(),
+              message: finalMsg,
               ...(outboundSubject ? { subject: outboundSubject } : {}),
             });
-            sentText = msgText.trim();
+            sentText = finalMsg;
           } else {
             aiDecidedSkip = true; // sentinela OU vazio = a IA optou por NÃO mandar
           }

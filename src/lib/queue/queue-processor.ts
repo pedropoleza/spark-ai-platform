@@ -8,6 +8,7 @@ import { processWithAI } from "@/lib/ai/openai-client";
 import type { ImageInput, ConversationTurn } from "@/lib/ai/openai-client";
 import { compressHistory } from "@/lib/ai/history-compressor";
 import { executeActions } from "@/lib/ai/action-executor";
+import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { transcribeAudioFromUrl } from "@/lib/ai/audio-transcriber";
 import { processMediaAttachments, type ProcessedMedia } from "@/lib/ai/media-processor";
 import type { MediaAttachment } from "@/lib/ai/media-extractor";
@@ -1232,6 +1233,7 @@ async function processGroup(
     // no mesmo turno).
     requireContactBeforeBooking: !!config.post_booking?.require_contact_before_booking,
     collectedData: { ...collectedData, ...(aiResult.response.collected_data || {}) },
+    forbiddenTerms: resolveForbiddenTerms(agent.id, config.forbidden_terms),
   });
 
   // 9. Sincronizar dados coletados pela IA de volta pro GHL

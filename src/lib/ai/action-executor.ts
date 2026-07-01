@@ -2,6 +2,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveMeetingLocation } from "@/lib/queue/meeting-links";
+import { sanitizeOutbound } from "@/lib/ai/outbound-sanitizer";
 import {
   addTagsToContact,
   removeTagsFromContact,
@@ -43,6 +44,8 @@ interface ExecutionContext {
   // real prematuro). Derivado de post_booking.require_contact_before_booking.
   requireContactBeforeBooking?: boolean;
   collectedData?: Record<string, string>;
+  // Termos proibidos (caso Marina): redigidos da saída antes de enviar/logar.
+  forbiddenTerms?: string[];
 }
 
 // Detecta um canal de contato (WhatsApp/telefone) já coletado — usado pelo gate
@@ -119,6 +122,15 @@ export async function executeActions(
   if (messages.length === 0) {
     console.warn("[ActionExecutor] Empty message, using neutral continuation");
     messages = ["Pode me contar mais sobre isso?"];
+  }
+
+  // Bloqueio determinístico de termos proibidos (caso Marina 2026-07-01): redige
+  // ANTES de enviar E de logar, então o que sai e o que fica no histórico batem.
+  const sanitized = sanitizeOutbound(messages, ctx.forbiddenTerms);
+  if (sanitized.redacted) {
+    messages = sanitized.messages;
+    console.warn("[Sanitizer] Redacted forbidden terms:", sanitized.hits.join(", "));
+    await logExecution(supabase, ctx, "outbound_sanitized", { hits: sanitized.hits });
   }
 
   if (!ctx.skipSendMessage && messages.length > 0) {
