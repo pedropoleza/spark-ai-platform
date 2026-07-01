@@ -2,7 +2,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveMeetingLocation } from "@/lib/queue/meeting-links";
-import { sanitizeOutbound } from "@/lib/ai/outbound-sanitizer";
+import { sanitizeOutbound, resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import {
   addTagsToContact,
   removeTagsFromContact,
@@ -126,7 +126,10 @@ export async function executeActions(
 
   // Bloqueio determinístico de termos proibidos (caso Marina 2026-07-01): redige
   // ANTES de enviar E de logar, então o que sai e o que fica no histórico batem.
-  const sanitized = sanitizeOutbound(messages, ctx.forbiddenTerms);
+  // resolveForbiddenTerms: config do DB > code-map por agentId > vazio. Sem isto
+  // (passando só ctx.forbiddenTerms), o caminho da resposta principal era NO-OP
+  // enquanto a coluna forbidden_terms não existe no DB — National Life vazava.
+  const sanitized = sanitizeOutbound(messages, resolveForbiddenTerms(ctx.agentId, ctx.forbiddenTerms));
   if (sanitized.redacted) {
     messages = sanitized.messages;
     console.warn("[Sanitizer] Redacted forbidden terms:", sanitized.hits.join(", "));

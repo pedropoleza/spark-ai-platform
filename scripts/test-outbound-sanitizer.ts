@@ -2,7 +2,7 @@
  * Testa o sanitizador determinístico de saída (caso Marina — palavra proibida).
  *   npx tsx -r tsconfig-paths/register scripts/test-outbound-sanitizer.ts
  */
-import { sanitizeOutbound } from "@/lib/ai/outbound-sanitizer";
+import { sanitizeOutbound, resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 
 const TERMS = ["National Life Group", "National Life", "Five Rings Financial", "Five Rings"];
 let pass = 0, fail = 0;
@@ -47,6 +47,15 @@ check("não sobra 'Group' órfão", !/\bgroup\b/i.test(r.messages.join(" ")), r.
 // 8) variação de caixa/acento
 r = sanitizeOutbound(["representa a NATIONAL LIFE, com mais de 170 anos de mercado"], TERMS);
 check("caixa alta redigida", noNL(r.messages), r.messages.join(" | "));
+
+// 9) resolver: code-map por agentId (Marina) quando não vem do DB — o bug real
+const MARINA = "3976b4b6-0345-4f25-b964-138bb7960058";
+check("resolver: Marina pega do code-map sem config DB", resolveForbiddenTerms(MARINA, undefined).includes("National Life"));
+check("resolver: config DB tem precedência", resolveForbiddenTerms(MARINA, ["OutroTermo"]).join() === "OutroTermo");
+check("resolver: agente sem code-map/config = vazio (parity)", resolveForbiddenTerms("outro-agente", null).length === 0);
+// e o fim-a-fim que quebrava: action-executor path (resolve por agentId → sanitiza)
+r = sanitizeOutbound(["trabalhando com a National Life Group, empresa com 100 anos"], resolveForbiddenTerms(MARINA, undefined));
+check("e2e (main path): Marina sem config DB AINDA bloqueia", noNL(r.messages) && r.redacted, r.messages.join(" | "));
 
 console.log(`\n${pass} passaram, ${fail} falharam`);
 process.exit(fail ? 1 : 0);
