@@ -82,6 +82,22 @@ export interface PromptContext {
    * "HISTÓRICO ANTERIOR DESSE LEAD" no system prompt.
    */
   leadHistory?: import("@/types/agent").LeadContext;
+  /**
+   * Redução de custo lead-facing (2026-07): chunks recuperados por RAG (carrier
+   * knowledge) PELA MENSAGEM do turno. São VOLÁTEIS (mudam a cada turno) → quando
+   * `cacheOptimized`, NÃO entram no system (que ia quebrar o cache todo turno);
+   * vão pro runtime context (user message) via buildRuntimeContext. A KB ESTÁTICA
+   * do agente (`knowledgeBase`) continua no system (estável, cacheável).
+   */
+  retrievedKnowledge?: KnowledgeBaseItem[];
+  /**
+   * Redução de custo lead-facing (2026-07): quando true, o conteúdo VOLÁTIL que
+   * hoje vaza pro system (carrier RAG por-mensagem + lead history) é reposicionado
+   * pro runtime context, deixando o system byte-estável por-agente → cache HIT nos
+   * ~85% de turnos <5min + reuso cross-conversa. Espelha o H44 F1 do SparkBot.
+   * Flag OFF (default) = comportamento byte-idêntico ao de hoje (paridade).
+   */
+  cacheOptimized?: boolean;
 }
 
 /**
@@ -122,7 +138,10 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     buildIdentitySection(ctx),
     // F37: histórico do lead vem ANTES das instruções do admin pra LLM
     // contextualizar antes de receber regras.
-    buildLeadHistorySection(ctx),
+    // Redução de custo (2026-07): quando cacheOptimized, o lead history é VOLÁTIL
+    // (varia por-lead e por-turno) → sai do system pro runtime (buildRuntimeContext)
+    // pra não quebrar o cache. Flag OFF = fica aqui (byte-idêntico ao de hoje).
+    ctx.cacheOptimized ? "" : buildLeadHistorySection(ctx),
     buildCustomInstructionsSection(ctx),
     buildExamplesSection(ctx),
     buildKnowledgeBaseSection(ctx),
@@ -283,7 +302,40 @@ NÃO inclua action book_appointment neste turno.`);
     }
   }
 
+  // Redução de custo (2026-07): conteúdo VOLÁTIL reposicionado do system pro
+  // runtime quando cacheOptimized — MESMO texto, só muda de lugar (preserva
+  // qualidade e libera o cache do system prompt). Flag OFF = nada aqui (o lead
+  // history fica no system e o carrier RAG é injetado na KB do system, como hoje).
+  if (ctx.cacheOptimized) {
+    const lh = buildLeadHistorySection(ctx);
+    if (lh) parts.push(lh);
+    const rk = buildRetrievedKnowledgeSection(ctx);
+    if (rk) parts.push(rk);
+  }
+
   return parts.join("\n\n");
+}
+
+/**
+ * Redução de custo (2026-07): renderiza os chunks recuperados por RAG (carrier
+ * knowledge) relevantes à MENSAGEM do turno. Vive no runtime context (user
+ * message), NUNCA no system — porque muda a cada turno e quebraria o cache do
+ * prefixo estável. Vazio se não veio nada.
+ */
+function buildRetrievedKnowledgeSection(ctx: PromptContext): string {
+  const items = ctx.retrievedKnowledge || [];
+  if (items.length === 0) return "";
+  const PER_ITEM_CAP = 4000;
+  const rendered = items.map((item, i) => {
+    const title = sanitize(item.title || "Sem titulo", 120);
+    let content = (item.content || "").trim();
+    if (content.length > PER_ITEM_CAP) content = `${content.substring(0, PER_ITEM_CAP)}\n[...conteudo truncado]`;
+    return `[REF ${i + 1}] ${title}\n${content || "(vazio)"}`;
+  });
+  return `### INFORMAÇÕES RELEVANTES PRA ESTA MENSAGEM
+Use como referência se o lead perguntar algo coberto aqui. Não mencione que veio de uma "base"; use naturalmente. Se não cobrir, diga que confirma com a equipe.
+
+${rendered.join("\n\n")}`;
 }
 
 function buildMetaInstruction(): string {
