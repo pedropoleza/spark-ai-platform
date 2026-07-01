@@ -17,7 +17,7 @@ import type { TaskDraft, DraftStep, DraftStepInput, DraftWithSteps } from "@/lib
 import type { TaskKind, DraftStatus } from "@/lib/account-assistant/task-orchestrator/config";
 
 const DRAFT_COLS =
-  "id, rep_id, location_id, agent_id, kind, status, title, meta, materialized_job_id, materialized_count, materialized_at, created_at, updated_at";
+  "id, rep_id, location_id, agent_id, kind, status, title, meta, materialized_job_id, materialized_count, materialized_at, saved_at, created_at, updated_at";
 const STEP_COLS =
   "id, draft_id, position, offset_days, send_time, intra_day_delay_s, message_text, media_url, media_type, send_condition, created_at, updated_at";
 
@@ -96,6 +96,10 @@ export async function getActiveDraftForRep(
     .select(DRAFT_COLS)
     .eq("rep_id", repId)
     .in("status", ["building", "ready_for_review"])
+    // Biblioteca (00117): um template SALVO não é o "rascunho ativo" — senão um
+    // start_task_draft retomaria o template e o editaria (corromperia a biblioteca).
+    // Pra mexer num salvo, o caller passa draft_id explícito.
+    .is("saved_at", null)
     .order("updated_at", { ascending: false })
     .limit(1);
   if (kind) q = q.eq("kind", kind);
@@ -131,6 +135,75 @@ export async function getLatestDraftForRep(
     return null;
   }
   return (data as TaskDraft) ?? null;
+}
+
+// --- Biblioteca de fluxos salvos (00117) -----------------------------------
+
+/** 1 fluxo salvo + contagem de passos (pra list_flows / find_flow). */
+export interface SavedFlowRow {
+  draft_id: string;
+  title: string | null;
+  step_count: number;
+  saved_at: string;
+  created_at: string;
+}
+
+/**
+ * Marca um draft como template salvo na biblioteca do rep (set saved_at) e,
+ * opcionalmente, renomeia (title). Escopo no rep (não salva draft de outro).
+ * Checa affected: 0 = não casou (id errado ou de outro rep) → caller não reporta sucesso.
+ */
+export async function markFlowSaved(
+  draftId: string,
+  repId: string,
+  name?: string | null,
+): Promise<{ ok: boolean; affected: number }> {
+  const db = createAdminClient();
+  const patch: Record<string, unknown> = { saved_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  if (name !== undefined && name !== null && name.trim()) patch.title = name.trim();
+  const { data, error } = await db
+    .from("task_drafts")
+    .update(patch)
+    .eq("id", draftId)
+    .eq("rep_id", repId)
+    .select("id");
+  if (error) {
+    console.warn("[task-drafts] markFlowSaved falhou:", error.message);
+    return { ok: false, affected: 0 };
+  }
+  return { ok: true, affected: data?.length ?? 0 };
+}
+
+/** Lista os fluxos SALVOS do rep (saved_at not null) + contagem de passos de cada. */
+export async function listSavedFlows(repId: string): Promise<SavedFlowRow[]> {
+  const db = createAdminClient();
+  const { data: drafts, error } = await db
+    .from("task_drafts")
+    .select("id, title, saved_at, created_at")
+    .eq("rep_id", repId)
+    .not("saved_at", "is", null)
+    .order("saved_at", { ascending: false });
+  if (error) {
+    console.warn("[task-drafts] listSavedFlows falhou:", error.message);
+    return [];
+  }
+  const rows = (drafts as Array<{ id: string; title: string | null; saved_at: string; created_at: string }>) ?? [];
+  if (rows.length === 0) return [];
+
+  // Contagem de passos por draft num único fetch (rep tem poucos fluxos × ≤60 passos).
+  const ids = rows.map((r) => r.id);
+  const { data: steps } = await db.from("draft_steps").select("draft_id").in("draft_id", ids);
+  const counts = new Map<string, number>();
+  for (const s of (steps as Array<{ draft_id: string }>) ?? []) {
+    counts.set(s.draft_id, (counts.get(s.draft_id) ?? 0) + 1);
+  }
+  return rows.map((r) => ({
+    draft_id: r.id,
+    title: r.title,
+    step_count: counts.get(r.id) ?? 0,
+    saved_at: r.saved_at,
+    created_at: r.created_at,
+  }));
 }
 
 /** Patch parcial do rascunho (status, title, meta, materialização). Checa error+affected. */

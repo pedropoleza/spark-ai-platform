@@ -61,6 +61,15 @@ interface ProcessMessageInput {
    * como garantia mecânica caso o modelo ignore a regra do prompt.
    */
   priorTurnCount?: number;
+  /**
+   * Redução de custo lead-facing (2026-07): TTL do cache do prefixo estável
+   * (system + tool). "1h" (setado pelo queue-processor no modo otimizado) pega os
+   * ~85% de turnos <5min E o reuso cross-conversa; também LIGA o breakpoint de
+   * histórico + o cache do tool. Ausente/"5m" = comportamento atual (só system,
+   * 5m default) → mantém paridade com flag OFF. Espelha o cacheTtl do SparkBot
+   * (llm-client.ts). Só afeta o path Claude (Anthropic); OpenAI cacheia sozinho.
+   */
+  cacheTtl?: "5m" | "1h";
 }
 
 function isClaude(model: string): boolean {
@@ -390,9 +399,37 @@ async function processWithClaude(
   // + futuro structured outputs (output_config.format, GA no Sonnet 4.6) — este
   // último precisa validar a compat do schema (union type:["string","null"]).
 
+  // Redução de custo (2026-07): TTL do cache do prefixo estável (tools+system).
+  // "1h" só no modo otimizado (queue-processor) — pega os ~85% de turnos <5min e o
+  // reuso cross-conversa. Ausente/"5m" = default de hoje. O marker no system já
+  // cacheia tools+system juntos (ordem canônica tools→system→messages), então não
+  // precisa marcar o tool. Espelha o stablePrefixCache do SparkBot (llm-client.ts).
+  const stablePrefixCache =
+    input.cacheTtl === "1h"
+      ? ({ type: "ephemeral", ttl: "1h" } as const)
+      : ({ type: "ephemeral" } as const);
+
+  // Breakpoint de histórico (só no modo otimizado): marca o ÚLTIMO bloco do
+  // PENÚLTIMO message (última msg estável do histórico; o último message é a user
+  // message volátil do turno). Sempre 5m (o histórico cresce todo turno → o write
+  // 2x do 1h não compensa aqui). Casa só o prefixo-comum entre turnos consecutivos
+  // — oportunístico, de graça. Espelha o F3 do SparkBot.
+  if (input.cacheTtl === "1h" && messages.length >= 2) {
+    const penIdx = messages.length - 2;
+    const pen = messages[penIdx];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const blocks: any[] = typeof pen.content === "string"
+      ? [{ type: "text", text: pen.content }]
+      : [...pen.content];
+    if (blocks.length > 0) {
+      blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: "ephemeral" } };
+      messages[penIdx] = { ...pen, content: blocks };
+    }
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const systemBlocks: any[] = [
-    { type: "text", text: input.systemPrompt, cache_control: { type: "ephemeral" } },
+    { type: "text", text: input.systemPrompt, cache_control: stablePrefixCache },
   ];
 
   // === STRUCTURED OUTPUT VIA TOOL-USE (Fix definitivo do parse-fail 2026-06-22) ===

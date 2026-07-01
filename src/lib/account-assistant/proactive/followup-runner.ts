@@ -19,6 +19,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { GHLClient } from "@/lib/ghl/client";
 import { filterOutOptOutContacts } from "./optout-detector";
+import { interpolateContactName } from "@/lib/account-assistant/task-orchestrator/interpolate";
 
 const MAX_PER_TICK = 30;
 const STARTUP_GRACE_SECONDS = 5;
@@ -49,7 +50,7 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
   const { data: candidates } = await supabase
     .from("followup_messages")
     .select(
-      "id, sequence_id, position, message_text, scheduled_at, status, requires_final_check, followup_sequences!inner(status, contact_id, contact_phone, location_id, rep_id, agent_id, delivery_channel, stop_on_reply, started_at)",
+      "id, sequence_id, position, message_text, scheduled_at, status, requires_final_check, followup_sequences!inner(status, contact_id, contact_name, contact_phone, location_id, rep_id, agent_id, delivery_channel, stop_on_reply, started_at)",
     )
     .eq("status", "pending")
     .lte("scheduled_at", nowIso)
@@ -62,6 +63,7 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
   interface SeqInfo {
     status: string;
     contact_id: string;
+    contact_name: string | null;
     contact_phone: string | null;
     location_id: string;
     rep_id: string;
@@ -250,12 +252,15 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
       // Recheck spam_score se requires_final_check (TODO MVP v2 — pra MVP skip)
       // ...
 
-      // Envia
+      // Envia — interpola o [nome] no momento do envio como DEFESA (defense-in-depth):
+      // o materializer já interpola na criação, mas isto cobre mensagens que ficaram
+      // pending ANTES do fix (caso Jussara) e qualquer outro motor que deixe o
+      // placeholder. No-op se não houver placeholder (idempotente).
       const sendResult = await sendFollowupMessage({
         location_id: seqInfo.location_id,
         contact_id: seqInfo.contact_id,
         delivery_channel: seqInfo.delivery_channel,
-        message: cand.message_text,
+        message: interpolateContactName(cand.message_text, seqInfo.contact_name),
       });
 
       if (sendResult.ok) {

@@ -14,6 +14,9 @@ config({ path: resolve(__dirname, "..", ".env.local") });
 
 import { createAdminClient } from "../src/lib/supabase/admin";
 import { isValidSendTime, isValidOffsetDays } from "../src/lib/account-assistant/task-orchestrator/config";
+import { interpolateContactName, firstNameOf, hasNamePlaceholder } from "../src/lib/account-assistant/task-orchestrator/interpolate";
+import { rankSavedFlows } from "../src/lib/account-assistant/task-orchestrator/flow-resolver";
+import { markFlowSaved, listSavedFlows, type SavedFlowRow } from "../src/lib/repositories/task-drafts.repo";
 import { buildSnapshot } from "../src/lib/account-assistant/task-orchestrator/core";
 import * as core from "../src/lib/account-assistant/task-orchestrator/core";
 import { materializeDraft, getDraftProgress, computeScheduledAt, applyFlowToContacts } from "../src/lib/account-assistant/task-orchestrator/materializer";
@@ -47,6 +50,38 @@ async function main() {
   check("offset_days -1 inválido", !isValidOffsetDays(-1));
   check("offset_days 2.5 inválido", !isValidOffsetDays(2.5));
   check("offset_days 400 inválido", !isValidOffsetDays(400));
+
+  console.log("\n=== Interpolação de [nome] (Fix caso Jussara 2026-06-29) ===");
+  check("firstNameOf pega 1º nome", firstNameOf("Matheus Albuquerque") === "Matheus");
+  check("firstNameOf vazio → ''", firstNameOf(null) === "" && firstNameOf("  ") === "");
+  check("[nome] vira primeiro nome", interpolateContactName("Oi [nome], tudo bem?", "Matheus Albuquerque") === "Oi Matheus, tudo bem?");
+  check("{nome} também", interpolateContactName("Oi {nome}!", "Lunna") === "Oi Lunna!");
+  check("{first_name} / {primeiro_nome} também", interpolateContactName("{first_name} e {primeiro_nome}", "Ana Paula") === "Ana e Ana");
+  check("case-insensitive [NOME]", interpolateContactName("Oi [NOME]", "Bia") === "Oi Bia");
+  check("sem placeholder → inalterado", interpolateContactName("Oi, tudo bem?", "Bia") === "Oi, tudo bem?");
+  check("idempotente (texto já interpolado)", interpolateContactName("Oi Matheus, tudo bem?", "Matheus") === "Oi Matheus, tudo bem?");
+  check("sem nome → remove placeholder + limpa pontuação", interpolateContactName("Oi, [nome]?", null) === "Oi?");
+  check("sem nome no meio → limpa", interpolateContactName("Olá [nome], bem-vindo!", "") === "Olá, bem-vindo!");
+  check("NÃO toca em {tags[0]} / {custom.slug}", interpolateContactName("seu {custom.cidade} e {tags[0]}", "Bia") === "seu {custom.cidade} e {tags[0]}");
+  check("hasNamePlaceholder detecta", hasNamePlaceholder("Oi [nome]") && !hasNamePlaceholder("Oi Bia"));
+  check("hasNamePlaceholder é stateless (2x seguidas)", hasNamePlaceholder("Oi [nome]") && hasNamePlaceholder("Oi [nome]"));
+
+  console.log("\n=== F7: resolver de fluxo salvo (rankSavedFlows, puro) ===");
+  const mkFlow = (title: string, steps = 3): SavedFlowRow => ({ draft_id: title.toLowerCase().replace(/\s+/g, "-"), title, step_count: steps, saved_at: "", created_at: "" });
+  const lib = [mkFlow("Fluxo no-show seguro", 5), mkFlow("Aniversário cliente"), mkFlow("Boas-vindas lead")];
+  const rNoShow = rankSavedFlows("no-show", lib);
+  check("acha 'no-show' com confidence high", rNoShow.confidence === "high" && rNoShow.best?.title === "Fluxo no-show seguro");
+  check("best traz step_count", rNoShow.best?.step_count === 5);
+  const rTypo = rankSavedFlows("noshow", lib);
+  check("tolera typo 'noshow'", rTypo.best?.title === "Fluxo no-show seguro");
+  const rAcc = rankSavedFlows("aniversario", lib); // sem acento
+  check("tolera falta de acento 'aniversario'", rAcc.best?.title === "Aniversário cliente");
+  const rLow = rankSavedFlows("cobrança fiscal xyz", lib);
+  check("query sem match → low / sem best", rLow.confidence === "low" && rLow.best === null);
+  const ambLib = [mkFlow("Fluxo no-show seguro"), mkFlow("Fluxo no-show college")];
+  const rAmb = rankSavedFlows("no-show", ambLib);
+  check("2 fluxos 'no-show' → ambiguous", rAmb.confidence === "ambiguous" && rAmb.candidates.length === 2);
+  check("rank vazio → low", rankSavedFlows("qualquer", []).confidence === "low");
 
   console.log("\n=== buildSnapshot (mock) ===");
   const snap = buildSnapshot({
@@ -186,17 +221,40 @@ async function main() {
     const matEmpty = await materializeDraft(repId, emptyId, null);
     check("materializar fluxo VAZIO → erro, count 0", !matEmpty.ok && matEmpty.count === 0);
 
+    // Fix caso Jussara 2026-06-29: o [nome] do passo vira o nome REAL do contato no
+    // followup_messages (antes saía "[nome]" cru). Round-trip no DB.
+    const nameDraft = await core.startDraft(repId, LOC, null, { kind: "campaign", title: "Nome" });
+    const nameId = nameDraft.ok ? nameDraft.snapshot.draft_id : "";
+    await core.addStep(repId, nameId, { offset_days: 0, message_text: "Oi [nome], tudo bem?" });
+    // guard anti-duplicata: 2º passo com texto IGUAL → vem com note (não bloqueia)
+    const dupStep = await core.addStep(repId, nameId, { offset_days: 1, message_text: "Oi [nome], tudo bem?" });
+    check("add_step duplicado → ok COM note de aviso", dupStep.ok && !!dupStep.note);
+    await core.setMeta(repId, nameId, { target: { contact_id: "NAME1111bbbb2222CCCC", contact_name: "Matheus Albuquerque" } });
+    const matName = await materializeDraft(repId, nameId, "America/New_York");
+    check("materializou fluxo com [nome]", matName.ok && matName.count === 2);
+    const { data: nameMsgs } = await db.from("followup_messages").select("message_text").eq("sequence_id", matName.ok ? matName.sequence_id : "").order("position");
+    check("[nome] → 'Matheus' no DB (não sai cru)", !!nameMsgs && nameMsgs[0].message_text === "Oi Matheus, tudo bem?");
+    check("nenhum placeholder [nome] cru no DB", !!nameMsgs && nameMsgs.every((m) => !hasNamePlaceholder(m.message_text)));
+
     console.log("\n=== F6: aplicar fluxo a N contatos (template) ===");
     const tmpl = await core.startDraft(repId, LOC, null, { kind: "followup_sequence", title: "Template no-show" });
     const tId = tmpl.ok ? tmpl.snapshot.draft_id : "";
-    await core.addStep(repId, tId, { offset_days: 0, message_text: "passo A" });
+    await core.addStep(repId, tId, { offset_days: 0, message_text: "Oi [nome]! passo A" });
     await core.addStep(repId, tId, { offset_days: 2, message_text: "passo B" });
     const applied = await applyFlowToContacts(repId, tId, [
-      { contact_id: "AAAA1111bbbb2222CCCC" },
+      { contact_id: "AAAA1111bbbb2222CCCC" }, // sem nome → placeholder removido
       { contact_id: "DDDD3333eeee4444FFFF", contact_name: "Lany" },
     ], "America/New_York");
     check("apply a 2 contatos → 2 sucessos", "succeeded" in applied && applied.succeeded === 2);
     check("total_messages = 4 (2 passos × 2 contatos)", "total_messages" in applied && applied.total_messages === 4);
+    // [nome] interpolado POR-CONTATO: cada sequência usa o nome do SEU contato.
+    const perContact = "per_contact" in applied ? applied.per_contact : [];
+    const seqLany = perContact.find((p) => p.contact_id === "DDDD3333eeee4444FFFF")?.sequence_id ?? "";
+    const seqNoName = perContact.find((p) => p.contact_id === "AAAA1111bbbb2222CCCC")?.sequence_id ?? "";
+    const { data: lanyMsgs } = await db.from("followup_messages").select("message_text").eq("sequence_id", seqLany).order("position");
+    const { data: noNameMsgs } = await db.from("followup_messages").select("message_text").eq("sequence_id", seqNoName).order("position");
+    check("apply: [nome] → 'Lany' na sequência da Lany", !!lanyMsgs && lanyMsgs[0].message_text === "Oi Lany! passo A");
+    check("apply: sem nome → placeholder removido ('Oi! passo A')", !!noNameMsgs && noNameMsgs[0].message_text === "Oi! passo A");
     const progT = await getDraftProgress(tId);
     check("progresso do template: total=4 pending=4", progT.ok && progT.total === 4 && progT.pending === 4);
     const { data: tRow } = await db.from("task_drafts").select("status").eq("id", tId).maybeSingle();
@@ -237,6 +295,41 @@ async function main() {
     const { data: iddMsgs } = await db.from("followup_messages").select("scheduled_at").eq("sequence_id", matIdd.ok ? matIdd.sequence_id : "").order("scheduled_at");
     const delta = iddMsgs && iddMsgs.length === 2 ? new Date(iddMsgs[1].scheduled_at).getTime() - new Date(iddMsgs[0].scheduled_at).getTime() : -1;
     check("intra-day: 2ª msg +30s da 1ª (intra_day_delay_s aplicado)", delta === 30000);
+
+    // F7 por último: cria fluxos salvos (não polui as retomadas por-kind acima).
+    console.log("\n=== F7: biblioteca de fluxos salvos (round-trip DB) ===");
+    // Salva o template do F6 na biblioteca com um nome
+    const saved = await markFlowSaved(tId, repId, "No-show seguro de vida");
+    check("markFlowSaved → 1 afetado", saved.ok && saved.affected === 1);
+    const savedOther = await markFlowSaved(tId, "00000000-0000-0000-0000-000000000000", "hack");
+    check("markFlowSaved de outro rep → 0 afetado (escopo)", savedOther.affected === 0);
+    // Lista a biblioteca
+    const myFlows = await listSavedFlows(repId);
+    check("listSavedFlows traz o fluxo salvo + step_count", myFlows.length === 1 && myFlows[0].title === "No-show seguro de vida" && myFlows[0].step_count === 2);
+    // Resolve por nome (fuzzy) sobre a biblioteca real
+    const resolved = rankSavedFlows("no show", myFlows);
+    check("resolveFlow acha 'no show' → high + flow certo", resolved.confidence === "high" && resolved.best?.draft_id === tId);
+    // Aplica o fluxo salvo via a TOOL (apply_saved_flow) por flow_query
+    const applySaved = TASK_ORCHESTRATOR_TOOLS.find((t) => t.def.name === "apply_saved_flow");
+    const savedCtx = { rep: { id: repId, timezone: null }, locationId: LOC, companyId: "c", ghlClient: null } as unknown as ToolContext;
+    const applyByName = await applySaved!.handler(savedCtx, { flow_query: "no-show", contacts: [{ contact_id: "HHHH7777iiii8888JJJJ", contact_name: "Gislene Souza" }] });
+    check("apply_saved_flow por nome → aplicou", applyByName.status === "ok" && (applyByName.data as { applied?: boolean }).applied === true);
+    check("apply_saved_flow reporta o nome do fluxo", (applyByName.data as { flow_name?: string }).flow_name === "No-show seguro de vida");
+    // [nome] interpolado no fluxo salvo aplicado
+    const gisSeq = ((applyByName.data as { per_contact?: Array<{ contact_id: string; sequence_id?: string }> }).per_contact || [])[0]?.sequence_id ?? "";
+    const { data: gisMsgs } = await db.from("followup_messages").select("message_text").eq("sequence_id", gisSeq).order("position");
+    check("fluxo salvo: [nome] → 'Gislene' no envio", !!gisMsgs && gisMsgs[0].message_text === "Oi Gislene! passo A");
+    // Ambíguo NÃO aplica (devolve candidatos): cria um 2º fluxo salvo "No-show ..."
+    const amb = await core.startDraft(repId, LOC, null, { kind: "file_export", title: "No-show college" });
+    const ambId = amb.ok ? amb.snapshot.draft_id : "";
+    await core.addStep(repId, ambId, { offset_days: 0, message_text: "oi" });
+    await markFlowSaved(ambId, repId, "No-show college");
+    const applyAmb = await applySaved!.handler(savedCtx, { flow_query: "no-show", contacts: [{ contact_id: "HHHH7777iiii8888JJJJ" }] });
+    check("apply_saved_flow ambíguo → NÃO aplica, pede desambiguação", (applyAmb.data as { needs_disambiguation?: boolean })?.needs_disambiguation === true);
+    // Guard: template SALVO (tId, agora saved) NÃO é retomado como rascunho ativo
+    // (senão start_task_draft editaria a biblioteca). Deve criar um fluxo FRESH.
+    const freshAfterSave = await core.startDraft(repId, LOC, null, { kind: "followup_sequence", title: "Fluxo novo pós-save" });
+    check("start_task_draft NÃO retoma template salvo (cria fresh)", freshAfterSave.ok && freshAfterSave.snapshot.draft_id !== tId && !freshAfterSave.note);
   } finally {
     // cleanup: deletar a rep cascateia draft/steps/events
     await db.from("rep_identities").delete().eq("id", repId);

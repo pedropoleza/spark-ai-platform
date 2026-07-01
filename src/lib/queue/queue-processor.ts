@@ -824,6 +824,16 @@ async function processGroup(
 
   const knowledgeBase = (kbData || []) as import("@/lib/ai/sales-prompt-builder").KnowledgeBaseItem[];
 
+  // Redução de custo lead-facing (2026-07): flag que liga o modo cache-otimizado
+  // (reposiciona o volátil pro runtime + TTL 1h no prefixo estável). Default OFF =
+  // comportamento de hoje, byte-idêntico. Achado: o carrier RAG por-mensagem
+  // vazava pro system e quebrava o cache em 94% dos turnos (net-negativo, +15%).
+  // Ver _planning/lead-agents-cost-reduction-2026-07/ESTUDO.md.
+  const cacheOptimized = process.env.LEAD_CACHE_OPTIMIZED === "1";
+  // Chunks recuperados por RAG (carrier) — no modo otimizado vão pro runtime (user
+  // message), NÃO pro system, senão quebram o cache do prefixo estável todo turno.
+  const retrievedKnowledge: import("@/lib/ai/sales-prompt-builder").KnowledgeBaseItem[] = [];
+
   // KB parte B: templates via carrier RAG. Se o agente tem enabled_kbs (NLG/
   // Brazillionaires), recupera chunks relevantes da carrier_knowledge pela
   // mensagem do lead e injeta como conhecimento. Gated + fail-safe (erro =
@@ -836,7 +846,11 @@ async function processGroup(
       const { retrieveCarrierKnowledge, carrierLabel } = await import("@/lib/knowledge/carrier-retrieval");
       const chunks = await retrieveCarrierKnowledge(enabledKbs, group.aggregatedBody, 3);
       for (const c of chunks) {
-        knowledgeBase.push({ title: `[${carrierLabel(c.carrier)}] ${c.title}`, type: "text", content: c.content });
+        const item = { title: `[${carrierLabel(c.carrier)}] ${c.title}`, type: "text" as const, content: c.content };
+        // Modo otimizado: chunk por-mensagem vai pro runtime (não quebra o cache do
+        // system). Modo legado (flag OFF): empilha na KB do system, como hoje.
+        if (cacheOptimized) retrievedKnowledge.push(item);
+        else knowledgeBase.push(item);
       }
       if (chunks.length > 0) {
         console.log(`[Queue] carrier RAG: +${chunks.length} chunks (${enabledKbs.join(",")}) agent=${agent.id}`);
@@ -958,6 +972,10 @@ async function processGroup(
     // Só injeta se a memória do lead está ON — o handoff pode ter carregado o
     // leadHistory só pro gate, e isso não deve poluir o prompt. Review 2026-06-05.
     leadHistory: leadHistoryCfg.enabled ? leadHistory : undefined,
+    // Redução de custo (2026-07): no modo otimizado, o builder tira o volátil
+    // (lead history + carrier RAG) do system e joga no runtime → system estável.
+    retrievedKnowledge: cacheOptimized ? retrievedKnowledge : undefined,
+    cacheOptimized,
   };
   // Plataforma Modular (Fase 2): roteia a montagem do prompt pelo motor unificado
   // quando AGENT_MOTOR_UNIFIED tá ON. Como o assembler delega pro mesmo
@@ -1060,6 +1078,9 @@ async function processGroup(
     images: imageInputs.length > 0 ? imageInputs : undefined,
     responseSchema,
     priorTurnCount: conversationTurns.length,
+    // Redução de custo (2026-07): 1h no prefixo estável só no modo otimizado
+    // (queue é sempre inbound). Flag OFF = undefined = 5m default de hoje.
+    cacheTtl: cacheOptimized ? "1h" : undefined,
   });
 
   if (!aiResult.success || !aiResult.response) {
@@ -1089,6 +1110,7 @@ async function processGroup(
       images: imageInputs.length > 0 ? imageInputs : undefined,
       responseSchema,
       priorTurnCount: conversationTurns.length,
+      cacheTtl: cacheOptimized ? "1h" : undefined,
     });
     if (retry.success && retry.response && !retry.parse_failed) {
       log("log", "retry recuperou JSON válido — lead não recebe a genérica");

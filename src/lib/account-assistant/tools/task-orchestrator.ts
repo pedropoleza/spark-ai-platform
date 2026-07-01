@@ -28,6 +28,8 @@ import {
 import { materializeDraft, getDraftProgress, applyFlowToContacts, type ContactTarget } from "../task-orchestrator/materializer";
 import { generateAndUploadFlowPdf } from "../task-orchestrator/flow-pdf";
 import { MAX_APPLY_CONTACTS, MAX_APPLY_MESSAGES, type TaskKind } from "../task-orchestrator/config";
+import { markFlowSaved, listSavedFlows } from "@/lib/repositories/task-drafts.repo";
+import { resolveFlow } from "../task-orchestrator/flow-resolver";
 
 function ok(snapshot: DraftSnapshot, extra?: Record<string, unknown>): ToolResult {
   return { status: "ok", data: { ...snapshot, ...(extra || {}) } };
@@ -44,6 +46,33 @@ function asStr(v: unknown): string | undefined {
   if (v === undefined || v === null) return undefined;
   const s = String(v).trim();
   return s.length ? s : undefined;
+}
+
+/** Parseia o array `contacts` da tool, descartando ids inválidos. Compartilhado por apply_*. */
+function parseContacts(raw: unknown): { contacts: ContactTarget[]; invalid: number } {
+  const arr = Array.isArray(raw) ? raw : [];
+  const contacts: ContactTarget[] = [];
+  let invalid = 0;
+  for (const c of arr) {
+    const o = (c || {}) as Record<string, unknown>;
+    const id = asStr(o.contact_id);
+    // validateGhlId devolve um erro (truthy) quando o id é inválido — descarta.
+    if (!id || validateGhlId(id, "contact")) { invalid++; continue; }
+    contacts.push({ contact_id: id, contact_name: asStr(o.contact_name) ?? null, contact_phone: asStr(o.contact_phone) ?? null });
+  }
+  return { contacts, invalid };
+}
+
+/** Caps anti-spam/ban/custo do apply (contatos × passos). Devolve a msg de erro ou null. */
+function applyCapError(contactCount: number, stepCount: number): string | null {
+  if (contactCount > MAX_APPLY_CONTACTS) {
+    return `São ${contactCount} contatos — o limite por aplicação é ${MAX_APPLY_CONTACTS}. Fatie em lotes menores.`;
+  }
+  const total = contactCount * stepCount;
+  if (total > MAX_APPLY_MESSAGES) {
+    return `Isso geraria ${total} mensagens (${contactCount} contatos × ${stepCount} passos) — o teto é ${MAX_APPLY_MESSAGES}. Reduza contatos ou passos.`;
+  }
+  return null;
 }
 
 const startTaskDraft: ToolEntry = {
@@ -134,7 +163,7 @@ const addStepTool: ToolEntry = {
       intra_day_delay_s: asInt(args.intra_day_delay_s),
       send_condition: asStr(args.send_condition) ?? null,
     });
-    return res.ok ? ok(res.snapshot) : err(res.error);
+    return res.ok ? ok(res.snapshot, res.note ? { note: res.note } : undefined) : err(res.error);
   },
 };
 
@@ -406,25 +435,11 @@ const applyFlowToContactsTool: ToolEntry = {
   handler: async (ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> => {
     const dws = await resolveDraftAny(ctx.rep.id, asStr(args.draft_id));
     if (!dws) return err("Nenhum fluxo encontrado pra aplicar.");
-    const raw = Array.isArray(args.contacts) ? args.contacts : [];
-    const contacts: ContactTarget[] = [];
-    let invalidCount = 0;
-    for (const c of raw) {
-      const o = (c || {}) as Record<string, unknown>;
-      const id = asStr(o.contact_id);
-      // validateGhlId devolve um erro (truthy) quando o id é inválido — descarta (review 2026-06-21).
-      if (!id || validateGhlId(id, "contact")) { invalidCount++; continue; }
-      contacts.push({ contact_id: id, contact_name: asStr(o.contact_name) ?? null, contact_phone: asStr(o.contact_phone) ?? null });
-    }
+    const { contacts } = parseContacts(args.contacts);
     if (contacts.length === 0) return err("Passe pelo menos 1 contato com contact_id VÁLIDO (use search_contacts/get_contacts_filtered).");
     // Caps anti-spam/ban/custo (review 2026-06-21): teto de contatos e de mensagens totais.
-    if (contacts.length > MAX_APPLY_CONTACTS) {
-      return err(`São ${contacts.length} contatos — o limite por aplicação é ${MAX_APPLY_CONTACTS}. Fatie em lotes menores.`);
-    }
-    const totalMsgs = contacts.length * dws.steps.length;
-    if (totalMsgs > MAX_APPLY_MESSAGES) {
-      return err(`Isso geraria ${totalMsgs} mensagens (${contacts.length} contatos × ${dws.steps.length} passos) — o teto é ${MAX_APPLY_MESSAGES}. Reduza contatos ou passos.`);
-    }
+    const capErr = applyCapError(contacts.length, dws.steps.length);
+    if (capErr) return err(capErr);
     const res = await applyFlowToContacts(ctx.rep.id, dws.draft.id, contacts, ctx.rep.timezone ?? null);
     if ("error" in res) return err(res.error);
     return {
@@ -441,7 +456,190 @@ const applyFlowToContactsTool: ToolEntry = {
   },
 };
 
-/** Montagem (F1) + materialização (F2) + progresso + PDF (F4) + envio (F5) + template N-contatos (F6). */
+// ─────────────────────────────────────────────────────────────
+// Biblioteca de Fluxos Salvos (Pedro 2026-06-29) — F7
+// Estudo: _planning/jussara-sparkbot/ESTUDO-fluxos-salvos.md
+// O rep monta 1 vez, salva com um nome, e depois só diz "manda o fluxo X pra
+// fulano". Reusa applyFlowToContacts (aplicar) + o scorer do H45 (achar por nome).
+// ─────────────────────────────────────────────────────────────
+
+const saveFlowTool: ToolEntry = {
+  def: {
+    name: "save_flow",
+    description:
+      "Salva o fluxo atual (recém-montado) na BIBLIOTECA do rep com um nome, pra reusar depois sem remontar. Use " +
+      "quando o rep terminar de montar e quiser guardar ('salva esse fluxo', 'guarda como No-show'), ou ofereça você " +
+      "mesmo ('quer que eu guarde como X pra reusar?'). Depois de salvo, o rep aciona com apply_saved_flow ('manda o " +
+      "fluxo X pra fulano'). Passe um `name` claro. Devolve o estado do fluxo salvo — afirme só o que vier no retorno.",
+    risk: "medium",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Nome do fluxo na biblioteca (ex 'No-show seguro'). Se omitido, usa o título atual." },
+        draft_id: { type: "string", description: "Opcional; usa o fluxo ativo/recente se omitido." },
+      },
+    },
+  },
+  handler: async (ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> => {
+    const dws = await resolveDraftAny(ctx.rep.id, asStr(args.draft_id));
+    if (!dws) return err("Nenhum fluxo encontrado pra salvar. Monte um primeiro (start_task_draft + add_step).");
+    if (dws.steps.length === 0) return err("O fluxo está vazio — adicione passos antes de salvar.");
+    const name = asStr(args.name) ?? dws.draft.title ?? null;
+    if (!name) return err("Preciso de um nome pra salvar o fluxo (ex 'No-show seguro'). Pergunte ao rep como quer chamar.");
+    const res = await markFlowSaved(dws.draft.id, ctx.rep.id, name);
+    if (!res.ok || res.affected === 0) return err("Não consegui salvar o fluxo na biblioteca (estado inalterado).");
+    return {
+      status: "ok",
+      data: {
+        saved: true,
+        flow_id: dws.draft.id,
+        name,
+        step_count: dws.steps.length,
+        confirmation: `Salvei o fluxo "${name}" (${dws.steps.length} toques) na biblioteca. É só me dizer "manda o ${name} pra fulano" quando quiser usar.`,
+      },
+    };
+  },
+};
+
+const listFlowsTool: ToolEntry = {
+  def: {
+    name: "list_flows",
+    description:
+      "Lista os fluxos SALVOS na biblioteca do rep (nome + nº de toques). Use quando o rep perguntar 'quais fluxos " +
+      "eu tenho?', 'meus fluxos salvos', ou pra escolher qual aplicar. Read-only — afirme só os nomes que vierem.",
+    risk: "safe",
+    parameters: { type: "object", properties: {} },
+  },
+  handler: async (ctx: ToolContext): Promise<ToolResult> => {
+    const flows = await listSavedFlows(ctx.rep.id);
+    return {
+      status: "ok",
+      data: {
+        count: flows.length,
+        flows: flows.map((f) => ({ flow_id: f.draft_id, name: f.title || "(sem nome)", steps: f.step_count, saved_at: f.saved_at })),
+        note: flows.length === 0 ? "Nenhum fluxo salvo ainda. Monte um e use save_flow pra guardar." : undefined,
+      },
+    };
+  },
+};
+
+const findFlowTool: ToolEntry = {
+  def: {
+    name: "find_flow",
+    description:
+      "Acha um fluxo SALVO da biblioteca do rep pelo NOME (tolera typo/acento). Use quando o rep mencionar um fluxo " +
+      "por nome ('o fluxo de no-show', 'aquele de triagem') ANTES de aplicar. Devolve `confidence`: 'high' (achou 1 " +
+      "claro — confirme o nome e siga), 'ambiguous' (vários parecidos — liste e pergunte), 'needs_confirm' (1 provável " +
+      "— confirme), 'low' (não achei — ofereça montar). NUNCA aplique sem confirmar o nome com o rep.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      required: ["query"],
+      properties: { query: { type: "string", description: "Nome (ou parte) do fluxo procurado." } },
+    },
+  },
+  handler: async (ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> => {
+    const query = asStr(args.query);
+    if (!query) return err("Diga o nome do fluxo procurado.");
+    const res = await resolveFlow(ctx.rep.id, query);
+    return {
+      status: "ok",
+      data: {
+        confidence: res.confidence,
+        best: res.best ? { flow_id: res.best.draft_id, name: res.best.title, steps: res.best.step_count, score: res.best.score } : null,
+        candidates: res.candidates.map((c) => ({ flow_id: c.draft_id, name: c.title, steps: c.step_count, score: c.score })),
+      },
+    };
+  },
+};
+
+const applySavedFlowTool: ToolEntry = {
+  def: {
+    name: "apply_saved_flow",
+    description:
+      "Aplica um fluxo SALVO da biblioteca a 1..N contatos — o 'manda o fluxo X pra fulano'. Passe `flow_id` (do " +
+      "find_flow, preferível) OU `flow_query` (o nome — eu resolvo; se ambíguo, devolvo a lista pra você perguntar e " +
+      "NÃO aplico). Resolva os contatos antes com search_contacts/get_contacts_filtered. É risco alto: confirme o NOME " +
+      "do fluxo + os contatos com o rep antes. NÃO consome o fluxo (continua salvo). Reporte só os counts REAIS do retorno.",
+    risk: "high",
+    parameters: {
+      type: "object",
+      required: ["contacts"],
+      properties: {
+        flow_id: { type: "string", description: "ID do fluxo salvo (do find_flow). Preferível — sem ambiguidade." },
+        flow_query: { type: "string", description: "Nome do fluxo (se não tiver o flow_id). Resolvo por nome; ambíguo → devolvo candidatos." },
+        contacts: {
+          type: "array",
+          description: "Contatos alvo (cada um com contact_id; nome/telefone opcionais).",
+          items: {
+            type: "object",
+            required: ["contact_id"],
+            properties: {
+              contact_id: { type: "string" },
+              contact_name: { type: "string" },
+              contact_phone: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+  },
+  handler: async (ctx: ToolContext, args: Record<string, unknown>): Promise<ToolResult> => {
+    // Resolve o fluxo: flow_id explícito vence; senão por nome (find_flow interno).
+    let flowId = asStr(args.flow_id);
+    let flowName: string | undefined;
+    if (!flowId) {
+      const query = asStr(args.flow_query);
+      if (!query) return err("Diga qual fluxo aplicar (flow_id do find_flow ou flow_query com o nome).");
+      const r = await resolveFlow(ctx.rep.id, query);
+      if (!r.best || r.confidence === "low") {
+        return err(`Não achei um fluxo salvo parecido com "${query}". Use list_flows pra ver os nomes, ou monte um novo.`);
+      }
+      if (r.confidence === "ambiguous") {
+        // NÃO aplica — devolve os candidatos pro bot perguntar qual.
+        return {
+          status: "ok",
+          data: {
+            applied: false,
+            needs_disambiguation: true,
+            candidates: r.candidates.map((c) => ({ flow_id: c.draft_id, name: c.title, steps: c.step_count })),
+            note: `Achei mais de um fluxo parecido com "${query}". Pergunte ao rep qual é (mostre os nomes) e chame de novo com o flow_id.`,
+          },
+        };
+      }
+      flowId = r.best.draft_id;
+      flowName = r.best.title;
+    }
+    // flow_id é UUID do nosso banco (não id GHL) — a posse é validada por resolveDraftAny abaixo.
+
+    const { contacts } = parseContacts(args.contacts);
+    if (contacts.length === 0) return err("Passe pelo menos 1 contato com contact_id VÁLIDO (use search_contacts/get_contacts_filtered).");
+
+    // Lê o fluxo (valida posse do rep + conta passos pro cap) antes de aplicar.
+    const dws = await resolveDraftAny(ctx.rep.id, flowId);
+    if (!dws) return err("Não achei esse fluxo salvo (ou não é seu).");
+    const capErr = applyCapError(contacts.length, dws.steps.length);
+    if (capErr) return err(capErr);
+
+    const res = await applyFlowToContacts(ctx.rep.id, dws.draft.id, contacts, ctx.rep.timezone ?? null);
+    if ("error" in res) return err(res.error);
+    return {
+      status: "ok",
+      data: {
+        applied: true,
+        flow_id: dws.draft.id,
+        flow_name: flowName ?? dws.draft.title ?? null,
+        total_contacts: res.total_contacts,
+        succeeded: res.succeeded,
+        total_messages: res.total_messages,
+        per_contact: res.per_contact,
+        confirmation: `Apliquei o fluxo "${flowName ?? dws.draft.title ?? ""}" a ${res.succeeded}/${res.total_contacts} contato(s), ${res.total_messages} mensagem(ns) agendadas no total.`,
+      },
+    };
+  },
+};
+
+/** Montagem (F1) + materialização (F2) + progresso + PDF (F4) + envio (F5) + template N-contatos (F6) + biblioteca (F7). */
 export const TASK_ORCHESTRATOR_TOOLS: ToolEntry[] = [
   startTaskDraft,
   showDraftTool,
@@ -454,4 +652,8 @@ export const TASK_ORCHESTRATOR_TOOLS: ToolEntry[] = [
   generateFlowPdfTool,
   sendMediaToContactTool,
   applyFlowToContactsTool,
+  saveFlowTool,
+  listFlowsTool,
+  findFlowTool,
+  applySavedFlowTool,
 ];

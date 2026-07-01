@@ -587,18 +587,15 @@ export async function POST(request: NextRequest) {
       .in("type", ["sales_agent", "recruitment_agent", "custom_agent"]);
 
     if (!allAgents || allAgents.length === 0) {
-      console.log(`[Webhook] Skipped: no_active_agent for location ${locationId}`);
-      // Sweep 2026-06-17: lead mandou msg mas a location não tem agente
-      // lead-facing ativo. Geralmente normal (lead-facing é pago/opt-in) → LOW
-      // (visível no painel, não empurra push). Vira sinal se um agente que
-      // DEVIA estar ativo foi pausado/excluído sem querer.
-      reportError({
-        title: "Inbound: location sem agente lead-facing ativo",
-        feature: "inbound-webhook",
-        severity: "low",
-        description: "Chegou inbound de lead mas a location não tem sales/recruitment/custom agent ativo.",
-        metadata: { location_id: locationId, contact_id: contactId, channel },
-      });
+      console.log(`[Webhook] Skipped: no_active_agent for location ${locationId} (contact ${contactId}, ${channel})`);
+      // Loop de qualidade 2026-06-29 (iter-1, redução de ruído de observabilidade):
+      // lead-facing é pago/opt-in → a MAIORIA das locations não tem agente, então
+      // este caso era ESPERADO mas virava admin_signal em TODO inbound (60.812
+      // ocorrências afogando o painel, sem caminho de escalação/push). Rebaixado pra
+      // console-only. O caso real "agente que DEVIA estar ativo foi pausado" não era
+      // pego por um sinal de 60k/mês — é melhor via reclamação do rep + smoke.
+      // (O sinal IRMÃO 'nenhum agente casou targeting' fica — esse TEM push em occ>=20
+      // e pega o bug F27 do agente-mudo.) Ver _planning/daily-quality-loop/PLANO.md.
       return NextResponse.json({ received: true, skipped: "no_active_agent" });
     }
     console.log(`[Webhook] Found ${allAgents.length} active agent(s): ${allAgents.map(a => a.type).join(", ")}`);
