@@ -1,14 +1,16 @@
 /**
  * Gate de entitlement da Plataforma Modular (Fase 0, D6).
  *
- * Modelo de negócio: SparkBot (account_assistant, rep-facing) é INCLUSO/grátis;
- * venda/recrutamento/custom (lead-facing) são upsell PAGO — exigem entitlement
- * ativo na location, OU um admin liberando (liberação manual).
+ * Modelo de negócio: SparkBot (account_assistant, rep-facing) é INCLUSO/grátis.
+ * Venda/recrutamento/custom (lead-facing) TAMBÉM passaram a ser INCLUÍDOS
+ * (Pedro 2026-07-02 — sem cobrança de $50/mês). A infra abaixo (decideEntitlement,
+ * Acessos, script de grant) fica intacta pra reativar cobrança no futuro (Fase 4),
+ * mas HOJE a enforcement está DESLIGADA no código → nada é bloqueado.
  *
- * SEGURANÇA DE ROLLOUT: a enforcement é GATED por env `AGENT_ENTITLEMENTS_ENFORCED`
- * (default OFF). Com a flag desligada, o gate SEMPRE libera mas LOGA o que
- * aconteceria (log-first) — assim a gente observa em prod antes de cortar acesso.
- * Mesma disciplina das outras features (PROACTIVE_EVENTS_ENABLED etc).
+ * Histórico: a enforcement era GATED por env `AGENT_ENTITLEMENTS_ENFORCED` (log-first,
+ * default OFF). Como a env chegou a ser LIGADA em prod e travou os agentes de venda
+ * (caso Gian, location 7pXJZ8..., 2026-07-02), agora ignoramos a env de propósito —
+ * ver isEntitlementsEnforced() abaixo.
  *
  * Plano: _planning/plataforma-modular/PLANO.md. Repo: agent-platform.repo.ts.
  */
@@ -16,10 +18,17 @@
 import { getActiveEntitlement } from "@/lib/repositories/agent-platform.repo";
 import type { AgentCapability } from "@/types/agent-platform";
 
-/** Enforcement ligada? Default OFF (log-first) até a gente validar em prod. */
+/**
+ * Enforcement ligada? Pedro 2026-07-02: DESLIGADA no código — agentes lead-facing
+ * viraram incluídos (sem cobrança), então nada é bloqueado. Ignora a env
+ * `AGENT_ENTITLEMENTS_ENFORCED` de propósito (ela estava ligada em prod e travou
+ * os agentes de venda). Pra reativar cobrança/gate no futuro: descomentar as 2
+ * linhas abaixo e setar a env.
+ */
 export function isEntitlementsEnforced(): boolean {
-  const v = (process.env.AGENT_ENTITLEMENTS_ENFORCED || "").toLowerCase();
-  return v === "1" || v === "on" || v === "true";
+  return false;
+  // const v = (process.env.AGENT_ENTITLEMENTS_ENFORCED || "").toLowerCase();
+  // return v === "1" || v === "on" || v === "true";
 }
 
 /**

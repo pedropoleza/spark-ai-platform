@@ -63,13 +63,9 @@ export function ChannelChip({ name }: { name: ChannelKey | string }) {
 
 /* ─── PriceBadge ────────────────────────────────────────────────── */
 export function PriceBadge({ included, entitled }: { included: boolean; entitled: boolean }) {
-  if (included) return <span className="pill pill--ok">Incluso</span>;
-  if (entitled)
-    return (
-      <span className="pill pill--muted">
-        <span className="mono">$50</span>/mês
-      </span>
-    );
+  // Pedro 2026-07-02: lead-facing virou incluído (sem cobrança de $50). Todo agente
+  // utilizável mostra "Incluso"; "Bloqueado" só reaparece se a enforcement voltar.
+  if (included || entitled) return <span className="pill pill--ok">Incluso</span>;
   return (
     <span className="pill pill--muted">
       <Lock size={11} /> Bloqueado

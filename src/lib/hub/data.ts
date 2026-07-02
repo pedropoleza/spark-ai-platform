@@ -826,7 +826,7 @@ export async function loadEntitlementsGrid(
       sales: null,
       recruitment: null,
       custom: null,
-      price: 50,
+      price: 0,
       since: null,
     });
   }
@@ -838,7 +838,7 @@ export async function loadEntitlementsGrid(
     else if (e.capability === "recruitment_agent") r.recruitment = status;
     else if (e.capability === "custom_agent") r.custom = status;
     if (e.status === "active") {
-      r.price = Number(e.monthly_price_usd) || 50;
+      r.price = Number(e.monthly_price_usd) || 0;
       r.since = e.granted_at;
     }
   }

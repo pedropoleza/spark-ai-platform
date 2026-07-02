@@ -69,7 +69,7 @@ export function NewAgentFlow({ templates }: { templates: NewTemplate[] }) {
             </div>
             <div className="row" style={{ gap: 8 }}>
               {t.entitled ? (
-                <span className="pill pill--muted"><span className="mono">$50</span>/mês</span>
+                <span className="pill pill--ok">Incluso</span>
               ) : (
                 <span className="pill pill--muted"><Lock size={11} /> Bloqueado</span>
               )}

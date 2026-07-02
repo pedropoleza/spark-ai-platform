@@ -42,7 +42,7 @@ export function AccessTable({ rows }: { rows: EntitlementGridRow[] }) {
   const countActive = (cap: Cap) => rows.filter((r) => r[cap] === "active").length;
 
   function openGrant(locationId = "", capability: Cap = "sales") {
-    setModal({ locationId: locationId || rows[0]?.location_id || "", capability, price: "50", expires: "" });
+    setModal({ locationId: locationId || rows[0]?.location_id || "", capability, price: "0", expires: "" });
   }
 
   async function grant() {
@@ -55,7 +55,7 @@ export function AccessTable({ rows }: { rows: EntitlementGridRow[] }) {
         body: JSON.stringify({
           location_id: modal.locationId,
           capability: modal.capability,
-          price_usd: Number(modal.price) || 50,
+          price_usd: Number(modal.price) || 0,
           expires_at: modal.expires || null,
         }),
       });
