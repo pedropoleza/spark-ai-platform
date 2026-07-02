@@ -735,7 +735,11 @@ export async function loadHubAgentDetail(agentId: string, locationId: string): P
       .filter((e) => e.status === "active" && (!e.expires_at || new Date(e.expires_at).getTime() > now))
       .map((e) => e.capability),
   );
-  const entitled = included || (cap ? activeCaps.has(cap) : false);
+  // Espelha loadHubAgents (line ~86): respeita a flag de enforcement. Com a
+  // enforcement OFF (Pedro 2026-07-02, lead-facing incluído), entitled=true →
+  // nunca "blocked" → botão Ativar destravado. Sem esse termo, a tela de DETALHE
+  // travava a ativação mesmo com a flag off (bug: divergia da lista).
+  const entitled = included || !isEntitlementsEnforced() || (cap ? activeCaps.has(cap) : false);
 
   let status: AgentStatus;
   if (!included && !entitled) status = "blocked";
