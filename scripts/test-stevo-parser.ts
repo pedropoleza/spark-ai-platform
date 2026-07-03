@@ -286,6 +286,68 @@ function check(name: string, cond: boolean, detail?: string) {
 }
 
 // ---------------------------------------------------------------------------
+// 7. CONTATO COMPARTILHADO (vCard) — payload REAL capturado (caso Wilker Fifa)
+// ---------------------------------------------------------------------------
+{
+  const r = parseStevoWebhook({
+    event: "Message",
+    instanceToken: INSTANCE_TOKEN,
+    data: {
+      Info: infoBase({ Type: "media", MediaType: "vcard" }),
+      Message: {
+        contactMessage: {
+          vcard:
+            "BEGIN:VCARD\nVERSION:3.0\nN:;Wilker Fifa ;;;\nFN:Wilker Fifa \nTEL;type=CELL;waid=19047558545:+1 (904) 755-8545\nEND:VCARD",
+          displayName: "Wilker Fifa ",
+        },
+      },
+    },
+  });
+  check("vcard: kind=text", r?.kind === "text");
+  check(
+    "vcard: text = nome + telefone",
+    r?.kind === "text" && r.text === "📇 Contato compartilhado: Wilker Fifa — +1 (904) 755-8545",
+    r?.kind === "text" ? r.text : "",
+  );
+  check("vcard: phone do rep normalizado", r?.phone === "+17867717077");
+}
+// vCard só com waid (sem telefone display após o ':') → usa waid como E.164
+{
+  const r = parseStevoWebhook({
+    event: "Message",
+    instanceToken: INSTANCE_TOKEN,
+    data: {
+      Info: infoBase({ Type: "media", MediaType: "vcard" }),
+      Message: {
+        contactMessage: { vcard: "BEGIN:VCARD\nFN:Sem Telefone\nTEL;waid=15551234567:\nEND:VCARD", displayName: "" },
+      },
+    },
+  });
+  check("vcard waid-only: usa +waid", r?.kind === "text" && r.text.includes("+15551234567"), r?.kind === "text" ? r.text : "");
+  check("vcard waid-only: usa FN quando sem displayName", r?.kind === "text" && r.text.includes("Sem Telefone"));
+}
+// Vários contatos (contactsArrayMessage)
+{
+  const r = parseStevoWebhook({
+    event: "Message",
+    instanceToken: INSTANCE_TOKEN,
+    data: {
+      Info: infoBase({ Type: "media", MediaType: "vcard" }),
+      Message: {
+        contactsArrayMessage: {
+          contacts: [
+            { displayName: "Ana", vcard: "FN:Ana\nTEL;waid=15550001111:+1 555 000-1111" },
+            { displayName: "Bruno", vcard: "FN:Bruno\nTEL;waid=15550002222:+1 555 000-2222" },
+          ],
+        },
+      },
+    },
+  });
+  check("vcard múltiplos: kind=text", r?.kind === "text");
+  check("vcard múltiplos: lista Ana e Bruno", r?.kind === "text" && r.text.includes("Ana") && r.text.includes("Bruno"), r?.kind === "text" ? r.text : "");
+}
+
+// ---------------------------------------------------------------------------
 // NULL RETURNS
 // ---------------------------------------------------------------------------
 {

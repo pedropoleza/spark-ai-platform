@@ -145,6 +145,52 @@ function extractQuotedText(qm: Record<string, unknown> | null): string {
   return t.length > 200 ? `${t.slice(0, 199)}…` : t;
 }
 
+/**
+ * Extrai {nome, telefone} de um vCard do WhatsApp (contato compartilhado).
+ * Formato real (prod): `FN:<nome>` + `TEL;type=CELL;waid=<digitos>:<telefone>`.
+ * Telefone = valor após o 1º `:` da linha TEL (o "waid=..." não tem `:`);
+ * fallback pro waid como E.164. Fix prod 2026-07-03 (caso Caua/Wilker Fifa).
+ */
+function parseVcard(vcard: string): { name: string; phone: string } {
+  let name = "";
+  let phone = "";
+  for (const raw of (vcard || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (/^FN:/i.test(line)) name = line.slice(3).trim();
+    else if (/^TEL/i.test(line)) {
+      const colon = line.indexOf(":");
+      if (colon >= 0) phone = line.slice(colon + 1).trim();
+      if (!phone) {
+        const waid = line.match(/waid=(\d+)/i);
+        if (waid) phone = `+${waid[1]}`;
+      }
+    }
+  }
+  return { name, phone };
+}
+
+/**
+ * Coleta os contatos compartilhados de uma mensagem: `contactMessage` (1) ou
+ * `contactsArrayMessage.contacts[]` (vários). Prioriza `displayName`; cai pro FN
+ * do vCard. Devolve [] quando não há contato.
+ */
+function collectSharedContacts(message: Record<string, unknown>): Array<{ name: string; phone: string }> {
+  const out: Array<{ name: string; phone: string }> = [];
+  const push = (raw: Record<string, unknown> | null) => {
+    if (!raw) return;
+    const parsed = parseVcard(asString(raw.vcard));
+    const name = (asString(raw.displayName) || parsed.name).trim();
+    const phone = parsed.phone.trim();
+    if (name || phone) out.push({ name: name || "(sem nome)", phone: phone || "(sem telefone)" });
+  };
+  push(asRecord(message.contactMessage));
+  const arr = asRecord(message.contactsArrayMessage);
+  if (arr && Array.isArray(arr.contacts)) {
+    for (const c of arr.contacts) push(asRecord(c));
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Parser principal
 // ---------------------------------------------------------------------------
@@ -314,6 +360,23 @@ export function parseStevoWebhook(body: unknown): ParsedStevoMessage | null {
         quotedText,
       };
     }
+  }
+
+  // 3d. Contato compartilhado (vCard). WhatsApp manda Info.MediaType "vcard" com
+  // Message.contactMessage.{vcard,displayName} (1 contato) ou
+  // Message.contactsArrayMessage.contacts[] (vários). SEM este ramo o cartão caía
+  // no "nada reconhecível" → era DESCARTADO: o rep compartilhava um contato e o
+  // bot NEM VIA (resolvia "ele/esse" pro último contato conhecido e agia na pessoa
+  // errada). Fix prod 2026-07-03 (caso Caua Botelho / Wilker Fifa). Normaliza pra
+  // TEXTO nome+telefone → o LLM age (achar/criar contato, pôr no funil) usando a
+  // resolução de contato normal.
+  const sharedContacts = collectSharedContacts(message);
+  if (sharedContacts.length > 0) {
+    const text =
+      sharedContacts.length === 1
+        ? `📇 Contato compartilhado: ${sharedContacts[0].name} — ${sharedContacts[0].phone}`
+        : `📇 Contatos compartilhados:\n${sharedContacts.map((c) => `• ${c.name} — ${c.phone}`).join("\n")}`;
+    return { ...base, kind: "text", text };
   }
 
   // 4. Texto — conversation OU extendedTextMessage.text.
