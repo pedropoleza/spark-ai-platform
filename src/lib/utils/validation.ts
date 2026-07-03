@@ -87,11 +87,19 @@ const followUpConfigSchema = z.object({
 });
 
 // Working hours
-const workingHoursDaySchema = z.object({
-  enabled: z.boolean(),
-  start: z.string().regex(/^\d{2}:\d{2}$/),
-  end: z.string().regex(/^\d{2}:\d{2}$/),
-});
+const workingHoursDaySchema = z
+  .object({
+    enabled: z.boolean(),
+    start: z.string().regex(/^\d{2}:\d{2}$/),
+    end: z.string().regex(/^\d{2}:\d{2}$/),
+  })
+  // Início TEM que ser antes do fim (Pedro 2026-07-03, caso Fabiana: 23:00→22:00 =
+  // janela impossível, agente "bugado"). "HH:MM" 24h zero-padded comparam como
+  // string. Só exige no dia ATIVO (dia off pode carregar placeholder tipo 09:00).
+  .refine((d) => !d.enabled || d.start < d.end, {
+    message: "O horário de início tem que ser antes do fim.",
+    path: ["end"],
+  });
 
 const workingHoursSchema = z.object({
   enabled: z.boolean(),

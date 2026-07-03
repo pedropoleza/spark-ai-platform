@@ -343,6 +343,20 @@ export function AgentDetailView({ detail }: { detail: HubAgentDetail }) {
 
   async function save() {
     if (isSparkbot && !window.confirm("Isso altera a configuração do SparkBot em PRODUÇÃO. Salvar mesmo assim?")) return;
+    // Validação de horário (Pedro 2026-07-03, caso Fabiana): os inputs type=time
+    // deixam digitar qualquer coisa — ela pôs 23:00→22:00 (início DEPOIS do fim =
+    // janela impossível, agente "bugado"). Bloqueia o save e aponta os dias. Só
+    // enforça quando o módulo de horário está ligado (senão a schedule é inerte).
+    if (enabled.has("active_hours")) {
+      const badDays = WEEK.filter((d) => {
+        const day = e.working_hours.schedule[d.key];
+        return day?.enabled && day.start && day.end && day.start >= day.end;
+      }).map((d) => d.label);
+      if (badDays.length > 0) {
+        toast.error(`Horário inválido em ${badDays.join(", ")}: o início tem que ser antes do fim.`);
+        return;
+      }
+    }
     setSaving(true);
     try {
       // Filtra entradas incompletas pra não falhar a validação do PUT inteiro.
@@ -888,13 +902,15 @@ function CatHours({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => 
         <div className="col" style={{ gap: 6 }}>
           {WEEK.map((d) => {
             const day: WorkingHoursDay = w.schedule[d.key] || { enabled: false, start: "09:00", end: "17:00" };
+            const invalid = day.enabled && !!day.start && !!day.end && day.start >= day.end;
             return (
               <div key={d.key} className="row" style={{ gap: 10, alignItems: "center", opacity: day.enabled ? 1 : 0.6 }}>
                 <button type="button" className="switch" role="switch" aria-checked={day.enabled} aria-label={`Atender ${d.label}`} onClick={() => setDay(d.key, { enabled: !day.enabled })} />
                 <span style={{ width: 78, fontSize: 13, fontWeight: 500 }}>{d.label}</span>
-                <input className="input" type="time" value={day.start} disabled={!day.enabled} onChange={(ev) => setDay(d.key, { start: ev.target.value })} style={{ width: 120 }} />
+                <input className="input" type="time" value={day.start} disabled={!day.enabled} onChange={(ev) => setDay(d.key, { start: ev.target.value })} style={{ width: 120, borderColor: invalid ? "var(--danger, #dc2626)" : undefined }} />
                 <span className="muted" style={{ fontSize: 12 }}>às</span>
-                <input className="input" type="time" value={day.end} disabled={!day.enabled} onChange={(ev) => setDay(d.key, { end: ev.target.value })} style={{ width: 120 }} />
+                <input className="input" type="time" value={day.end} disabled={!day.enabled} onChange={(ev) => setDay(d.key, { end: ev.target.value })} style={{ width: 120, borderColor: invalid ? "var(--danger, #dc2626)" : undefined }} />
+                {invalid && <span style={{ fontSize: 11.5, color: "var(--danger, #dc2626)", fontWeight: 500 }}>início &lt; fim</span>}
               </div>
             );
           })}
