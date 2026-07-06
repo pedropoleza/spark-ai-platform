@@ -145,23 +145,80 @@ const cases: Case[] = [
   },
 ];
 
+// ── Família pipeline_add (flag COHERENCE_PIPELINE_FAMILY, loop de qualidade 2026-07-06) ──
+// Rodam com a flag LIGADA. Provam: casa a falsa confirmação de "adicionada ao funil"
+// (caso Leidy) e NÃO casa as confirmações reais nem os proativos "movimentar o pipeline".
+const pipelineCases: Case[] = [
+  {
+    name: "Leidy: 'adicionada ao funil X, stage Y' com tools=[] (BUG real 2026-07-03)",
+    text: "Feito! ✅ *Leidy Eder 3T* adicionada ao funil *1- Prospects*, stage *New Leads*.",
+    tools: [],
+    expectCoherent: false, expectAction: "rerun",
+    why: "afirmou add no funil sem create/move_opportunity → falsa confirmação, re-run seguro",
+  },
+  {
+    name: "TP real: 'adicionado ao funil' COM create_opportunity → satisfeito",
+    text: "*Murilo Santos* adicionado ao funil *4- Agency*, stage *Proposed Agent*. ✅",
+    tools: [
+      { name: "list_pipelines", result: OK },
+      { name: "create_opportunity", result: OK },
+    ],
+    expectCoherent: true, expectAction: "ok",
+    why: "create_opportunity rodou com sucesso → confirmação legítima",
+  },
+  {
+    name: "FP: proativo 'bom dia pra movimentar o pipeline' (infinitivo) não casa",
+    text: "☀️ Bom dia, *Marcos*! Terça-feira chegou — bom dia pra movimentar o pipeline.",
+    tools: [],
+    expectCoherent: true, expectAction: "ok",
+    why: "'movimentar' é infinitivo descritivo, não afirmação de escrita",
+  },
+  {
+    name: "FP: 'não adicionei ela ao funil ainda' (negação)",
+    text: "Não adicionei ela ao funil ainda — quer que eu adicione?",
+    tools: [],
+    expectCoherent: true, expectAction: "ok",
+    why: "negação antes do match",
+  },
+];
+
 let pass = 0;
 let fail = 0;
 console.log("=== Golden test: coherence-gate (Onda 1) ===\n");
-for (const c of cases) {
+function runCase(c: Case): boolean {
   const r = analyzeCoherence(c.text, c.tools);
-  const okCoherent = r.coherent === c.expectCoherent;
-  const okAction = r.action === c.expectAction;
-  const ok = okCoherent && okAction;
+  const ok = r.coherent === c.expectCoherent && r.action === c.expectAction;
   console.log(`${ok ? "✅" : "❌"} ${c.name}`);
   console.log(`   coerente=${r.coherent} (exp ${c.expectCoherent}) · action=${r.action} (exp ${c.expectAction}) · hadWrite=${r.hadSuccessfulWrite}`);
   if (!ok) {
     console.log(`   WHY: ${c.why}`);
     console.log(`   violations=${JSON.stringify(r.violations)}`);
-    fail++;
-  } else {
-    pass++;
   }
+  return ok;
 }
+
+for (const c of cases) {
+  if (runCase(c)) pass++;
+  else fail++;
+}
+
+// Família nova só ativa com a flag — prova que LIGADA pega o BUG e não gera FP.
+console.log("\n--- pipeline_add (COHERENCE_PIPELINE_FAMILY=1) ---");
+process.env.COHERENCE_PIPELINE_FAMILY = "1";
+for (const c of pipelineCases) {
+  if (runCase(c)) pass++;
+  else fail++;
+}
+// Prova de paridade: com a flag DESLIGADA o caso Leidy passa batido (comportamento de hoje).
+console.log("\n--- paridade: flag OFF não muda nada (Leidy passa batido) ---");
+delete process.env.COHERENCE_PIPELINE_FAMILY;
+{
+  const off = analyzeCoherence(pipelineCases[0].text, pipelineCases[0].tools);
+  const ok = off.coherent === true && off.action === "ok";
+  console.log(`${ok ? "✅" : "❌"} Leidy com flag OFF → coerente=${off.coherent} action=${off.action} (esperado ok/true = idêntico a hoje)`);
+  if (ok) pass++;
+  else fail++;
+}
+
 console.log(`\n${pass}/${pass + fail} OK (${Math.round((pass / (pass + fail)) * 100)}%)`);
 if (fail > 0) process.exit(1);

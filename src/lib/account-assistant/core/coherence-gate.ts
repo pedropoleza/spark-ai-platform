@@ -121,6 +121,36 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
   },
 ];
 
+// ── Família NOVA (loop de qualidade 2026-07-06) — atrás de flag COHERENCE_PIPELINE_FAMILY (default OFF) ──
+// GAP achado lendo conversas reais: caso Leidy 2026-07-03 (rep 2dbd9d0a) —
+//   user: "adicione ela a prospects e new leads"
+//   bot:  "Feito! ✅ *Leidy Eder 3T* adicionada ao funil *1- Prospects*, stage *New Leads*."  (tools=[])
+// Falsa confirmação de escrita no pipeline que NENHUMA família pegava, porque:
+//   (1) a palavra user-facing "funil" (o que o bot realmente fala) não está nas
+//       famílias opportunity_* (que só citam oportunidade/opp/deal/negócio/pipeline);
+//   (2) a estrutura é participle-first ("adicionad[ao] ao funil"), enquanto as
+//       famílias opportunity_* são noun-first ("pipeline adicionada") e o catch-all
+//       GENERIC só cobre verbos em 1ª pessoa ("adicionei", não "adicionada").
+// Empírico (30d): casa 5 confirmações REAIS (todas com create/move/update_opportunity
+// → satisfeitas, zero violação) + a 1 falsa (Leidy, tools=[] → viola). Os proativos
+// "bom dia pra movimentar o pipeline" usam infinitivo → não casam. FP observado = 0.
+// Mantido atrás de flag até o Pedro validar 1 conversa real (regra "nunca piore").
+const PIPELINE_ADD_PATTERN: ClaimPattern = {
+  family: "pipeline_add",
+  regex:
+    /\b(adicionad[ao]|inclu[ií]d[ao]|colocad[ao]|inserid[ao])\s+(a|ao|no|na|à)\s+(funil|pipeline|est[aá]gio|etapa|stage)\b|\b(adicionei|inclu[ií]|coloquei|inseri)\s+(a\s+|o\s+|ela\s+|ele\s+|el[ea]s\s+)?(no|na|ao|à|pro|pra)\s+(funil|pipeline|est[aá]gio|etapa|stage)\b/i,
+  satisfying_tools: ["create_opportunity", "move_opportunity", "update_opportunity", "update_opportunity_status"],
+};
+
+function isPipelineFamilyEnabled(): boolean {
+  return process.env.COHERENCE_PIPELINE_FAMILY === "1";
+}
+
+/** Famílias ativas: base + pipeline_add só quando a flag está ON (default OFF = comportamento idêntico ao de hoje). */
+function activeClaimPatterns(): ClaimPattern[] {
+  return isPipelineFamilyEnabled() ? [...CLAIM_PATTERNS, PIPELINE_ADD_PATTERN] : CLAIM_PATTERNS;
+}
+
 // Verbos de write em 1ª pessoa pretérito — catch-all genérico.
 const GENERIC_WRITE_VERB_REGEX =
   /\b(criei|criamos|agendei|agendamos|marquei|marcamos|salvei|salvamos|anotei|anotamos|registrei|registramos|removi|removemos|adicionei|adicionamos|mandei|mandamos|enviei|enviamos|disparei|disparamos|atualizei|atualizamos|atribu[ií]|atribu[ií]mos|deletei|deletamos|apaguei|apagamos|completei|completamos|fechei|fechamos|movi|movemos|troquei|trocamos|bloqueei|bloqueamos|cancelei|cancelamos|pausei|pausamos|configurei|configuramos|confirmei|confirmamos|inseri|inserimos|despachei|despachamos|cadastrei|cadastramos|importei|importamos|sincronizei|sincronizamos|reagendei|reagendamos|reatribu[ií]|reatribu[ií]mos)\b/i;
@@ -161,7 +191,7 @@ export interface CoherenceViolation {
  */
 export function detectHallucination(responseText: string, toolsCalled: string[]): CoherenceViolation[] {
   const found: CoherenceViolation[] = [];
-  for (const pattern of CLAIM_PATTERNS) {
+  for (const pattern of activeClaimPatterns()) {
     const match = responseText.match(pattern.regex);
     if (!match || match.index === undefined) continue;
     if (isNegatedOrPreviewContext(responseText, match.index)) continue;
@@ -214,7 +244,7 @@ export function analyzeCoherence(responseText: string, toolCalls: ToolCallRecord
   const hadSuccessfulWrite = toolCalls.some((tc) => isWriteTool(tc.name) && toolSucceeded(tc.result));
 
   const violations: CoherenceViolation[] = [];
-  for (const pattern of CLAIM_PATTERNS) {
+  for (const pattern of activeClaimPatterns()) {
     const match = responseText.match(pattern.regex);
     if (!match || match.index === undefined) continue;
     if (isNegatedOrPreviewContext(responseText, match.index)) continue;
