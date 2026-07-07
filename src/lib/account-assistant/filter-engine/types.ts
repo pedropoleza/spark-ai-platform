@@ -281,6 +281,14 @@ export interface FilterExecutionOptions {
   bypass_cache?: boolean;
   /** Não escreve audit log (testes) */
   skip_audit?: boolean;
+  /**
+   * Deadline por relógio (ms de orçamento pra paginação). Se estourar durante a
+   * varredura de páginas, para e marca truncado (`complete=false`). Sem isso =
+   * sem limite de tempo (comportamento legado — todos os callers antigos). Fix
+   * caso Luciano 2026-07-03: o preview do bulk varria ~50 páginas (cap 5000) e
+   * estourava o turno do LLM ("precisei parar pra não travar"), nunca criando o job.
+   */
+  deadlineMs?: number;
 }
 
 // =====================================================================

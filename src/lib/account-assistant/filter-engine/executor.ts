@@ -39,6 +39,10 @@ interface Workspace {
   totals_reported: Map<string, number>;
   pages_fetched_total: number;
   any_truncated: boolean;
+  /** Instante-limite (Date.now() ms) pra parar a paginação; undefined = sem deadline. */
+  deadline_at?: number;
+  /** A paginação parou por DEADLINE (distinto do cap de 5000)? */
+  deadline_hit: boolean;
 }
 
 // =====================================================================
@@ -95,6 +99,8 @@ async function executeFilter(
       totals_reported: new Map(),
       pages_fetched_total: 0,
       any_truncated: false,
+      deadline_at: options.deadlineMs && options.deadlineMs > 0 ? start + options.deadlineMs : undefined,
+      deadline_hit: false,
     };
     const cap = Math.min(Math.max(options.limit || 5000, 1), 5000);
 
@@ -329,6 +335,12 @@ async function paginateContactsGet(
   const MAX_PAGES = Math.ceil(cap / PAGE_SIZE);
 
   while (pagesFetched < MAX_PAGES) {
+    // Deadline por relógio: para de paginar quando estoura o budget (marca truncado).
+    if (workspace.deadline_at && Date.now() >= workspace.deadline_at) {
+      workspace.any_truncated = true;
+      workspace.deadline_hit = true;
+      break;
+    }
     const params: Record<string, string> = {
       locationId: ctx.location_id,
       limit: String(PAGE_SIZE),
@@ -396,6 +408,12 @@ async function paginateOpportunitiesSearch(
   const MAX_PAGES = Math.ceil(cap / PAGE_SIZE);
 
   while (pagesFetched < MAX_PAGES) {
+    // Deadline por relógio: para de paginar quando estoura o budget (marca truncado).
+    if (workspace.deadline_at && Date.now() >= workspace.deadline_at) {
+      workspace.any_truncated = true;
+      workspace.deadline_hit = true;
+      break;
+    }
     const params: Record<string, string> = {
       location_id: ctx.location_id,
       limit: String(PAGE_SIZE),

@@ -221,9 +221,27 @@ async function resolveSegments(
 
     const result = await executeContactsFilter(s.filter, engineCtx, {
       limit: cap,
+      // Deadline ~25s: deixa folga no lambda de 60s pro resto do turno. Segmento
+      // grande demais → para de paginar e marca complete=false (tratado abaixo).
+      // Fix caso Luciano 2026-07-03 (o preview varria ~50 páginas e travava o turno).
+      deadlineMs: 25000,
     });
     if (result.status === "error") {
       return { ok: false, error: `Segment "${label}" filter falhou: ${result.message}` };
+    }
+    // Resolução INCOMPLETA (estourou o tempo/cap varrendo o funil) → NÃO seguimos
+    // com lista PARCIAL (blast incompleto/errado, pegaria só uma fatia). Devolve
+    // erro acionável: o bot orienta quebrar em LOTES MENORES (por stage/mês/tag),
+    // que era o que o próprio Luciano intuiu ("faz em blocos de 5 em 5").
+    if (result.complete === false) {
+      return {
+        ok: false,
+        error:
+          `O segmento "${label}" é grande demais pra montar de uma vez — o sistema varre ` +
+          `contatos demais e estoura o tempo. Quebra em LOTES MENORES (por stage do funil, ` +
+          `por mês, ou por tag) e dispara um de cada vez; cada lote resolve rápido e sai ` +
+          `certinho. Mandar parcial não rola: pegaria só um pedaço da lista.`,
+      };
     }
     const items = result.items || [];
     const before = items.length;
