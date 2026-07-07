@@ -170,7 +170,9 @@ export async function processMessageQueue(): Promise<{
           ? `O contato acabou de receber a tag "${t.key}" no Spark Leads`
           : t.kind === "stage_changed"
             ? `O contato acabou de entrar na etapa "${t.key}" do funil${t.pipelineId ? ` (pipeline ${t.pipelineId})` : ""}`
-            : `Evento ${t.kind}: ${t.key}`;
+            : t.kind === "custom_field_changed"
+              ? `O contato acabou de ser ativado para atendimento no Spark Leads`
+              : `Evento ${t.kind}: ${t.key}`;
       group.aggregatedBody =
         `[GATILHO REATIVO — sem mensagem do contato. ${eventDesc}. ` +
         `Inicie uma conversa proativa coerente com o propósito do agente. ` +

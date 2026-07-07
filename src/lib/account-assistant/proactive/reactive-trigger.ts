@@ -1,8 +1,8 @@
 /**
- * Reactive trigger — F27.D (Pedro 2026-05-29).
+ * Reactive trigger — F27.D (Pedro 2026-05-29; custom field 2026-07-06).
  *
- * Quando o GHL/Spark Leads notifica "tag adicionada" ou "lead entrou em
- * estágio", esse módulo:
+ * Quando o GHL/Spark Leads notifica "tag adicionada", "lead entrou em estágio"
+ * ou "custom field mudou", esse módulo:
  *  1. Lista agentes lead-facing ATIVOS da location.
  *  2. Filtra os que têm `targeting_rules` que bate com o evento.
  *  3. Pra cada match, enfileira UMA mensagem "trigger sintético" em
@@ -11,14 +11,24 @@
  *
  * Idempotência: antes de disparar, consulta `execution_log` últimas 24h
  * com `action_type='reactive_trigger_fired'`. Se mesmo (agent, contact,
- * event_key) já fired = skip. Evita disparo em loop quando tag é
- * adicionada/removida várias vezes.
+ * event_key) já fired = skip. Evita disparo em loop quando o evento
+ * (tag/campo) é reenviado várias vezes.
+ *
+ * Custom field (Pedro 2026-07-06 — caso Alves Cury): o `CONTACTUPDATE` do GHL
+ * chega com TODOS os customFields (valor ATUAL, sem diff antes/depois). Por isso
+ * o disparo por custom field tem uma guarda EXTRA além do dedup de 24h: só
+ * dispara se o contato ainda NÃO tem conversa com esse agente. Senão um
+ * ContactUpdate solto de um contato já em atendimento re-abriria a conversa do
+ * zero. O caso "lead falou antes da IA ligar" NÃO tem conversation_state (o
+ * inbound foi descartado no targeting), então passa a guarda e o agente
+ * "continua" via lead_history.
  *
  * Diferente do `reaction-engine.ts` (POST-LLM, reage a `on_data_field_set`),
  * esse é PRE-LLM: dispara o agente do zero quando webhook GHL chega.
  *
  * Gate: roda só quando `isProactiveEventsEnabled()` (env
- * `PROACTIVE_EVENTS_ENABLED`). Hoje OFF — só liga após smoke supervisionado.
+ * `PROACTIVE_EVENTS_ENABLED`) e, se `PROACTIVE_EVENTS_LOCATIONS` estiver setado,
+ * só pras locations da allowlist (escopo de rollout — ver event-router).
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -27,16 +37,24 @@ import type { TargetingRule, TargetingRules } from "@/types/agent";
 
 const REACTIVE_TRIGGER_PREFIX = "__reactive_trigger__:";
 
-export type ReactiveTriggerKind = "tag_added" | "tag_removed" | "stage_changed" | "contact_created";
+export type ReactiveTriggerKind =
+  | "tag_added"
+  | "tag_removed"
+  | "stage_changed"
+  | "contact_created"
+  | "custom_field_changed";
 
 export interface ReactiveTriggerContext {
   locationId: string;
   contactId: string;
   kind: ReactiveTriggerKind;
-  /** Para tag_*: o nome da tag. Para stage_changed: o ID do estágio. */
+  /** Para tag_*: o nome da tag. Para stage_changed: o ID do estágio. Vazio p/ custom_field. */
   key: string;
   /** Para stage_changed: o pipeline ID (opcional). */
   pipelineId?: string;
+  /** Para custom_field_changed: os customFields ATUAIS do contato {id, value}.
+   *  Cada agente casa o SEU (custom_field_key + custom_field_value). */
+  customFields?: Array<{ id: string; value: string }>;
 }
 
 interface AgentRow {
@@ -58,8 +76,8 @@ interface AgentRow {
 function extractConfig(agent: AgentRow) {
   const cfg = Array.isArray(agent.agent_configs) ? agent.agent_configs[0] : agent.agent_configs;
   // v2 (Pedro 2026-06-17): targeting_rules pode ser array legado OU set v2 com
-  // grupos E/OU. Achata pra folhas — ruleMatchesTrigger só casa tag/pipeline_stage
-  // (ignora message/custom_field, que não têm trigger reativo por evento).
+  // grupos E/OU. Achata pra folhas — matchedTriggerKey casa tag/pipeline_stage/
+  // custom_field (ignora message, que não tem trigger reativo por evento).
   const set = normalizeTargeting((cfg?.targeting_rules ?? null) as TargetingRules | null);
   const rules: TargetingRule[] = set ? set.groups.flatMap((g) => g.rules) : [];
   return {
@@ -69,25 +87,22 @@ function extractConfig(agent: AgentRow) {
 }
 
 /**
- * Decide se o evento dispara o agente baseado nas targeting_rules.
- * AND lógico — todas regras precisam passar (mesma semântica do F27.A).
+ * Devolve a CHAVE de dedup do evento se ALGUMA regra do agente casa, senão null.
+ * A chave é específica da regra que disparou (tag / estágio / campo:valor), pra
+ * o dedup de 24h não confundir gatilhos diferentes do mesmo contato.
  *
- * Pra trigger reativo, o "match" significa: a regra inclui o evento.
- *  - tag_added "VIP": agente com rule {type:"tag", tag:"VIP"} → DISPARA
- *  - stage_changed "stageX": agente com rule {type:"pipeline_stage",
- *    pipeline_stage_id:"stageX"} → DISPARA
- *  - rules vazias → NÃO dispara (sem ativação reativa configurada)
- *
- * Custom_field ainda não tem trigger reativo aqui (precisa ContactUpdate
- * com diff de fields — fase 2).
+ *  - tag_added "VIP" + rule {type:"tag", tag:"VIP"} -> "tag_added:VIP"
+ *  - stage_changed "stageX" + rule {type:"pipeline_stage", pipeline_stage_id:"stageX"} -> "stage_changed:stageX"
+ *  - custom_field_changed + rule {type:"custom_field", key:AI, value:"Venda"} e o
+ *    contato tem esse campo com esse valor -> "custom_field_changed:AI:Venda"
+ *    (valor vazio na regra = "qualquer valor")
+ *  - rules vazias / nenhum match -> null
  */
-export function ruleMatchesTrigger(rules: TargetingRule[], ev: ReactiveTriggerContext): boolean {
-  if (!rules || rules.length === 0) return false;
-  // Pra trigger reativo, basta UMA regra bater o evento — não exige AND aqui,
-  // pq se o rep marca {tag:"VIP", stage:"stageX"}, ambos eventos disparam.
+export function matchedTriggerKey(rules: TargetingRule[], ev: ReactiveTriggerContext): string | null {
+  if (!rules || rules.length === 0) return null;
   for (const rule of rules) {
     if (ev.kind === "tag_added" && rule.type === "tag" && rule.tag && ev.key === rule.tag) {
-      return true;
+      return `tag_added:${rule.tag}`;
     }
     if (
       ev.kind === "stage_changed" &&
@@ -96,10 +111,24 @@ export function ruleMatchesTrigger(rules: TargetingRule[], ev: ReactiveTriggerCo
       ev.key === rule.pipeline_stage_id &&
       (!rule.pipeline_id || !ev.pipelineId || rule.pipeline_id === ev.pipelineId)
     ) {
-      return true;
+      return `stage_changed:${rule.pipeline_stage_id}`;
+    }
+    if (ev.kind === "custom_field_changed" && rule.type === "custom_field" && rule.custom_field_key) {
+      const hit = (ev.customFields || []).find((f) => f.id === rule.custom_field_key);
+      if (hit) {
+        const wanted = (rule.custom_field_value ?? "").trim();
+        if (!wanted || wanted === (hit.value ?? "").trim()) {
+          return `custom_field_changed:${rule.custom_field_key}:${hit.value}`;
+        }
+      }
     }
   }
-  return false;
+  return null;
+}
+
+/** Back-compat: booleano de match (delega pra matchedTriggerKey). */
+export function ruleMatchesTrigger(rules: TargetingRule[], ev: ReactiveTriggerContext): boolean {
+  return matchedTriggerKey(rules, ev) !== null;
 }
 
 function eventKey(ev: ReactiveTriggerContext): string {
@@ -108,9 +137,11 @@ function eventKey(ev: ReactiveTriggerContext): string {
 
 /**
  * Encode do trigger no body da queue. queue-processor detecta o prefix e
- * gera 1ª msg proativa (sem esperar lead mandar nada).
+ * gera 1ª msg proativa. Pra custom_field o body é GENÉRICO (a abertura NÃO cita
+ * o campo/valor); o valor específico fica só no dedup key, não no body.
  */
 export function encodeTriggerBody(ev: ReactiveTriggerContext): string {
+  if (ev.kind === "custom_field_changed") return `${REACTIVE_TRIGGER_PREFIX}custom_field_changed:activated`;
   return `${REACTIVE_TRIGGER_PREFIX}${eventKey(ev)}`;
 }
 
@@ -130,14 +161,14 @@ export function parseTriggerBody(body: string): { kind: ReactiveTriggerKind; key
 }
 
 /**
- * Idempotência: checa se mesmo (agent, contact, eventKey) já foi disparado
+ * Idempotência: checa se mesmo (agent, contact, dedupKey) já foi disparado
  * nas últimas 24h. Usa execution_log como audit + cache.
  */
 async function alreadyFired(
   supabase: ReturnType<typeof createAdminClient>,
   agentId: string,
   contactId: string,
-  ev: ReactiveTriggerContext,
+  dedupKey: string,
 ): Promise<boolean> {
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { count } = await supabase
@@ -147,7 +178,24 @@ async function alreadyFired(
     .eq("contact_id", contactId)
     .eq("action_type", "reactive_trigger_fired")
     .gte("created_at", cutoff)
-    .contains("action_payload", { event_key: eventKey(ev) });
+    .contains("action_payload", { event_key: dedupKey });
+  return (count ?? 0) > 0;
+}
+
+/**
+ * Guarda anti-reabertura (só custom_field): não dispara proativo se o contato
+ * JÁ tem conversa com esse agente. Ver bloco de doc no topo.
+ */
+async function hasConversation(
+  supabase: ReturnType<typeof createAdminClient>,
+  agentId: string,
+  contactId: string,
+): Promise<boolean> {
+  const { count } = await supabase
+    .from("conversation_state")
+    .select("id", { count: "exact", head: true })
+    .eq("agent_id", agentId)
+    .eq("contact_id", contactId);
   return (count ?? 0) > 0;
 }
 
@@ -156,11 +204,17 @@ async function alreadyFired(
  * Retorna count de triggers enfileirados.
  */
 export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise<{ fired: number; matched: number }> {
-  if (!ev.contactId || !ev.locationId || !ev.key) return { fired: 0, matched: 0 };
+  if (!ev.contactId || !ev.locationId) return { fired: 0, matched: 0 };
+  // custom_field precisa dos campos; os demais precisam de key.
+  if (ev.kind === "custom_field_changed") {
+    if (!ev.customFields || ev.customFields.length === 0) return { fired: 0, matched: 0 };
+  } else if (!ev.key) {
+    return { fired: 0, matched: 0 };
+  }
   const supabase = createAdminClient();
 
   // Lista agentes lead-facing ATIVOS da location (rep-facing/SparkBot ignorado —
-  // não tem targeting nem opera por evento de tag de lead).
+  // não tem targeting nem opera por evento de tag/campo de lead).
   const { data: agents } = await supabase
     .from("agents")
     .select("id, type, audience, agent_configs(targeting_rules, outreach_config)")
@@ -178,10 +232,14 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
     const { rules, outreachOn } = extractConfig(a);
     // Outreach (bulk) tem seu próprio fluxo via bulk-runner — não dispara aqui.
     if (outreachOn) continue;
-    if (!ruleMatchesTrigger(rules, ev)) continue;
+    const dedupKey = matchedTriggerKey(rules, ev);
+    if (!dedupKey) continue;
     matched++;
 
-    if (await alreadyFired(supabase, a.id, ev.contactId, ev)) continue;
+    // Guarda anti-reabertura (custom_field): não re-abre contato já em conversa.
+    if (ev.kind === "custom_field_changed" && (await hasConversation(supabase, a.id, ev.contactId))) continue;
+
+    if (await alreadyFired(supabase, a.id, ev.contactId, dedupKey)) continue;
 
     // Enfileira o trigger sintético. queue-processor detecta o prefix.
     const nowIso = new Date().toISOString();
@@ -211,7 +269,7 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
       location_id: ev.locationId,
       contact_id: ev.contactId,
       action_type: "reactive_trigger_fired",
-      action_payload: { event_key: eventKey(ev), kind: ev.kind, key: ev.key, pipeline_id: ev.pipelineId || null },
+      action_payload: { event_key: dedupKey, kind: ev.kind, key: ev.key, pipeline_id: ev.pipelineId || null },
       success: true,
     });
 
@@ -219,7 +277,7 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
   }
 
   if (matched > 0) {
-    console.log(`[reactive-trigger] ${ev.kind}:${ev.key} loc=${ev.locationId} matched=${matched} fired=${fired}`);
+    console.log(`[reactive-trigger] ${ev.kind} loc=${ev.locationId} matched=${matched} fired=${fired}`);
   }
 
   return { fired, matched };
