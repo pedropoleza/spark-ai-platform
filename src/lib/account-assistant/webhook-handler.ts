@@ -896,6 +896,8 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
         ghl_contact_id: contactId,
         model: result.model_used,
         tools: result.tools_executed,
+        // H47-F0 (telemetria 2026-07-10): funil de resolução de contato (paridade stevo).
+        contact_resolution: result.contact_resolution ?? null,
         // tool_calls completos (input + result) pra debug. Trunca cada
         // resultado a 800 chars pra não estourar jsonb. Cap em 30 calls
         // (Fix Pedro 2026-05-19: era 5, mascarava debug em turns com

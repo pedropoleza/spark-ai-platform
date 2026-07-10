@@ -58,9 +58,17 @@ const analyzeTabularData: ToolEntry = {
   handler: async (ctx, args) => {
     const att = ctx.attachment;
     if (!att || att.kind !== "tabular") {
+      // H49 (post-mortem Jussara 2026-07-03): explicação HONESTA e completa pro LLM.
+      // A msg antiga ("peça pra reanexar") não explicava a mecânica → o LLM inventou
+      // um "TTL de 30 minutos" e repetiu como fato 8×, num loop de 12 reanexos.
       return {
         status: "error",
-        message: "Não tem planilha anexada nesta turn. Peça ao rep pra reanexar.",
+        message:
+          "O arquivo da planilha só fica disponível NO TURNO em que o rep o enviou — " +
+          "esta mensagem do rep veio SEM anexo, então não tenho mais acesso aos dados. " +
+          "ISSO NÃO É EXPIRAÇÃO/TTL — nunca explique como 'o servidor guarda por X minutos'. " +
+          "Diga apenas que precisa do arquivo junto da instrução e peça pra reenviar o .xlsx " +
+          "JÁ COM tudo decidido no caption (o que importar/disparar), pra resolver em UMA mensagem.",
         retryable: false,
       };
     }
@@ -158,9 +166,15 @@ const importContactsFromData: ToolEntry = {
   handler: async (ctx, args) => {
     const att = ctx.attachment;
     if (!att || att.kind !== "tabular") {
+      // H49 (post-mortem Jussara 2026-07-03): mesma explicação honesta do analyze.
       return {
         status: "error",
-        message: "Não tem planilha anexada nesta turn. Peça ao rep pra reanexar e tentar de novo.",
+        message:
+          "O arquivo da planilha só fica disponível NO TURNO em que o rep o enviou — " +
+          "esta mensagem veio SEM anexo. ISSO NÃO É EXPIRAÇÃO/TTL — nunca invente mecânica " +
+          "interna ('servidor guarda 30 min', 'timer reinicia'). Peça o .xlsx de novo e " +
+          "IMPORTE+DISPARE no MESMO turno em que ele chegar, usando as decisões que o rep " +
+          "já confirmou nesta conversa (não re-pergunte o que já foi respondido).",
         retryable: false,
       };
     }

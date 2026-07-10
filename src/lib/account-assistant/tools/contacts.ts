@@ -17,6 +17,9 @@ import { executeContactsFilter, type FilterExpression } from "../filter-engine";
 import { normalizePhone, resolveLocationDefaultCountry } from "../identity";
 // F5/F6 (contact-resolution 2026-06): resolver fuzzy + telefone + score (substitui o GET cru).
 import { resolveContact } from "../contact-resolver";
+// H47-F1 (2026-07-10): alimenta o desempate por recência do resolver (param existia e nunca era passado).
+import { readRecentContacts } from "../contact-resolver/active-contact";
+import { phoneDigits } from "../contact-resolver/normalize";
 
 const searchContacts: ToolEntry = {
   def: {
@@ -57,21 +60,46 @@ const searchContacts: ToolEntry = {
     if (query && !tag && !assignedToMe) {
       try {
         const defaultCountry = await resolveLocationDefaultCountry(ctx.locationId);
+        // H47-F1 (2026-07-10): o ring buffer F10 agora ALIMENTA o desempate por
+        // recência do resolver (o param recentContactIds existia desde o H45 e
+        // nunca era passado — desempate implementado e morto).
+        const recentIds = new Set(readRecentContacts(ctx.rep.profile).map((c) => c.id));
         const result = await resolveContact(ctx.ghlClient, ctx.locationId, query, {
           defaultCountry,
+          recentContactIds: recentIds.size > 0 ? recentIds : undefined,
           limit: Math.min(cap, 50),
         });
         if (!result.best || result.alternatives.length === 0) {
           return { status: "not_found", message: `Nenhum contato encontrado pra "${query}" (tentei variações de nome e de telefone).` };
         }
+        // H47-F1 (2026-07-10, caso Thais F Garrett × Thaís Gerdt): DUPLICATA do mesmo
+        // contato (mesmo telefone/email normalizado do best) NÃO é ambiguidade — antes,
+        // 2 cadastros do mesmo cliente (score ~1.0/1.0, gap 0) viravam "ambiguous" e o
+        // bot mandava o rep escolher entre iguais. Detecta, tira do cálculo de gap e
+        // AVISA que há cadastro duplicado.
+        const bestPhone = result.best.phone ? phoneDigits(result.best.phone) : "";
+        const bestEmail = (result.best.email || "").trim().toLowerCase();
+        const bestId = result.best.id;
+        const duplicatesOfBest = result.alternatives.filter((c) => {
+          if (c.id === bestId) return false;
+          const p = c.phone ? phoneDigits(c.phone) : "";
+          const e = (c.email || "").trim().toLowerCase();
+          return (!!bestPhone && p === bestPhone) || (!!bestEmail && e === bestEmail);
+        });
+        const dupIds = new Set(duplicatesOfBest.map((c) => c.id));
+        // alternatives vêm ordenadas (best primeiro) — recalcula gap/sole SEM as duplicatas.
+        const nonDup = result.alternatives.filter((c) => c.id === bestId || !dupIds.has(c.id));
+        const effGap = nonDup.length >= 2 ? Number((nonDup[0].score - nonDup[1].score).toFixed(3)) : 0;
+        const effSole = nonDup.length === 1;
+
         // F7 (hardening pós-review): score = similaridade PURA; gap só vale com ≥2 candidatos
         // (sole → gap=0). 'high' = dominante OU único-forte (bot confirma inline + segue);
         // 'needs_confirm' = 1 decente mas não certíssimo (bot pergunta "é a Fulana?" antes);
         // 'ambiguous' = 2+ colados (lista); 'low' = fraco (trata como não-achei).
         const confidence =
-          result.alternatives.length >= 2 && result.gap < 0.12 && result.score >= 0.6
+          nonDup.length >= 2 && effGap < 0.12 && result.score >= 0.6
             ? "ambiguous"
-            : result.score >= 0.9 && (result.sole || result.gap >= 0.15)
+            : result.score >= 0.9 && (effSole || effGap >= 0.15)
               ? "high"
               : result.score >= 0.7
                 ? "needs_confirm"
@@ -88,8 +116,14 @@ const searchContacts: ToolEntry = {
               last_activity: c.last_activity,
               match_score: c.score,
             })),
-            best_match: { id: result.best.id, name: result.best.name, score: result.score, gap: result.gap },
+            best_match: { id: result.best.id, name: result.best.name, score: result.score, gap: effGap },
             confidence,
+            // Duplicatas do best (mesmo fone/email com OUTRO id). O bot deve usar o
+            // best_match e AVISAR o rep ("existem 2 cadastros desse contato: X e Y —
+            // vou usar o mais recente"), nunca pedir pra escolher entre iguais.
+            duplicates_of_best: duplicatesOfBest.length > 0
+              ? duplicatesOfBest.map((c) => ({ id: c.id, name: c.name }))
+              : undefined,
             complete: true,
             total_returned: result.alternatives.length,
             method: `resolver (${result.method})`,

@@ -27,6 +27,8 @@ export interface HealthCheckResult {
   stalled_jobs_count: number;
   alerts_created: number;
   reps_notified?: number;
+  /** H49-F5: jobs PAUSADOS há >24h com pendentes (esquecidos). */
+  paused_forgotten_count?: number;
 }
 
 export async function checkBulkRunnerStaleAndAlert(): Promise<HealthCheckResult> {
@@ -152,10 +154,90 @@ export async function checkBulkRunnerStaleAndAlert(): Promise<HealthCheckResult>
     console.warn("[bulk-health] rep notification falhou:", err);
   }
 
+  // === Check 4: jobs PAUSADOS e esquecidos (H49-F5, post-mortem Jussara 2026-07-03) ===
+  // Job 'paused' com pendentes há >24h não avisava NINGUÉM — os 5 pendentes da
+  // Jussara ficaram 7 dias parados em silêncio. Avisa o REP (1× por job+paused_at,
+  // marker no profile; re-pausar → novo aviso) + admin signal, perguntando o que
+  // fazer (retomar / cancelar / trocar o texto).
+  let pausedForgotten = 0;
+  try {
+    const cutoffPaused = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: pausedJobs } = await supabase
+      .from("bulk_message_jobs")
+      .select("id, rep_id, location_id, label, paused_at, sent_count, total_contacts")
+      .eq("status", "paused")
+      .lt("paused_at", cutoffPaused)
+      .limit(20);
+
+    for (const job of pausedJobs || []) {
+      const { count: pendingCount } = await supabase
+        .from("bulk_message_recipients")
+        .select("id", { count: "exact", head: true })
+        .eq("job_id", job.id)
+        .eq("status", "pending");
+      if ((pendingCount ?? 0) === 0) continue;
+      pausedForgotten++;
+
+      const { data: repRow } = await supabase
+        .from("rep_identities")
+        .select("id, phone, profile, last_inbound_at, active_location_id")
+        .eq("id", job.rep_id)
+        .maybeSingle();
+      if (!repRow) continue;
+      const profileFull = (repRow.profile || {}) as Record<string, unknown>;
+      const notifiedMap = (profileFull.paused_jobs_notified || {}) as Record<string, string>;
+      if (notifiedMap[job.id] === job.paused_at) continue; // já avisado DESSA pausa
+
+      recordSignalAsync({
+        type: "failure",
+        title: `bulk job ${job.id.slice(0, 8)}: pausado e esquecido (pendentes)`,
+        description:
+          `Job pausado desde ${job.paused_at} com ${pendingCount} recipients pending ` +
+          `(${job.sent_count}/${job.total_contacts} enviados). Rep foi notificado pra decidir retomar/cancelar/trocar texto.`,
+        severity: "medium",
+        source: "bot_auto",
+        metadata: {
+          component: "bulk-message-runner",
+          job_id: job.id,
+          rep_id: job.rep_id,
+          location_id: job.location_id,
+          pending_recipients: pendingCount,
+          paused_at: job.paused_at,
+        },
+      });
+      alertsCreated++;
+
+      const pausedDays = Math.max(1, Math.round((Date.now() - new Date(job.paused_at).getTime()) / 86400000));
+      const label = job.label || job.id.slice(0, 8);
+      const { deliverProactiveMessage } = await import("./whatsapp-delivery");
+      const res = await deliverProactiveMessage(
+        { id: repRow.id, phone: repRow.phone, last_inbound_at: repRow.last_inbound_at },
+        `⏸️ Só lembrando: seu disparo *"${label}"* tá pausado há ${pausedDays} dia(s) e *${pendingCount} contato(s)* ainda não receberam (${job.sent_count}/${job.total_contacts} enviados). Me fala o que prefere: *"retoma o disparo"*, *"cancela o disparo"*, ou me manda um texto novo que eu troco antes de retomar. 👍`,
+        {
+          activeLocationId: repRow.active_location_id,
+          source: "bulk_paused_reminder",
+          kind: "bulk_paused_reminder",
+          extraMetadata: { job_id: job.id },
+        },
+      );
+      if (res.ok) {
+        repsNotified++;
+        // Merge defensivo do profile (mesmo padrão do rep-notifier C1).
+        await supabase
+          .from("rep_identities")
+          .update({ profile: { ...profileFull, paused_jobs_notified: { ...notifiedMap, [job.id]: job.paused_at } } })
+          .eq("id", repRow.id);
+      }
+    }
+  } catch (err) {
+    console.warn("[bulk-health] check 4 (paused forgotten) falhou:", err);
+  }
+
   return {
     runner_stale: runnerStale,
     stalled_jobs_count: stalledCount,
     alerts_created: alertsCreated,
     reps_notified: repsNotified,
+    paused_forgotten_count: pausedForgotten,
   };
 }

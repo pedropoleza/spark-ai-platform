@@ -572,6 +572,9 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       source: "stevo",
       model: result.model_used,
       tools: result.tools_executed,
+      // H47-F0 (telemetria 2026-07-10): funil de resolução de contato re-rodável
+      // (confidence × método × score por search_contacts do turno).
+      contact_resolution: result.contact_resolution ?? null,
       prompt_tokens: result.tokens?.prompt,
       completion_tokens: result.tokens?.completion,
       cached_tokens: result.tokens?.cached,

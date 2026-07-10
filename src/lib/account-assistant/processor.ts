@@ -138,6 +138,37 @@ export interface ProcessOutput {
   /** Origem do interativo: "present_options" (LLM chamou) ou "backstop" (LLM
    *  escreveu lista numerada e o sistema converteu). Métrica de adesão. */
   interactive_via?: "present_options" | "backstop";
+  /** H47-F0 (telemetria 2026-07-10): resumo compacto das resoluções de contato do
+   *  turno (1 entrada por search_contacts). Persiste na metadata da msg do agent →
+   *  vira o funil re-rodável (confidence × desfecho) do plano das 3 frentes. */
+  contact_resolution?: Array<{
+    q: string;
+    method?: string;
+    confidence?: string;
+    score?: number;
+    alts?: number;
+  }>;
+}
+
+/** H47-F0: extrai o resumo de resolução de contato dos tool_calls do turno. */
+function summarizeContactResolution(
+  toolCalls: Array<{ name: string; input: Record<string, unknown>; result: unknown }>,
+): ProcessOutput["contact_resolution"] {
+  const out: NonNullable<ProcessOutput["contact_resolution"]> = [];
+  for (const tc of toolCalls) {
+    if (tc.name !== "search_contacts") continue;
+    const r = tc.result as { status?: string; data?: Record<string, unknown> } | undefined;
+    const d = r?.data || {};
+    const bm = d.best_match as { score?: number } | undefined;
+    out.push({
+      q: String((tc.input as Record<string, unknown>)?.query ?? "").slice(0, 60),
+      method: typeof d.method === "string" ? d.method : undefined,
+      confidence: typeof d.confidence === "string" ? d.confidence : r?.status === "not_found" ? "not_found" : undefined,
+      score: typeof bm?.score === "number" ? bm.score : undefined,
+      alts: Array.isArray(d.contacts) ? (d.contacts as unknown[]).length : undefined,
+    });
+  }
+  return out.length > 0 ? out.slice(0, 10) : undefined;
 }
 
 export async function processIncoming(input: ProcessInput): Promise<ProcessOutput> {
@@ -583,7 +614,13 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
         const id = (d.contact_id || (d.contact as { id?: string } | undefined)?.id) as string | undefined;
         if (id) resolved = { id, name: nameFromInput };
       } else if (tc.name === "get_contact") {
-        const c = (d.contact || {}) as { id?: string; name?: string; contactName?: string; firstName?: string; lastName?: string };
+        // H47-F1 (fix 2026-07-10): get_contact devolve data FLAT ({id, name, ...}, SEM
+        // wrapper `contact` — ver contacts.ts). O código antigo lia `d.contact` → sempre
+        // undefined → o caminho canônico de re-validação da herança NUNCA alimentava o
+        // buffer. Lê flat primeiro; mantém `d.contact` como fallback defensivo.
+        const c = ((d.contact as Record<string, unknown> | undefined) || d) as {
+          id?: string; name?: string; contactName?: string; firstName?: string; lastName?: string;
+        };
         if (c.id) resolved = { id: String(c.id), name: c.name || c.contactName || [c.firstName, c.lastName].filter(Boolean).join(" ") || undefined };
       } else if (tc.name === "update_contact") {
         const id = typeof input.contact_id === "string" ? input.contact_id : undefined;
@@ -961,6 +998,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     secondary_error: result.secondary_error,
     interactive: interactive ?? undefined,
     interactive_via: interactiveVia,
+    contact_resolution: summarizeContactResolution(result.tool_calls),
   };
 }
 

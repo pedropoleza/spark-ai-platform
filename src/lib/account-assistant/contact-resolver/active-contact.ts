@@ -113,11 +113,25 @@ export async function recordRecentContact(
   source: FocusContact["source"] = "tool_result",
 ): Promise<void> {
   if (!contact?.id) return;
+  const entry = { id: contact.id, name: contact.name || null, source, last_ref_at: new Date().toISOString() };
   try {
+    // H47-F1 (2026-07-10): RPC atômico (migration 00121) — o read-modify-write
+    // antigo raceava com outros writers do profile JSONB (prefs, notified-lists);
+    // o RPC toca SÓ a chave recent_contacts numa sentença. Fallback pro caminho
+    // legado se a migration ainda não rodou (PGRST202 = function not found).
+    const rpc = await supabase.rpc("append_recent_contact", {
+      p_rep_id: repId,
+      p_entry: entry,
+      p_cap: RECENT_CAP,
+    });
+    if (!rpc.error) return;
+    if (rpc.error.code !== "PGRST202") {
+      console.warn("[active-contact] append_recent_contact RPC falhou:", rpc.error.message);
+    }
+    // Fallback legado (best-effort, sabidamente race-prone — só até a 00121 aplicar).
     const r = await supabase.from("rep_identities").select("profile").eq("id", repId).single();
     const profile = ((r.data?.profile as Record<string, unknown>) || {}) as Record<string, unknown>;
     const prev = Array.isArray(profile.recent_contacts) ? (profile.recent_contacts as Array<Record<string, unknown>>) : [];
-    const entry = { id: contact.id, name: contact.name || null, source, last_ref_at: new Date().toISOString() };
     const next = [entry, ...prev.filter((c) => c && c.id !== contact.id)].slice(0, RECENT_CAP);
     await supabase
       .from("rep_identities")

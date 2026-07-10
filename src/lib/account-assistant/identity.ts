@@ -110,7 +110,15 @@ export function inferCountryFromTimezone(tz: string | null | undefined): "US" | 
  * 10/11 dígitos sem `+` default-a pra +1 no GHL → contato com phone errado,
  * falha de dedup e outbound (SMS/WhatsApp) que não entrega silenciosamente.
  */
+// H47-F1 (2026-07-10): cache in-memory 5min — rodava um SELECT em `locations` a CADA
+// search_contacts (contraste com isSparkbotHub, que já cacheia). Timezone de location
+// praticamente não muda; cache é intra-lambda (mesmo padrão/limite do isSparkbotHub).
+const countryCache = new Map<string, { v: "US" | "BR"; exp: number }>();
+const COUNTRY_CACHE_TTL_MS = 5 * 60 * 1000;
+
 export async function resolveLocationDefaultCountry(locationId: string): Promise<"US" | "BR"> {
+  const hit = countryCache.get(locationId);
+  if (hit && hit.exp > Date.now()) return hit.v;
   try {
     const sb = createAdminClient();
     const { data: locRow } = await sb
@@ -118,7 +126,9 @@ export async function resolveLocationDefaultCountry(locationId: string): Promise
       .select("timezone")
       .eq("location_id", locationId)
       .maybeSingle();
-    return inferCountryFromTimezone(locRow?.timezone);
+    const v = inferCountryFromTimezone(locRow?.timezone);
+    countryCache.set(locationId, { v, exp: Date.now() + COUNTRY_CACHE_TTL_MS });
+    return v;
   } catch (err) {
     console.warn(
       "[identity] resolveLocationDefaultCountry lookup falhou — usando US default:",

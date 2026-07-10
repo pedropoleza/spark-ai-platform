@@ -117,7 +117,10 @@ export async function resolveContact(
     const e164Digits = phoneDigits(e164);
     const digits = phoneDigits(query);
     const terms = [...new Set([e164, digits, digits.slice(-10)].filter((t) => t && t.length >= 7))] as string[];
-    for (const t of terms) { tried.push(t); add(await ghlGet(client, locationId, t, cap)); }
+    // H47-F1 (2026-07-10): variantes em PARALELO (eram 3 awaits em série — latência pura;
+    // os GETs são independentes e o dedup por Map preserva a prioridade pela ORDEM do add).
+    const phoneResults = await Promise.all(terms.map((t) => ghlGet(client, locationId, t, cap)));
+    terms.forEach((t, i) => { tried.push(t); add(phoneResults[i]); });
     const scored: Scored[] = [...byId.values()]
       .map((c) => {
         const r = toResolved(c);
@@ -131,7 +134,9 @@ export async function resolveContact(
   // ===== RAMO NOME =====
   const tokens = nameTokens(query);
   const variants = [...new Set([query, tokens[0], tokens[tokens.length - 1]].filter((t): t is string => !!t && t.length >= 2))];
-  for (const v of variants) { tried.push(v); add(await ghlGet(client, locationId, v, cap)); }
+  // H47-F1 (2026-07-10): idem ramo telefone — variantes em paralelo, ordem preservada no add.
+  const nameResults = await Promise.all(variants.map((v) => ghlGet(client, locationId, v, cap)));
+  variants.forEach((v, i) => { tried.push(v); add(nameResults[i]); });
 
   const scored: Scored[] = [...byId.values()]
     .map((c) => {
