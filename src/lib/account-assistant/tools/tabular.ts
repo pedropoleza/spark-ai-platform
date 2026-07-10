@@ -16,15 +16,61 @@
  *   - GHL: bulk via /contacts/upsert em batch paralelo controlado
  */
 
-import type { ToolEntry } from "./types";
+import type { ToolEntry, ToolContext } from "./types";
 import { getRepGhlUserId } from "./types";
 import { upsertContact, postNoteOnContactRaw } from "@/lib/ghl/operations";
 import { normalizePhone, resolveLocationDefaultCountry } from "../identity";
 import type { RepInput } from "@/types/account-assistant";
+// H49 Onda 2 (2026-07-10): draft persistente da planilha — mata o loop de reanexo.
+import {
+  saveImportDraft,
+  loadImportDraft,
+  setImportDraftCreated,
+  type ImportDraft,
+} from "../import-draft";
 
 const IMPORT_BATCH_SIZE = 10; // chamadas GHL paralelas por batch
 const IMPORT_MAX_TOTAL = 500;
 const DEFAULT_AUTO_TAG = "imported-via-sparkbot";
+
+type TabularData = Extract<RepInput, { kind: "tabular" }>["tabular"];
+
+/**
+ * H49 (2026-07-10): resolve os dados tabulares do turno.
+ * - Turno COM anexo → usa o anexo E persiste o snapshot num draft (task_drafts
+ *   kind='import_bulk', janela 24h) pra os turnos seguintes não precisarem do arquivo.
+ * - Turno SEM anexo → cai pro draft aberto do rep (o fix do caso Jussara: 12 reanexos).
+ * - null = nem anexo nem draft (aí sim pede o arquivo, com explicação honesta).
+ */
+async function resolveTabularData(
+  ctx: ToolContext,
+): Promise<{ t: TabularData; draftId: string | null; fromDraft: ImportDraft | null } | null> {
+  const att = ctx.attachment;
+  if (att && att.kind === "tabular") {
+    const t = att.tabular;
+    let draftId: string | null = null;
+    if (t.total_rows <= IMPORT_MAX_TOTAL) {
+      draftId = await saveImportDraft(ctx.rep.id, ctx.locationId, {
+        filename: t.filename,
+        columns: t.columns,
+        total_rows: t.total_rows,
+        active_sheet: t.active_sheet ?? null,
+        rows: t.rows,
+      });
+    }
+    return { t, draftId, fromDraft: null };
+  }
+  const draft = await loadImportDraft(ctx.rep.id);
+  if (!draft) return null;
+  const t = {
+    filename: draft.filename,
+    columns: draft.columns,
+    total_rows: draft.total_rows,
+    rows: draft.rows,
+    active_sheet: draft.active_sheet ?? undefined,
+  } as TabularData;
+  return { t, draftId: draft.draft_id, fromDraft: draft };
+}
 
 interface ColumnMapping {
   first_name?: string;
@@ -56,23 +102,23 @@ const analyzeTabularData: ToolEntry = {
     },
   },
   handler: async (ctx, args) => {
-    const att = ctx.attachment;
-    if (!att || att.kind !== "tabular") {
+    // H49 Onda 2: anexo do turno OU draft persistido (≤24h) — o rep NÃO precisa reanexar.
+    const resolved = await resolveTabularData(ctx);
+    if (!resolved) {
       // H49 (post-mortem Jussara 2026-07-03): explicação HONESTA e completa pro LLM.
       // A msg antiga ("peça pra reanexar") não explicava a mecânica → o LLM inventou
       // um "TTL de 30 minutos" e repetiu como fato 8×, num loop de 12 reanexos.
       return {
         status: "error",
         message:
-          "O arquivo da planilha só fica disponível NO TURNO em que o rep o enviou — " +
-          "esta mensagem do rep veio SEM anexo, então não tenho mais acesso aos dados. " +
+          "Não achei planilha nem neste turno nem no rascunho das últimas 24h. " +
           "ISSO NÃO É EXPIRAÇÃO/TTL — nunca explique como 'o servidor guarda por X minutos'. " +
-          "Diga apenas que precisa do arquivo junto da instrução e peça pra reenviar o .xlsx " +
-          "JÁ COM tudo decidido no caption (o que importar/disparar), pra resolver em UMA mensagem.",
+          "Peça o .xlsx de novo JÁ COM a instrução completa no caption; depois que ele chegar " +
+          "1 vez, eu guardo os dados e os próximos passos NÃO precisam do arquivo.",
         retryable: false,
       };
     }
-    const t = att.tabular;
+    const { t, fromDraft } = resolved;
     const sampleSize = Math.min(Math.max(Number(args.sample_size) || 5, 1), 20);
     const sample = t.rows.slice(0, sampleSize);
 
@@ -103,6 +149,11 @@ const analyzeTabularData: ToolEntry = {
           phone_like_columns: phoneLike,
           email_like_columns: emailLike,
         },
+        // H49: quando os dados vieram do DRAFT (turno sem anexo), avisa o LLM —
+        // segue o fluxo normal SEM pedir reanexo.
+        reused_from_draft: fromDraft
+          ? { filename: fromDraft.filename, saved_at: fromDraft.updated_at }
+          : undefined,
       },
     };
   },
@@ -164,21 +215,22 @@ const importContactsFromData: ToolEntry = {
     },
   },
   handler: async (ctx, args) => {
-    const att = ctx.attachment;
-    if (!att || att.kind !== "tabular") {
+    // H49 Onda 2: anexo do turno OU draft persistido (≤24h) — sem reanexo.
+    const resolved = await resolveTabularData(ctx);
+    if (!resolved) {
       // H49 (post-mortem Jussara 2026-07-03): mesma explicação honesta do analyze.
       return {
         status: "error",
         message:
-          "O arquivo da planilha só fica disponível NO TURNO em que o rep o enviou — " +
-          "esta mensagem veio SEM anexo. ISSO NÃO É EXPIRAÇÃO/TTL — nunca invente mecânica " +
-          "interna ('servidor guarda 30 min', 'timer reinicia'). Peça o .xlsx de novo e " +
-          "IMPORTE+DISPARE no MESMO turno em que ele chegar, usando as decisões que o rep " +
-          "já confirmou nesta conversa (não re-pergunte o que já foi respondido).",
+          "Não achei planilha nem neste turno nem no rascunho das últimas 24h. " +
+          "ISSO NÃO É EXPIRAÇÃO/TTL — nunca invente mecânica interna ('servidor guarda " +
+          "30 min', 'timer reinicia'). Peça o .xlsx de novo; depois que ele chegar 1 vez, " +
+          "eu guardo os dados e sigo o fluxo SEM precisar do arquivo, usando as decisões " +
+          "que o rep já confirmou (não re-pergunte o que já foi respondido).",
         retryable: false,
       };
     }
-    const t = att.tabular;
+    const { t, draftId, fromDraft } = resolved;
 
     if (t.total_rows > IMPORT_MAX_TOTAL) {
       return {
@@ -385,6 +437,26 @@ const importContactsFromData: ToolEntry = {
       }
     }
 
+    // H49 Onda 2: grava os ghl_ids REAIS no draft → o disparo alveja ESSES ids
+    // (segments com source:'last_import'), sem depender da tag recém-criada
+    // indexar no Spark Leads (a race que devolvia 0/2 contatos no caso Jussara).
+    if (draftId && created.length > 0) {
+      const byIdx = new Map(contactsToCreate.map((c) => [c.idx, c]));
+      await setImportDraftCreated(
+        draftId,
+        created.map((c) => {
+          const p = (byIdx.get(c.idx)?.payload || {}) as Record<string, unknown>;
+          const name = [p.firstName, p.lastName].filter(Boolean).join(" ") || null;
+          return {
+            id: c.ghl_id,
+            name,
+            phone: typeof p.phone === "string" ? p.phone : null,
+            email: typeof p.email === "string" ? p.email : null,
+          };
+        }),
+      );
+    }
+
     return {
       status: "ok",
       data: {
@@ -406,6 +478,15 @@ const importContactsFromData: ToolEntry = {
         })),
         failed_sample: failed.slice(0, 5),
         skipped_sample: skipped.slice(0, 3).map((s) => ({ idx: s.idx, reason: s.reason })),
+        reused_from_draft: fromDraft
+          ? { filename: fromDraft.filename, saved_at: fromDraft.updated_at }
+          : undefined,
+        // H49: roteiro pro disparo — NUNCA filtrar pela tag recém-criada (race de
+        // indexação); alvejar os ids importados via source:'last_import'.
+        dispatch_hint:
+          created.length > 0
+            ? "Pra disparar pra ESSES contatos: preview_bulk_message_v2 com segments:[{source:'last_import', message_template:'...'}] — usa os ids REAIS importados. NÃO filtre pela tag recém-criada (demora a indexar e volta 0 contatos)."
+            : undefined,
       },
     };
   },

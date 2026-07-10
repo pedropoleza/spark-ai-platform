@@ -46,6 +46,8 @@ function clampEndAtTo9PM(endAtIso: string): ClampResult {
   void ss;
   return { adjusted: endAtIso, wasClamped: false, originalHour: hourLocal };
 }
+// H49 (2026-07-10): draft do import de planilha — alvo por ids + guarda de template.
+import { loadImportDraft, setImportDraftPreview } from "../import-draft";
 import {
   executeContactsFilter,
   computeDisclaimers,
@@ -167,14 +169,19 @@ function computeCoexistenceRecommendation(
 
 interface SegmentInput {
   label?: string;
-  filter: FilterExpression;
+  /** FEL — obrigatório EXCETO quando source:'last_import'. */
+  filter?: FilterExpression;
+  /** H49 (2026-07-10): 'last_import' = alveja os ghl_ids REAIS do último import de
+   *  planilha do rep (draft ≤24h) — sem race de tag recém-criada. */
+  source?: "last_import";
   message_template: string;
   variation_mode?: "none" | "light" | "medium";
 }
 
 interface ResolvedSegment {
   label: string;
-  filter: FilterExpression;
+  filter?: FilterExpression;
+  source?: "last_import";
   message_template: string;
   variation_mode: "none" | "light" | "medium";
   contacts: ContactResult[];
@@ -192,7 +199,17 @@ async function resolveSegments(
   ctx: ToolContext,
   dedupAcrossSegments: boolean,
   cap: number,
-): Promise<{ ok: true; segments: ResolvedSegment[]; total_after_dedup: number } | { ok: false; error: string }> {
+): Promise<
+  | {
+      ok: true;
+      segments: ResolvedSegment[];
+      total_after_dedup: number;
+      /** H49: setado quando algum segment usou source:'last_import' (guarda de template). */
+      import_draft_id?: string;
+      import_draft_preview?: { templates: string[]; at: string } | null;
+    }
+  | { ok: false; error: string }
+> {
   const repUserId = getRepGhlUserId(ctx);
   const engineCtx = {
     rep_id: ctx.rep.id,
@@ -209,6 +226,9 @@ async function resolveSegments(
 
   const seen = new Set<string>();
   const resolved: ResolvedSegment[] = [];
+  // H49: draft do último import de planilha (lazy — só carrega se algum segment pedir).
+  let importDraft: Awaited<ReturnType<typeof loadImportDraft>> = null;
+  let importDraftLoaded = false;
 
   for (let i = 0; i < segments.length; i++) {
     const s = segments[i];
@@ -217,6 +237,58 @@ async function resolveSegments(
 
     if (!s.message_template || s.message_template.trim().length === 0) {
       return { ok: false, error: `Segment "${label}" sem message_template.` };
+    }
+
+    // H49 (2026-07-10, caso Jussara): alvo = ids REAIS do último import (draft ≤24h).
+    // Zero chamadas GHL, zero race de indexação de tag (o preview por tag recém-criada
+    // devolvia 0/2 contatos segundos após o import).
+    if (s.source === "last_import") {
+      if (!importDraftLoaded) {
+        importDraft = await loadImportDraft(ctx.rep.id);
+        importDraftLoaded = true;
+      }
+      if (!importDraft?.created?.length) {
+        return {
+          ok: false,
+          error:
+            `Segment "${label}": não achei import de planilha nas últimas 24h (ou o import ainda não rodou). ` +
+            `Rode import_contacts_from_data primeiro, ou use um filter normal (ex: tag).`,
+        };
+      }
+      const items: ContactResult[] = importDraft.created.map((c) => {
+        const parts = (c.name || "").split(/\s+/).filter(Boolean);
+        return {
+          id: c.id,
+          name: c.name,
+          firstName: parts[0] || undefined,
+          lastName: parts.slice(1).join(" ") || undefined,
+          email: c.email,
+          phone: c.phone,
+          tags: [],
+        };
+      });
+      const filtered = dedupAcrossSegments
+        ? items.filter((c) => {
+            if (seen.has(c.id)) return false;
+            seen.add(c.id);
+            return true;
+          })
+        : items;
+      resolved.push({
+        label,
+        source: "last_import",
+        message_template: s.message_template,
+        variation_mode: variation,
+        contacts: filtered,
+        count_before_dedup: items.length,
+        count_after_dedup: filtered.length,
+        filter_explanation: `ids importados da planilha "${importDraft.filename}" (${importDraft.created.length} contatos)`,
+      });
+      continue;
+    }
+
+    if (!s.filter) {
+      return { ok: false, error: `Segment "${label}" precisa de filter OU source:'last_import'.` };
     }
 
     const result = await executeContactsFilter(s.filter, engineCtx, {
@@ -269,7 +341,13 @@ async function resolveSegments(
   }
 
   const total = resolved.reduce((a, s) => a + s.count_after_dedup, 0);
-  return { ok: true, segments: resolved, total_after_dedup: total };
+  return {
+    ok: true,
+    segments: resolved,
+    total_after_dedup: total,
+    import_draft_id: importDraft?.draft_id,
+    import_draft_preview: importDraft?.last_preview ?? null,
+  };
 }
 
 function explainFilter(
@@ -331,7 +409,14 @@ const previewBulkMessageV2: ToolEntry = {
             type: "object",
             properties: {
               label: { type: "string", description: "Nome descritivo do segmento (opcional, ex: 'M0')." },
-              filter: { type: "object", description: "FEL — ver get_contacts_filtered docs." },
+              filter: { type: "object", description: "FEL — ver get_contacts_filtered docs. Obrigatório EXCETO com source:'last_import'." },
+              source: {
+                type: "string",
+                enum: ["last_import"],
+                description:
+                  "H49: 'last_import' = alveja os ids REAIS do último import de planilha do rep (últimas 24h). " +
+                  "USE SEMPRE isso logo após import_contacts_from_data — NÃO filtre pela tag recém-criada (demora a indexar, volta 0).",
+              },
               message_template: { type: "string", description: "Template do texto. Suporta {first_name}, {tags[0]}, {custom.slug}, etc." },
               variation_mode: {
                 type: "string",
@@ -339,7 +424,7 @@ const previewBulkMessageV2: ToolEntry = {
                 description: "Variação por contato. Default 'light'.",
               },
             },
-            required: ["filter", "message_template"],
+            required: ["message_template"],
           },
         },
         list_temperature: {
@@ -377,6 +462,16 @@ const previewBulkMessageV2: ToolEntry = {
     const resolveRes = await resolveSegments(segmentsInput, ctx, dedup, 5000);
     if (!resolveRes.ok) {
       return { status: "error", message: resolveRes.error, retryable: false };
+    }
+
+    // H49 (2026-07-10): registra no draft os textos DESTE preview — o schedule só
+    // aceita texto idêntico (guarda anti-drift; caso Jussara: o texto aprovado foi
+    // reescrito no caminho e 12 contatos receberam a mensagem errada).
+    if (resolveRes.import_draft_id) {
+      await setImportDraftPreview(
+        resolveRes.import_draft_id,
+        resolveRes.segments.map((s) => s.message_template),
+      );
     }
 
     // Disclaimers
@@ -630,11 +725,12 @@ const scheduleBulkMessageV2: ToolEntry = {
             type: "object",
             properties: {
               label: { type: "string" },
-              filter: { type: "object" },
+              filter: { type: "object", description: "Obrigatório EXCETO com source:'last_import'." },
+              source: { type: "string", enum: ["last_import"], description: "H49: ids do último import de planilha (24h)." },
               message_template: { type: "string" },
               variation_mode: { type: "string", enum: ["none", "light", "medium"] },
             },
-            required: ["filter", "message_template"],
+            required: ["message_template"],
           },
         },
         list_temperature: { type: "string", enum: ["warm", "cold"] },
@@ -737,6 +833,37 @@ const scheduleBulkMessageV2: ToolEntry = {
     const total = resolveRes.total_after_dedup;
     if (total === 0) {
       return { status: "not_found", message: "Nenhum contato bate os filtros após dedup." };
+    }
+
+    // H49 (2026-07-10): GUARDA ANTI-DRIFT do fluxo planilha (caso Jussara 03/07 —
+    // o texto aprovado foi reescrito pelo LLM no caminho e 12 contatos receberam a
+    // mensagem ERRADA). Pra segments de import, o schedule exige texto IDÊNTICO ao
+    // do último preview (≤2h). Divergiu → erro acionável, nunca disparo silencioso.
+    if (resolveRes.import_draft_id) {
+      const prev = resolveRes.import_draft_preview;
+      const ageOk = prev && Date.now() - new Date(prev.at).getTime() < 2 * 60 * 60 * 1000;
+      if (!prev || !ageOk) {
+        return {
+          status: "error",
+          message:
+            "Antes de agendar o disparo da planilha importada, rode preview_bulk_message_v2 com o texto FINAL " +
+            "(o preview registra o texto que o rep viu/aprovou — é a trava anti-texto-errado).",
+          retryable: false,
+        };
+      }
+      const previewed = new Set(prev.templates.map((t) => t.trim()));
+      const divergent = resolveRes.segments.find((s) => !previewed.has(s.message_template.trim()));
+      if (divergent) {
+        return {
+          status: "error",
+          message:
+            "O texto deste disparo NÃO é o mesmo que foi mostrado no último preview — não vou enviar texto que o rep não viu. " +
+            "Mostre a diferença pro rep e re-rode o preview com o texto final, OU use o texto EXATO previewado.\n" +
+            `Previewado: "${prev.templates[0]?.slice(0, 180) ?? ""}"\n` +
+            `Agora: "${divergent.message_template.slice(0, 180)}"`,
+          retryable: false,
+        };
+      }
     }
 
     // F1.6 Pedro 2026-05-16 (caso Gustavo): coexistência vira WARNING info,
@@ -1018,7 +1145,10 @@ const scheduleBulkMessageV2: ToolEntry = {
       version: 2,
       segments: resolveRes.segments.map((s) => ({
         label: s.label,
-        filter: s.filter,
+        // H49: segment de import não tem FEL — marcador serializável no lugar
+        // (refresh_segment não se aplica a lista fixa de ids).
+        filter: s.filter ?? { source: "last_import" },
+        source: s.source ?? null,
         message_template: s.message_template,
         variation_mode: s.variation_mode,
         resolved_count: s.contacts.length,

@@ -476,7 +476,8 @@ export function buildSparkbotSystemPrompt(args: BuildPromptArgs): string {
     "👤 USER DO PRÓPRIO REP: pra agendamento/task do próprio rep, atribua a ELE automaticamente. NUNCA pergunte 'qual é o seu user?' nem cite/sugira o nome de OUTRO user. Se não der pra resolver o user do rep, crie SEM atribuir e siga (no máximo um 'criei sem dono — quer que eu te atribua?'). Só envolva outro user se o rep pedir explicitamente pra atribuir a outra pessoa.",
     "🧩 RESOLVE TUDO, DEPOIS CONFIRMA 1 VEZ: junte tudo que a ação precisa (contato resolvido + calendário + horário + user=self) ANTES de pedir confirmação. Confirme UMA vez, no fim. NUNCA confirme e DEPOIS fique pedindo mais dados — vira pingue-pongue e irrita.",
     "🔎 ANTES DE CRIAR CONTATO: SEMPRE `search_contacts` (nome/telefone/email) primeiro. Se já existe, use `update_contact`/`add_tag`/`create_note` no contato existente — NUNCA `create_contact` (criar duplicado dá erro 'já existe', recorrente nos signals).",
-    "📊 PLANILHA: só chame `analyze_tabular_data`/`import_contacts_from_data` quando há uma planilha/CSV/XLSX anexada NESTA mensagem. Sem anexo, PEÇA o arquivo — não chame a tool (dá erro 'sem planilha anexada nesta turn').",
+    "📊 PLANILHA (H49): `analyze_tabular_data`/`import_contacts_from_data` usam o anexo DESTA mensagem OU o rascunho salvo do último upload (24h) — o rep NÃO precisa reanexar entre um passo e outro. CHAME a tool normalmente mesmo sem anexo; só peça o arquivo se ela responder que não há rascunho. NUNCA explique falha como 'TTL/expiração/o servidor guarda X minutos' — isso não existe.",
+    "📊 PLANILHA → DISPARO (fluxo canônico, caso Jussara 03/07): 1) analyze → 2) import_contacts_from_data → 3) preview_bulk_message_v2 com segments:[{source:'last_import', message_template:<texto EXATO aprovado>}] — NUNCA filtre pela tag recém-criada (demora a indexar, volta 0 contatos) → 4) schedule com o MESMO texto do preview. O texto do disparo é o que o REP aprovou, palavra por palavra: se reformular QUALQUER coisa, mostre o texto final completo e aponte a mudança ANTES do preview. O schedule RECUSA texto diferente do previewado.",
     "⏳ MUITOS CONTATOS de uma vez: o que TRAVA (timeout, incidente 2026-05-21 com 34 contatos) é puxar histórico/notas PESADO de todos num turno só. Regra de ouro: leitura LEVE por contato (só o essencial pra montar a mensagem), nunca o histórico completo de todo mundo de uma vez. E você responde tudo NO MESMO turno (não existe background nem 'te mando depois'), então NUNCA prometa 'vou puxar de cada um e volto'. Pra MANDAR mensagem pra uma lista, veja a seção ACOMPANHAMENTO GUIADO. Lista MUITO grande (25+): faça em partes e avise.",
     "✍️ ESTILO NATURAL: evite o travessão (o tracinho longo) porque soa robótico/AI. Prefira vírgula, ponto, parênteses ou reescreva a frase. Vale pra TODA mensagem (conversa e follow-up). Idem reticências e bullets em excesso. Fale como gente, sem pontuação artificial.",
     "",
@@ -1059,6 +1060,21 @@ export async function loadCarrierTier1(carrier = "national_life_group"): Promise
 function buildMemorySection(profile: RepProfile): string {
   const lines: string[] = ["# MEMÓRIA (sobre este rep específico)"];
   let hasContent = false;
+
+  // Contexto manual do admin (Pedro 2026-07-10): diretrizes por-rep escritas à mão.
+  // Vêm PRIMEIRO e INTEIRAS (não sofrem o slice(-3) das notes) porque costumam ser
+  // regra operacional crítica — ex: caso Jussara, tag exata que dispara a automação.
+  // Framing forte ("siga à risca") de propósito: é comando do admin, não observação.
+  if (profile.manual_context?.length) {
+    lines.push("");
+    lines.push(
+      "## INSTRUÇÕES MANUAIS DESTE REP (definidas pelo admin — siga à risca; têm prioridade sobre defaults)",
+    );
+    for (const directive of profile.manual_context) {
+      lines.push(`- ${directive}`);
+    }
+    hasContent = true;
+  }
 
   if (profile.preferences?.tone) {
     lines.push(`- Prefere tom ${profile.preferences.tone}.`);
