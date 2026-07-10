@@ -245,6 +245,26 @@ function truncate(s: string, n: number): string {
   return cp.length <= n ? t : `${cp.slice(0, n - 1).join("")}…`;
 }
 
+/**
+ * H47-F2 (2026-07-10): truncamento INTELIGENTE de título de row. Nome de pessoa
+ * comprido preserva o ÚLTIMO sobrenome (o discriminador típico entre homônimos):
+ * "Maria Aparecida do Nascimento" → "Maria A. d. Nascimento" (≤24). Antes o corte
+ * cego em 24 deixava 2 homônimas INDISTINGUÍVEIS ("Maria Aparecida do Nasc…" 2×).
+ * Labels que não parecem nome (têm dígito/símbolo, <3 tokens) caem no truncate normal.
+ * Exportado pra teste.
+ */
+export function smartRowTitle(s: string, n: number): string {
+  const t = (s || "").trim();
+  if (Array.from(t).length <= n) return t;
+  const tokens = t.split(/\s+/);
+  const looksLikeName = tokens.length >= 3 && tokens.every((w) => /^[\p{L}'.\-]+$/u.test(w));
+  if (!looksLikeName) return truncate(t, n);
+  const first = tokens[0];
+  const last = tokens[tokens.length - 1];
+  const middles = tokens.slice(1, -1).map((w) => `${Array.from(w)[0]}.`);
+  return truncate([first, ...middles, last].join(" "), n);
+}
+
 export type StevoButtonParams = {
   serverUrl: string;
   apiKey: string;
@@ -333,7 +353,8 @@ export async function sendStevoList(p: StevoListParams): Promise<StevoSendResult
       const rows = (sec.rows || []).slice(0, Math.max(0, budget)).map((row) => {
         const r: Record<string, unknown> = {
           rowId: row.rowId,
-          title: truncate(row.title, ROW_TITLE_MAX),
+          // H47-F2: truncamento inteligente preserva o último sobrenome.
+          title: smartRowTitle(row.title, ROW_TITLE_MAX),
         };
         if (row.description) r.description = truncate(row.description, ROW_DESC_MAX);
         return r;
@@ -344,6 +365,26 @@ export async function sendStevoList(p: StevoListParams): Promise<StevoSendResult
       return out;
     })
     .filter((s) => (s.rows as unknown[]).length > 0);
+
+  // H47-F2 (2026-07-10): DEDUP de títulos pós-truncamento — 2 homônimos não podem
+  // ficar visualmente idênticos na lista (o rep não vê o rowId). Sufixa os últimos
+  // 4 dígitos do telefone da description (ou um contador) mantendo o cap de 24.
+  {
+    const seenTitles = new Map<string, number>();
+    for (const sec of sections) {
+      for (const row of sec.rows as Array<Record<string, unknown>>) {
+        const key = String(row.title);
+        const count = (seenTitles.get(key) || 0) + 1;
+        seenTitles.set(key, count);
+        if (count > 1) {
+          const digits = String(row.description || "").replace(/\D/g, "");
+          const sfx = digits.length >= 4 ? ` …${digits.slice(-4)}` : ` (${count})`;
+          const room = ROW_TITLE_MAX - Array.from(sfx).length;
+          row.title = `${truncate(key, Math.max(room, 4))}${sfx}`;
+        }
+      }
+    }
+  }
 
   const totalRows = sections.reduce((n, s) => n + (s.rows as unknown[]).length, 0);
 

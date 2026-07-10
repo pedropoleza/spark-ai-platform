@@ -26,7 +26,9 @@ export const PRESENTATION_TOOLS: ToolEntry[] = [
         "(auto-contido — o rep também pode estar num canal que mostra só texto). Cada opção tem `id` curto e " +
         "estável (ex: 'confirm', 'cancel', 'opt_3') e `label` (o que aparece). Quando o rep tocar, você recebe " +
         "o label como se ele tivesse DIGITADO — e ele SEMPRE pode digitar em vez de tocar. " +
-        "NÃO use pra texto livre (corpo de nota, nome, valor, data, mensagem pro cliente, pergunta aberta).",
+        "NÃO use pra texto livre (corpo de nota, nome, valor, data, mensagem pro cliente, pergunta aberta). " +
+        "⚠️ NÃO repita as opções numeradas dentro do `body` — a lista já as mostra (repetir = opções em dobro na tela). " +
+        "H47-F2: quando as opções são CONTATOS, passe `contact_id` em cada uma — o tap volta resolvido e você NUNCA re-pergunta a mesma lista.",
       parameters: {
         type: "object",
         properties: {
@@ -52,7 +54,13 @@ export const PRESENTATION_TOOLS: ToolEntry[] = [
                 },
                 description: {
                   type: "string",
-                  description: "Descrição opcional (só aparece em lista, ≤72 chars).",
+                  description: "Descrição opcional (só aparece em lista, ≤72 chars). Pra contato: telefone/email aqui.",
+                },
+                contact_id: {
+                  type: "string",
+                  description:
+                    "H47-F2: id do CONTATO que a opção representa (quando a escolha é entre contatos). " +
+                    "O tap volta com esse id resolvido — elimina a re-pergunta.",
                 },
               },
               required: ["id", "label"],

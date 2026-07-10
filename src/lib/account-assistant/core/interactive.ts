@@ -16,6 +16,10 @@ export interface InteractiveOption {
   label: string;
   /** Descrição opcional (só lista). */
   description?: string;
+  /** H47-F2 (2026-07-10): id do CONTATO que a opção representa (quando a escolha
+   *  é entre contatos). Persiste na metadata da msg → o tap volta DETERMINÍSTICO
+   *  (caso E1: o LLM re-perguntava a mesma lista porque só via o título truncado). */
+  contact_id?: string;
 }
 
 export interface InteractivePayload {
@@ -55,6 +59,7 @@ export function extractInteractiveFromToolCalls(
         id: String(r.id || "").trim(),
         label: String(r.label || "").trim(),
         description: r.description ? String(r.description).trim() : undefined,
+        contact_id: r.contact_id ? String(r.contact_id).trim() : undefined,
       };
     })
     .filter((o) => o.id && o.label)
@@ -146,10 +151,15 @@ export function detectNumberedOptionsFallback(text: string): InteractivePayload 
   let body = lines.slice(0, firstIdx).join("\n").replace(/\*/g, "").trim();
   if (!body) body = nonEmptyAt(lastIdx + 1, +1) || "Escolhe uma opção:";
 
-  const options: InteractiveOption[] = opts.slice(0, 10).map((o, i) => ({
-    id: `opt_${i + 1}`,
-    label: o.label.slice(0, 72),
-  }));
-  const needsList = options.length > 3 || options.some((o) => o.label.length > 20);
+  const options: InteractiveOption[] = opts.slice(0, 10).map((o, i) => {
+    // H47-F2 (2026-07-10): separa "Nome — discriminador" (ou " · ") em label +
+    // description. Antes a LINHA INTEIRA virava title e era decapitada em 24
+    // chars no WhatsApp — o telefone/discriminador sumia por completo.
+    const parts = o.label.split(/\s+—\s+|\s+·\s+/);
+    const label = (parts[0] || o.label).trim().slice(0, 72);
+    const description = parts.length > 1 ? parts.slice(1).join(" · ").trim().slice(0, 72) : undefined;
+    return { id: `opt_${i + 1}`, label, description };
+  });
+  const needsList = options.length > 3 || options.some((o) => o.label.length > 20 || !!o.description);
   return { kind: needsList ? "list" : "buttons", body, options };
 }

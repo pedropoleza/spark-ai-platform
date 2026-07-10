@@ -286,6 +286,46 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
     return;
   }
 
+  // 4b. H47-F2 (2026-07-10): TAP DETERMINÍSTICO. O reply de lista/botão carrega o
+  // selection_id, mas o LLM só via o TÍTULO truncado (24ch) — quando ambíguo
+  // ("Victor Alves"), ele RE-PERGUNTAVA a mesma lista (caso E1/Guilherme Dias).
+  // Agora: busca a opção ORIGINAL (persistida na metadata da msg do agent) pelo
+  // selection_id e injeta label completo + description + contact_id como PISTA
+  // re-validável (padrão H45 — nunca id cego).
+  if (parsed.kind === "interactive" && parsed.selectionId && repInput.kind === "text") {
+    try {
+      const sb = createAdminClient();
+      const { data: recent } = await sb
+        .from("sparkbot_messages")
+        .select("metadata")
+        .eq("rep_id", rep.id)
+        .eq("role", "agent")
+        .not("metadata->interactive_options", "is", null)
+        .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(5);
+      for (const row of recent || []) {
+        const opts = ((row.metadata as Record<string, unknown>)?.interactive_options || []) as Array<{
+          id?: string; label?: string; description?: string | null; contact_id?: string | null;
+        }>;
+        const hit = Array.isArray(opts) ? opts.find((o) => o?.id === parsed.selectionId) : undefined;
+        if (hit) {
+          const bits = [
+            `opção escolhida na lista: "${hit.label ?? ""}"`,
+            hit.description ? `(${hit.description})` : "",
+            hit.contact_id
+              ? `— contact_id ${hit.contact_id} como PISTA: valide com get_contact antes de agir, NÃO re-pergunte qual contato`
+              : "",
+          ].filter(Boolean).join(" ");
+          repInput.text = `${repInput.text}\n[${bits}]`;
+          break; // usa a msg mais recente que contém esse selection_id
+        }
+      }
+    } catch (err) {
+      console.warn("[stevo-handler] enriquecimento do tap falhou (segue sem):", err instanceof Error ? err.message : err);
+    }
+  }
+
   // 6. Persiste a msg do rep ANTES de processar (assim se LLM crashar, o
   //    próximo turno ainda tem o histórico). Captura 23505 = dedup signal.
   const insertedUser = await insertSparkbotMessage({
@@ -575,6 +615,17 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       // H47-F0 (telemetria 2026-07-10): funil de resolução de contato re-rodável
       // (confidence × método × score por search_contacts do turno).
       contact_resolution: result.contact_resolution ?? null,
+      // H47-F2 (2026-07-10): opções COMPLETAS da lista/botões enviados — o tap
+      // volta com selection_id e o handler resolve DETERMINISTICAMENTE qual
+      // opção/contato o rep escolheu (ver enriquecimento 4b no inbound).
+      interactive_options: result.interactive
+        ? result.interactive.options.map((o) => ({
+            id: o.id,
+            label: o.label,
+            description: o.description ?? null,
+            contact_id: o.contact_id ?? null,
+          }))
+        : null,
       prompt_tokens: result.tokens?.prompt,
       completion_tokens: result.tokens?.completion,
       cached_tokens: result.tokens?.cached,
