@@ -15,6 +15,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import type { RepIdentity } from "@/types/account-assistant";
+// H48 (2026-07-10): compromissos do Google Calendar / bloqueios no briefing.
+import { fetchCalendarBlocks } from "../calendar-context";
 // sparkbot_messages — as 4 queries de count abaixo usam filtros JSONB específicos
 // (metadata->tools cs [...]) que não estão cobertos pelo repo genérico.
 // Mantemos createAdminClient pra essas queries; o resto (locations) também fica aqui.
@@ -25,6 +27,14 @@ export interface BriefingAppointment {
   contact_name: string;
   calendar_name?: string;
   title?: string;
+}
+
+/** H48 (2026-07-10): compromisso FORA do CRM (Google Calendar busy / bloqueio manual). */
+export interface BriefingBlock {
+  start_time_label: string; // "9:00 AM"
+  end_time_label: string;   // "10:00 AM"
+  title: string;            // título real do Google (ou "(ocupado)")
+  source: "google_calendar" | "native";
 }
 
 export interface BriefingTask {
@@ -55,6 +65,9 @@ export interface BriefingContext {
   timezone: string;
   active_location_id: string;
   appointments_today: BriefingAppointment[];
+  /** H48: compromissos do Google/bloqueios do dia (cap 10). NÃO dispara briefing sozinho. */
+  blocks_today: BriefingBlock[];
+  blocks_truncated_count: number;
   tasks_pending: BriefingTask[];
   yesterday: BriefingYesterday;
   has_any_content: boolean; // false → cron skipa send
@@ -255,6 +268,33 @@ export async function loadDailyContext(
     );
   }
 
+  // H48 (2026-07-10): compromissos FORA do CRM — eventos busy do Google Calendar
+  // + bloqueios manuais. O /events acima é CEGO a eles (probe: rep com events=0 e
+  // blocked=8 → briefing dizia "agenda livre"). Fail-soft: erro → lista vazia.
+  const timeLabelOf = (iso: string): string => {
+    const ms = new Date(iso).getTime();
+    return isNaN(ms)
+      ? ""
+      : new Date(ms).toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true });
+  };
+  const rawEventsForDedup =
+    eventsRes.status === "fulfilled" ? (eventsRes.value.events || []) : [];
+  const allBlocks = await fetchCalendarBlocks(ghl, {
+    locationId: activeLocId,
+    userId: repGhlUserId,
+    startMs: today.startMs,
+    endMs: today.endMs,
+    existingAppointments: rawEventsForDedup,
+  });
+  const BLOCKS_CAP = 10;
+  const blocks_today: BriefingBlock[] = allBlocks.slice(0, BLOCKS_CAP).map((b) => ({
+    start_time_label: timeLabelOf(b.start_iso),
+    end_time_label: timeLabelOf(b.end_iso),
+    title: b.title,
+    source: b.source,
+  }));
+  const blocks_truncated_count = Math.max(0, allBlocks.length - BLOCKS_CAP);
+
   // Yesterday recap: notes/tasks via sparkbot_messages audit
   // (tools criadas pelo bot ontem). Não é 100% — só captura o que bot
   // executou. Mas é o que temos sem custom GHL query.
@@ -359,6 +399,8 @@ export async function loadDailyContext(
     timezone: tz,
     active_location_id: activeLocId,
     appointments_today,
+    blocks_today,
+    blocks_truncated_count,
     tasks_pending,
     yesterday: yesterday_data,
     has_any_content: true,

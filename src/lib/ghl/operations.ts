@@ -574,6 +574,33 @@ export async function listCalendarEvents(
   }>("/calendars/events", params);
 }
 
+/**
+ * H48 (2026-07-10): GET /calendars/blocked-slots — block slots nativos + eventos
+ * BUSY sincronizados do Google/Outlook. Probe prod 2026-07-10 (scripts/
+ * probe-blocked-slots.ts): título REAL do Google vem; bloco Google é USER-level
+ * (sem calendarId — consulte por userId); recorrência já vem EXPANDIDA por
+ * instância; `createdBy.source==="google_calendar"` distingue Google de nativo.
+ * Mesmo wrapper de resposta `{events}` do /calendars/events.
+ */
+export async function listBlockedSlots(
+  client: GHLClient,
+  params: Record<string, string>,
+): Promise<{
+  events?: Array<{
+    id: string; title?: string; startTime: string; endTime: string;
+    assignedUserId?: string; masterEventId?: string; isRecurring?: boolean;
+    deleted?: boolean; createdBy?: { source?: string };
+  }>;
+}> {
+  return client.get<{
+    events?: Array<{
+      id: string; title?: string; startTime: string; endTime: string;
+      assignedUserId?: string; masterEventId?: string; isRecurring?: boolean;
+      deleted?: boolean; createdBy?: { source?: string };
+    }>;
+  }>("/calendars/blocked-slots", params);
+}
+
 export async function getAppointment(
   client: GHLClient,
   appointmentId: string,

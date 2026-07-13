@@ -674,6 +674,13 @@ async function processPostMeetingPolling(
       if (isNaN(endMs)) continue;
       // Filtro fino: só appointments cujo endTime caiu DENTRO da janela.
       if (endMs < windowStart || endMs > windowEnd) continue;
+      // H48 (2026-07-10): evento SEM contactId = bloqueio/evento pessoal (não é
+      // reunião com cliente) — NUNCA disparar "como foi a reunião?" pra um
+      // "Almoço". Guarda defensiva independente de onde o bloco apareça.
+      if (!event.contactId) {
+        skipped++;
+        continue;
+      }
       const status = (event.appointmentStatus || "scheduled").toLowerCase();
       if (
         status === "cancelled" ||

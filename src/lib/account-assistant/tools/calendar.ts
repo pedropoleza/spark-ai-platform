@@ -23,6 +23,8 @@ import {
 import type { ToolResult } from "@/types/account-assistant";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 import { updateRepById } from "@/lib/repositories/rep-identities.repo";
+// H48 (2026-07-10): compromissos do Google Calendar / bloqueios na agenda.
+import { fetchCalendarBlocks } from "../calendar-context";
 
 /**
  * Lê a preferência de agendamento salva do rep (calendário/duração padrão).
@@ -206,9 +208,22 @@ const listAppointments: ToolEntry = {
         userId: repUserId,
       });
       const events = res.events || [];
+
+      // H48 (2026-07-10): agenda COMPLETA — soma os compromissos FORA do CRM
+      // (eventos busy do Google Calendar + bloqueios manuais). Fail-soft: erro
+      // aqui devolve [] e a lista de appointments segue intacta.
+      const blocks = await fetchCalendarBlocks(ctx.ghlClient, {
+        locationId: ctx.locationId,
+        userId: repUserId,
+        startMs: startTs,
+        endMs: endTs,
+        existingAppointments: events,
+      });
+
       // Fix Track 3 HIGH-8 (review 2026-05-05): retorna not_found pra empty
-      // em vez de status:ok+data:[] (semântica clara pro LLM).
-      if (events.length === 0) {
+      // em vez de status:ok+data:[] (semântica clara pro LLM). H48: dia SÓ com
+      // blocks não é "agenda livre" — devolve ok com os blocks.
+      if (events.length === 0 && blocks.length === 0) {
         return {
           status: "not_found",
           message: `Nenhum appointment ${when === "today" ? "hoje" : `em '${when}'`} pra você.`,
@@ -216,14 +231,25 @@ const listAppointments: ToolEntry = {
       }
       return {
         status: "ok",
-        data: events.map((e) => ({
-          id: e.id, title: e.title || "(sem título)",
-          start: e.startTime, end: e.endTime,
-          contact_id: e.contactId || null,
-          status: e.appointmentStatus || "scheduled",
-          assigned_to: e.assignedUserId,
-          calendar_id: e.calendarId,
-        })),
+        data: {
+          appointments: events.map((e) => ({
+            id: e.id, title: e.title || "(sem título)",
+            start: e.startTime, end: e.endTime,
+            contact_id: e.contactId || null,
+            status: e.appointmentStatus || "scheduled",
+            assigned_to: e.assignedUserId,
+            calendar_id: e.calendarId,
+          })),
+          // Compromissos fora do Spark Leads (Google/bloqueio). São OCUPAÇÃO de
+          // agenda, NÃO reuniões com contato do CRM — apresente separado ("outros
+          // compromissos") e nunca ofereça mover/cancelar por aqui.
+          other_commitments: blocks.map((b) => ({
+            title: b.title,
+            start: b.start_iso,
+            end: b.end_iso,
+            source: b.source === "google_calendar" ? "Google Calendar" : "bloqueio manual",
+          })),
+        },
       };
     } catch (err) {
       return ghlErrorToResult(err, "listagem de appointments");
