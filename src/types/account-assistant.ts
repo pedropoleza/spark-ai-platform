@@ -82,6 +82,18 @@ export interface RepProfile {
   quiet_hours_personal?: QuietHoursConfig;
   notes?: string[];                // free-form observações
   /**
+   * Contexto manual do admin (Pedro 2026-07-10) — diretrizes POR-REP escritas à
+   * mão, injetadas NO TOPO da MEMÓRIA do prompt e seguidas à risca. Diferente de
+   * `notes` (observações soft, só as últimas 3): `manual_context` aparece SEMPRE e
+   * INTEIRO, porque costuma ser regra operacional crítica daquele rep — ex: caso
+   * Jussara, "fluxo de triagem = tag exata 'triagem', que dispara a automação do
+   * Spark Leads". Escrito via SQL/admin (ainda sem tool/UI dedicada). Global-safe:
+   * só renderiza quando presente, então reps sem o campo têm prompt idêntico ao de
+   * antes (hub do SparkBot é central/compartilhado — por isso a diretriz é por-rep
+   * no profile, NUNCA em agent_configs.custom_instructions, que vazaria pra todos).
+   */
+  manual_context?: string[];
+  /**
    * Aliases — atalhos pessoais do rep pra termos do CRM/operação.
    * Pedro 2026-05-14: introduzido pra resolver bug do Gustavo onde bot
    * desconhecia que "M2" significa "M2 dos 5 ao 20k" (stage interno).
