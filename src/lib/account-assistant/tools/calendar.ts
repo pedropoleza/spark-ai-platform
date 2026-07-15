@@ -25,6 +25,9 @@ import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 import { updateRepById } from "@/lib/repositories/rep-identities.repo";
 // H48 (2026-07-10): compromissos do Google Calendar / bloqueios na agenda.
 import { fetchCalendarBlocks } from "../calendar-context";
+// H50 (2026-07-15, caso Caua): guarda determinística weekday↔data — o LLM
+// calculava a data do dia-da-semana nomeado e errava, marcando no dia errado.
+import { checkWeekdayMatchesDate, formatWeekdayDate } from "../weekday-guard";
 
 /**
  * Lê a preferência de agendamento salva do rep (calendário/duração padrão).
@@ -44,6 +47,12 @@ function getSchedulingPref(ctx: ToolContext): {
 // agenda antes de o bot parar de perguntar "confirmar mesmo assim?" e passar a
 // agendar direto (avisando passivo).
 const FORCE_SLOT_LEARN_THRESHOLD = 5;
+
+// H50 (2026-07-15): fuso do rep pra a guarda weekday↔data e o rótulo do confirm.
+// Mesmo default do resto do agendamento (ctx.rep.timezone || America/New_York).
+function getRepTz(ctx: ToolContext): string {
+  return ctx.rep.timezone || "America/New_York";
+}
 
 /**
  * Resolve qual calendário usar pra agendar SEM perguntar (parte code-side da
@@ -1056,6 +1065,15 @@ const createAppointment: ToolEntry = {
         contact_id: { type: "string" },
         start_time: { type: "string", description: "ISO 8601" },
         end_time: { type: "string", description: "ISO 8601" },
+        // H50 (2026-07-15, caso Caua): trava anti-alucinação de data. O servidor
+        // valida que start_time cai NESTE dia-da-semana e corrige se você errou.
+        expected_weekday: {
+          type: "string",
+          description:
+            "SEMPRE que o rep disser um DIA DA SEMANA ('segunda', 'quarta-feira', 'sexta 18h'), passe aqui a palavra que o REP falou (ex: 'segunda-feira'). " +
+            "O servidor confere que a DATA do start_time realmente cai nesse dia — se você errou a conta, ele REJEITA com a data certa pra você re-chamar. " +
+            "⚠️ NÃO re-derive do seu próprio start_time; passe o dia que o REP pediu. Se o rep deu uma data explícita ('dia 20', '20/07') ou 'hoje/amanhã', pode omitir.",
+        },
         title: { type: "string" },
         meeting_location_type: {
           type: "string",
@@ -1108,6 +1126,20 @@ const createAppointment: ToolEntry = {
     if (startInvalid) return startInvalid;
     const endInvalid = validateIso8601(String(args.end_time || ""), "end_time");
     if (endInvalid) return endInvalid;
+
+    // H50 (2026-07-15, caso Caua): guarda determinística weekday↔data. O LLM
+    // calculava a data do dia nomeado ("segunda") e errava (marcou no dia
+    // errado, off-by-one). Aqui o servidor confere e devolve a correção exata.
+    if (args.expected_weekday) {
+      const wdCheck = checkWeekdayMatchesDate(
+        String(args.start_time),
+        String(args.expected_weekday),
+        getRepTz(ctx),
+      );
+      if (!wdCheck.ok) {
+        return { status: "error", message: wdCheck.message!, retryable: true };
+      }
+    }
 
     // H26 (review 2026-05-14): gate admin pras 3 flags destrutivas.
     const overrideResult = buildOverridePayload(ctx, args);
@@ -1327,6 +1359,10 @@ const createAppointment: ToolEntry = {
         data: {
           appointment_id: apptId,
           assigned_to: res.assignedUserId || null,
+          // H50 (2026-07-15): rótulo COMPUTADO por código (dia-da-semana + data
+          // no fuso do rep). O bot DEVE narrar o confirm a partir daqui — nunca
+          // recalcular a data de cabeça (foi o que gerou "Segunda 14/07" errado).
+          booked_label: formatWeekdayDate(String(args.start_time), getRepTz(ctx)),
           // Quando setado, o bot deve avisar o rep que vai usar esse calendário
           // por padrão daqui pra frente (e que dá pra trocar). 1ª vez só.
           learned_default_calendar: learnedDefaultCalendar,
@@ -1411,6 +1447,12 @@ const blockCalendarSlot: ToolEntry = {
       properties: {
         start_time: { type: "string", description: "ISO 8601" },
         end_time: { type: "string", description: "ISO 8601" },
+        // H50 (2026-07-15): mesma trava do create_appointment — 'bloqueia quarta 14h'.
+        expected_weekday: {
+          type: "string",
+          description:
+            "SEMPRE que o rep disser um DIA DA SEMANA ('bloqueia quarta 14h'), passe a palavra que o REP falou. O servidor confere que a data bate e corrige se você errou. Omita se o rep deu data explícita ou 'hoje/amanhã'.",
+        },
         title: {
           type: "string",
           description:
@@ -1430,6 +1472,16 @@ const blockCalendarSlot: ToolEntry = {
     if (startInvalid) return startInvalid;
     const endInvalid = validateIso8601(String(args.end_time || ""), "end_time");
     if (endInvalid) return endInvalid;
+
+    // H50 (2026-07-15): guarda weekday↔data (mesma do create_appointment).
+    if (args.expected_weekday) {
+      const wdCheck = checkWeekdayMatchesDate(
+        String(args.start_time),
+        String(args.expected_weekday),
+        getRepTz(ctx),
+      );
+      if (!wdCheck.ok) return { status: "error", message: wdCheck.message!, retryable: true };
+    }
 
     // Fix bug "self" literal 2026-05-14: helper resolveAssignedUserId aceita
     // 'self'/'me'/'eu' e resolve pro rep, valida UUID se passado explícito.
@@ -1469,6 +1521,8 @@ const blockCalendarSlot: ToolEntry = {
         data: {
           block_id: eventId,
           assigned_to: targetUser,
+          // H50: rótulo determinístico pro bot narrar (não recalcular a data).
+          booked_label: formatWeekdayDate(String(args.start_time), getRepTz(ctx)),
           message:
             "Horário bloqueado no calendar (não é appointment com cliente — ninguém é notificado).",
         },
@@ -1493,6 +1547,12 @@ const updateAppointment: ToolEntry = {
         appointment_id: { type: "string" },
         start_time: { type: "string", description: "ISO 8601 novo horário." },
         end_time: { type: "string", description: "ISO 8601 novo fim." },
+        // H50 (2026-07-15): trava weekday↔data ao reagendar ('move pra quarta 18h').
+        expected_weekday: {
+          type: "string",
+          description:
+            "SEMPRE que o rep disser um DIA DA SEMANA pro novo horário ('move pra sexta 15h'), passe a palavra que o REP falou. O servidor confere que start_time bate e corrige se você errou. Omita se for data explícita ou 'hoje/amanhã'.",
+        },
         appointment_status: {
           type: "string",
           enum: ["confirmed", "showed", "noshow", "cancelled", "invalid"],
@@ -1540,6 +1600,15 @@ const updateAppointment: ToolEntry = {
     if (args.start_time) {
       const startInvalid = validateIso8601(String(args.start_time), "start_time");
       if (startInvalid) return startInvalid;
+      // H50 (2026-07-15): guarda weekday↔data no reagendamento.
+      if (args.expected_weekday) {
+        const wdCheck = checkWeekdayMatchesDate(
+          String(args.start_time),
+          String(args.expected_weekday),
+          getRepTz(ctx),
+        );
+        if (!wdCheck.ok) return { status: "error", message: wdCheck.message!, retryable: true };
+      }
       body.startTime = new Date(String(args.start_time)).toISOString();
     }
     if (args.end_time) {
@@ -1627,7 +1696,17 @@ const updateAppointment: ToolEntry = {
         });
       }
 
-      return { status: "ok", data: { appointment_id: appointmentId, updated: Object.keys(body) } };
+      return {
+        status: "ok",
+        data: {
+          appointment_id: appointmentId,
+          updated: Object.keys(body),
+          // H50: rótulo determinístico quando o horário mudou (pro bot narrar).
+          ...(args.start_time
+            ? { booked_label: formatWeekdayDate(String(args.start_time), getRepTz(ctx)) }
+            : {}),
+        },
+      };
     } catch (err) {
       return ghlErrorToResult(err, "atualização de appointment");
     }
@@ -1805,6 +1884,11 @@ const createAppointmentsBatch: ToolEntry = {
               start_time: { type: "string", description: "ISO 8601 com offset de fuso (ex: 2026-06-30T14:00:00-04:00)" },
               end_time: { type: "string", description: "ISO 8601 com offset de fuso" },
               title: { type: "string" },
+              // H50 (2026-07-15): dia-da-semana que o rep nomeou pra ESTE item.
+              expected_weekday: {
+                type: "string",
+                description: "OPCIONAL. Dia da semana que o rep nomeou pra esta reunião ('segunda-feira'). O servidor valida que start_time bate — item com data errada volta em 'failed' com a correção.",
+              },
             },
             required: ["contact_id", "start_time", "end_time"],
           },
@@ -1872,7 +1956,7 @@ const createAppointmentsBatch: ToolEntry = {
       }
     }
 
-    const created: Array<{ contact_id: string; appointment_id: string }> = [];
+    const created: Array<{ contact_id: string; appointment_id: string; label?: string | null }> = [];
     const failed: Array<{ contact_id: string; error: string }> = [];
     const notAttempted: string[] = [];
     const startedAt = Date.now();
@@ -1897,6 +1981,15 @@ const createAppointmentsBatch: ToolEntry = {
         failed.push({ contact_id: contactId, error: "start_time/end_time inválido (precisa ISO 8601 com fuso)" });
         continue;
       }
+      // H50 (2026-07-15): guarda weekday↔data por item (crítico na criação em
+      // massa a partir de template — 1 data errada iria pra vários contatos).
+      if (it.expected_weekday) {
+        const wdCheck = checkWeekdayMatchesDate(startStr, String(it.expected_weekday), getRepTz(ctx));
+        if (!wdCheck.ok) {
+          failed.push({ contact_id: contactId, error: wdCheck.message! });
+          continue;
+        }
+      }
       try {
         const body: Record<string, unknown> = {
           calendarId,
@@ -1910,7 +2003,13 @@ const createAppointmentsBatch: ToolEntry = {
         };
         const res = await ghlCreateAppointment(ctx.ghlClient, body);
         const apptId = res.id || res.appointment?.id;
-        if (apptId) created.push({ contact_id: contactId, appointment_id: apptId });
+        if (apptId)
+          created.push({
+            contact_id: contactId,
+            appointment_id: apptId,
+            // H50: rótulo determinístico por item (dia-da-semana + data reais).
+            label: formatWeekdayDate(startStr, getRepTz(ctx)),
+          });
         else failed.push({ contact_id: contactId, error: "Spark Leads não retornou appointment_id" });
       } catch (e) {
         failed.push({ contact_id: contactId, error: e instanceof Error ? e.message : String(e) });
