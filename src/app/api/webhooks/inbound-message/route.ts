@@ -766,14 +766,28 @@ export async function POST(request: NextRequest) {
     if (wh?.enabled && !isWithinWorkingHours(wh)) {
       workingHoursDelay = nextWorkingHourStart(wh);
       if (!workingHoursDelay) {
+        // FAIL-OPEN (fix review de deploy 2026-07-15; casos Jussara 13/07 + Alves
+        // Cury 15/07): working_hours.enabled=true com schedule vazio/todos-disabled
+        // fazia nextWorkingHourStart voltar null e o inbound era DESCARTADO em
+        // silêncio (sem fila/log/sinal) — o agente calava a location inteira sem
+        // rastro no painel. Agora NÃO cala: responde já (workingHoursDelay fica
+        // null → debounce normal abaixo) e emite sinal pro admin arrumar a config.
         console.warn(
-          `[Webhook] Working hours config inválida (todos disabled?) — skipping. location=${locationId}`,
+          `[Webhook] Working hours habilitado com schedule vazio/inválido — FAIL-OPEN (responde já). location=${locationId}`,
         );
-        return NextResponse.json({ received: true, skipped: "outside_working_hours_no_window" });
+        reportError({
+          title: "Inbound: working_hours habilitado com schedule vazio (agente calaria a location)",
+          feature: "inbound-webhook",
+          severity: "high",
+          description:
+            "Agente ativo com working_hours.enabled=true mas schedule vazio/todos-disabled (janela de expediente impossível). Antes o inbound era descartado em silêncio (location muda, sem rastro). Agora o webhook responde mesmo assim (fail-open); corrigir a config do agente: desligar working_hours ou setar dias válidos.",
+          metadata: { location_id: locationId, contact_id: contactId, agent_id: agent.id },
+        });
+      } else {
+        console.log(
+          `[Webhook] Outside working hours — enqueueing pra ${workingHoursDelay} (location=${locationId})`,
+        );
       }
-      console.log(
-        `[Webhook] Outside working hours — enqueueing pra ${workingHoursDelay} (location=${locationId})`,
-      );
     }
 
     // ===== DEBOUNCE ATÔMICO: usar RPC ou transação =====

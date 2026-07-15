@@ -87,26 +87,37 @@ const followUpConfigSchema = z.object({
 });
 
 // Working hours
-const workingHoursDaySchema = z
+const workingHoursDaySchema = z.object({
+  enabled: z.boolean(),
+  start: z.string().regex(/^\d{2}:\d{2}$/),
+  end: z.string().regex(/^\d{2}:\d{2}$/),
+});
+
+const workingHoursSchema = z
   .object({
     enabled: z.boolean(),
-    start: z.string().regex(/^\d{2}:\d{2}$/),
-    end: z.string().regex(/^\d{2}:\d{2}$/),
+    timezone: z.string().min(1),
+    mode: z.enum(["only_during", "only_outside"]),
+    schedule: z.record(z.string(), workingHoursDaySchema),
   })
   // Início TEM que ser antes do fim (Pedro 2026-07-03, caso Fabiana: 23:00→22:00 =
-  // janela impossível, agente "bugado"). "HH:MM" 24h zero-padded comparam como
-  // string. Só exige no dia ATIVO (dia off pode carregar placeholder tipo 09:00).
-  .refine((d) => !d.enabled || d.start < d.end, {
-    message: "O horário de início tem que ser antes do fim.",
-    path: ["end"],
+  // janela impossível). "HH:MM" 24h zero-padded comparam como string. Gateado pelo
+  // MÓDULO (wh.enabled): com o horário DESLIGADO, config LEGADA com dia inválido
+  // ainda salva — espelha o guard client-side (agent-detail-view). Fix review de
+  // deploy 2026-07-15: antes o .refine ficava no DIA e o server rejeitava o PUT
+  // inteiro mesmo com o módulo OFF (conta legada não conseguia salvar NADA).
+  .superRefine((wh, ctx) => {
+    if (!wh.enabled) return;
+    for (const [day, d] of Object.entries(wh.schedule)) {
+      if (d.enabled && d.start >= d.end) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["schedule", day, "end"],
+          message: "O horário de início tem que ser antes do fim.",
+        });
+      }
+    }
   });
-
-const workingHoursSchema = z.object({
-  enabled: z.boolean(),
-  timezone: z.string().min(1),
-  mode: z.enum(["only_during", "only_outside"]),
-  schedule: z.record(z.string(), workingHoursDaySchema),
-});
 
 // Agent config update
 // Limites de tamanho em campos free-text que vão parar no prompt da IA.

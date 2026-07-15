@@ -21,6 +21,18 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
+import { loadSilenceDecision } from "./silence-gate";
+
+/**
+ * Gate do lembrete de disparo pausado (Check 4). Default OFF (log-first).
+ * Review de deploy 2026-07-15: sem gate, o 1º tick pós-deploy dispararia o
+ * lembrete RETROATIVO pra TODOS os reps com job pausado esquecido (o dedup só
+ * evita repetição, não o 1º disparo), furando o silence-gate. Com OFF, só o
+ * admin_signal fica; nada sai pro rep. Ligar por env após validar 1 conta real.
+ */
+function isBulkPausedReminderEnabled(): boolean {
+  return /^(1|true|yes)$/i.test(process.env.BULK_PAUSED_REMINDER_ENABLED?.trim() || "");
+}
 
 export interface HealthCheckResult {
   runner_stale: boolean;
@@ -206,6 +218,14 @@ export async function checkBulkRunnerStaleAndAlert(): Promise<HealthCheckResult>
         },
       });
       alertsCreated++;
+
+      // Outreach ao rep gateado (flag default OFF) + silence gate. O admin_signal
+      // acima fica SEMPRE; só o WhatsApp ao rep precisa do gate — evita o blast
+      // retroativo no deploy e não atropela rep em silence-pause/sem-resposta
+      // (deliverProactiveMessage não aplica silence-gate). Review deploy 2026-07-15.
+      if (!isBulkPausedReminderEnabled()) continue;
+      const silence = await loadSilenceDecision(supabase, repRow.id);
+      if (!silence.canSend) continue;
 
       const pausedDays = Math.max(1, Math.round((Date.now() - new Date(job.paused_at).getTime()) / 86400000));
       const label = job.label || job.id.slice(0, 8);
