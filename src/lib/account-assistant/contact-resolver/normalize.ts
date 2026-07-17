@@ -43,8 +43,59 @@ export function dice(a: string, b: string): number {
 }
 
 /**
- * Score de nome 0..1: pra cada token da QUERY, pega o melhor token do CANDIDATO (Dice) e
- * faz a média (recall sobre os tokens pedidos). Tolera ordem trocada (token-set) e typo.
+ * Levenshtein com early-exit (só precisamos saber se ≤ maxDist). Barato pra
+ * tokens de nome (≤ ~15 chars); devolve maxDist+1 quando passa do teto.
+ */
+export function levenshtein(a: string, b: string, maxDist = 2): number {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > maxDist) return maxDist + 1;
+  const m = a.length;
+  const n = b.length;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i, ...new Array<number>(n).fill(0)];
+    let rowMin = i;
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(
+        prev[j] + 1,
+        cur[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      if (cur[j] < rowMin) rowMin = cur[j];
+    }
+    if (rowMin > maxDist) return maxDist + 1;
+    prev = cur;
+  }
+  return prev[n];
+}
+
+/**
+ * Similaridade de token: melhor entre Dice (bigramas) e o degrau de distância
+ * de edição. Fix bug observado em prod 2026-07-16 (ultra-review P1-11, caso
+ * Gian): typo de 1 letra no MEIO do nome quebra 2 bigramas de uma vez —
+ * dice("nilzete","niuzete") ≈ 0,67, abaixo do corte, e o resolver devolvia
+ * not_found pra um typo trivial (mesma classe do caso-motivador do H45,
+ * "fernanada"). Levenshtein ≤2 em tokens ≥5 chars recupera: lev=1 em 7 chars →
+ * sim ≈ 0,86 → cai em needs_confirm ("Achei Niuzete Fialho, é ela?") em vez
+ * de "não achei". Tokens curtos ficam só no Dice (lev≤2 em 4 chars casaria
+ * nomes DIFERENTES, ex: "ana"×"ada").
+ */
+export function tokenSim(q: string, c: string): number {
+  const d = dice(q, c);
+  if (q.length >= 5 && c.length >= 5) {
+    const lev = levenshtein(q, c, 2);
+    if (lev <= 2) {
+      const levSim = 1 - lev / Math.max(q.length, c.length);
+      return Math.max(d, levSim);
+    }
+  }
+  return d;
+}
+
+/**
+ * Score de nome 0..1: pra cada token da QUERY, pega o melhor token do CANDIDATO
+ * (tokenSim = Dice + degrau Levenshtein) e faz a média (recall sobre os tokens
+ * pedidos). Tolera ordem trocada (token-set) e typo.
  * Ex: "Fernanda Lira" vs "fernanada lira" → (0.86 + 1.0)/2 ≈ 0.93.
  * Penalidade leve se o candidato tem MUITO mais tokens que a query (anti "silvana amiga da fernanda").
  */
@@ -55,7 +106,7 @@ export function nameScore(query: string, candidate: string): number {
   let sum = 0;
   for (const q of qt) {
     let best = 0;
-    for (const c of ct) best = Math.max(best, dice(q, c));
+    for (const c of ct) best = Math.max(best, tokenSim(q, c));
     sum += best;
   }
   const recall = sum / qt.length;

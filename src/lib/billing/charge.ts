@@ -14,6 +14,11 @@ import {
 } from "@/lib/repositories/usage-records.repo";
 import { getLocationSpendCap } from "@/lib/repositories/agents.repo";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  isInsufficientFundsError,
+  markWalletBlocked,
+  clearWalletBlock,
+} from "./wallet-block";
 
 interface TrackUsageParams {
   locationId: string;
@@ -121,12 +126,27 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
       );
 
       await markWalletCharged(record.id, ghlChargeId, new Date().toISOString());
+      // Wallet block (Pedro 2026-07-17): cobrança passou → desbloqueia se
+      // estava bloqueada. INCONDICIONAL (H52 review adversarial): o clear não
+      // pode passar por isWalletBlocked — kill-switch/cache curto-circuitariam
+      // e a location ficaria muda pra sempre. clearWalletBlock é no-op barato
+      // quando não está bloqueada.
+      await clearWalletBlock(params.locationId);
     } catch (error) {
       console.error("[Billing] Failed to charge wallet:", error);
       // Nao bloqueia o processamento — cron chargeUnbilledRecords retenta.
       // F49 (review 2026-06-05): mas surface pro admin — se o retry tb falhar,
       // a cobrança se perde silenciosamente (dinheiro).
       reportError({ title: "Billing: cobrança no wallet GHL falhou", feature: "billing-charge", severity: "high", error, metadata: { actionType: params.actionType } });
+      // Wallet block (Pedro 2026-07-17, ultra-review P0-2): saldo esgotado →
+      // marca a location bloqueada; os gates de runtime param de gastar LLM e
+      // avisam como recarregar (antes rodava de graça em silêncio).
+      if (isInsufficientFundsError(error)) {
+        await markWalletBlocked(
+          params.locationId,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
   }
 }
@@ -378,6 +398,9 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
 
       await markWalletCharged(record.id, ghlChargeId, new Date().toISOString());
       charged++;
+      // Recarga detectada pelo cron de retry → desbloqueio automático (~15min).
+      // Incondicional (H52) — nunca passa pelo isWalletBlocked/kill-switch.
+      await clearWalletBlock(record.location_id);
     } catch (err) {
       failed++;
       // NÃO libera o claim aqui (mudança 2026-05-26). Deixa reivindicado: o
@@ -390,6 +413,11 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
       const msg = err instanceof Error ? err.message.slice(0, 200) : String(err);
       sampleErr(record.id, msg);
       console.warn(`[Billing] Single charge failed for record ${record.id}: ${msg}`);
+      // Wallet block (Pedro 2026-07-17): saldo esgotado → bloqueia a location
+      // (idempotente; o retry do reaper re-tenta e desbloqueia quando recarregar).
+      if (isInsufficientFundsError(err)) {
+        await markWalletBlocked(record.location_id, msg);
+      }
     }
   }
 

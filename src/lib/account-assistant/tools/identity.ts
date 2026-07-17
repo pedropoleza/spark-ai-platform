@@ -322,6 +322,45 @@ const reportMissedCapability: ToolEntry = {
     if (!what) {
       return { status: "error", message: "what_rep_wanted obrigatório", retryable: false };
     }
+    // Dedup de captura (ultra-review 2026-07-17): o LLM chamava a tool 2x em
+    // segundos (rajada/retry) com títulos LEVEMENTE diferentes — o fingerprint
+    // exato do recorder não colava e ~40% do funil de ideias virava duplicata
+    // (11+ pares com segundos de diferença). Regras (H52 review adversarial):
+    //  - só suprime dup FUZZY (parecido mas NÃO idêntico) da MESMA location nos
+    //    últimos 15min — pedido igual de OUTRO cliente é demanda real e conta;
+    //  - título IDÊNTICO passa direto pro recordSignalAsync: o recorder dedupa
+    //    por fingerprint e INCREMENTA occurrence_count — a métrica que o Pedro
+    //    usa pra priorizar o funil (suprimir aqui matava a contagem).
+    try {
+      const { createAdminClient } = await import("@/lib/supabase/admin");
+      const { dice, deburr } = await import("@/lib/account-assistant/contact-resolver/normalize");
+      const sb = createAdminClient();
+      const cutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const { data: recent } = await sb
+        .from("admin_signals")
+        .select("title, metadata")
+        .eq("type", "missed_capability")
+        .gte("last_seen_at", cutoff)
+        .order("last_seen_at", { ascending: false })
+        .limit(20);
+      const norm = (s: string) => deburr(s).replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+      const whatNorm = norm(what);
+      const isFuzzyDupSameLocation = (recent || []).some((r) => {
+        // location vive em metadata.samples[].location_id (shape do recorder) —
+        // comparação por serialização é suficiente e à prova de shape drift.
+        const metaStr = JSON.stringify((r as { metadata?: unknown }).metadata || {});
+        if (!metaStr.includes(ctx.locationId)) return false;
+        const t = norm(String((r as { title?: string }).title || ""));
+        if (!t || t === whatNorm) return false; // idêntico → deixa o recorder contar
+        return dice(whatNorm, t) >= 0.75;
+      });
+      if (isFuzzyDupSameLocation) {
+        return {
+          status: "ok",
+          data: { registered: true, message: "Pedido já registrado há pouco (dedup)." },
+        };
+      }
+    } catch { /* dedup é best-effort — na dúvida, registra */ }
     recordSignalAsync({
       type: "missed_capability",
       title: what,

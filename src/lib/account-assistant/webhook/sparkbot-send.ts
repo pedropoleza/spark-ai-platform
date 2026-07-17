@@ -18,9 +18,16 @@ import { pickOutboundChannel, fallbackChannel } from "../outbound-channel";
  * sinalizar break entre mensagens. No WhatsApp, vira múltiplas bolhas
  * (mais legível que bolha gigante). Web UI ignora — renderiza como hr.
  *
- * Limita a 3 partes por turn pra evitar spam. Cada parte recebe trim.
- * Linhas com só `---` ou `***` (qualquer comprimento >= 3) são separadores.
+ * Cap de bolhas por turno pra evitar spam — mas SEM PERDER CONTEÚDO:
+ * Fix bug observado em prod 2026-07-17 (caso Andrea, ultra-review P1-2): o
+ * cap antigo era `slice(0, 3)` — partes além da 3ª eram DESCARTADAS em
+ * silêncio. Rep pediu mensagens pra 4 leads, recebeu 2, duas vezes seguidas,
+ * e o bot nem sabia (o texto completo estava no DB; a entrega cortava).
+ * Agora: até 5 bolhas; o excedente é FUNDIDO na última bolha em vez de
+ * sumir. Linhas com só `---`/`***` (>= 3 chars) são separadores.
  */
+const SPLIT_MAX_BUBBLES = 5;
+
 export function splitResponseIntoMessages(text: string): string[] {
   if (!text) return [];
   // Regex: linha contendo APENAS 3+ dashes/asterisks (pode ter espaços ao redor)
@@ -42,8 +49,12 @@ export function splitResponseIntoMessages(text: string): string[] {
 
   // Sem splitter → retorna msg única
   if (parts.length === 0) return [text.trim()].filter((s) => s.length > 0);
-  // Cap em 3 partes
-  return parts.slice(0, 3);
+  // Cap de bolhas SEM descartar conteúdo: excedente vira parte da última.
+  if (parts.length <= SPLIT_MAX_BUBBLES) return parts;
+  return [
+    ...parts.slice(0, SPLIT_MAX_BUBBLES - 1),
+    parts.slice(SPLIT_MAX_BUBBLES - 1).join("\n\n"),
+  ];
 }
 
 /**

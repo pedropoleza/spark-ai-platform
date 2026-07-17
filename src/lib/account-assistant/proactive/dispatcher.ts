@@ -257,6 +257,30 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     return { status: "skipped_quiet_hours", message: "Dentro de quiet hours" };
   }
 
+  // 3b. Wallet sem saldo (Pedro 2026-07-17, ultra-review P0-2): proativo gera
+  // turno LLM — location bloqueada por saldo não gasta. is_internal segue
+  // normal (não é cobrado por design). Antes do claim pra não queimar slot.
+  // H52 review adversarial: (a) a location do gate é a MESMA cadeia que o
+  // billing usa no passo 5 (overrideLocationId primeiro — post_meeting dispara
+  // pra locations != active do rep, e era exatamente onde o gate checava a
+  // location ERRADA); (b) NÃO grava recordSkip — o upsert estamparia
+  // last_fired_at=now e seguraria o proativo por mais um cooldown inteiro
+  // DEPOIS da recarga.
+  if (rep.is_internal !== true) {
+    const { isWalletBlocked } = await import("@/lib/billing/wallet-block");
+    const billingLocation =
+      overrideLocationId ||
+      rep.active_location_id ||
+      rep.ghl_users?.[0]?.location_id ||
+      agent.location_id;
+    if (billingLocation && (await isWalletBlocked(billingLocation))) {
+      return {
+        status: "skipped_wallet_blocked",
+        message: "Wallet sem saldo — location bloqueada",
+      };
+    }
+  }
+
   // 4. Atomic claim do slot (substitui cooldown check + upsert separados)
   // Se 2 crons paralelos chegam aqui, só 1 ganha; o outro recebe null.
   const alertStateId = await tryClaimDispatchSlot(rule, rep.id, targetId, forceFire === true);

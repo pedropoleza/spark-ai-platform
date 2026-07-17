@@ -19,6 +19,7 @@ import {
   updateAppointment as ghlUpdateAppointment,
   deleteAppointment as ghlDeleteAppointment,
   getCalendarDetails,
+  getContactAppointments as ghlGetContactAppointments,
 } from "@/lib/ghl/operations";
 import type { ToolResult } from "@/types/account-assistant";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
@@ -1075,6 +1076,16 @@ const createAppointment: ToolEntry = {
             "⚠️ NÃO re-derive do seu próprio start_time; passe o dia que o REP pediu. Se o rep deu uma data explícita ('dia 20', '20/07') ou 'hoje/amanhã', pode omitir.",
         },
         title: { type: "string" },
+        // Ultra-review 2026-07-17 (P1-4, caso Caua): dedup determinístico —
+        // o servidor REJEITA se já existe appointment idêntico (mesmo contato+
+        // calendário+horário) não-cancelado. Este param é o bypass explícito.
+        allow_duplicate: {
+          type: "boolean",
+          description:
+            "OPCIONAL, default false. O servidor rejeita appointment idêntico a um já existente " +
+            "(mesmo contato+calendário+horário — típico clique duplo de confirmação). " +
+            "Só passe true se o rep CONFIRMAR explicitamente que quer uma segunda reunião idêntica.",
+        },
         meeting_location_type: {
           type: "string",
           description:
@@ -1220,6 +1231,43 @@ const createAppointment: ToolEntry = {
           "[create_appointment] resolução de assignee pro dono do calendar falhou (segue fluxo normal):",
           e instanceof Error ? e.message : e,
         );
+      }
+    }
+
+    // Dedup determinístico (ultra-review 2026-07-17 P1-4, caso Caua): rajada
+    // do rep gerava 2 bubbles de confirm vivos → 2 cliques em "Confirmar" → 2
+    // create_appointment idênticos ("Você marcou 2 vezes"). Antes do POST,
+    // confere se o contato JÁ tem appointment não-cancelado no MESMO calendário
+    // com o MESMO horário (±2min) — se tem, rejeita retryable apontando o id.
+    // Bypass explícito: allow_duplicate=true (reunião duplicada intencional).
+    // Best-effort: se a listagem falhar, segue o fluxo (não bloqueia booking).
+    if (args.allow_duplicate !== true) {
+      try {
+        const existing = await ghlGetContactAppointments(ctx.ghlClient, contactId);
+        const targetMs = new Date(String(args.start_time)).getTime();
+        const dup = (existing.events || []).find((e) => {
+          if (!e.startTime || e.calendarId !== calendarId) return false;
+          const st = String(e.appointmentStatus || "").toLowerCase();
+          if (st === "cancelled" || st === "no_show" || st === "noshow") return false;
+          return Math.abs(new Date(e.startTime).getTime() - targetMs) < 2 * 60 * 1000;
+        });
+        if (dup) {
+          return {
+            status: "error",
+            retryable: false,
+            // H52 review adversarial: sem `code`, cada dedup virava admin_signal
+            // HIGH (a captura de erro do executeTool só ignora codes conhecidos)
+            // — mesmo padrão do duplicate_contact, que é o bot ACERTANDO.
+            code: "duplicate_appointment",
+            message:
+              `Já existe um appointment deste contato neste calendário e horário (id ${dup.id}` +
+              `${dup.title ? `, "${dup.title}"` : ""}) — provável clique duplo de confirmação. ` +
+              `NÃO recrie. Diga ao rep que a reunião JÁ está marcada. Se ele quiser mesmo uma ` +
+              `segunda reunião idêntica, re-chame com allow_duplicate=true.`,
+          };
+        }
+      } catch {
+        // listagem é best-effort; nunca bloqueia o booking legítimo
       }
     }
 

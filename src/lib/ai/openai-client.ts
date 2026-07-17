@@ -210,6 +210,34 @@ export async function processWithAI(input: ProcessMessageInput): Promise<AIProce
   // TODOS os tiers falharam — NUNCA silencioso. Vira admin_signal (high) +
   // Sentry; com o canal de push setado (observability-alerts), pinga na hora.
   const aggErr = errors.join(" | ");
+
+  // Fix bug observado em prod 2026-07-16 (ultra-review P1-7, sticker .webp):
+  // imagem improcessável derrubava a chain INTEIRA — o fallback repassa a
+  // MESMA imagem quebrada pros 3 tiers (400 em todos) e o turno morre (3
+  // critical_error num episódio real; a recuperação foi acidental). Se o erro
+  // agregado é de imagem e havia imagem no input, re-roda a chain UMA vez SEM
+  // as imagens, com marcador textual — o lead não fica mudo por um sticker.
+  // Sem recursão infinita: o retry vai com images undefined.
+  const IMAGE_ERR_RE = /could not process image|unsupported image|invalid image|image.*(invalid|unsupported)/i;
+  if (input.images && input.images.length > 0 && IMAGE_ERR_RE.test(aggErr)) {
+    console.warn(
+      `[AI] chain inteira falhou por imagem improcessável — re-rodando SEM a(s) ${input.images.length} imagem(ns).`,
+    );
+    reportError({
+      title: "LLM lead-facing: imagem improcessável descartada (retry sem imagem)",
+      feature: "openai-client",
+      severity: "medium",
+      error: new Error(aggErr.slice(0, 400)),
+      metadata: { primary: input.model, image_count: input.images.length },
+    });
+    return processWithAI({
+      ...input,
+      images: undefined,
+      newMessages:
+        (input.newMessages || "") +
+        "\n\n[o contato enviou uma imagem que não pôde ser processada — responda normalmente ao texto e, se fizer sentido, diga que não conseguiu visualizar a imagem]",
+    });
+  }
   reportError({
     title: "LLM lead-facing: todos os providers/tiers falharam",
     feature: "openai-client",

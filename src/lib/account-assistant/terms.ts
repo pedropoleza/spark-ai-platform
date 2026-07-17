@@ -51,6 +51,17 @@ export function parseTermsResponse(text: string): "accept" | "reject" | "unclear
   const normalized = normalizeForParse(label || text);
   if (!normalized) return "unclear";
 
+  // Dígito seco = seleção do menu numerado do fallback (H52 review adversarial
+  // 2026-07-17): o web_ui exibe "1. Aceito ✅ / 2. Não aceito ❌" e a resposta
+  // mais natural a menu numerado no BR é SÓ o número — que caía em unclear e
+  // re-enviava os termos (o loop do caso Willian, no formato mais provável).
+  // O parser SÓ roda nos gates de termos, onde o menu tem exatamente essas 2
+  // opções nessa ordem — mapear é determinístico e seguro.
+  // Cobre também "1)", "(1)", "1." (R2: normalizeForParse não strippa
+  // parênteses; só dígito+pontuação vazia — "10"/"2 pessoas" NÃO casam).
+  if (/^\(?1[.)\]]?$/.test(normalized)) return "accept";
+  if (/^\(?2[.)\]]?$/.test(normalized)) return "reject";
+
   // Fix CRITICAL Track 1 C2 (review 2026-05-05): "não tá ok" não pode virar
   // ACCEPT. Negação → REJECT.
   // Fix 2026-05-20 (bug observado: rep silenciado por comando): REJECT só pra
@@ -75,8 +86,28 @@ export function parseTermsResponse(text: string): "accept" | "reject" | "unclear
   }
 
   // ACCEPT: whole-word match no início OU frase única. NUNCA `.includes` no meio.
+  //
+  // Fix bug observado em prod 2026-07-17 (caso Willian, ultra-review P1-1): o
+  // fallback do web_ui exibe as opções NUMERADAS ("1. Aceito ✅") e o PRÓPRIO
+  // formato que o bot mostrava não passava aqui — o rep tentou aceitar ~12x
+  // ("1. Aceito ✅", "1 aceito", "eu aceito os termos"), levou o mesmo reenvio
+  // dos termos em <100ms cada vez e desistiu (churn fatal no onboarding).
+  // Normalização adicional SÓ pro accept (reject já cobre esses formatos via
+  // NEGATION/STRONG_REFUSAL no texto inteiro):
+  //  - prefixo da opção de ACEITE ("1.", "1)", "1 -") cai fora. SÓ o "1"
+  //    (H52 review adversarial): stripar qualquer dígito fazia "2 ok" —
+  //    rep escolhendo a opção 2 = NÃO aceito — virar consentimento. "2 ..."
+  //    sem negação explícita fica unclear (reenvia), nunca accept.
+  //  - "eu" introdutório cai fora ("eu aceito os termos" → "aceito os termos").
+  const denumbered = normalized
+    .replace(/^1\s*[.)\-]?\s+/, "")
+    .replace(/^eu\s+/, "");
   const accepts = ACCEPT_KEYWORDS.some(
-    (k) => normalized === k || normalized.startsWith(k + " "),
+    (k) =>
+      normalized === k ||
+      normalized.startsWith(k + " ") ||
+      denumbered === k ||
+      denumbered.startsWith(k + " "),
   );
   // "Yes-but-no" (aceite + negação no texto, ex: "aceito que errei mas não
   // concordo") → NÃO registra consentimento → unclear (re-pergunta). LGPD.
@@ -164,11 +195,11 @@ export const GROUP_CAMPAIGN_TERMS_TEXT = `📣 *Campanhas em grupos — antes de
 
 Postar em grupos de WhatsApp é poderoso, mas vem com responsabilidade. Preciso do seu ok em 3 pontos pra liberar essa função pra você:
 
-1️⃣ *Risco de bloqueio do número.* Enviar muita mensagem, repetida ou pra muita gente de uma vez, faz o WhatsApp marcar o número como spam — e ele pode ser *bloqueado*. Eu trabalho pra reduzir isso (espaço os envios, varia o texto, alterna entre grupos), mas o risco nunca é zero. O número é seu; a decisão de disparar é sua.
+• *Risco de bloqueio do número.* Enviar muita mensagem, repetida ou pra muita gente de uma vez, faz o WhatsApp marcar o número como spam — e ele pode ser *bloqueado*. Eu trabalho pra reduzir isso (espaço os envios, varia o texto, alterna entre grupos), mas o risco nunca é zero. O número é seu; a decisão de disparar é sua.
 
-2️⃣ *Você é responsável pelo conteúdo.* Nada de promessa de retorno garantido, esquema de renda, corrente ou spam. Mensagem honesta e relevante pro grupo. Eu te aviso se um texto parecer arriscado, mas a palavra final — e a responsabilidade — é sua.
+• *Você é responsável pelo conteúdo.* Nada de promessa de retorno garantido, esquema de renda, corrente ou spam. Mensagem honesta e relevante pro grupo. Eu te aviso se um texto parecer arriscado, mas a palavra final — e a responsabilidade — é sua.
 
-3️⃣ *Servidor dedicado recomendado.* Pra proteger seu número, o ideal é rodar campanha de grupo num *número/servidor dedicado* (separado do seu WhatsApp pessoal). A gente tem um parceiro de proxy doméstico que oferece esse servidor dedicado — ajuda bastante a evitar bloqueio. Se quiser, eu falo com o suporte pra te montar um. 💪
+• *Servidor dedicado recomendado.* Pra proteger seu número, o ideal é rodar campanha de grupo num *número/servidor dedicado* (separado do seu WhatsApp pessoal). A gente tem um parceiro de proxy doméstico que oferece esse servidor dedicado — ajuda bastante a evitar bloqueio. Se quiser, eu falo com o suporte pra te montar um. 💪
 
 Topa seguir com essas condições?`;
 

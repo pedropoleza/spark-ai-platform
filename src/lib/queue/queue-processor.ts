@@ -339,6 +339,38 @@ async function processGroup(
     return;
   }
 
+  // Wallet sem saldo (Pedro 2026-07-17, ultra-review P0-2): a location ficou
+  // sem crédito → agentes lead-facing param de gastar LLM. O LEAD não recebe
+  // aviso (mensagem de saldo é pro dono da conta, nunca pro cliente final); a
+  // dona é avisada 1x/24h via SparkBot. Auditado em execution_log. Desbloqueio
+  // automático quando a cobrança volta a passar (charge.ts).
+  {
+    const { isWalletBlocked, notifyWalletBlockOwnerOnce } = await import(
+      "@/lib/billing/wallet-block"
+    );
+    if (await isWalletBlocked(group.locationId)) {
+      log("log", `SKIP wallet sem saldo (location ${group.locationId})`);
+      try {
+        await supabase.from("execution_log").insert({
+          agent_id: agent.id,
+          location_id: group.locationId,
+          contact_id: group.contactId,
+          conversation_id: group.conversationId,
+          action_type: "wallet_blocked_skip",
+          action_payload: { messages_swallowed: group.messages.length },
+          success: true,
+        });
+      } catch { /* observabilidade best-effort */ }
+      // H52 R2: await (não fire-and-forget) — a Vercel congela a runtime
+      // quando o handler retorna; a promise órfã podia morrer DEPOIS de
+      // carimbar o cooldown de 24h e ANTES de entregar o aviso (dona ficaria
+      // 1 dia sem saber). A função nunca lança e custa ~1-2s no caminho que
+      // já não gasta LLM.
+      await notifyWalletBlockOwnerOnce(group.locationId);
+      return;
+    }
+  }
+
   // F28 (Pedro 2026-05-28): max_messages_per_conversation enforcement.
   // Antes: salvo no agent_configs (validation.ts:106) e UI permitia editar
   // (detail-view CatLimits), mas runtime NUNCA contava nem pausava — rep

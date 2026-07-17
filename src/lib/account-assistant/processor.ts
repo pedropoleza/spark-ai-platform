@@ -228,6 +228,34 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       ? "Opa, já vi que você quer começar a usar! 🙌 Eu já te ajudo com isso — só preciso que aceite os termos rapidinho aqui embaixo 👇"
       : undefined;
     const termsInteractive = buildTermsInteractive(ackPrefix);
+    // Ultra-review 2026-07-17 (caso Willian): rep preso no gate de termos 3+
+    // vezes em 24h = provável formato de aceite que o parser não entende →
+    // sinal pro admin destravar na mão em vez de churn silencioso. Fire-and-
+    // forget: nunca atrasa nem derruba o reenvio.
+    void (async () => {
+      try {
+        const sb = createAdminClient();
+        const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const { count } = await sb
+          .from("sparkbot_messages")
+          .select("id", { count: "exact", head: true })
+          .eq("rep_id", rep.id)
+          .eq("role", "user")
+          .gte("created_at", dayAgo);
+        if (typeof count === "number" && count >= 3) {
+          reportError({
+            title: `📝 Rep preso no gate de termos (${rep.display_name || rep.id})`,
+            feature: "sparkbot-terms",
+            severity: "medium",
+            description:
+              `Rep mandou ${count} msgs em 24h e segue sem aceite registrado — o parser pode não estar ` +
+              `entendendo o formato da resposta dele. Última msg: "${userText.slice(0, 120)}". ` +
+              `Destravar: UPDATE rep_identities SET terms_accepted_at=now() WHERE id='${rep.id}'.`,
+            metadata: { rep_id: rep.id, phone: rep.phone, msgs_24h: count },
+          });
+        }
+      } catch { /* observabilidade best-effort */ }
+    })();
     return {
       text: interactiveFallbackText(termsInteractive),
       interactive: termsInteractive,
@@ -323,6 +351,101 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
 
   // 3. Buscar info da location pra timezone + company_id
   const supabase = createAdminClient();
+
+  // 2b. Wallet sem saldo (Pedro 2026-07-17, ultra-review P0-2): location sem
+  // crédito → NÃO gasta LLM; resposta determinística ensina a recarregar na
+  // wallet do Spark Leads. is_internal bypassa (não gera cobrança por design).
+  // Desbloqueio é automático quando uma cobrança volta a passar (charge.ts).
+  if (rep.is_internal !== true) {
+    const { isWalletBlocked, WALLET_BLOCKED_REP_MESSAGE } = await import(
+      "@/lib/billing/wallet-block"
+    );
+    if (await isWalletBlocked(activeLocationId)) {
+      return { text: WALLET_BLOCKED_REP_MESSAGE, should_send: true };
+    }
+  }
+
+  // 2c. Loop bot-a-bot (ultra-review 2026-07-17, P0 caso Fabiana): telefone de
+  // canal lead-facing identificado como rep → ping-pong IA×IA que o silence-gate
+  // não pega (todo inbound reseta o counter). Detecção determinística sobre as
+  // últimas msgs; ao acusar: silencia ESTE turno + pausa proativos + signal.
+  // H52 review adversarial: (a) SÓ roda no WhatsApp — o loop existe apenas via
+  // telefone identificado como rep; no web_ui (painel autenticado, síncrono) um
+  // power-user digitando rápido tripava o guard e era engolido em silêncio;
+  // (b) a pausa leva `proactive_pause_source='loop_guard'` — o silence-reset de
+  // inbound NÃO limpa essa origem (senão o rep-fantasma re-acendia o loop todo
+  // dia); (c) rep já flagrado re-silencia com 2 trocas (não 6) — re-ignição por
+  // follow-up do outro bot queima 1 turno, não 6.
+  if (!input.testSessionId && (input.channel || "whatsapp") === "whatsapp") {
+    try {
+      const { data: recentMsgs } = await supabase
+        .from("sparkbot_messages")
+        .select("role, created_at, content")
+        .eq("rep_id", rep.id)
+        .eq("channel", "whatsapp")
+        .order("created_at", { ascending: false })
+        .limit(16);
+      const msgsAsc = (recentMsgs || [])
+        .reverse()
+        .map((m) => ({
+          role: String((m as { role?: string }).role || ""),
+          created_at: String((m as { created_at?: string }).created_at || ""),
+          content_len: String((m as { content?: string }).content || "").length,
+        }));
+      const { detectPingPongLoop } = await import(
+        "@/lib/account-assistant/loop-guard"
+      );
+      // H52 R2: a flag decai — threshold reduzido (2) só vale se o flagra é
+      // RECENTE (<48h). Flag velha volta ao threshold padrão (6): um rep REAL
+      // flagrado por engano não fica em modo degradado pra sempre (a pausa em
+      // si expira em 7d via resetSilenceTracking).
+      const repFlag = rep as {
+        proactive_pause_source?: string | null;
+        proactive_paused_at?: string | null;
+      };
+      const flaggedAtMs = repFlag.proactive_paused_at
+        ? new Date(repFlag.proactive_paused_at).getTime()
+        : 0;
+      const alreadyFlagged =
+        repFlag.proactive_pause_source === "loop_guard" &&
+        Date.now() - flaggedAtMs < 48 * 60 * 60 * 1000;
+      const loop = detectPingPongLoop(msgsAsc, alreadyFlagged ? 2 : undefined);
+      if (loop.looping) {
+        const nowIso = new Date().toISOString();
+        // SEMPRE re-seta (sem checar rep.proactive_paused_at: o objeto é um
+        // snapshot de ANTES do silence-reset do webhook — estaria stale).
+        await supabase
+          .from("rep_identities")
+          .update({
+            proactive_paused_at: nowIso,
+            proactive_pause_source: "loop_guard",
+            updated_at: nowIso,
+          })
+          .eq("id", rep.id);
+        reportError({
+          title: `🤖🔁 Possível loop bot-a-bot — SparkBot silenciado (${rep.display_name || rep.id})`,
+          feature: "sparkbot-loop-guard",
+          severity: "high",
+          description:
+            `${loop.exchanges} trocas consecutivas com resposta <90s e texto longo — padrão de ` +
+            `auto-reply IA×IA (caso Fabiana 2026-07-17). Turno silenciado + proativos pausados ` +
+            `(origem loop_guard: inbound NÃO despausa; limpar via admin: UPDATE rep_identities ` +
+            `SET proactive_paused_at=NULL, proactive_pause_source=NULL WHERE id='${rep.id}'). ` +
+            `Conferir se o telefone deste "rep" é na verdade um canal de agente lead-facing.`,
+          metadata: {
+            rep_id: rep.id,
+            location_id: activeLocationId,
+            phone: rep.phone,
+            exchanges: loop.exchanges,
+            already_flagged: alreadyFlagged,
+          },
+        });
+        return { text: "", should_send: false };
+      }
+    } catch (err) {
+      console.warn("[processor] loop-guard falhou (não-fatal):", err);
+    }
+  }
   const { data: location } = await supabase
     .from("locations")
     .select("location_id, company_id, location_name, timezone")
@@ -574,6 +697,11 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     ? input.config.disabled_tools
     : [...(input.config.disabled_tools || []), "present_options"];
 
+  // H52 review adversarial R2: âncora do relógio do TURNO INTEIRO. Os reruns
+  // do coherence-gate/anti-repeat abaixo herdam este relógio — sem isso cada
+  // rerun re-ancorava 45s NOVOS (turno de 44s + rerun de 35s = 79s > hard-limit
+  // 60s → lambda morta muda ANTES do billing/envio, a classe que o H52 mata).
+  const turnStartedAt = Date.now();
   const result = await runSparkbotTurn({
     systemPrompt,
     messages: [...history, userMessage],
@@ -668,7 +796,14 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       feature: "sparkbot-turn",
       severity: "medium",
       description: `Turno excedeu ~45s e devolveu fallback gracioso (${result.tool_calls.length} tools no turno). Provável tarefa pesada num único turno.`,
-      metadata: { rep_id: rep.id, location_id: activeLocationId, tools_in_turn: result.tool_calls.length },
+      metadata: {
+        rep_id: rep.id,
+        location_id: activeLocationId,
+        tools_in_turn: result.tool_calls.length,
+        // Ultra-review 2026-07-17: as últimas tools do turno dizem QUAL passo
+        // pesado estourou (antes o sinal não permitia diagnosticar — Fabiana).
+        last_tools: result.tool_calls.slice(-5).map((t) => t.name),
+      },
     });
   }
   if (llmFailed && input.testSessionId) {
@@ -783,6 +918,9 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
             executor: (name, args) => executeTool(name, args, toolCtx),
             model: input.config.ai_model,
             fallbackModel: input.config.fallback_model,
+            // H52 R2: rerun herda o relógio do turno — no máx 12s, e nunca
+            // além de turnStart+55s (sobra ~5s pro billing/envio pós-loop).
+            deadlineAt: Math.min(Date.now() + 12_000, turnStartedAt + 55_000),
           });
           result.prompt_tokens += rerun.prompt_tokens;
           result.completion_tokens += rerun.completion_tokens;
@@ -946,6 +1084,8 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
           executor: (name, args) => executeTool(name, args, toolCtx),
           model: input.config.ai_model,
           fallbackModel: input.config.fallback_model,
+          // H52 R2: herda o relógio do turno (ver rerun do coherence acima).
+          deadlineAt: Math.min(Date.now() + 12_000, turnStartedAt + 55_000),
         });
         result.prompt_tokens += rerun.prompt_tokens;
         result.completion_tokens += rerun.completion_tokens;

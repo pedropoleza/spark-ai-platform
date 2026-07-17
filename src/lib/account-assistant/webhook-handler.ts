@@ -829,17 +829,11 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
 
   // Silence reset (fix audit Phase 3): qualquer inbound do rep limpa
   // o counter e a pausa. Se o rep tava silenciado, agora reabriu a janela
-  // (no sentido WhatsApp 24h tbm).
+  // (no sentido WhatsApp 24h tbm). H52: pausa do loop-guard NÃO é limpa
+  // (helper compartilhado — ver resetSilenceTracking).
   try {
-    await supabase
-      .from("rep_identities")
-      .update({
-        last_inbound_at: new Date().toISOString(),
-        consecutive_proactive_without_reply: 0,
-        proactive_paused_at: null,
-        proactive_warned_at: null,
-      })
-      .eq("id", rep.id);
+    const { resetSilenceTracking } = await import("@/lib/repositories/rep-identities.repo");
+    await resetSilenceTracking(rep.id, new Date().toISOString());
   } catch (err) {
     console.warn("[Sparkbot] silence reset falhou (não-bloqueante):", err instanceof Error ? err.message : err);
   }

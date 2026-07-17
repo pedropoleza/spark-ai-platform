@@ -8,6 +8,7 @@
  */
 
 import type { ToolDefinition } from "@/types/account-assistant";
+import { withDeadline, DeadlineExceededError } from "@/lib/utils/deadline";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const FALLBACK_MODEL = "gpt-4.1";
@@ -22,7 +23,27 @@ const MAX_ITERATIONS = 10;
 // total (sem resposta, sem signal). Orçamento de wall-clock: ao se aproximar do
 // limite, PARAMOS e devolvemos um fallback gracioso (stopped_reason time_budget)
 // — deixando ~15s de folga pro coherence/billing/envio depois do loop.
+//
+// Ultra-review 2026-07-17 (casos Luciano 10 msgs mudas/6d + Fabiana): o budget
+// era checado só ENTRE passos — os 2 buracos que matavam a lambda muda eram:
+//  (A) a chamada LLM tinha timeout próprio de 60s (client) + retries, maior
+//      que o tempo RESTANTE do turno → agora cada create() recebe timeout =
+//      restante do budget (+ margem) e só re-tenta se sobra tempo;
+//  (B) UMA tool lenta (ex: preview de bulk paginando o CRM) estourava o budget
+//      POR DENTRO → agora cada tool corre contra o tempo restante via
+//      withDeadline; estourou → resultado sintético honesto + fallback AGORA.
 const TURN_BUDGET_MS = 45_000;
+// Teto por tool: nenhuma tool pode consumir mais que isto (mesmo com budget
+// sobrando) — uma tool nesse patamar é bug dela, não razão pra matar o turno.
+const TOOL_DEADLINE_CAP_MS = 30_000;
+// Mensagem sintética quando a tool estoura o deadline. JS não cancela a
+// promise: a ação PODE concluir depois do corte — por isso manda CONFERIR.
+const TOOL_TIMEOUT_RESULT = {
+  status: "error",
+  message:
+    "tempo esgotado dentro da tool — a ação PODE ter rodado parcialmente (ou até concluído). " +
+    "CONFIRA o estado real antes de repetir; NÃO repita às cegas.",
+} as const;
 
 // H1 (review 2026-04-28): no stress test, 6 de 7 falhas conversacionais
 // (hallucinations, compliance flexível) ocorreram em GPT-4.1 fallback —
@@ -120,6 +141,14 @@ export interface RunWithToolsInput {
   executor: ToolCallExecutor;
   model?: string;
   /**
+   * Deadline ABSOLUTO do turno (epoch ms) — H52 review adversarial 2026-07-17.
+   * Setado UMA vez no runWithTools e herdado por TODA a cadeia de fallback
+   * (primário → Haiku → OpenAI). Antes, cada provider re-ancorava o próprio
+   * budgetStart: um turno que caía pro secundário podia somar 45s+45s > o
+   * hard-limit de 60s da lambda e morrer mudo do mesmo jeito.
+   */
+  deadlineAt?: number;
+  /**
    * Modelo secundário pra fallback se o primário falhar (rate-limit, 5xx
    * sem tool calls). Default Claude Haiku 4.5 (mesmo provider, capacity
    * pool diferente). Configurável via agent_configs.fallback_model.
@@ -170,6 +199,8 @@ export interface RunWithToolsOutput {
  * fora, OpenAI deve estar OK).
  */
 export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToolsOutput> {
+  // H52: um ÚNICO relógio pro turno inteiro, fallbacks inclusos.
+  input = { ...input, deadlineAt: input.deadlineAt ?? Date.now() + TURN_BUDGET_MS };
   const model = input.model || DEFAULT_MODEL;
   const isClaude = model.startsWith("claude-");
 
@@ -209,6 +240,24 @@ export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToo
         const r = secondaryIsClaude
           ? await runWithClaude({ ...input, model: secondary })
           : await runWithOpenAI({ ...input, model: secondary });
+        // H52 R2: com maxRetries=0 (anti-timeout), um blip 429/5xx no primário
+        // cai DIRETO aqui — o downgrade pro secundário era invisível (só a
+        // falha dupla sinalizava). Signal medium dedupado torna o volume de
+        // degradação observável sem depender de reclamação de rep.
+        try {
+          const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+          recordSignalAsync({
+            type: "failure",
+            title: "SparkBot: tier primário degradado (turno completou no fallback)",
+            description:
+              `Primário ${model} falhou na iteração 0 e o turno completou no ${secondary}. ` +
+              `Com maxRetries=0 (anti-timeout H52) blips transitórios caem direto no fallback — ` +
+              `se o occurrence subir rápido, é rate-limit/outage do primário. Erro: ${primaryErrMsg.slice(0, 200)}`,
+            severity: "medium",
+            source: "bot_auto",
+            metadata: { primary: model, secondary, error_snippet: primaryErrMsg.slice(0, 200) },
+          });
+        } catch { /* signal não-crítico */ }
         return { ...r, primary_error: primaryErrMsg };
       } catch (err2) {
         // Mesmo guard pro secundário
@@ -414,9 +463,19 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
   let totalCacheCreationTokens = 0;
 
   // Orçamento de tempo (anti-timeout silencioso) — ver TURN_BUDGET_MS.
-  const budgetStart = Date.now();
-  const budgetReturn = (iters: number): RunWithToolsOutput => ({
-    text: "Tô levando tempo demais pra fazer tudo isso de uma vez e precisei parar pra não travar. Me confirma o que ainda falta que eu sigo daí 👍",
+  // H52 (review adversarial 2026-07-17): o relógio é ABSOLUTO e herdado do
+  // runWithTools (input.deadlineAt) — o MESMO deadline atravessa a cadeia de
+  // fallback; cada provider NÃO re-ancora o orçamento.
+  const deadlineAt = input.deadlineAt ?? Date.now() + TURN_BUDGET_MS;
+  const remainingMs = () => deadlineAt - Date.now();
+  const budgetReturn = (iters: number, timedOutMidTool = false): RunWithToolsOutput => ({
+    // H52: quando UMA tool estourou o deadline no meio, o texto precisa avisar
+    // que a ação PODE ter concluído (JS não cancela a promise) — o texto
+    // genérico ("me confirma o que falta") convidava o rep a REPETIR uma ação
+    // possivelmente executada (ex: disparo em dobro).
+    text: timedOutMidTool
+      ? "Uma das ações demorou demais e precisei parar no meio dela. ⚠️ Ela PODE ter sido concluída mesmo assim — me pede pra conferir o que entrou antes de repetir, beleza?"
+      : "Tô levando tempo demais pra fazer tudo isso de uma vez e precisei parar pra não travar. Me confirma o que ainda falta que eu sigo daí 👍",
     tool_calls,
     model_used: input.model,
     prompt_tokens: totalPromptTokens,
@@ -428,7 +487,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
   });
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    if (Date.now() - budgetStart > TURN_BUDGET_MS) return budgetReturn(i);
+    if (remainingMs() <= 0) return budgetReturn(i);
     let response;
     try {
       // Fix Track 12 M1 (review 2026-05-05): aplica cache_control no ÚLTIMO
@@ -443,18 +502,31 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
               : t,
           )
         : tools;
-      response = await client.messages.create({
-        model: input.model,
-        max_tokens: 2500,
-        system: [
+      // Anti-timeout (H52, buraco A / caso Luciano): a chamada LLM não pode
+      // levar o turno além do orçamento. ⚠️ O timeout do SDK é POR TENTATIVA e
+      // o SDK re-tenta timeout por default — timeout 50s × retries estourava o
+      // hard-limit 60s do mesmo jeito (achado do review adversarial). Por isso:
+      // maxRetries: 0 SEMPRE (falha rápida cai na NOSSA cadeia de fallback
+      // Haiku/OpenAI, que herda ESTE MESMO deadline) e teto de 35s por chamada,
+      // nunca além do que resta do turno (-5s de folga pro pós-call).
+      response = await client.messages.create(
+        {
+          model: input.model,
+          max_tokens: 2500,
+          system: [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            { type: "text", text: input.systemPrompt, cache_control: stablePrefixCache } as any,
+          ],
+          tools: toolsWithCache,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          { type: "text", text: input.systemPrompt, cache_control: stablePrefixCache } as any,
-        ],
-        tools: toolsWithCache,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        messages: messages as any,
-        temperature: 0.3, // mais determinístico pra tool use
-      });
+          messages: messages as any,
+          temperature: 0.3, // mais determinístico pra tool use
+        },
+        {
+          timeout: Math.min(35_000, Math.max(2_000, remainingMs() - 5_000)),
+          maxRetries: 0,
+        },
+      );
     } catch (err) {
       // Fix CRITICAL stress test 2026-05-03: se já executamos tools nessa
       // chamada, NÃO permitir fallback pra outro provider (re-execução).
@@ -546,9 +618,18 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
     for (const tu of toolUses) {
       // Anti-timeout: se o lote de tools (ex: 14 appointments) já estourou o
       // orçamento, para AQUI com fallback gracioso em vez de a lambda morrer.
-      if (Date.now() - budgetStart > TURN_BUDGET_MS) return budgetReturn(i);
+      // Buraco B (H52, casos Luciano/Fabiana): UMA tool lenta (ex: preview de
+      // bulk paginando o CRM) estourava o orçamento POR DENTRO e a lambda
+      // morria muda. A tool corre contra o tempo restante do turno; estourou →
+      // resultado sintético honesto + fallback gracioso AGORA.
+      const remainingForTool = remainingMs();
+      if (remainingForTool < 3_000) return budgetReturn(i);
       try {
-        const result = await input.executor(tu.name, tu.input);
+        const result = await withDeadline(
+          input.executor(tu.name, tu.input),
+          Math.min(Math.max(remainingForTool - 1_000, 2_000), TOOL_DEADLINE_CAP_MS),
+          tu.name,
+        );
         tool_calls.push({ name: tu.name, input: tu.input, result });
         toolResults.push({
           type: "tool_result",
@@ -556,6 +637,10 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
           content: truncateToolResult(JSON.stringify(result)),
         });
       } catch (err) {
+        if (err instanceof DeadlineExceededError) {
+          tool_calls.push({ name: tu.name, input: tu.input, result: TOOL_TIMEOUT_RESULT });
+          return budgetReturn(i, true);
+        }
         const errorMsg = err instanceof Error ? err.message : "tool execution failed";
         tool_calls.push({
           name: tu.name,
@@ -636,9 +721,13 @@ async function runWithOpenAI(input: RunWithToolsInput & { model: string }): Prom
   let totalCachedTokens = 0;
 
   // Orçamento de tempo (anti-timeout silencioso) — ver TURN_BUDGET_MS.
-  const budgetStart = Date.now();
-  const budgetReturn = (iters: number): RunWithToolsOutput => ({
-    text: "Tô levando tempo demais pra fazer tudo isso de uma vez e precisei parar pra não travar. Me confirma o que ainda falta que eu sigo daí 👍",
+  // H52: relógio ABSOLUTO herdado da cadeia (ver runWithClaude — mesma lógica).
+  const deadlineAt = input.deadlineAt ?? Date.now() + TURN_BUDGET_MS;
+  const remainingMs = () => deadlineAt - Date.now();
+  const budgetReturn = (iters: number, timedOutMidTool = false): RunWithToolsOutput => ({
+    text: timedOutMidTool
+      ? "Uma das ações demorou demais e precisei parar no meio dela. ⚠️ Ela PODE ter sido concluída mesmo assim — me pede pra conferir o que entrou antes de repetir, beleza?"
+      : "Tô levando tempo demais pra fazer tudo isso de uma vez e precisei parar pra não travar. Me confirma o que ainda falta que eu sigo daí 👍",
     tool_calls,
     model_used: input.model,
     prompt_tokens: totalPromptTokens,
@@ -649,15 +738,24 @@ async function runWithOpenAI(input: RunWithToolsInput & { model: string }): Prom
   });
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    if (Date.now() - budgetStart > TURN_BUDGET_MS) return budgetReturn(i);
-    const completion = await client.chat.completions.create({
-      model: input.model,
-      messages,
-      tools,
-      temperature: 0.3,
-      max_tokens: 2500,
-      store: true, // ativa OpenAI prompt caching automático
-    });
+    if (remainingMs() <= 0) return budgetReturn(i);
+    // Anti-timeout (H52): mesmo tratamento do caminho Claude — timeout POR
+    // TENTATIVA ≤ restante do turno e maxRetries 0 (o SDK re-tenta timeout
+    // com o mesmo teto; 2 tentativas de 45s estourariam o hard-limit).
+    const completion = await client.chat.completions.create(
+      {
+        model: input.model,
+        messages,
+        tools,
+        temperature: 0.3,
+        max_tokens: 2500,
+        store: true, // ativa OpenAI prompt caching automático
+      },
+      {
+        timeout: Math.min(35_000, Math.max(2_000, remainingMs() - 5_000)),
+        maxRetries: 0,
+      },
+    );
 
     const usage = completion.usage;
     totalPromptTokens += usage?.prompt_tokens || 0;
@@ -693,12 +791,19 @@ async function runWithOpenAI(input: RunWithToolsInput & { model: string }): Prom
     // Executa tool calls
     for (const tc of msg.tool_calls) {
       if (tc.type !== "function") continue;
-      if (Date.now() - budgetStart > TURN_BUDGET_MS) return budgetReturn(i);
+      // Buraco B (H52): deadline por tool — paridade com o caminho Claude;
+      // tool lenta não pode matar a lambda muda.
+      const remainingForTool = remainingMs();
+      if (remainingForTool < 3_000) return budgetReturn(i);
       const args: Record<string, unknown> = (() => {
         try { return JSON.parse(tc.function.arguments); } catch { return {}; }
       })();
       try {
-        const result = await input.executor(tc.function.name, args);
+        const result = await withDeadline(
+          input.executor(tc.function.name, args),
+          Math.min(Math.max(remainingForTool - 1_000, 2_000), TOOL_DEADLINE_CAP_MS),
+          tc.function.name,
+        );
         tool_calls.push({ name: tc.function.name, input: args, result });
         messages.push({
           role: "tool",
@@ -706,6 +811,10 @@ async function runWithOpenAI(input: RunWithToolsInput & { model: string }): Prom
           content: truncateToolResult(JSON.stringify(result)),
         });
       } catch (err) {
+        if (err instanceof DeadlineExceededError) {
+          tool_calls.push({ name: tc.function.name, input: args, result: TOOL_TIMEOUT_RESULT });
+          return budgetReturn(i, true);
+        }
         const errorMsg = err instanceof Error ? err.message : "tool execution failed";
         tool_calls.push({
           name: tc.function.name,

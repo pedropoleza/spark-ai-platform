@@ -285,15 +285,38 @@ export async function mergeRepProfile(
  * sequência lógica e facilitar rastreamento de bugs futuros.
  * Esta função é para outros callers (testes, scripts de manutenção, etc).
  */
-export async function resetSilenceTracking(repId: string, inboundAt: string): Promise<void> {
+export async function resetSilenceTracking(
+  repId: string,
+  inboundAt: string,
+  extraPatch?: Record<string, unknown>,
+): Promise<void> {
   const supabase = createAdminClient();
+  // Heartbeat + counter: SEMPRE (qualquer inbound reabre a janela 24h).
   await supabase
     .from("rep_identities")
     .update({
       last_inbound_at: inboundAt,
       consecutive_proactive_without_reply: 0,
-      proactive_paused_at: null,
-      proactive_warned_at: null,
+      ...(extraPatch || {}),
     })
     .eq("id", repId);
+  // Pausa de proativos: só limpa quando NÃO veio do loop-guard (H52 review
+  // adversarial 2026-07-17). O loop bot-a-bot é EXATAMENTE o cenário "todo
+  // inbound reseta a pausa" — o rep-fantasma sempre responde, então a pausa
+  // do guard nunca segurava e o loop re-acendia todo dia. Pausa por silêncio
+  // (source NULL) segue sendo limpa em qualquer inbound, como sempre foi.
+  // H52 R2: a preservação EXPIRA em 7 dias — rep real flagrado por engano
+  // volta ao normal sozinho (o fantasma real re-flagra na hora via threshold 2).
+  const loopGuardExpiry = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  await supabase
+    .from("rep_identities")
+    .update({
+      proactive_paused_at: null,
+      proactive_warned_at: null,
+      proactive_pause_source: null,
+    })
+    .eq("id", repId)
+    .or(
+      `proactive_pause_source.is.null,proactive_pause_source.neq.loop_guard,proactive_paused_at.lt.${loopGuardExpiry}`,
+    );
 }

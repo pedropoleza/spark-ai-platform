@@ -12,6 +12,7 @@ import { withRetry } from "@/lib/utils/retry";
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
 import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
 import { reportError } from "@/lib/admin-signals/report-error";
+import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import type { FollowUpConfig } from "@/types/agent";
 
 /**
@@ -207,10 +208,49 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       }
 
       // ai_paused_at: humano assumiu, bot fica em silêncio.
+      // Fix bug observado em prod 2026-07-17 (ultra-review P1-8): este era o
+      // ÚNICO branch do loop que dava `continue` SEM atualizar o status — a row
+      // ficava presa em 'processing' PRA SEMPRE (o claim só pega 'pending'):
+      // 11 zumbis em prod, follow-up que nem envia, nem cancela, nem retry.
+      // Agora cancela SÓ este toque (não a sequência): se a IA despausar antes
+      // do próximo irmão, os toques seguintes ainda saem; se seguir pausada,
+      // cada irmão é cancelado lazy na sua vez — sem zumbi.
       if (convState && (convState as { ai_paused_at?: string }).ai_paused_at) {
         console.log(
-          `[FollowUp] Skipping pra contact=${followUp.contact_id} — ai_paused_at setado.`,
+          `[FollowUp] IA pausada pra contact=${followUp.contact_id} — cancelando este toque.`,
         );
+        await supabase
+          .from("scheduled_followups")
+          .update({ status: "cancelled" })
+          .eq("id", followUp.id);
+        continue;
+      }
+
+      // Wallet sem saldo (H52 review adversarial 2026-07-17): o follow-up gera
+      // turno LLM + mensagem pro lead — location bloqueada NÃO gasta nem envia.
+      // Roda DEPOIS dos checks de cancelamento (objetivo cumprido/ai_paused
+      // cancelam mesmo com wallet bloqueada — não gastam LLM) e ANTES do DND
+      // (chamada externa). ADIA o toque em +2h (volta pra pending): a sequência
+      // retoma sozinha após a recarga. Teto anti-zumbi (R2): sequência com
+      // >30 dias de vida numa location que nunca recarrega é CANCELADA — senão
+      // o ciclo claim→defer roda pra sempre e, numa reativação meses depois,
+      // follow-ups fantasmas de conversas mortas acordariam de uma vez.
+      if (await isWalletBlocked(followUp.location_id)) {
+        const createdMs = followUp.created_at ? new Date(followUp.created_at as string).getTime() : Date.now();
+        if (Date.now() - createdMs > 30 * 24 * 60 * 60 * 1000) {
+          await supabase
+            .from("scheduled_followups")
+            .update({ status: "cancelled" })
+            .eq("id", followUp.id);
+        } else {
+          await supabase
+            .from("scheduled_followups")
+            .update({
+              status: "pending",
+              scheduled_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+            })
+            .eq("id", followUp.id);
+        }
         continue;
       }
 
@@ -242,6 +282,24 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             continue;
           }
         } catch (err) {
+          // Fix bug observado em prod 2026-07-17 (ultra-review P1-9): contato
+          // DELETADO do CRM (GHL 400 "Contact not found") caía aqui e falhava
+          // attempt por attempt — os irmãos pending refalhavam dias depois (22
+          // ocorrências do sinal, 27 rows failed). Contato deletado nunca
+          // volta: cancela a sequência INTEIRA do (agent, contact) de uma vez.
+          const errMsg = err instanceof Error ? err.message : String(err);
+          if (/contact\s+not\s+found/i.test(errMsg)) {
+            console.log(
+              `[FollowUp] Contato ${followUp.contact_id} deletado do CRM — cancelando sequência inteira.`,
+            );
+            await supabase
+              .from("scheduled_followups")
+              .update({ status: "cancelled" })
+              .eq("agent_id", followUp.agent_id)
+              .eq("contact_id", followUp.contact_id)
+              .in("status", ["pending", "processing"]);
+            continue;
+          }
           // Se não conseguiu verificar DND, não enviar por segurança
           console.warn("[FollowUp] Could not verify DND, skipping");
           await supabase.from("scheduled_followups").update({ status: "failed" }).eq("id", followUp.id);

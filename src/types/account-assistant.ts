@@ -169,6 +169,12 @@ export interface RepIdentity {
    * mas não inicia conversa. Resetado em qualquer inbound do rep.
    */
   proactive_paused_at?: string | null;
+  /**
+   * H52 (2026-07-17): origem da pausa de proativos. NULL = silence-gate
+   * (qualquer inbound limpa, comportamento clássico); 'loop_guard' = detector
+   * bot-a-bot (inbound NÃO limpa — senão o rep-fantasma re-acendia o loop).
+   */
+  proactive_pause_source?: string | null;
   proactive_warned_at?: string | null;
   consecutive_proactive_without_reply?: number;
   /**
@@ -403,6 +409,7 @@ export type AlertDispatchStatus =
   | "skipped_quiet_hours"
   | "skipped_disabled"
   | "skipped_silence" // rep não tá respondendo — silence gate barrou (3+ proativos sem resposta)
+  | "skipped_wallet_blocked" // location sem saldo no wallet (Pedro 2026-07-17) — não gasta LLM
   | "failed";
 
 export interface AlertState {

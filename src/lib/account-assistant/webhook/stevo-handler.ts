@@ -362,17 +362,10 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
   }
 
   // Silence reset: qualquer inbound do rep limpa counter + pausa proativa.
+  // H52: pausa do loop-guard NÃO é limpa (ver resetSilenceTracking).
   try {
-    const supabase = createAdminClient();
-    await supabase
-      .from("rep_identities")
-      .update({
-        last_inbound_at: new Date().toISOString(),
-        consecutive_proactive_without_reply: 0,
-        proactive_paused_at: null,
-        proactive_warned_at: null,
-      })
-      .eq("id", rep.id);
+    const { resetSilenceTracking } = await import("@/lib/repositories/rep-identities.repo");
+    await resetSilenceTracking(rep.id, new Date().toISOString());
   } catch (err) {
     console.warn(
       "[stevo-handler] silence reset falhou (não-bloqueante):",

@@ -201,16 +201,9 @@ export async function POST(request: NextRequest) {
   //   já que o rep falou. Espelha lógica do webhook-handler.ts WhatsApp.
   try {
     const nowIso = new Date().toISOString();
-    const heartbeatPatch = {
-      web_session_active_at: nowIso,
-      last_inbound_at: nowIso,
-      consecutive_proactive_without_reply: 0,
-      proactive_paused_at: null,
-      proactive_warned_at: null,
-    };
-    // web_session_active_at existe no DB mas não no tipo RepIdentity
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await updateRepById(rep.id, heartbeatPatch as any);
+    // H52: helper compartilhado — pausa do loop-guard NÃO é limpa pelo reset.
+    const { resetSilenceTracking } = await import("@/lib/repositories/rep-identities.repo");
+    await resetSilenceTracking(rep.id, nowIso, { web_session_active_at: nowIso });
   } catch { /* coluna ausente — sem heartbeat */ }
 
   // 7. Monta RepInput. Se tem attachment, usa ele; message vira caption.
