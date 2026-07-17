@@ -3,7 +3,7 @@
  * Hot path: falso-positivo de "humano" = agente pausa errado (fica mudo).
  * Falso-negativo = IA atropela o humano. Os dois são ruins → cobrir bem.
  */
-import { isAiEcho, extractAiSentTexts, classifyLastOutbound } from "../src/lib/queue/human-takeover";
+import { isAiEcho, extractAiSentTexts, classifyLastOutbound, hasUnfilledMergeField } from "../src/lib/queue/human-takeover";
 import { isHumanOutboundMessage } from "../src/lib/queue/lead-history";
 
 let passed = 0, failed = 0;
@@ -64,6 +64,21 @@ eq("IA já ativa + não-eco SEM userId (2º bot/humano no IG) → humano (recua)
 // disc 5 — mídia (sem texto) depois da IA ativa → humano (a IA só manda texto).
 eq("mídia sem texto, IA já ativa → humano",
   cl({ lastOutbound: { body: "", userId: "", source: "app" }, aiTexts: aiMsgs }), true);
+
+console.log("\n=== disc 2b: merge field quebrado = automação, NÃO humano (caso Jussara 2026-07-16) ===");
+eq("hasUnfilledMergeField 'Oi Nome do Cliente'", hasUnfilledMergeField("Oi Nome do Cliente, seu exame está agendado"), true);
+eq("hasUnfilledMergeField '{{contact.name}}'", hasUnfilledMergeField("Olá {{contact.name}}, tudo bem?"), true);
+eq("hasUnfilledMergeField '[nome]'", hasUnfilledMergeField("Oi [nome], passando pra lembrar"), true);
+eq("hasUnfilledMergeField texto normal → false", hasUnfilledMergeField("Oi Tiago, tudo bem?"), false);
+eq("hasUnfilledMergeField colchete comum humano → false", hasUnfilledMergeField("beleza [risos], falo com vc depois"), false);
+// A CHAVE do fix: template quebrado COM userId (automação rodando 'como user',
+// source=api na conta Stevo) NÃO deve pausar a IA. Antes disso caía no disc 3 (userId → humano).
+eq("template quebrado 'Oi Nome do Cliente' + userId + api → NÃO humano (fix Jussara)",
+  cl({ lastOutbound: { body: "Oi Nome do Cliente, seu exame está agendado", userId: "OLxJycjn", source: "api" }, aiTexts: aiMsgs }), false);
+// NÃO-REGRESSÃO: humano de verdade (Brenda) digitando texto normal na conta Stevo
+// (source=api, sem placeholder, IA já falou) → CONTINUA sendo humano (pausa correta).
+eq("Brenda texto normal (api, sem placeholder, IA já ativa) → humano (não regride)",
+  cl({ lastOutbound: { body: "oi, aqui é a Brenda, deixa comigo", userId: "", source: "api" }, aiTexts: aiMsgs }), true);
 
 console.log("\n=== isHumanOutboundMessage (F37/should-respond) — paridade c/ classifyLastOutbound ===");
 const ihm = isHumanOutboundMessage;

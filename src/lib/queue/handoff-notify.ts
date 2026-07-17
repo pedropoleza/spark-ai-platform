@@ -252,3 +252,61 @@ export async function notifyRepViaSparkbot(args: NotifyArgs): Promise<NotifyResu
     return { notified: false, reason: decision.reason, rep_id: rep.id, skipped_reason: "deliver_failed" };
   }
 }
+
+/**
+ * Notifica o rep quando o AUTO-PAUSE POR HISTÓRICO (F52) muta a IA de um contato
+ * (caso Jussara 2026-07-16). Numa conta Stevo/WhatsApp TUDO é source="api", então
+ * o F52 às vezes pausa por engano (automação/eco/áudio) e a IA engolia o lead EM
+ * SILÊNCIO — a rep só descobria reclamando. Aqui ela é avisada (cooldown 4h por
+ * contato, reusa o dedup do handoff) e pode pedir pra retomar. Fail-soft total:
+ * nunca estoura pro caller (o pause em si não pode quebrar por causa do aviso).
+ */
+export async function notifyAutoPauseToRep(args: {
+  agentId: string;
+  locationId: string;
+  contactId: string;
+  contactName?: string | null;
+  assignedUserId?: string | null;
+}): Promise<{ notified: boolean; reason: string }> {
+  const { agentId, locationId, contactId, contactName, assignedUserId } = args;
+  const reason = "auto_pause:human_message:history";
+  try {
+    const supabase = createAdminClient();
+    const rep = await resolveOwnerRep(supabase, locationId, {
+      contact: { assignedUserId: assignedUserId || undefined, name: contactName || undefined },
+    } as unknown as LeadContext);
+    if (!rep) return { notified: false, reason: "no_owner_resolved" };
+    if (await alreadyNotified(supabase, locationId, contactId, reason)) {
+      return { notified: false, reason: "cooldown" };
+    }
+    const who = contactName ? `*${contactName}*` : "um contato";
+    const message =
+      `🤖 Pausei a IA na conversa com ${who} porque apareceu uma resposta que parece de ` +
+      `outra pessoa/automação (nessa conta o WhatsApp não distingue bem quem enviou). ` +
+      `Se foi engano e você quer a IA de volta nesse contato, me avisa aqui que eu retomo.`;
+    const { deliverProactiveMessage } = await import("@/lib/account-assistant/proactive/whatsapp-delivery");
+    const delivery = await deliverProactiveMessage(
+      { id: rep.id, phone: rep.phone || "", last_inbound_at: null },
+      message,
+      {
+        activeLocationId: rep.active_location_id || locationId,
+        source: "lead_handoff_notification",
+        kind: "auto_pause",
+        extraMetadata: { handoff_reason: reason, lead_contact_id: contactId, lead_name: contactName || null, agent_id: agentId },
+      },
+    );
+    await supabase.from("execution_log").insert({
+      agent_id: agentId,
+      location_id: locationId,
+      contact_id: contactId,
+      action_type: "handoff_notification",
+      action_payload: { rep_id: rep.id, reason, delivery_via: delivery.via, delivery_ok: delivery.ok },
+      success: delivery.ok,
+      error_message: delivery.error || null,
+    });
+    return { notified: delivery.ok, reason };
+  } catch (err) {
+    reportError({ title: "Auto-pause notify falhou (não-bloqueante)", feature: "lead-awareness-handoff", severity: "low", error: err });
+    return { notified: false, reason: "error" };
+  }
+}

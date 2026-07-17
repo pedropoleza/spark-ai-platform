@@ -19,7 +19,7 @@
  */
 import { GHLClient } from "@/lib/ghl/client";
 import { isHumanOutboundSource } from "@/lib/ghl/message-sources";
-import { isAiEcho, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { isAiEcho, extractAiSentTexts, hasUnfilledMergeField } from "@/lib/queue/human-takeover";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { LeadContext, LeadHistoryConfig } from "@/types/agent";
 
@@ -176,6 +176,10 @@ export function isHumanOutboundMessage(
   // aiTexts null = não verificável → conservador (não conta humano, fail-open).
   if (aiTexts === null) return false;
   if (isAiEcho(String(msg.body || ""), aiTexts)) return false;
+  // 2b (paridade com classifyLastOutbound, caso Jussara 2026-07-16): merge field
+  // não-interpolado ("Oi Nome do Cliente", "{{...}}", "[nome]") = automação, não
+  // humano — mesmo com userId (a automação roda "como" um user). Vem ANTES do userId.
+  if (hasUnfilledMergeField(String(msg.body || ""))) return false;
   // userId de user do GHL → humano (rep mandou manual). Checado ANTES do disc-4
   // (paridade EXATA com classifyLastOutbound: userId vence aiTexts-vazio) — um rep
   // que escreve pra um lead NOVO (IA ainda não falou) É humano.

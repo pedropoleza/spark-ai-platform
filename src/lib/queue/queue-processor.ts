@@ -28,7 +28,7 @@ import { reportError } from "@/lib/admin-signals/report-error";
 // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
 import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
-import { notifyRepViaSparkbot } from "@/lib/queue/handoff-notify";
+import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
 import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
 import { notifyCriticalError } from "@/lib/utils/notify";
 import { withRetry } from "@/lib/utils/retry";
@@ -570,7 +570,7 @@ async function processGroup(
   type ContactResp = { contact: {
     firstName?: string; lastName?: string; name?: string; email?: string; phone?: string;
     address1?: string; city?: string; state?: string; postalCode?: string; country?: string;
-    dateOfBirth?: string; companyName?: string;
+    dateOfBirth?: string; companyName?: string; assignedTo?: string;
     customFields?: { id: string; value: string; fieldKey?: string }[];
   } };
   type SlotsResp = Record<string, unknown>;
@@ -724,6 +724,21 @@ async function processGroup(
           action_type: "ai_paused",
           action_payload: { reason: "auto_pause:human_message:history", trigger: "F52_history_fallback" },
           success: true,
+        });
+        // Fix caso Jussara 2026-07-16: tira o auto-pause do SILÊNCIO. Numa conta
+        // Stevo (tudo source="api") esse fallback às vezes pausa por engano e
+        // engolia o lead sem a rep saber. Avisa a dona (cooldown 4h por contato,
+        // reusa o dedup do handoff). Fail-soft: nunca quebra o pause.
+        const pausedContactName =
+          contactSettled.status === "fulfilled" ? contactSettled.value?.contact?.name : undefined;
+        const pausedAssignedTo =
+          contactSettled.status === "fulfilled" ? contactSettled.value?.contact?.assignedTo : undefined;
+        await notifyAutoPauseToRep({
+          agentId: agent.id,
+          locationId: group.locationId,
+          contactId: group.contactId,
+          contactName: pausedContactName,
+          assignedUserId: pausedAssignedTo,
         });
         return; // não responde — humano está conduzindo
       }

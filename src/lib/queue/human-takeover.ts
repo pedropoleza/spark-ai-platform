@@ -108,6 +108,12 @@ export interface LastOutboundForClassify {
  *   1. source = automação → NÃO é humano (welcome/campanha/workflow). Alves Cury.
  *   2. eco da própria IA (anti-eco) → NÃO é humano. É o que impede a IA de se
  *      auto-pausar pelo próprio envio multi-parte (caso das 39 / Vandinha).
+ *   2b. MERGE FIELD NÃO-INTERPOLADO ("Oi Nome do Cliente", "{{contact.name}}",
+ *      "[nome]") → NÃO é humano. É automação/workflow do GHL com o campo
+ *      quebrado — humano nunca digita isso. Vem ANTES do userId porque a
+ *      automação roda "como" um user (caso Jussara 2026-07-16: numa conta
+ *      Stevo tudo é source="api", então o passo 1 não pega a automação e o
+ *      "Oi Nome do Cliente" caía no userId → humano → auto-pause indevido).
  *   3. userId de user do GHL presente → humano (sinal forte; reforço, não requisito).
  *   4. IA NUNCA falou nesta conversa (aiTexts vazio) → NÃO pausa: é lead de anúncio/
  *      automação de entrada, não há de quem "assumir". Marcela Lana 2026-06-05.
@@ -120,6 +126,20 @@ export interface LastOutboundForClassify {
  * (se a IA enviou nos ~90s, presume eco e não pausa). Assim, outbound antigo de
  * outro não cala a IA pra sempre — só recua quando o outro falou recentemente.
  */
+/**
+ * `true` se o corpo tem um MERGE FIELD não-interpolado — sinal forte de automação
+ * do GHL com o campo quebrado ("Oi Nome do Cliente", "{{contact.name}}", "[nome]").
+ * Humano digitando no inbox nunca manda isso. Conservador: só tokens conhecidos +
+ * `{{...}}` (handlebars), pra ZERO falso-positivo de humano de verdade.
+ */
+export function hasUnfilledMergeField(body: string): boolean {
+  if (!body) return false;
+  if (/\{\{[^}]{1,60}\}\}/.test(body)) return true; // {{contact.name}} etc
+  if (/\bnome do cliente\b/i.test(body)) return true; // default PT do GHL quando 1º nome vazio
+  if (/\[(nome|nome do cliente|name|first_name|primeiro_nome)\]/i.test(body)) return true;
+  return false;
+}
+
 export function classifyLastOutbound(args: {
   lastOutbound: LastOutboundForClassify;
   aiTexts: string[];
@@ -136,6 +156,11 @@ export function classifyLastOutbound(args: {
     isHuman = false; // automação/workflow do GHL não é humano (mesmo com userId)
   } else if (aiEcho) {
     isHuman = false; // é a própria msg da IA → NÃO auto-pausa pelo próprio eco
+  } else if (hasUnfilledMergeField(body)) {
+    // 2b (caso Jussara 2026-07-16): merge field quebrado = automação, não humano.
+    // ANTES do userId porque a automação roda "como" um user (source="api" na conta
+    // Stevo, então o passo 1 não pega). Sem isto, "Oi Nome do Cliente" auto-pausava.
+    isHuman = false;
   } else if (sentByGhlUser) {
     isHuman = true; // user GHL mandou manual (sinal forte de humano)
   } else if (aiTexts.length === 0) {
