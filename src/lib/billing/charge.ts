@@ -1,7 +1,7 @@
 import { getLocationToken } from "@/lib/ghl/auth";
 import { GHL_API_BASE } from "@/lib/utils/constants";
 import { reportError } from "@/lib/admin-signals/report-error";
-import { calculateCost } from "./pricing";
+import { calculateCost, isKnownModel } from "./pricing";
 import {
   insertUsageRecord,
   markCustomKeyCharged,
@@ -11,6 +11,7 @@ import {
   claimUnbilledBatch,
   reapStaleClaims,
   markWalletCharged,
+  markChargeFailReason,
 } from "@/lib/repositories/usage-records.repo";
 import { getLocationSpendCap } from "@/lib/repositories/agents.repo";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -52,6 +53,19 @@ interface TrackUsageParams {
  * pra ficar visível no Vercel log se a tabela não existir / RLS bloquear.
  */
 export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
+  // A3 (estudo de custo 2026-07-20): modelo fora da tabela de pricing cai no DEFAULT
+  // (gpt-4.1-mini) e SUB-COBRA em silêncio — o claude-sonnet-5 ficou 3 semanas a ~1/8
+  // do preço real com só um console.warn. Vira signal dedupado no /admin/signals.
+  if (!isKnownModel(params.model)) {
+    reportError({
+      title: "Billing: modelo sem pricing — cobrando no DEFAULT (gpt-4.1-mini)",
+      feature: "billing-pricing",
+      severity: "high",
+      error: new Error(`modelo "${params.model}" sem entry no TOKEN_PRICING — adicionar em pricing.ts`),
+      metadata: { model: params.model, action_type: params.actionType, location_id: params.locationId },
+    });
+  }
+
   const cost = calculateCost({
     model: params.model,
     promptTokens: params.promptTokens ?? 0,
@@ -138,6 +152,8 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
       // F49 (review 2026-06-05): mas surface pro admin — se o retry tb falhar,
       // a cobrança se perde silenciosamente (dinheiro).
       reportError({ title: "Billing: cobrança no wallet GHL falhou", feature: "billing-charge", severity: "high", error, metadata: { actionType: params.actionType } });
+      // A7 (2026-07-20): causa da falha no próprio record (best-effort).
+      await markChargeFailReason(record.id, error instanceof Error ? error.message : String(error));
       // Wallet block (Pedro 2026-07-17, ultra-review P0-2): saldo esgotado →
       // marca a location bloqueada; os gates de runtime param de gastar LLM e
       // avisam como recarregar (antes rodava de graça em silêncio).
@@ -412,6 +428,9 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
       // auto-cura quando o cliente recarrega.
       const msg = err instanceof Error ? err.message.slice(0, 200) : String(err);
       sampleErr(record.id, msg);
+      // A7 (2026-07-20): persiste a causa — "pendente" passa a distinguir wallet sem
+      // saldo (auto-cura na recarga) de bug de token/config (perda real). Best-effort.
+      await markChargeFailReason(record.id, msg);
       console.warn(`[Billing] Single charge failed for record ${record.id}: ${msg}`);
       // Wallet block (Pedro 2026-07-17): saldo esgotado → bloqueia a location
       // (idempotente; o retry do reaper re-tenta e desbloqueia quando recarregar).

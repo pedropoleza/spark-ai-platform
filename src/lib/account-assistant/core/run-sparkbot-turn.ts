@@ -50,10 +50,17 @@ export interface RunSparkbotTurnInput {
   model?: string;
   fallbackModel?: string | null;
   /**
-   * F4 (cost-reduction 2026-06): TTL do cache do prefixo estável. "1h" só pro inbound
-   * (gap 5-60min lucra); proativo omite → "5m" default. Repassado pro runWithTools.
+   * F4 (cost-reduction 2026-06) — revertido em A1 (2026-07-20): nenhum caller passa
+   * mais "1h" (ver llm-client.ts RunWithToolsInput.cacheTtl). Mantido pro futuro.
    */
   cacheTtl?: "5m" | "1h";
+  /** A4 (2026-07-20): desliga cache_control — disparo 1x/dia nunca relê o cache. */
+  disableCache?: boolean;
+  /** A2 (2026-07-20): tools terminais (ver llm-client.ts RunWithToolsInput.terminalTools). */
+  terminalTools?: Array<{
+    name: string;
+    validate?: (input: Record<string, unknown>) => boolean;
+  }>;
 }
 
 /**
@@ -116,7 +123,7 @@ function stableArgs(args: unknown): string {
 export async function runSparkbotTurn(
   input: RunSparkbotTurnInput,
 ): Promise<RunWithToolsOutput> {
-  const { systemPrompt, messages, toolCtx, toolSelection, model, fallbackModel, cacheTtl } = input;
+  const { systemPrompt, messages, toolCtx, toolSelection, model, fallbackModel, cacheTtl, disableCache, terminalTools } = input;
 
   const tools =
     toolSelection.kind === "all"
@@ -160,5 +167,7 @@ export async function runSparkbotTurn(
     model,
     fallbackModel,
     cacheTtl,
+    disableCache,
+    terminalTools,
   });
 }

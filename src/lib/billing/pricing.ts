@@ -24,9 +24,18 @@ interface ModelPricing {
 const TOKEN_PRICING: Record<string, ModelPricing> = {
   // ===== Anthropic Claude (cache write = 1.25x input) =====
   "claude-sonnet-4-6":         { input: 3.00,  cachedInput: 0.30,  cacheWriteInput: 3.75,   output: 15.00 },
+  // A3 (estudo de custo 2026-07-20): sonnet-5 estava FORA da tabela → caía no DEFAULT
+  // gpt-4.1-mini e sub-cobrava ~8x (3 agentes lead-facing ativos, 3 semanas sem ninguém
+  // ver). Cobramos o preço de TABELA ($3/$15): a Anthropic pratica intro $2/$10 até
+  // 2026-08-31 — a folga cobre o pós-intro sem precisar de update agendado.
+  "claude-sonnet-5":           { input: 3.00,  cachedInput: 0.30,  cacheWriteInput: 3.75,   output: 15.00 },
   "claude-haiku-4-5":          { input: 1.00,  cachedInput: 0.10,  cacheWriteInput: 1.25,   output: 5.00  },
   "claude-haiku-4-5-20251001": { input: 1.00,  cachedInput: 0.10,  cacheWriteInput: 1.25,   output: 5.00  },
-  "claude-opus-4-6":           { input: 15.00, cachedInput: 1.50,  cacheWriteInput: 18.75,  output: 75.00 },
+  // A3: o preço do Opus 4.6 estava 3x ERRADO pra cima ($15/$75 era a família Opus 4.1);
+  // Opus 4.5-4.8 custam $5/$25 (cache-read $0.50, write $6.25). 4-7/4-8 preventivos.
+  "claude-opus-4-6":           { input: 5.00,  cachedInput: 0.50,  cacheWriteInput: 6.25,   output: 25.00 },
+  "claude-opus-4-7":           { input: 5.00,  cachedInput: 0.50,  cacheWriteInput: 6.25,   output: 25.00 },
+  "claude-opus-4-8":           { input: 5.00,  cachedInput: 0.50,  cacheWriteInput: 6.25,   output: 25.00 },
 
   // ===== OpenAI GPT-5.4 (placeholder — modelo não anunciado oficialmente) =====
   // Sinalizado em UI; se algum agent estiver setado nesse modelo o pricing
@@ -172,6 +181,17 @@ export function calculateCost(
     markupUsd: Math.round(markupUsd * 1_000_000) / 1_000_000,
     totalChargeUsd: Math.round(totalChargeUsd * 1_000_000) / 1_000_000,
   };
+}
+
+/**
+ * A3 (estudo de custo 2026-07-20): true se o modelo resolve pra pricing CONHECIDO
+ * (chave exata, prefixo, ou modelo de áudio). O trackAndCharge usa isto pra emitir
+ * admin_signal quando um modelo cai no DEFAULT — o claude-sonnet-5 ficou 3 semanas
+ * cobrando ~1/8 do preço real com um console.warn que ninguém lê.
+ */
+export function isKnownModel(model: string): boolean {
+  if (TOKEN_PRICING[model] || AUDIO_PRICING[model]) return true;
+  return Object.keys(TOKEN_PRICING).some((key) => model.startsWith(key));
 }
 
 /**

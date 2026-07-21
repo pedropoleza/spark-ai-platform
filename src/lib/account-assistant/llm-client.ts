@@ -94,6 +94,38 @@ async function getAnthropicClient() {
 }
 
 /**
+ * A2 (estudo de custo 2026-07-20): decisão PURA (testável) de encerrar o loop numa
+ * tool terminal. Regras: (1) a resposta do modelo teve EXATAMENTE um tool_use;
+ * (2) ele é uma tool terminal registrada; (3) a execução não devolveu status:"error";
+ * (4) o validate (se houver) aprova o input — validate que LANÇA conta como reprovado.
+ * Qualquer "não" → o loop segue normal (o LLM vê o resultado e escreve o texto).
+ */
+export function shouldEndOnTerminalTool(params: {
+  toolUses: Array<{ name: string; input: Record<string, unknown> }>;
+  terminalTools?: Array<{ name: string; validate?: (input: Record<string, unknown>) => boolean }>;
+  /** A última tool_call registrada nesta iteração ({name, result}). */
+  lastCall?: { name: string; result: unknown } | null;
+}): boolean {
+  const { toolUses, terminalTools, lastCall } = params;
+  if (toolUses.length !== 1 || !terminalTools?.length) return false;
+  const tu = toolUses[0];
+  const t = terminalTools.find((x) => x.name === tu.name);
+  if (!t) return false;
+  const execOk =
+    !!lastCall && lastCall.name === tu.name &&
+    (lastCall.result as { status?: string } | null | undefined)?.status !== "error";
+  if (!execOk) return false;
+  if (t.validate) {
+    try {
+      return t.validate(tu.input);
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Erro especial: LLM falhou DEPOIS de já ter executado tools com side-effects.
  * NÃO deve cair em fallback (provider secundário re-executaria as tools).
  *
@@ -156,12 +188,41 @@ export interface RunWithToolsInput {
    */
   fallbackModel?: string | null;
   /**
-   * F4 (cost-reduction 2026-06): TTL do cache do prefixo estável (tools+system).
-   * "1h" só pro INBOUND (reps com gap 5-60min entre turnos — ~10% medido — lucram ao
-   * reler em vez de re-escrever). Proativo/briefing NÃO seta → fica "5m" (default): são
-   * disparos one-shot raramente relidos, onde o write 2x do 1h seria custo puro. Default "5m".
+   * F4 (cost-reduction 2026-06) — ⚠️ REVERTIDO em A1 (estudo de custo 2026-07-20):
+   * o TTL 1h foi medido NET-NEGATIVO (18% dos gaps >1h = frios de qualquer jeito,
+   * vs só 10% na janela 5-60min que ele salvava) E sub-cobrado (Anthropic fatura
+   * write 1h a 2x = $6/M no sonnet; pricing.ts cobrava 1.25x = ~$56-63/mês
+   * invisíveis ao cost_usd). O SPARKBOT não passa mais "1h" por aqui. ⚠️ O
+   * LEAD-FACING (queue-processor.ts → openai-client.ts, plumbing PRÓPRIO de
+   * cacheTtl) AINDA passa "1h" — lá o 1h é net-POSITIVO (hit ~70%) mas o
+   * billing segue cobrando write a 1,25x = furo ~$15-19/mês ABERTO (review
+   * Onda A 2026-07-21). Fix pendente: ler usage.cache_creation.
+   * ephemeral_{5m,1h}_input_tokens do SDK e cobrar o bucket 1h a 2x no
+   * pricing.ts — vale pros DOIS caminhos se o 1h voltar aqui.
    */
   cacheTtl?: "5m" | "1h";
+  /**
+   * A4 (estudo de custo 2026-07-20): desliga TODO cache_control da chamada
+   * (prefixo E histórico). Pra disparos agendados 1x/dia (Resumo matinal etc):
+   * a cadência (24h) é maior que o TTL máximo do cache (1h), então o write
+   * premium de 1.25x era pago todo dia e NUNCA lido (medido: cache_read=0 em
+   * 126/126 runs do Resumo matinal).
+   */
+  disableCache?: boolean;
+  /**
+   * A2 (estudo de custo 2026-07-20): tools TERMINAIS. Quando a resposta do
+   * modelo contém EXATAMENTE um tool_use desta lista, com `validate(input)` ok
+   * e execução sem erro, o loop retorna SEM a chamada LLM seguinte — o caller
+   * gera o texto final deterministicamente e DESCARTAVA o texto dessa chamada
+   * (caso present_options: ~76K tok de prefixo relido pra um texto jogado fora,
+   * 683x/mês). Payload inválido ou erro na tool → loop segue normal (o LLM vê
+   * o resultado e reage). Implementado no caminho Claude; o fallback OpenAI
+   * (raro) mantém o comportamento antigo (paga a chamada extra, sem quebrar).
+   */
+  terminalTools?: Array<{
+    name: string;
+    validate?: (input: Record<string, unknown>) => boolean;
+  }>;
 }
 
 export interface RunWithToolsOutput {
@@ -183,7 +244,9 @@ export interface RunWithToolsOutput {
    */
   cache_creation_tokens?: number;
   iterations: number;
-  stopped_reason: "end_turn" | "max_iterations" | "error" | "time_budget";
+  /** "terminal_tool" (A2): encerrado numa tool terminal — text vem VAZIO de
+   *  propósito; o caller gera o texto final (ex: interactiveFallbackText). */
+  stopped_reason: "end_turn" | "max_iterations" | "error" | "time_budget" | "terminal_tool";
   /** Erro do modelo primário, se houve fallback. Ajuda debug Claude vs OpenAI. */
   primary_error?: string;
   /** Erro do secundário Claude, se também falhou e caiu pra OpenAI. */
@@ -426,7 +489,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
   // tool_result, o marker pularia de posição e o prefixo cacheado mudaria a cada iteração.
   // TTL default (5min): o histórico cresce todo turno, não compensa o write 2x do 1h aqui.
   // Breakpoints ativos: tools[último] + system + este penúltimo-message = 3 de 4 (sobra 1).
-  if (messages.length >= 2) {
+  if (!input.disableCache && messages.length >= 2) {
     const penIdx = messages.length - 2;
     const pen = messages[penIdx];
     const blocks: AnthropicBlock[] =
@@ -441,10 +504,9 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
     }
   }
 
-  // F4 (cost-reduction 2026-06): TTL do cache do PREFIXO estável (tools+system). 1h só no
-  // inbound (cacheTtl="1h" setado pelo processor) — net-positivo pros ~10% de turnos com gap
-  // 5-60min. Proativo/briefing fica no default 5m (one-shot, raramente relido → 1h seria
-  // write 2x de custo puro). O breakpoint do histórico (F3) fica SEMPRE em 5m (muda todo turno).
+  // F4 (cost-reduction 2026-06) — REVERTIDO em A1 (2026-07-20): nenhum caller passa mais
+  // "1h" (net-negativo + sub-cobrado; ver doc do campo cacheTtl). O mecanismo fica pra
+  // eventual reativação COM billing por bucket. O breakpoint do histórico (F3) é SEMPRE 5m.
   const stablePrefixCache =
     input.cacheTtl === "1h"
       ? ({ type: "ephemeral", ttl: "1h" } as const)
@@ -494,8 +556,10 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
       // tool além do system prompt. Tools array (~30 defs JSON pesado) é
       // estável entre turns — ~30% economia de input tokens em cache hit.
       // Anthropic cacheia tudo até o último marker ephemeral inclusivo.
+      // A4: disableCache → nenhum marker (disparo 1x/dia nunca relê o cache;
+      // o write premium era custo puro).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const toolsWithCache: any = Array.isArray(tools) && tools.length > 0
+      const toolsWithCache: any = !input.disableCache && Array.isArray(tools) && tools.length > 0
         ? tools.map((t, idx) =>
             idx === tools.length - 1
               ? { ...t, cache_control: stablePrefixCache }
@@ -514,8 +578,10 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
           model: input.model,
           max_tokens: 2500,
           system: [
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            { type: "text", text: input.systemPrompt, cache_control: stablePrefixCache } as any,
+            input.disableCache
+              ? { type: "text" as const, text: input.systemPrompt }
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              : ({ type: "text", text: input.systemPrompt, cache_control: stablePrefixCache } as any),
           ],
           tools: toolsWithCache,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -656,6 +722,31 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
     }
 
     messages.push({ role: "user", content: toolResults });
+
+    // A2 (estudo de custo 2026-07-20): tool TERMINAL — se a resposta teve SÓ ela,
+    // payload válido e execução ok, encerra AQUI. A chamada LLM seguinte era paga
+    // (~76K tok de prefixo relido) e o texto dela DESCARTADO pelo caller, que gera
+    // o texto final deterministicamente (present_options → interactiveFallbackText).
+    // Erro na tool ou payload inválido → loop segue normal (o LLM reage/reescreve).
+    if (
+      shouldEndOnTerminalTool({
+        toolUses,
+        terminalTools: input.terminalTools,
+        lastCall: tool_calls[tool_calls.length - 1] ?? null,
+      })
+    ) {
+      return {
+        text: "",
+        tool_calls,
+        model_used: input.model,
+        prompt_tokens: totalPromptTokens,
+        completion_tokens: totalCompletionTokens,
+        cached_tokens: totalCachedTokens,
+        cache_creation_tokens: totalCacheCreationTokens,
+        iterations: i + 1,
+        stopped_reason: "terminal_tool",
+      };
+    }
   }
 
   // Loop excedeu maxIterations

@@ -526,7 +526,33 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     },
     model: rule.ai_model || agentConfig?.ai_model || "claude-haiku-4-5-20251001",
     fallbackModel: agentConfig?.fallback_model ?? null,
+    // A4 (estudo de custo 2026-07-20): regra SCHEDULED = disparo 1x/dia (Resumo matinal
+    // etc). A cadência (24h) é maior que o TTL máximo do cache (1h) → NUNCA há cache-read
+    // (medido: 0 em 126/126 runs do Resumo matinal) e o write premium de 1.25x era custo
+    // puro — cachear aqui custava MAIS que não cachear. Reativas (ex: Pós-reunião)
+    // seguem cacheando: releem o prefixo em ~44% dos runs (disparos agrupam pós-evento).
+    // ⚠️ PREMISSA (review 2026-07-21): run de 1 ITERAÇÃO (126/126 medidos). Um run que
+    // chame tool (2+ iterações) paga o prefixo fresh N vezes e fica ~48% MAIS caro que
+    // cacheado — o guard abaixo torna o flip visível antes de doer (rules da Onda 3-5
+    // do H43 são tool-dependentes; revisar o A4 antes de ligá-las).
+    disableCache: rule.rule_type === "scheduled",
   });
+
+  // Guard do A4 (review Onda A 2026-07-21): scheduled iterou com cache desligado →
+  // a premissa de 1 iteração quebrou pra ESTA regra; signal dedupado pro Pedro rever.
+  if (rule.rule_type === "scheduled" && llmResult.iterations > 1) {
+    reportError({
+      title: "A4: regra scheduled iterou sem cache — revisar disableCache",
+      feature: "proactive-dispatcher",
+      severity: "low",
+      error: new Error(
+        `rule "${rule.name}" fez ${llmResult.iterations} iterações com disableCache — ` +
+        `sem cache, cada iteração re-paga o prefixo inteiro (~48% mais caro que cacheado). ` +
+        `Condicionar o disableCache pra esta regra (ver H53/A4).`,
+      ),
+      metadata: { rule_name: rule.name, iterations: llmResult.iterations },
+    });
+  }
   const durationMs = Date.now() - startTs;
 
   if (!llmResult.text || llmResult.stopped_reason === "error") {

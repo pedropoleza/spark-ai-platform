@@ -304,7 +304,12 @@ export async function markWalletCharged(
   chargedAt: string,
 ): Promise<void> {
   const supabase = createAdminClient();
-  await supabase
+  // Review Onda A (2026-07-21): o UPDATE do DINHEIRO fica ordering-proof — sem a
+  // coluna nova do A7 no payload. Se charge_fail_reason faltar num ambiente (drift
+  // de migration, staging fresh), o PostgREST falharia o statement INTEIRO em
+  // silêncio (PGRST204; supabase-js não lança) e a cobrança JÁ FEITA no GHL nunca
+  // seria marcada → re-charge em loop pelo cron. Crítico primeiro; clear separado.
+  const { error } = await supabase
     .from("usage_records")
     .update({
       charged_to_wallet: true,
@@ -312,4 +317,33 @@ export async function markWalletCharged(
       charged_at: chargedAt,
     })
     .eq("id", recordId);
+  if (error) {
+    console.error(`[usage-records] markWalletCharged FALHOU record=${recordId}: ${error.message}`);
+  }
+  // A7 (2026-07-20): cobrança passou → limpa a causa da falha anterior (best-effort).
+  try {
+    await supabase
+      .from("usage_records")
+      .update({ charge_fail_reason: null })
+      .eq("id", recordId);
+  } catch {
+    /* best-effort — nunca derruba o caminho do dinheiro */
+  }
+}
+
+/**
+ * A7 (estudo de custo 2026-07-20): persiste a CAUSA da falha de cobrança no próprio
+ * record. Sem isso, "pendente" não distingue wallet sem saldo (esperado; auto-cura na
+ * recarga) de bug de token/config (perda silenciosa). Best-effort — nunca lança.
+ */
+export async function markChargeFailReason(recordId: string, reason: string): Promise<void> {
+  try {
+    const supabase = createAdminClient();
+    await supabase
+      .from("usage_records")
+      .update({ charge_fail_reason: reason.slice(0, 300) })
+      .eq("id", recordId);
+  } catch {
+    /* observabilidade best-effort — não pode quebrar o fluxo de cobrança */
+  }
 }

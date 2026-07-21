@@ -713,9 +713,27 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     },
     model: input.config.ai_model,
     fallbackModel: input.config.fallback_model,
-    // F4 (cost-reduction 2026-06): só o inbound usa TTL 1h no prefixo cacheado — os ~10% de
-    // turnos com gap 5-60min releem em vez de re-escrever. Proativo fica no default 5m.
-    cacheTtl: "1h",
+    // A1 (estudo de custo 2026-07-20) — REVERTE o F4/H44 ("cacheTtl: 1h"): o TTL 1h foi
+    // medido NET-NEGATIVO (18% dos gaps entre turnos são >1h = frios de qualquer jeito,
+    // vs só 10% na janela 5-60min que ele salvava) E SUB-COBRADO (a Anthropic fatura
+    // write de 1h a 2x = $6/M no sonnet; pricing.ts cobrava o flat de 1.25x = ~$56-63/mês
+    // de custo real invisível ao cost_usd). Voltamos ao default 5m. Se reativar um dia:
+    // ANTES ler usage.cache_creation.ephemeral_{5m,1h} do SDK e cobrar o bucket 1h a 2x.
+    //
+    // A2 (estudo de custo 2026-07-20): present_options é tool TERMINAL — o texto final é
+    // gerado deterministicamente (interactiveFallbackText, ~linha 1054) e o texto da
+    // chamada LLM seguinte era DESCARTADO (683 chamadas/mês de ~76K tok pagas à toa).
+    // Só encerra com payload VÁLIDO (mesma validação da extração); payload inválido ou
+    // erro → o loop segue e o LLM escreve o texto como antes (os ~2% de casos inválidos).
+    terminalTools: interactiveEnabled
+      ? [
+          {
+            name: "present_options",
+            validate: (inp) =>
+              extractInteractiveFromToolCalls([{ name: "present_options", input: inp }]) !== null,
+          },
+        ]
+      : undefined,
   });
 
   // F10 (contact-resolution 2026-06): registra contatos resolvidos NESTE turno no buffer
