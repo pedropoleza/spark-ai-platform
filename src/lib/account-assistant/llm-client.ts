@@ -247,6 +247,13 @@ export interface RunWithToolsOutput {
   /** "terminal_tool" (A2): encerrado numa tool terminal — text vem VAZIO de
    *  propósito; o caller gera o texto final (ex: interactiveFallbackText). */
   stopped_reason: "end_turn" | "max_iterations" | "error" | "time_budget" | "terminal_tool";
+  /**
+   * B0 (Onda B custo 2026-07-21): usage POR CHAMADA LLM (1 entry por iteração do
+   * loop). Resolve a divergência de anatomia do estudo (prefixo 40K vs 76K? quantas
+   * chamadas por turno?) com dado REAL em vez de inferência. Persiste na metadata
+   * de sparkbot_messages. Só o caminho Claude popula; OpenAI (fallback raro) omite.
+   */
+  call_usage?: Array<{ fresh: number; read: number; write: number; out: number }>;
   /** Erro do modelo primário, se houve fallback. Ajuda debug Claude vs OpenAI. */
   primary_error?: string;
   /** Erro do secundário Claude, se também falhou e caiu pra OpenAI. */
@@ -523,6 +530,8 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
   let totalCompletionTokens = 0;
   let totalCachedTokens = 0;
   let totalCacheCreationTokens = 0;
+  // B0 (Onda B 2026-07-21): usage por chamada — anatomia real do turno.
+  const call_usage: NonNullable<RunWithToolsOutput["call_usage"]> = [];
 
   // Orçamento de tempo (anti-timeout silencioso) — ver TURN_BUDGET_MS.
   // H52 (review adversarial 2026-07-17): o relógio é ABSOLUTO e herdado do
@@ -544,6 +553,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
     completion_tokens: totalCompletionTokens,
     cached_tokens: totalCachedTokens,
     cache_creation_tokens: totalCacheCreationTokens,
+    call_usage,
     iterations: iters,
     stopped_reason: "time_budget",
   });
@@ -633,6 +643,13 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
     totalCompletionTokens += response.usage?.output_tokens || 0;
     totalCachedTokens += cachedInput;
     totalCacheCreationTokens += cacheCreation;
+    // B0: 1 entry por chamada (cap MAX_ITERATIONS=10 → payload pequeno).
+    call_usage.push({
+      fresh: freshInput,
+      read: cachedInput,
+      write: cacheCreation,
+      out: response.usage?.output_tokens || 0,
+    });
 
     // Append response como assistant message
     messages.push({ role: "assistant", content: response.content as AnthropicBlock[] });
@@ -651,6 +668,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
         completion_tokens: totalCompletionTokens,
         cached_tokens: totalCachedTokens,
         cache_creation_tokens: totalCacheCreationTokens,
+    call_usage,
         iterations: i + 1,
         stopped_reason: "end_turn",
       };
@@ -675,6 +693,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
         completion_tokens: totalCompletionTokens,
         cached_tokens: totalCachedTokens,
         cache_creation_tokens: totalCacheCreationTokens,
+    call_usage,
         iterations: i + 1,
         stopped_reason: "end_turn",
       };
@@ -743,6 +762,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
         completion_tokens: totalCompletionTokens,
         cached_tokens: totalCachedTokens,
         cache_creation_tokens: totalCacheCreationTokens,
+    call_usage,
         iterations: i + 1,
         stopped_reason: "terminal_tool",
       };
@@ -758,6 +778,7 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
     completion_tokens: totalCompletionTokens,
     cached_tokens: totalCachedTokens,
     cache_creation_tokens: totalCacheCreationTokens,
+    call_usage,
     iterations: MAX_ITERATIONS,
     stopped_reason: "max_iterations",
   };

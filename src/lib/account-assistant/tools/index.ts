@@ -112,11 +112,11 @@ function withConfirmationParam(def: ToolDefinition, mode: ConfirmationMode): Too
   if (!properties.confirmed_by_rep) {
     properties.confirmed_by_rep = {
       type: "boolean",
+      // B2 (Onda B 2026-07-21): prosa enxuta — o protocolo completo mora na seção
+      // "# CONFIRMAÇÃO DE AÇÕES (H8)" do system (era 349 chars x 23 tools no prefixo).
+      // O `required` continua injetado abaixo — é a parte load-bearing do anti-loop.
       description:
-        "OBRIGATÓRIO antes de executar esta tool. " +
-        "Passe `false` na PRIMEIRA chamada (rep ainda não confirmou) — gate bloqueia e devolve mensagem dizendo pra perguntar 'Confirma?'. " +
-        "Depois que rep responder 'sim/confirma/pode/ok', RECHAME esta tool com EXATAMENTE os mesmos argumentos + `confirmed_by_rep: true`. " +
-        "NUNCA omita esse campo. Sem ele, gate bloqueia.",
+        "Gate H8 (ver # CONFIRMAÇÃO DE AÇÕES (H8) no system): 1ª chamada com `false` → o sistema pede confirmação; após o 'sim' do rep, RECHAME com os MESMOS args + `true`. Nunca omita.",
     };
   }
   // Fix Pedro 2026-05-06: marca como REQUIRED no schema. Sem isso,

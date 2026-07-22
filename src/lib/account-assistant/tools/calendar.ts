@@ -1054,10 +1054,9 @@ const createAppointment: ToolEntry = {
   def: {
     name: "create_appointment",
     description:
-      "⚠️ AGENDA reunião pra um contato no calendário. AFETA o lead — sempre confirma com o rep ANTES. Use get_free_slots pra escolher horário válido.\n\n" +
-      "Observação importante: pra calendars **round-robin/collective/group** (com vários team members), NÃO passe `assigned_user_id` — deixe o Spark Leads escolher automaticamente. Pra calendars **personal/service** (1 user só), opcional. Default: não passar (mais seguro pra qualquer tipo de calendar).\n\n" +
-      "⚙️ MEETING LOCATION (qualquer rep): se rep especificar onde/como — 'Zoom', 'Google Meet', 'presencial em [endereço]', 'telefone [num]', 'link [url]' — passe `meeting_location_type` E `meeting_location`. Sem isso, o Spark Leads ignora silenciosamente e usa default do calendar (bug histórico pré-H26).\n\n" +
-      "⚙️ OVERRIDE ADMIN (apenas internal team): se rep admin pedir pra forçar slot bloqueado (`ignore_free_slot_validation`), ignorar minimum notice (`ignore_date_range`), ou marcar sem notificação (`to_notify=false`), SEMPRE explicite o override na frase de confirmação: 'Vou marcar X mesmo com slot bloqueado — confirma?'. NUNCA use silenciosamente. Rep não-admin recebe erro do gate.",
+      // B2 (Onda B 2026-07-21): prosa de MEETING LOCATION/OVERRIDE saiu — mora nas seções
+      // # AGENDAR REUNIÃO / # MEETING LOCATION / OVERRIDE do system (fonte única).
+      "⚠️ AGENDA reunião pra um contato no calendário. AFETA o lead — sempre confirme com o rep ANTES; use get_free_slots pra horário válido. Regras completas (meeting location, override admin, assignee) na seção # AGENDAR REUNIÃO do system. Calendars round-robin/collective/group: NÃO passe `assigned_user_id` (o Spark Leads escolhe); default é não passar.",
     risk: "high",
     parameters: {
       type: "object",

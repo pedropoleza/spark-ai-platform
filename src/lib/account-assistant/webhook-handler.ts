@@ -896,6 +896,8 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
         // resultado a 800 chars pra não estourar jsonb. Cap em 30 calls
         // (Fix Pedro 2026-05-19: era 5, mascarava debug em turns com
         // muitos search+write em sequência tipo "cria nota nos 8 agentes").
+        // B0 (Onda B 2026-07-21): anatomia real do turno (usage por chamada LLM).
+        call_usage: result.call_usage,
         tool_calls: (result.tool_calls || []).slice(0, 30).map((tc) => ({
           name: tc.name,
           input: tc.input,

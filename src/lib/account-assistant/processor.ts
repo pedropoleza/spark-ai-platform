@@ -38,7 +38,7 @@ import {
   setActiveLocation,
   syncRepInternalFlag,
 } from "./identity";
-import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1, type BuildPromptArgs } from "./prompt-builder";
+import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, buildRepContextBlock, loadCarrierTier1, type BuildPromptArgs } from "./prompt-builder";
 import { assembleSystemPrompt, isUnifiedMotorEnabled } from "@/lib/agent-platform/assembler";
 import { runWithTools, type LLMMessage } from "./llm-client";
 import { getAllToolDefinitions, executeTool, type ToolContext } from "./tools";
@@ -123,6 +123,9 @@ export interface ProcessOutput {
     input: Record<string, unknown>;
     result: unknown;
   }>;
+  /** B0 (Onda B 2026-07-21): usage por chamada LLM (anatomia real do turno).
+   *  Persiste em sparkbot_messages.metadata.call_usage. */
+  call_usage?: Array<{ fresh: number; read: number; write: number; out: number }>;
   /** True se runWithTools retornou stopped_reason='error' ou 'max_iterations'.
    *  Test endpoint deve persistir em metadata pra próximo turno detectar
    *  loop e responder com fallback explícito. */
@@ -631,6 +634,15 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     // não mais pelo system prompt. Reusa o objeto já montado em sparkbotPromptArgs (o system
     // ignora esse campo agora). Mantém o prefixo cacheado byte-estável por-conversa.
     conversationalLayer: sparkbotPromptArgs.conversationalLayer,
+    // B3 (Onda B custo 2026-07-21): FORMATO DE HORA + CONTEXTO DO REP + MEMÓRIA saíram do
+    // system (única variação por-rep) → system byte-idêntico por config = cache compartilhado
+    // entre os 55 reps do hub. Strings verbatim, mesma informação disponível ao LLM.
+    repContextBlock: buildRepContextBlock({
+      rep,
+      locationName: sparkbotPromptArgs.locationName,
+      locationTimezone: timezone,
+      locale,
+    }),
   });
 
   // F3 (contact-resolution 2026-06): "CONTATO EM FOCO" — herda o contact_id de um proativo
@@ -852,6 +864,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
         },
         tool_calls: result.tool_calls,
         tools_executed: result.tool_calls.map((tc) => tc.name),
+    call_usage: result.call_usage,
       };
     }
   }
@@ -943,6 +956,10 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
           result.prompt_tokens += rerun.prompt_tokens;
           result.completion_tokens += rerun.completion_tokens;
           result.cached_tokens += rerun.cached_tokens;
+          // B0 (review Onda B): rerun também entra na anatomia (senão sum(call_usage)
+          // não fecha com prompt_tokens exatamente nos turnos anômalos que o B0 mede).
+          result.cache_creation_tokens = (result.cache_creation_tokens ?? 0) + (rerun.cache_creation_tokens ?? 0);
+          if (rerun.call_usage?.length) result.call_usage = [...(result.call_usage || []), ...rerun.call_usage];
           // Recheck contra a UNIÃO das tools (turno original + re-run): cobre
           // 'rerun' (write nova) e 'rewrite' (write já feita no turno original).
           const combined = [...result.tool_calls, ...rerun.tool_calls];
@@ -1108,6 +1125,10 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
         result.prompt_tokens += rerun.prompt_tokens;
         result.completion_tokens += rerun.completion_tokens;
         result.cached_tokens += rerun.cached_tokens;
+        // B0 (review Onda B): rerun também entra na anatomia + cache_creation (paridade
+        // com o rerun do coherence-gate acima).
+        result.cache_creation_tokens = (result.cache_creation_tokens ?? 0) + (rerun.cache_creation_tokens ?? 0);
+        if (rerun.call_usage?.length) result.call_usage = [...(result.call_usage || []), ...rerun.call_usage];
         // Só aceita o re-run se ele REALMENTE saiu do loop (não ecoa de novo).
         if (rerun.text && !findBotEcho(rerun.text, history) && !isNearDuplicate(rerun.text, finalText)) {
           broke = stripDashes(rerun.text);
@@ -1150,6 +1171,7 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     },
     model_used: result.model_used,
     tools_executed: result.tool_calls.map((tc) => tc.name),
+    call_usage: result.call_usage,
     tool_calls: result.tool_calls,
     llm_failed: llmFailed,
     primary_error: result.primary_error,

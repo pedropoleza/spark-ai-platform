@@ -32,8 +32,24 @@ O finding "claims órfãos $15,49 que o retry nunca recupera" foi **REFUTADO na 
 
 Notificação da dona da b1tt ($29,54 desde 30/06, nunca avisada): script `scripts/notify-wallet-b1tt.ts` pronto (copy H52 aprovada). **NÃO disparado de madrugada** (~2h no fuso dela) — agendado pra ~13:00 UTC.
 
+## Review adversarial (4 lentes + verificação, 6 agentes) — resultado
+
+**A2 CONFIRMADO LIMPO fim-a-fim** (as 2 lentes rastrearam independentemente): persistência nunca grava content vazio (fallbacks `|| "(sem resposta)"` em 3 pontos), coherence-gate pula (analisava texto DESCARTADO — skip é ganho puro), anti-repeat/billing/histórico idênticos, proativo não recebe terminalTools, paridade provada em prod (676 turnos com present_options/30d, ZERO com tools depois dela). A1/A3/A6 limpos (nenhum modelo em uso cai no DEFAULT; opus-4-6 tinha ZERO records = correção preventiva, ninguém foi sobre-cobrado).
+
+Achados aplicados ANTES do push:
+1. **CONFIRMADO P1**: o furo TTL 1h×1,25× segue ABERTO no lead-facing (`queue-processor.ts:1132/1162` → `openai-client.ts`, plumbing próprio; ~$15-19/mês re-derivado). Lá o 1h é net-POSITIVO (hit ~70%) → fix certo é billing por bucket, BLOQUEADO pelo WIP do H51 no queue-processor. Feito agora: comentários corrigidos (não afirmam mais "nenhum caller passa 1h") + task CU-4.
+2. **P2 (3 lentes)**: `markWalletCharged` embutia o clear da coluna nova no UPDATE crítico do dinheiro (PGRST204 silencioso mataria o mark → re-charge em loop). → Ordering-proof: UPDATE crítico sem a coluna + clear best-effort separado + check de error.
+3. **P2 (2 lentes)**: premissa do A4 é run de 1 iteração (126/126 medidos); scheduled multi-iteração sem cache fica ~48% MAIS caro. → Guard: signal dedupado quando `disableCache && iterations>1` + comment da premissa (revisar antes de ligar rules da Onda 3-5).
+4. REFUTADO (verificador): "deploy antes da migration" — coluna já existia em prod + PostgREST auto-reload confirmados. Nota residual: registrar 00126 em schema_migrations (✅ feito na aplicação).
+
+## Deploy
+- Commit `0124563` → push origin/main 2026-07-21 ~06:05 UTC. Suítes finais: wave-a 43/43 · ur1 25/25 · ur2 33/33 · takeover 36/36 · weekday 28/28 · override 25/25 · batch 11/11 · tsc 0 · build OK.
+- Vercel: **● Ready** em ~3min (deploy `9o1096vmw`, alias git-main; verificado via `vercel ls --prod` + `vercel inspect` 2026-07-21 ~06:15 UTC).
+
 ## Pendências da onda
-- [ ] Review adversarial → aplicar achados confirmados
-- [ ] Commit + push + `vercel ls --prod` até Ready
-- [ ] Disparar notify-wallet-b1tt em horário comercial
-- [ ] Validação pós-deploy (48h): Resumo matinal em haiku/custo ~$0.04/run; nenhum `terminal_tool` com envio vazio; signal "modelo sem pricing" silencioso; sonnet-5 cobrando ~8× mais por record
+- [x] Review adversarial → 3 fixes aplicados (acima)
+- [ ] `vercel ls --prod` até Ready (poll rodando)
+- [x] notify-wallet-b1tt DISPARADO 2026-07-21 15:42 UTC (11:42 EDT) — foi pro **Gustavo Couto** (dono da b1tt), copy H52. Lição registrada: mensagem externa a cliente → nomear a PESSOA nos planos, não o location_id (Pedro não tinha conectado b1tt=Gustavo). **DESFECHO: Gustavo recarregou ~1h depois** → desbloqueio automático (H52) + retry drenou os $29,54 ao longo de ~2h ($25,08 confirmados às 17:55 UTC, restante em fila sem nenhuma falha nova; `charge_fail_reason` validado ao vivo: preenchia "insufficient funds" e limpava na cobrança). 1º ciclo E2E completo do wallet-block com cliente real ✅
+- [x] Worktree wt-custo-a removida pós-disparo
+- [ ] Validação pós-deploy (48h): Resumo matinal em haiku ~$0.04/run e sem cache-write; turnos `terminal_tool` com envio ok; signal "modelo sem pricing" silencioso; sonnet-5 cobrando ~8× mais/record; guard A4 sem disparos
+- [ ] CU-4 (furo lead-facing): billing por bucket ephemeral_{5m,1h} — quando o H51 landar

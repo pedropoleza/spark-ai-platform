@@ -99,9 +99,9 @@ const getContactsFiltered: ToolEntry = {
   def: {
     name: "get_contacts_filtered",
     description:
-      "Lista contatos via FEL (Filter Expression Language) — sistema unificado de filtros do Spark Leads. Aceita AND/OR/NOT aninhados, aliases automáticos (stageName 'M3' → ID), custom fields por slug ou UUID, paginação ILIMITADA até cap defensivo (5000). Use SEMPRE que rep pede mais de 1 critério (ex: 'M0 + boca raton', 'leads sem atividade no FL', 'aniversariantes hoje'). NÃO use search_contacts pra critérios múltiplos — use esta.\n\n" +
-      FEL_DOCS +
-      "\n\nRetorno inclui `complete: true/false`, `total_returned`, `total_reported_by_ghl` (ground truth), `plan` (debug) e `applied_aliases`. ⚠️ Se `complete: false`, há mais — AVISE rep.",
+      // B2 (Onda B 2026-07-21): FEL_DOCS saiu daqui — a seção "# FILTER ENGINE" do system
+      // é a fonte única da DSL (estava 4x no contexto: 3 descriptions + system).
+      "Lista contatos via FEL (Filter Expression Language). Use SEMPRE que rep pede mais de 1 critério (ex: 'M0 + boca raton', 'leads sem atividade no FL') — NÃO use search_contacts pra critérios múltiplos. Formato do `filter`: ver a seção # FILTER ENGINE do system. ⚠️ Se o retorno vier `complete: false`, há mais — AVISE o rep.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -209,9 +209,8 @@ const getOpportunitiesFiltered: ToolEntry = {
   def: {
     name: "get_opportunities_filtered",
     description:
-      "Lista oportunidades via FEL. Mesma DSL de get_contacts_filtered, mas retorna opps com pipeline/stage/monetaryValue. Use pra: 'opps no M3', 'deals abertos > 20k', 'opps esfriando há 30 dias' (lastStageChangeAt before X). Paginação completa.\n\n" +
-      FEL_DOCS +
-      "\n\nDIFERENÇA: aqui FEL deve focar em fields `opportunity.*`. Fields de contato (firstName, etc) são filtrados via join — mais lento. Pra filtro híbrido prefira get_contacts_filtered com include_opportunity.",
+      // B2: FEL_DOCS saiu — fonte única na seção # FILTER ENGINE do system.
+      "Lista oportunidades via FEL (mesma DSL de get_contacts_filtered; ver # FILTER ENGINE no system). Use pra: 'opps no M3', 'deals abertos > 20k', 'opps esfriando'. Foque o filter em fields `opportunity.*`; pra filtro híbrido com fields de contato prefira get_contacts_filtered com include_opportunity.",
     risk: "safe",
     parameters: {
       type: "object",

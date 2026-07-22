@@ -381,23 +381,9 @@ const previewBulkMessageV2: ToolEntry = {
   def: {
     name: "preview_bulk_message_v2",
     description:
-      "Preview de disparo em massa multi-segment via Filter Engine (H28). Aceita 1+ segmentos (cada um com filter FEL + message_template). Retorna count/segment + dedup + ETA + DISCLAIMERS + delivery_options PRÉ-COMPUTADAS (Pedro 2026-05-15).\n\n" +
-      "💡 FLUXO INTUITIVO RECOMENDADO (Pedro 2026-05-15):\n" +
-      "  1. Se rep já deu briefing claro do tom da mensagem ('texto curto humanizado', 'tom casual sobre X'), GERE o message_template direto — NÃO pergunte 'qual texto?' de novo.\n" +
-      "  2. Chame preview_bulk_message_v2 com texto montado.\n" +
-      "  3. Pegue `delivery_options[]` do retorno (3 opções pré-calculadas: hoje / spread N dias / custom window) e APRESENTE COMO MENU NUMERADO pro rep:\n" +
-      "       Como quer distribuir o envio?\n" +
-      "       1. Tudo hoje (~3h)\n" +
-      "       2. Spread em 2 dias (~60/dia)\n" +
-      "       3. Janela específica (você define)\n" +
-      "  4. Coleta disclaimer flags TODOS, daí schedule_bulk_message_v2 com delivery_strategy escolhida.\n\n" +
-      "EXEMPLO MULTI-SEGMENT:\n" +
-      "  segments=[\n" +
-      "    { label:'M0', filter:{field:'opportunity.stageName',op:'eq',value:'M0'}, message_template:'Bem-vindo {first_name}!' },\n" +
-      "    { label:'Prova Agendada', filter:{field:'opportunity.stageName',op:'eq',value:'Prova Agendada'}, message_template:'Oi {first_name}, último dia do ingresso...' }\n" +
-      "  ]\n\n" +
-      "INTERPOLAÇÃO: {first_name} {last_name} {full_name} {email} {phone} {tags[0]} {custom.slug} {opportunity.stage_name} {opportunity.value} {opportunity.customField.slug}\n\n" +
-      "⚠️ Sempre PRIMEIRO preview → exibe disclaimers + delivery_options → rep escolhe → schedule_bulk_message_v2 com delivery_strategy + flags.",
+      // B2 (Onda B 2026-07-21): fluxo/exemplo/interpolação saíram — moram na seção
+      // # BULK MESSAGES V2 do system (a maior do prompt; fonte única).
+      "Preview de disparo em massa multi-segment via Filter Engine (H28): 1+ segmentos (filter FEL + message_template cada). Retorna counts + dedup + ETA + DISCLAIMERS + delivery_options pré-computadas. ⚠️ SEMPRE preview PRIMEIRO → apresente disclaimers + delivery_options como menu → só então schedule_bulk_message_v2. Fluxo completo e interpolação: seção # BULK MESSAGES V2 do system.",
     risk: "safe",
     parameters: {
       type: "object",
@@ -708,12 +694,8 @@ const scheduleBulkMessageV2: ToolEntry = {
   def: {
     name: "schedule_bulk_message_v2",
     description:
-      "Cria job de disparo em massa multi-segment (H28). EXIGE que rep tenha confirmado TODOS os disclaimers do preview previamente. Tool aceita N segmentos, cada com filter FEL + template próprios, gera job único + N recipients no DB, runner dispara espaçado respeitando quiet_hours.\n\n" +
-      "⚠️ FLUXO OBRIGATÓRIO:\n" +
-      "  1. `preview_bulk_message_v2` primeiro — mostra disclaimers + counts.\n" +
-      "  2. Bot exibe CADA disclaimer pro rep separadamente, colhe confirmação textual de CADA.\n" +
-      "  3. Bot chama `schedule_bulk_message_v2` com `confirmed_by_rep:true` + as flags de aceite (confirmed_warm_list, confirmed_risk_cold/volume, etc).\n\n" +
-      "Sem os flags corretos, tool retorna erro listando quais faltam.",
+      // B2: fluxo obrigatório mora na seção # BULK MESSAGES V2 do system.
+      "Cria o job de disparo em massa multi-segment (H28). EXIGE preview prévio + confirmação textual de CADA disclaimer (flags confirmed_warm_list/confirmed_risk_* etc — sem elas a tool devolve erro listando o que falta). Fluxo completo: seção # BULK MESSAGES V2 do system.",
     risk: "high",
     parameters: {
       type: "object",

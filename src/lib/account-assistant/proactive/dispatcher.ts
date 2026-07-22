@@ -26,7 +26,7 @@ import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
 import type { LLMMessage } from "../llm-client";
 import { type ToolContext } from "../tools";
 import { runSparkbotTurn, buildToolCtx } from "../core/run-sparkbot-turn";
-import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "../prompt-builder";
+import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, buildRepContextBlock, loadCarrierTier1 } from "../prompt-builder";
 import type {
   ProactiveRule,
   RepIdentity,
@@ -463,7 +463,18 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
   // O suffix volátil do modo proativo + a instrução da regra + o JSON do disparo vão na
   // user message (não-cacheada) — mesmas strings verbatim de antes (parity de comportamento).
   const runtimeContext = [
-    buildSparkbotRuntimeContext({ locationTimezone: tz, locale }),
+    // B3 (Onda B custo 2026-07-21): repContextBlock = paridade com o inbound — o bloco
+    // por-rep (nome/fuso/memória) saiu do system e o proativo também precisa dele.
+    buildSparkbotRuntimeContext({
+      locationTimezone: tz,
+      locale,
+      repContextBlock: buildRepContextBlock({
+        rep,
+        locationName: location.location_name || activeLocationId,
+        locationTimezone: tz,
+        locale,
+      }),
+    }),
     "",
     "# MODO PROATIVO ATIVADO",
     `Você está iniciando uma conversa proativamente (não foi o rep que pediu — você está agindo por conta própria pra ajudar).`,

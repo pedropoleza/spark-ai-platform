@@ -608,6 +608,9 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       // H47-F0 (telemetria 2026-07-10): funil de resolução de contato re-rodável
       // (confidence × método × score por search_contacts do turno).
       contact_resolution: result.contact_resolution ?? null,
+      // B0 (Onda B 2026-07-21): anatomia real do turno — a rota Stevo é ~97% do tráfego
+      // (o review pegou: só o webhook-handler persistia e o B0 ficava cego em prod).
+      call_usage: result.call_usage ?? null,
       // H47-F2 (2026-07-10): opções COMPLETAS da lista/botões enviados — o tap
       // volta com selection_id e o handler resolve DETERMINISTICAMENTE qual
       // opção/contato o rep escolheu (ver enriquecimento 4b no inbound).
