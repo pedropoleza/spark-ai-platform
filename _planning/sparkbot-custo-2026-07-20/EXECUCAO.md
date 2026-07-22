@@ -53,3 +53,6 @@ Achados aplicados ANTES do push:
 - [x] Worktree wt-custo-a removida pós-disparo
 - [ ] Validação pós-deploy (48h): Resumo matinal em haiku ~$0.04/run e sem cache-write; turnos `terminal_tool` com envio ok; signal "modelo sem pricing" silencioso; sonnet-5 cobrando ~8× mais/record; guard A4 sem disparos
 - [ ] CU-4 (furo lead-facing): billing por bucket ephemeral_{5m,1h} — quando o H51 landar
+
+## Onda B deploy 1 (H54) — 2026-07-21, commit 7157050
+B3 prefixo global por-config (~$50/mes) + B2 dieta descriptions (tools 103K->92K) + B0 call_usage por chamada (webhook+Stevo). Review: ZERO P0/P1, 1 confirmado (B0 cego na rota Stevo, corrigido) + 6 P2. Sem migration/flag — rollback = revert. Validacao 48h: cache-write/turno cai, call_usage populando, conversa da Jussara honra manual_context (👤). Pendente: B1 tool-search defer, B4 secoes condicionais, B5 proativos F8.
