@@ -10,6 +10,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { identifyRep } from "./identity";
 import { processIncoming } from "./processor";
+import { buildProcessorConfig } from "./core/processor-config";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { extractRepInput, type AudioMeta } from "./webhook/input-parser";
@@ -845,26 +846,9 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     agentId: hubAgent.id,
     conversationHistory,
     channel: "whatsapp",
-    config: {
-      confirmation_mode:
-        (agentConfig?.confirmation_mode as "always" | "medium_and_high" | "high_only") ||
-        "high_only",
-      ai_model: agentConfig?.ai_model,
-      fallback_model: agentConfig?.fallback_model || null,
-      custom_instructions: agentConfig?.custom_instructions || null,
-      knowledge_base_instructions: agentConfig?.knowledge_base_instructions || null,
-      disabled_tools: Array.isArray(agentConfig?.disabled_tools) ? agentConfig.disabled_tools : [],
-      enabled_kbs: Array.isArray(agentConfig?.enabled_kbs)
-        ? agentConfig.enabled_kbs
-        : ["national_life_group", "agency_brazillionaires"],
-      tone_creativity: agentConfig?.tone_creativity ?? null,
-      tone_formality: agentConfig?.tone_formality ?? null,
-      tone_naturalness: agentConfig?.tone_naturalness ?? null,
-      tone_aggressiveness: agentConfig?.tone_aggressiveness ?? null,
-      enable_audio_transcription: agentConfig?.enable_audio_transcription ?? true,
-      enable_image_analysis: agentConfig?.enable_image_analysis ?? true,
-      enable_pdf_reading: agentConfig?.enable_pdf_reading ?? true,
-    },
+    // Ultra-review 2026-07-22: mapeador único (buildProcessorConfig) usado pelas 3
+    // rotas — impede o drift que deixou a rota Stevo com config hardcoded.
+    config: buildProcessorConfig(agentConfig as Record<string, unknown> | null),
   });
 
   if (result.should_send && result.text) {

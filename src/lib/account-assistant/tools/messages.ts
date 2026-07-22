@@ -348,6 +348,39 @@ const scheduleMessageToContact: ToolEntry = {
 
     try {
       const supabase = (await import("@/lib/supabase/admin")).createAdminClient();
+
+      // Dedup determinístico (ultra-review 2026-07-22, caso Gustavo): o LLM às vezes
+      // chama a tool 2× no mesmo turno (turnos sobrepostos) → 2 agendamentos idênticos
+      // = o contato recebe a MESMA mensagem 2×. Se já existe um pending idêntico
+      // (mesmo rep+contato+horário+texto), devolve o existente sem criar outro
+      // (idempotente, mesmo espírito do F58). Não bloqueia agendamentos legítimos
+      // com texto/horário diferentes.
+      const { data: dup } = await supabase
+        .from("assistant_scheduled_tasks")
+        .select("id, next_run_at")
+        .eq("rep_id", ctx.rep.id)
+        .eq("location_id", ctx.locationId)
+        .eq("status", "pending")
+        .eq("next_run_at", isoSend)
+        .eq("task_payload->>contact_id", contactId)
+        .eq("task_payload->>message", message)
+        .limit(1)
+        .maybeSingle();
+      if (dup?.id) {
+        return {
+          status: "ok",
+          data: {
+            scheduled_id: dup.id,
+            contact_id: contactId,
+            send_at: dup.next_run_at,
+            channel,
+            recurring: !!recurrence,
+            recurrence: recurrence || null,
+            deduped: true,
+          },
+        };
+      }
+
       const { data, error } = await supabase
         .from("assistant_scheduled_tasks")
         .insert({

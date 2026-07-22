@@ -290,6 +290,8 @@ export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToo
           prompt_tokens: err.partialResult.prompt_tokens || 0,
           completion_tokens: err.partialResult.completion_tokens || 0,
           cached_tokens: err.partialResult.cached_tokens || 0,
+          cache_creation_tokens: err.partialResult.cache_creation_tokens, // C6: billing/anatomia
+          call_usage: err.partialResult.call_usage, // C6: anatomia B0 fecha nos turnos que morrem
           iterations: err.partialResult.iterations || 0,
           stopped_reason: "error" as const,
           primary_error: errMsg,
@@ -341,6 +343,8 @@ export async function runWithTools(input: RunWithToolsInput): Promise<RunWithToo
             prompt_tokens: err2.partialResult.prompt_tokens || 0,
             completion_tokens: err2.partialResult.completion_tokens || 0,
             cached_tokens: err2.partialResult.cached_tokens || 0,
+            cache_creation_tokens: err2.partialResult.cache_creation_tokens, // C6
+            call_usage: err2.partialResult.call_usage, // C6
             iterations: err2.partialResult.iterations || 0,
             stopped_reason: "error" as const,
             primary_error: primaryErrMsg,
@@ -616,6 +620,12 @@ async function runWithClaude(input: RunWithToolsInput & { model: string }): Prom
             prompt_tokens: totalPromptTokens,
             completion_tokens: totalCompletionTokens,
             cached_tokens: totalCachedTokens,
+            // C6 (ultra-review 2026-07-22): sem estes 2, o turno que morre no meio
+            // some da anatomia B0 (sum(call_usage) < prompt_tokens) e os tokens de
+            // cache-write são cobrados a fresh (sub-cobrança ~25%). Os acumuladores
+            // já existem no escopo do loop.
+            cache_creation_tokens: totalCacheCreationTokens,
+            call_usage,
             iterations: i,
             stopped_reason: "error" as const,
           },

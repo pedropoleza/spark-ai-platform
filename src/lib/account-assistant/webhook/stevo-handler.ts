@@ -27,6 +27,7 @@ import { resolvePrimaryHub } from "../hub-resolver";
 import { identifyRep } from "../identity";
 import { processFile } from "../file-processor";
 import { processIncoming } from "../processor";
+import { buildProcessorConfig } from "../core/processor-config";
 import { transcribeAudioFromBuffer } from "@/lib/ai/audio-transcriber";
 import { reportError } from "@/lib/admin-signals/report-error";
 import {
@@ -429,7 +430,21 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
     );
   }
 
-  // 7. Processa via pipeline padrão (mesma config default do webhook GHL).
+  // 7. Processa via pipeline padrão.
+  // Ultra-review 2026-07-22 (P1): a rota Stevo (~97% do inbound) ignorava o
+  // agent_config e usava config HARDCODED → o A5 (disabled_tools) ficava INERTE
+  // no WhatsApp e QUALQUER edição de config (modelo, instruções, tools, tones)
+  // não chegava à rota dominante. Agora carrega o config real via o mesmo
+  // mapeador (buildProcessorConfig) das outras 2 rotas. enable_audio/image/pdf
+  // seguem TRUE (default do helper; os campos do hub foram corrigidos junto — o
+  // áudio é load-bearing e o hardcode antigo os mantinha true de propósito).
+  const cfgClient = createAdminClient();
+  const { data: agentConfig } = await cfgClient
+    .from("agent_configs")
+    .select("*")
+    .eq("agent_id", agentId)
+    .maybeSingle();
+
   let result;
   try {
     result = await processIncoming({
@@ -438,13 +453,7 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       agentId,
       conversationHistory,
       channel: "whatsapp",
-      config: {
-        confirmation_mode: "high_only",
-        enabled_kbs: ["national_life_group", "agency_brazillionaires"],
-        enable_audio_transcription: true,
-        enable_image_analysis: true,
-        enable_pdf_reading: true,
-      },
+      config: buildProcessorConfig(agentConfig as Record<string, unknown> | null),
     });
   } catch (err) {
     console.error(
@@ -611,6 +620,15 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       // B0 (Onda B 2026-07-21): anatomia real do turno — a rota Stevo é ~97% do tráfego
       // (o review pegou: só o webhook-handler persistia e o B0 ficava cego em prod).
       call_usage: result.call_usage ?? null,
+      // tool_calls completos (ultra-review 2026-07-22): a rota Stevo (~97% do tráfego)
+      // não persistia isso → falhas de tool (ex: create_opportunity 4× da Bianca)
+      // ficavam indiagnosticáveis pelo DB. Paridade com o webhook-handler: {name,
+      // input, result_preview} truncado a 800 chars, cap 30 calls.
+      tool_calls: (result.tool_calls || []).slice(0, 30).map((tc) => ({
+        name: tc.name,
+        input: tc.input,
+        result_preview: JSON.stringify(tc.result).slice(0, 800),
+      })),
       // H47-F2 (2026-07-10): opções COMPLETAS da lista/botões enviados — o tap
       // volta com selection_id e o handler resolve DETERMINISTICAMENTE qual
       // opção/contato o rep escolheu (ver enriquecimento 4b no inbound).

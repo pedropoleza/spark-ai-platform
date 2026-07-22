@@ -22,6 +22,36 @@ export interface LoopGuardMsg {
   created_at: string;
   /** tamanho do texto (chars) */
   content_len: number;
+  /**
+   * Ultra-review 2026-07-22 (caso Melissa, falso positivo P0): a msg do "rep" é
+   * PROVA DE HUMANO — tap em opção interativa (botão/lista) ou áudio. Um bot em
+   * loop nunca toca botão nem grava áudio; e o tap é persistido com o eco da
+   * pergunta (`[opção escolhida na lista: ...]`), inflando o content_len acima do
+   * piso de 40 e derrotando a exceção de "texto curto". Quando true, a troca
+   * QUEBRA o padrão de loop (mesmo efeito de texto curto/gap longo).
+   */
+  is_human_proof?: boolean;
+}
+
+/**
+ * Ultra-review 2026-07-22 (caso Melissa): true se a msg do "rep" é prova de
+ * HUMANO — tap em opção interativa (botão/lista) ou áudio gravado. Bot em loop
+ * manda só texto: nunca toca botão nem grava áudio. Usa metadata (fonte real)
+ * com fallback nos markers de content (msgs antigas sem metadata completa).
+ * Puro/testável — chamado pelo processor ao montar as LoopGuardMsg.
+ */
+export function isHumanProofMsg(
+  content: string | null | undefined,
+  metadata: Record<string, unknown> | null | undefined,
+): boolean {
+  const m = metadata || {};
+  if (m.interactive_reply || m.selection_id) return true; // tap de menu
+  if (m.input_kind === "audio") return true; // áudio
+  const c = content || "";
+  // Fallbacks determinísticos (o stevo-handler grava esses markers no content):
+  if (c.includes("opção escolhida na lista:")) return true;
+  if (c.startsWith("🎤")) return true;
+  return false;
 }
 
 /** Trocas agent→user consecutivas no fim da conversa pra acusar loop. */
@@ -62,6 +92,10 @@ export function detectPingPongLoop(
       continue;
     }
     const user = msgsAsc[idx];
+    // Ultra-review 2026-07-22 (caso Melissa): tap de menu ou áudio = prova de
+    // humano interagindo com a UI/mic do bot — o OPOSTO de bot-a-bot. Quebra o
+    // padrão (o fluxo interativo do Agendamento V2 é rápido POR ser 1 toque).
+    if (user.is_human_proof) break;
     const prev = msgsAsc[idx - 1];
     if (prev.role !== "agent") break; // user atrás de user = humano em rajada
     const gap =

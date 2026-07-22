@@ -628,6 +628,10 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
         target_id: targetId,
         model: llmResult.model_used,
         tools: llmResult.tool_calls.map((t) => t.name),
+        // C6 (ultra-review 2026-07-22): anatomia B0 no caminho PROATIVO (o B0 só
+        // cobria inbound; ~127 disparos de regra + 86 reminders/sem ficavam cegos —
+        // justo onde o A4/disableCache precisa de acompanhamento).
+        call_usage: llmResult.call_usage ?? null,
         // F8 (contact-resolution 2026-06): chave PADRONIZADA contact_id/contact_name pro
         // "contato em foco" (F3) herdar. Só de campo EXPLÍCITO de contato no contextData
         // (triggers de task/appointment/followup) — NÃO usa target_id cru (ambíguo, pode

@@ -383,21 +383,28 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     try {
       const { data: recentMsgs } = await supabase
         .from("sparkbot_messages")
-        .select("role, created_at, content")
+        .select("role, created_at, content, metadata")
         .eq("rep_id", rep.id)
         .eq("channel", "whatsapp")
         .order("created_at", { ascending: false })
         .limit(16);
-      const msgsAsc = (recentMsgs || [])
-        .reverse()
-        .map((m) => ({
-          role: String((m as { role?: string }).role || ""),
-          created_at: String((m as { created_at?: string }).created_at || ""),
-          content_len: String((m as { content?: string }).content || "").length,
-        }));
-      const { detectPingPongLoop } = await import(
+      const { detectPingPongLoop, isHumanProofMsg } = await import(
         "@/lib/account-assistant/loop-guard"
       );
+      const msgsAsc = (recentMsgs || [])
+        .reverse()
+        .map((m) => {
+          const mm = m as { role?: string; created_at?: string; content?: string; metadata?: Record<string, unknown> };
+          return {
+            role: String(mm.role || ""),
+            created_at: String(mm.created_at || ""),
+            content_len: String(mm.content || "").length,
+            // Ultra-review 2026-07-22 (caso Melissa): tap de menu/áudio = prova de
+            // humano → quebra o padrão de loop no loop-guard (o fluxo interativo do
+            // Agendamento V2 é rápido por ser 1 toque, não porque é bot-a-bot).
+            is_human_proof: isHumanProofMsg(mm.content, mm.metadata),
+          };
+        });
       // H52 R2: a flag decai — threshold reduzido (2) só vale se o flagra é
       // RECENTE (<48h). Flag velha volta ao threshold padrão (6): um rep REAL
       // flagrado por engano não fica em modo degradado pra sempre (a pausa em
