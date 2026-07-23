@@ -3,6 +3,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import { buildFollowUpPrompt } from "@/lib/ai/sales-prompt-builder";
 import { sanitizeOutbound, resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
+import { splitLeadOutbound } from "@/lib/ai/message-splitter";
 import { processWithAI } from "@/lib/ai/openai-client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { withRetry } from "@/lib/utils/retry";
@@ -14,6 +15,36 @@ import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-take
 import { reportError } from "@/lib/admin-signals/report-error";
 import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import type { FollowUpConfig } from "@/types/agent";
+
+// Delay curto entre bolhas de um mesmo follow-up (quando o texto é quebrado em
+// várias). Curto o bastante pra não estourar o cron serverless.
+function bubbleDelay(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 400 + Math.random() * 400));
+}
+
+/**
+ * Envia um texto de follow-up pro lead, quebrando "wall of text" em bolhas
+ * curtas (healthcheck 2026-07-23) e entregando cada bolha como uma mensagem
+ * separada. Devolve o array de bolhas efetivamente enviadas (pra logar no
+ * execution_log com o mesmo shape do fluxo principal).
+ */
+async function sendFollowUpMessage(
+  client: GHLClient,
+  params: { contactId: string; outboundType: string; subject?: string },
+  text: string,
+): Promise<string[]> {
+  const bubbles = splitLeadOutbound([text]).messages;
+  for (let i = 0; i < bubbles.length; i++) {
+    if (i > 0) await bubbleDelay();
+    await client.post("/conversations/messages", {
+      type: params.outboundType,
+      contactId: params.contactId,
+      message: bubbles[i],
+      ...(params.subject ? { subject: params.subject } : {}),
+    });
+  }
+  return bubbles;
+}
 
 /**
  * Agenda follow-ups para uma conversa que ficou inativa.
@@ -431,20 +462,20 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       // INVISÍVEL: o loader (👍/👎) e o anti-eco do F52 identificam "mensagem da
       // IA" por execution_log.send_message — era o "não mostra thumbs no follow-up".
       let sentText: string | null = null;
+      let sentBubbles: string[] | null = null;
       // Fix Marina 2026-06-18: a IA pode DECIDIR não fazer follow-up (lead adiou/
       // recusou/acabamos de responder) retornando message vazia. Antes o prompt
       // mandava "SEMPRE envie" → virava o "já voltou do Brasil?" 10min depois.
       let aiDecidedSkip = false;
 
-      // Se tem mensagem customizada, enviar direto
+      // Se tem mensagem customizada, enviar direto (quebrando bolha longa)
       if (followUp.custom_message) {
-        await client.post("/conversations/messages", {
-          type: outboundType,
-          contactId: followUp.contact_id,
-          message: followUp.custom_message,
-          ...(outboundSubject ? { subject: outboundSubject } : {}),
-        });
-        sentText = followUp.custom_message;
+        sentBubbles = await sendFollowUpMessage(
+          client,
+          { contactId: followUp.contact_id, outboundType, subject: outboundSubject },
+          followUp.custom_message,
+        );
+        sentText = sentBubbles.join("\n\n");
       } else {
         // Buscar contexto recente (últimas 10 msgs + nome) para personalizar o follow-up.
         // Dois fetches em paralelo para minimizar latência do scheduler.
@@ -622,13 +653,14 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             const san = sanitizeOutbound([msgText.trim()], resolveForbiddenTerms(followUp.agent_id, config.forbidden_terms));
             const finalMsg = san.messages.join("\n\n");
             if (san.redacted) console.warn("[Sanitizer/followup] Redacted:", san.hits.join(", "));
-            await client.post("/conversations/messages", {
-              type: outboundType,
-              contactId: followUp.contact_id,
-              message: finalMsg,
-              ...(outboundSubject ? { subject: outboundSubject } : {}),
-            });
-            sentText = finalMsg;
+            // Quebra "wall of text" em bolhas curtas antes de enviar (healthcheck
+            // 2026-07-23). No-op pra follow-up já curto (o normal aqui).
+            sentBubbles = await sendFollowUpMessage(
+              client,
+              { contactId: followUp.contact_id, outboundType, subject: outboundSubject },
+              finalMsg,
+            );
+            sentText = sentBubbles.join("\n\n");
           } else {
             aiDecidedSkip = true; // sentinela OU vazio = a IA optou por NÃO mandar
           }
@@ -650,7 +682,9 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           location_id: followUp.location_id,
           action_type: "send_message",
           action_payload: {
-            message: [sentText.trim()],
+            // Bolhas efetivamente enviadas (o texto longo pode ter virado várias);
+            // fallback pro texto único preserva o shape mesmo sem sentBubbles.
+            message: sentBubbles && sentBubbles.length ? sentBubbles : [sentText.trim()],
             source: "follow_up",
             attempt_number: followUp.attempt_number,
           },

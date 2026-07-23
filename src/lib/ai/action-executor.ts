@@ -3,6 +3,7 @@ import { channelToMessageType } from "@/lib/ghl/channel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveMeetingLocation } from "@/lib/queue/meeting-links";
 import { sanitizeOutbound, resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
+import { splitLeadOutbound } from "@/lib/ai/message-splitter";
 import {
   addTagsToContact,
   removeTagsFromContact,
@@ -134,6 +135,18 @@ export async function executeActions(
     messages = sanitized.messages;
     console.warn("[Sanitizer] Redacted forbidden terms:", sanitized.hits.join(", "));
     await logExecution(supabase, ctx, "outbound_sanitized", { hits: sanitized.hits });
+  }
+
+  // Guarda determinística de tamanho (healthcheck 2026-07-23, caso five star
+  // ricos): quebra "wall of text" (700-800 chars numa bolha) em bolhas curtas
+  // ANTES de enviar. Roda DEPOIS do sanitizer (o texto redigido também é
+  // limitado) e é no-op pra mensagem já curta. Loop de envio abaixo já entrega
+  // cada bolha como uma mensagem separada com delay.
+  const split = splitLeadOutbound(messages);
+  if (split.didSplit) {
+    messages = split.messages;
+    console.log(`[Splitter] Bolha longa quebrada → ${messages.length} bolhas`);
+    await logExecution(supabase, ctx, "outbound_split", { parts: messages.length });
   }
 
   if (!ctx.skipSendMessage && messages.length > 0) {

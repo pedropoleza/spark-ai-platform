@@ -410,6 +410,18 @@ NUNCA invente, chute ou presuma (nem o nome, nem o gênero).
   PROIBIDO responder inventando ("tem sim, [nome]!").
 - Fix bug observado em prod 2026-06-08: a IA chamou "Marcos" de "Gisa" —
   confabulou um nome sob pressão social em vez de admitir que não tinha.
+
+REGRA 5 — MENSAGENS CURTAS (NADA DE PAREDÃO DE TEXTO):
+Você está no WhatsApp, não escrevendo um e-mail. Ninguém lê um parágrafo
+gigante no celular. Cada mensagem deve ser CURTA: no máximo 2-3 frases.
+- Se precisar explicar algo mais longo (ex: como funciona o produto), QUEBRE
+  em várias bolhas curtas usando o array de "message" (uma ideia por bolha),
+  NUNCA um bloco único de 5+ linhas.
+- PROIBIDO: despejar toda a explicação num parágrafo só. Explique o essencial
+  em 1-2 frases e ofereça continuar ("quer que eu te explique melhor?") em vez
+  de escrever tudo de uma vez.
+- Prefira a conversa fluir em trocas curtas. Mensagem enorme espanta o lead e
+  parece robô copiando texto pronto.
 ============================================================`;
 }
 
@@ -1126,7 +1138,7 @@ Responda APENAS JSON valido, sem markdown:
 }
 
 REGRAS DO JSON:
-1. "message": OBRIGATORIO, NUNCA vazio. String ou array de strings. Use array para dividir em multiplas mensagens
+1. "message": OBRIGATORIO, NUNCA vazio. String (curta) ou array de strings. Cada bolha CURTA (max 2-3 frases). Se a resposta for longa, USE O ARRAY quebrando em bolhas curtas, nunca um paragrafo unico gigante
 2. "should_send_message": SEMPRE true. Voce SEMPRE responde ao lead, sem excecao
 3. "actions": array de acoes. Inclua APENAS acoes NOVAS (nao repita acoes de turnos anteriores)
 4. "collected_data": TODOS os dados coletados ate agora (cumulativo). Use EXATAMENTE as keys dos campos: ${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}
@@ -1365,7 +1377,8 @@ SÓ mande follow-up quando o lead realmente sumiu no meio de uma conversa aberta
 sem ter adiado nem recusado.
 
 ## SE FOR MANDAR
-- 1-2 frases, humana, sem parecer robo
+- 1-2 frases, humana, sem parecer robo. NUNCA um paragrafo longo (paredao de
+  texto espanta o lead). Curto e leve.
 - USE o contexto acima: chame o lead pelo nome (se souber) e referencie o ponto onde pararam
 - Nao repita perguntas ja feitas nem peça dados ja coletados
 - Nao mencione automacao, IA ou follow-up
