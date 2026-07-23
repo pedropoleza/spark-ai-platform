@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
 import { formatAvailableSlots } from "@/lib/ai/slots-format";
-import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
 import { assembleSystemPrompt, isUnifiedMotorEnabled, templateKeyForAgentType } from "@/lib/agent-platform/assembler";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ImageInput, ConversationTurn } from "@/lib/ai/openai-client";
@@ -707,6 +707,9 @@ async function processGroup(
       const { isHuman } = classifyLastOutbound({
         lastOutbound,
         aiTexts: extractAiSentTexts(aiSends),
+        // 2026-07-23 (caso Marina): casa por ID de mensagem (determinístico) —
+        // em IG o anti-eco por texto falha e a IA se auto-pausava achando handoff.
+        sentIds: extractAiSentIds(aiSends),
       });
       // Guarda de recência espelhando o webhook F51 (Fix review 2026-06-18): o
       // anti-eco por TEXTO pode falhar se o canal mangleou o corpo OU se o envio

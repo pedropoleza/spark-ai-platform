@@ -75,11 +75,39 @@ export function extractAiSentTexts(
 }
 
 /**
+ * IDs das mensagens GHL que a IA registrou ter enviado (2026-07-23, caso Marina).
+ * O `action-executor`/`follow-up-scheduler` gravam `message_ids` no payload do
+ * send_message (o `sendMessageToContact` retorna o messageId do GHL). Se o último
+ * outbound da conversa tem um desses ids → fomos NÓS, com certeza — sem depender
+ * do anti-eco por texto (que falha em IG: canal mangleia o corpo + userId vazio).
+ */
+export function extractAiSentIds(
+  rows: Array<{ action_payload: unknown }> | null | undefined,
+): string[] {
+  const out: string[] = [];
+  for (const row of rows || []) {
+    const ids = (row?.action_payload as { message_ids?: unknown } | null)?.message_ids;
+    if (Array.isArray(ids)) {
+      out.push(...ids.filter((x): x is string => typeof x === "string" && !!x));
+    }
+  }
+  return out;
+}
+
+/**
  * Campos do último OUTBOUND que a ladder consome. O GHLMessage NÃO tipa
  * `userId`/`source` (chegam via cast nos call sites), por isso são opcionais aqui
  * — quando ausentes, a ladder cai nos discriminadores que não dependem deles.
  */
 export interface LastOutboundForClassify {
+  /**
+   * ID da mensagem no GHL (2026-07-23): sinal DETERMINÍSTICO de "fui eu que
+   * enviei". Se este id está entre os que a IA registrou ter enviado (sentIds),
+   * a msg é NOSSA com certeza — imune ao problema do anti-eco por texto (em IG o
+   * canal mangleia o corpo e `userId` nunca vem, então o texto falhava e a IA se
+   * auto-pausava achando que um humano assumiu — caso Marina, 152 falsos).
+   */
+  id?: string | null;
   body?: string | null;
   userId?: string | null;
   source?: string | null;
@@ -143,16 +171,28 @@ export function hasUnfilledMergeField(body: string): boolean {
 export function classifyLastOutbound(args: {
   lastOutbound: LastOutboundForClassify;
   aiTexts: string[];
+  /**
+   * IDs das msgs que a IA registrou ter enviado (2026-07-23). Discriminador de
+   * MAIOR confiança: se o id do último outbound está aqui, fomos nós — decide
+   * ANTES do anti-eco por texto (imune ao mangle do IG). Opcional: callers
+   * antigos que não passam caem no comportamento anterior (só texto).
+   */
+  sentIds?: string[];
 }): { isHuman: boolean } {
-  const { lastOutbound, aiTexts } = args;
+  const { lastOutbound, aiTexts, sentIds } = args;
   const body = (lastOutbound.body || "").trim();
   const sentByGhlUser = !!lastOutbound.userId;
   const outboundSource = String(lastOutbound.source || "").toLowerCase();
   const isAutomationOutbound = AUTOMATION_SOURCES.has(outboundSource);
-  const aiEcho = !!body && isAiEcho(body, aiTexts);
+  // Match determinístico por ID (2026-07-23, caso Marina/152 falsos): o último
+  // outbound é uma mensagem que NÓS enviamos → NUNCA é handoff humano.
+  const idEcho = !!lastOutbound.id && !!sentIds?.includes(String(lastOutbound.id));
+  const aiEcho = idEcho || (!!body && isAiEcho(body, aiTexts));
 
   let isHuman: boolean;
-  if (isAutomationOutbound) {
+  if (idEcho) {
+    isHuman = false; // certeza: é uma msg NOSSA (id bate com o que a IA enviou)
+  } else if (isAutomationOutbound) {
     isHuman = false; // automação/workflow do GHL não é humano (mesmo com userId)
   } else if (aiEcho) {
     isHuman = false; // é a própria msg da IA → NÃO auto-pausa pelo próprio eco

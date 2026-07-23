@@ -11,7 +11,7 @@ import { withRetry } from "@/lib/utils/retry";
 // queue-processor — se o histórico do Spark Leads falhar, o follow-up não pode
 // virar uma re-apresentação fria. Reconstrói do nosso DB.
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
-import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import type { FollowUpConfig } from "@/types/agent";
@@ -35,15 +35,17 @@ async function sendFollowUpMessage(
   params: { contactId: string; outboundType: string; subject?: string },
   text: string,
   opts?: { condense?: boolean },
-): Promise<string[]> {
+): Promise<{ bubbles: string[]; messageId: string | null }> {
   const msg = opts?.condense ? condenseFollowUp(text) : text.trim();
-  await client.post("/conversations/messages", {
+  // 2026-07-23 (caso Marina): captura o messageId que o GHL devolve → o anti-eco
+  // do handoff (F52) casa por ID (determinístico), não só por texto.
+  const sent = await client.post<{ messageId?: string }>("/conversations/messages", {
     type: params.outboundType,
     contactId: params.contactId,
     message: msg,
     ...(params.subject ? { subject: params.subject } : {}),
   });
-  return [msg];
+  return { bubbles: [msg], messageId: sent?.messageId ?? null };
 }
 
 /**
@@ -467,6 +469,9 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       // IA" por execution_log.send_message — era o "não mostra thumbs no follow-up".
       let sentText: string | null = null;
       let sentBubbles: string[] | null = null;
+      // 2026-07-23 (caso Marina): id do GHL do follow-up enviado → o anti-eco do
+      // F52 casa por id (determinístico), não só por texto.
+      let sentMessageId: string | null = null;
       // Fix Marina 2026-06-18: a IA pode DECIDIR não fazer follow-up (lead adiou/
       // recusou/acabamos de responder) retornando message vazia. Antes o prompt
       // mandava "SEMPRE envie" → virava o "já voltou do Brasil?" 10min depois.
@@ -474,11 +479,13 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
 
       // Se tem mensagem customizada, enviar como está (texto explícito do admin).
       if (followUp.custom_message) {
-        sentBubbles = await sendFollowUpMessage(
+        const r = await sendFollowUpMessage(
           client,
           { contactId: followUp.contact_id, outboundType, subject: outboundSubject },
           followUp.custom_message,
         );
+        sentBubbles = r.bubbles;
+        sentMessageId = r.messageId;
         sentText = sentBubbles.join("\n\n");
       } else {
         // Buscar contexto recente (últimas 10 msgs + nome) para personalizar o follow-up.
@@ -488,7 +495,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           convId
             ? withRetry(
                 () =>
-                  client.get<{ messages: { messages: { direction: string; body?: string; dateAdded: string; messageType?: string; source?: string | null; userId?: string | null }[] } }>(
+                  client.get<{ messages: { messages: { id?: string; direction: string; body?: string; dateAdded: string; messageType?: string; source?: string | null; userId?: string | null }[] } }>(
                     `/conversations/${convId}/messages`,
                     { locationId: followUp.location_id },
                   ),
@@ -558,8 +565,12 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
               .limit(15);
             const aiTexts = extractAiSentTexts(sentRows);
             const { isHuman } = classifyLastOutbound({
-              lastOutbound: { body: lastOutbound.body, userId: lastOutbound.userId, source: lastOutbound.source },
+              // 2026-07-23 (caso Marina): +id no lastOutbound e sentIds → o gate de
+              // "humano assumiu" antes de mandar follow-up também casa por ID (não
+              // cancela a sequência achando falso-handoff em IG).
+              lastOutbound: { id: lastOutbound.id, body: lastOutbound.body, userId: lastOutbound.userId, source: lastOutbound.source },
               aiTexts,
+              sentIds: extractAiSentIds(sentRows),
             });
             if (isHuman) {
               await supabase
@@ -659,12 +670,14 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             if (san.redacted) console.warn("[Sanitizer/followup] Redacted:", san.hits.join(", "));
             // Condensa pro tamanho de follow-up (curto e certeiro) antes de enviar
             // (healthcheck 2026-07-23). No-op pra follow-up já curto (o normal).
-            sentBubbles = await sendFollowUpMessage(
+            const r = await sendFollowUpMessage(
               client,
               { contactId: followUp.contact_id, outboundType, subject: outboundSubject },
               finalMsg,
               { condense: true },
             );
+            sentBubbles = r.bubbles;
+            sentMessageId = r.messageId;
             sentText = sentBubbles.join("\n\n");
           } else {
             aiDecidedSkip = true; // sentinela OU vazio = a IA optou por NÃO mandar
@@ -690,6 +703,8 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             // Bolhas efetivamente enviadas (o texto longo pode ter virado várias);
             // fallback pro texto único preserva o shape mesmo sem sentBubbles.
             message: sentBubbles && sentBubbles.length ? sentBubbles : [sentText.trim()],
+            // message_ids (Onda D, caso Marina): anti-eco do handoff casa por ID.
+            ...(sentMessageId ? { message_ids: [sentMessageId] } : {}),
             source: "follow_up",
             attempt_number: followUp.attempt_number,
           },
