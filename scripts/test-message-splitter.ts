@@ -6,6 +6,8 @@
 import {
   splitLeadOutbound,
   splitLongBubble,
+  condenseFollowUp,
+  FOLLOWUP_MAX_CHARS,
   SPLIT_TRIGGER_CHARS,
 } from "@/lib/ai/message-splitter";
 
@@ -90,6 +92,27 @@ const withNewlines = "Primeira ideia importante aqui.\n\nSegunda ideia também r
 r = splitLeadOutbound([withNewlines]);
 check("texto com \\n\\n longo é quebrado", r.messages.length > 1);
 check("newlines: zero perda", noLoss(withNewlines, r.messages));
+
+// ── condenseFollowUp: follow-up curto e certeiro (caso five star ricos) ──────
+console.log("\n[condenseFollowUp — follow-up curto]");
+// Curto passa intacto (a maioria dos follow-ups reais: 90-160 chars)
+const shortFu = "Oi Nancy, ficou pendente sua data de nascimento, pode me passar? 😊";
+check("follow-up curto passa intacto", condenseFollowUp(shortFu) === shortFu);
+check("exemplo da cliente (~75 chars) intacto", condenseFollowUp("Olá, pode mandar os dados pra gente preparar uma cotação pra você analisar?").length <= FOLLOWUP_MAX_CHARS);
+
+// Longo com hedging é condensado, mantendo frase(s) inteira(s) e o pedido
+const longFu =
+  "Oi Paulo, só um último toque por aqui. Ainda tenho interesse em te ajudar com a proteção, mas não quero ser inconveniente. Se quiser continuar, é só me mandar seu nome completo, data de nascimento, estado onde mora e se é fumante. Se não for o momento, tudo bem também, sem pressão nenhuma, fico à disposição quando quiser.";
+const condensed = condenseFollowUp(longFu);
+check("follow-up longo foi condensado", condensed.length < longFu.length, `${longFu.length}→${condensed.length}`);
+check("condensado dentro do budget", condensed.length <= FOLLOWUP_MAX_CHARS, `${condensed.length}`);
+check("condensado começa com a 1ª frase (não corta no meio)", longFu.startsWith(condensed.split(/(?<=[.!?])\s/)[0]));
+check("condensado termina em pontuação (frase inteira)", /[.!?…]$/.test(condensed.trim()));
+
+// Frase única gigante sem ponto → corte por espaço (garante algo, sem estourar)
+const oneGiant = "Oi " + "palavra ".repeat(80).trim();
+check("frase única gigante fica no budget", condenseFollowUp(oneGiant).length <= FOLLOWUP_MAX_CHARS);
+check("frase única gigante não parte palavra", /\w$/.test(condenseFollowUp(oneGiant)));
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} ${pass} passaram, ${fail} falharam\n`);
 process.exit(fail === 0 ? 0 : 1);

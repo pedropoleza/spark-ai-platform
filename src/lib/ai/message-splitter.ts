@@ -96,6 +96,37 @@ export function splitLongBubble(text: string): string[] {
   return packed.length ? packed : [t];
 }
 
+// Teto de tamanho de um FOLLOW-UP. Diferente da conversa ao vivo: um follow-up
+// é UM toque curto e direto (a cliente do five star ricos pediu explicitamente
+// "mais curto e certeiro", ex: "pode mandar os dados pra eu preparar a cotação?"
+// ~75 chars). Nunca vira várias bolhas — é um lembrete, não uma conversa.
+export const FOLLOWUP_MAX_CHARS = 260;
+
+/**
+ * Condensa um follow-up pra UMA mensagem curta. Mantém FRASES INTEIRAS até o
+ * budget (garante ao menos a 1ª frase — normalmente já contém o pedido). No-op
+ * pra follow-up já curto. Determinístico: é o backstop pro modelo que ignora a
+ * regra de brevidade do prompt (mesma filosofia do sanitizer/splitter).
+ */
+export function condenseFollowUp(text: string, maxChars = FOLLOWUP_MAX_CHARS): string {
+  const t = (text || "").trim();
+  if (t.length <= maxChars) return t;
+  const sentences = splitIntoSentences(t);
+  let out = "";
+  for (const s of sentences) {
+    if (!out) {
+      out = s;
+    } else if (out.length + 1 + s.length <= maxChars) {
+      out = `${out} ${s}`;
+    } else {
+      break;
+    }
+  }
+  // 1ª frase sozinha já passa do budget → corta por espaço (raro).
+  if (out.length > maxChars) out = hardSplitLongSentence(out, maxChars)[0];
+  return out || t.slice(0, maxChars).trim();
+}
+
 export interface SplitOutboundResult {
   messages: string[];
   didSplit: boolean; // true se ALGUMA bolha foi de fato quebrada

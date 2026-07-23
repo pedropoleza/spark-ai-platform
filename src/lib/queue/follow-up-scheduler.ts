@@ -3,7 +3,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import { buildFollowUpPrompt } from "@/lib/ai/sales-prompt-builder";
 import { sanitizeOutbound, resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
-import { splitLeadOutbound } from "@/lib/ai/message-splitter";
+import { condenseFollowUp } from "@/lib/ai/message-splitter";
 import { processWithAI } from "@/lib/ai/openai-client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { withRetry } from "@/lib/utils/retry";
@@ -16,34 +16,34 @@ import { reportError } from "@/lib/admin-signals/report-error";
 import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import type { FollowUpConfig } from "@/types/agent";
 
-// Delay curto entre bolhas de um mesmo follow-up (quando o texto é quebrado em
-// várias). Curto o bastante pra não estourar o cron serverless.
-function bubbleDelay(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 400 + Math.random() * 400));
-}
+// Piso do 1º toque de follow-up em modo ai_auto (healthcheck 2026-07-23, caso
+// five star ricos): a cliente viu follow-up disparar ~10 min depois do lead
+// escrever ("somente 5 min depois que a pessoa chamou"). Um toque proativo em
+// menos de 1h num canal de CONVERSA é atropelo (mesma lição do fix Marina
+// 2026-06-18, que subiu o DEFAULT pra 60 — aqui vira PISO, pega config baixo).
+// Só ai_auto: modo manual são passos EXPLÍCITOS do admin, respeitados como estão.
+const FIRST_TOUCH_FLOOR_MIN = 60;
 
 /**
- * Envia um texto de follow-up pro lead, quebrando "wall of text" em bolhas
- * curtas (healthcheck 2026-07-23) e entregando cada bolha como uma mensagem
- * separada. Devolve o array de bolhas efetivamente enviadas (pra logar no
- * execution_log com o mesmo shape do fluxo principal).
+ * Envia UM follow-up pro lead — sempre UMA mensagem (follow-up é um toque, não
+ * uma conversa). Pra texto gerado pela IA, condensa pro tamanho de follow-up
+ * (curto e certeiro); pra custom_message do admin, envia como está (texto
+ * explícito dele). Devolve o array com a mensagem enviada (shape do execution_log).
  */
 async function sendFollowUpMessage(
   client: GHLClient,
   params: { contactId: string; outboundType: string; subject?: string },
   text: string,
+  opts?: { condense?: boolean },
 ): Promise<string[]> {
-  const bubbles = splitLeadOutbound([text]).messages;
-  for (let i = 0; i < bubbles.length; i++) {
-    if (i > 0) await bubbleDelay();
-    await client.post("/conversations/messages", {
-      type: params.outboundType,
-      contactId: params.contactId,
-      message: bubbles[i],
-      ...(params.subject ? { subject: params.subject } : {}),
-    });
-  }
-  return bubbles;
+  const msg = opts?.condense ? condenseFollowUp(text) : text.trim();
+  await client.post("/conversations/messages", {
+    type: params.outboundType,
+    contactId: params.contactId,
+    message: msg,
+    ...(params.subject ? { subject: params.subject } : {}),
+  });
+  return [msg];
 }
 
 /**
@@ -110,7 +110,11 @@ export async function scheduleFollowUps(params: {
       // conversa (follow-up disparava 10min depois da nossa própria resposta).
       // Sobe pra 60min. O gate de decisão no runner é a proteção real; isto só
       // evita o toque cedo demais quando o agente não setou delay próprio.
-      const minDelay = followUpConfig.min_delay_minutes || 60;
+      // Piso de 1h no 1º toque (healthcheck 2026-07-23): mesmo com config baixo
+      // (ex: min_delay_minutes=10, causa do "5 min depois" reportado), o primeiro
+      // follow-up nunca sai antes de 1h. attempt 1 usa exatamente minDelay
+      // (t=0 na curva), então floor aqui já resolve o toque cedo demais.
+      const minDelay = Math.max(followUpConfig.min_delay_minutes || 60, FIRST_TOUCH_FLOOR_MIN);
       const maxDelay = followUpConfig.max_delay_minutes || 10080; // 7 dias
       for (let i = 0; i < maxAttempts; i++) {
         const totalDelayMinutes = calculateCumulativeDelay(i + 1, intensity, maxAttempts, minDelay, maxDelay);
@@ -468,7 +472,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       // mandava "SEMPRE envie" → virava o "já voltou do Brasil?" 10min depois.
       let aiDecidedSkip = false;
 
-      // Se tem mensagem customizada, enviar direto (quebrando bolha longa)
+      // Se tem mensagem customizada, enviar como está (texto explícito do admin).
       if (followUp.custom_message) {
         sentBubbles = await sendFollowUpMessage(
           client,
@@ -653,12 +657,13 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             const san = sanitizeOutbound([msgText.trim()], resolveForbiddenTerms(followUp.agent_id, config.forbidden_terms));
             const finalMsg = san.messages.join("\n\n");
             if (san.redacted) console.warn("[Sanitizer/followup] Redacted:", san.hits.join(", "));
-            // Quebra "wall of text" em bolhas curtas antes de enviar (healthcheck
-            // 2026-07-23). No-op pra follow-up já curto (o normal aqui).
+            // Condensa pro tamanho de follow-up (curto e certeiro) antes de enviar
+            // (healthcheck 2026-07-23). No-op pra follow-up já curto (o normal).
             sentBubbles = await sendFollowUpMessage(
               client,
               { contactId: followUp.contact_id, outboundType, subject: outboundSubject },
               finalMsg,
+              { condense: true },
             );
             sentText = sentBubbles.join("\n\n");
           } else {

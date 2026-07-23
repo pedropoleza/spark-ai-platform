@@ -63,8 +63,49 @@ prova zero perda de conteúdo, sem corte no meio de palavra, teto de bolhas,
 bordas (vazio/whitespace/newlines). `tsc --noEmit` + `next build` verdes;
 `test-outbound-sanitizer.ts` 16/16 (sem regressão).
 
+---
+
+# Parte 2 — Reclamações da cliente sobre FOLLOW-UP (2026-07-23)
+
+A cliente relatou 3 pontos, todos confirmados nos dados de prod:
+
+### (2a) Follow-up disparando cedo demais ("5 min depois que a pessoa chamou")
+`scheduled_followups` mostrou attempt-1 sendo enviado **10-11 min** depois do
+último inbound do lead (`min_after_lead_msg` = 10/11 em várias linhas). Causa: a
+curva usa `minDelay` no attempt 1 (t=0) e o config antigo tinha `min_delay`
+baixo. **Fix:** `FIRST_TOUCH_FLOOR_MIN = 60` em `scheduleFollowUps` (ai_auto) —
+o 1º toque NUNCA sai antes de 1h, mesmo com config baixo. Modo manual (passos
+explícitos do admin) fica isento.
+
+### (2b) Mensagem de follow-up longa demais ("mais curto e certeiro")
+Follow-ups reais tinham 96-339 chars com hedging empilhado ("...se não for o
+momento, tudo bem também, sem pressão..."). A cliente quer 1 linha direta, ex:
+"Olá, pode mandar os dados pra gente preparar uma cotação?". **Fix:** duplo —
+(i) `condenseFollowUp()` determinístico (cap `FOLLOWUP_MAX_CHARS=260`, mantém
+frases inteiras, follow-up é SEMPRE 1 bolha, nunca multi-bolha); (ii) prompt
+base de follow-up reescrito pra "UMA frase curta e direta, sem hedging longo".
+custom_message do admin é respeitado como está (não condensa o texto explícito
+dele).
+
+### (2c) IA mandando "textão" explicando o seguro depois de coletar os dados
+Screenshot: depois de "vou deixar sua cotação pronta e a equipe te chama", a IA
+mandou um parágrafo explicando o seguro (os leads de anúncio chegam pedindo
+"quero entender como funciona" e a IA dava aula de 340-787 chars). **Fix:**
+REGRA 6 no prompt de vendas — explicar produto em NO MÁXIMO 1-2 frases sempre
+deferindo pro especialista, e DEPOIS de coletar/encerrar NÃO reabrir o pitch
+nem mandar explicação. O splitter da Parte 1 continua como backstop de entrega.
+
+### Config data (location afetado)
+`min_delay_minutes` do Agente de Vendas mudado de **1440 (24h) → 60 (1h)** pra
+bater com o que a cliente pediu ("1h depois está ótimo"). Restante do
+`follow_up_config` preservado (max_attempts=3, max_delay=7d, custom_prompt).
+Os 9 follow-ups já `pending` mantêm o schedule antigo (24h — seguro); os novos
+usam 1h. Reversível: `jsonb_set(..., '{min_delay_minutes}', '1440')`.
+
 ## Follow-up sugerido (👤)
-- Depois do deploy, re-rodar a query de distribuição em ~7 dias: `max_chars`
-  deve cair de 787 pra ≤550 e `max_bubbles` subir >1 nos casos longos.
-- Se quiser cap configurável por agente no futuro: expor
-  `agent_configs.max_bubble_chars` (hoje é constante em `message-splitter.ts`).
+- Re-rodar em ~7 dias: `max_chars` do fluxo principal deve cair pra ≤550;
+  follow-ups devem ficar ≤260 chars e disparar ≥60 min após o inbound.
+- Cap configurável por agente no futuro: expor `agent_configs.max_bubble_chars`
+  e `followup_max_chars` (hoje constantes em `message-splitter.ts`).
+- O `FIRST_TOUCH_FLOOR_MIN=60` é global (ai_auto): se algum outro location
+  quiser 1º toque < 1h, vira config per-agente.
