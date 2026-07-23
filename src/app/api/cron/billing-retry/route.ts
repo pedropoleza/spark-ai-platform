@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { chargeUnbilledRecords } from "@/lib/billing/charge";
+import { sweepNotifyBlockedOwners } from "@/lib/billing/wallet-block";
 import { isAuthorizedCron } from "@/lib/utils/cron-auth";
 import { reportError } from "@/lib/admin-signals/report-error";
 
@@ -33,13 +34,17 @@ export async function GET(request: NextRequest) {
   const startTs = Date.now();
   try {
     const result = await chargeUnbilledRecords();
+    // D1a (2026-07-23): avisa a dona de TODA location bloqueada por saldo — não só
+    // as com tráfego de lead (scan 07-23: 9 de 11 donas nunca souberam). Idempotente
+    // (cooldown 24h por location); fail-soft (nunca derruba o retry de cobrança).
+    const notify = await sweepNotifyBlockedOwners().catch(() => ({ scanned: 0 }));
     const dur = Date.now() - startTs;
-    if (result.charged > 0 || result.failed > 0 || result.reaped > 0) {
+    if (result.charged > 0 || result.failed > 0 || result.reaped > 0 || notify.scanned > 0) {
       console.log(
-        `[cron:billing-retry] charged=${result.charged} failed=${result.failed} reaped=${result.reaped} in ${dur}ms`,
+        `[cron:billing-retry] charged=${result.charged} failed=${result.failed} reaped=${result.reaped} blocked_notified_scan=${notify.scanned} in ${dur}ms`,
       );
     }
-    return NextResponse.json({ success: true, ...result, duration_ms: dur });
+    return NextResponse.json({ success: true, ...result, blocked_notify_scanned: notify.scanned, duration_ms: dur });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Erro desconhecido";
     console.error("[cron:billing-retry] FATAL:", msg);

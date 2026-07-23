@@ -160,6 +160,12 @@ export async function executeActions(
         });
         await logExecution(supabase, ctx, "send_error_message", { message: errorMsg });
       } else {
+        // 2026-07-23 (caso Marina): captura o messageId que o GHL retorna em cada
+        // envio → grava em message_ids no log. O anti-eco do handoff (F52) casa por
+        // ESSE id (determinístico), não só por texto — em IG o canal mangleia o
+        // corpo e userId vem vazio, então o texto falhava e a IA se auto-pausava
+        // achando que um humano tinha assumido (152 falsos positivos).
+        const messageIds: string[] = [];
         for (let i = 0; i < messages.length; i++) {
           const msg = messages[i];
           if (!msg.trim()) continue;
@@ -168,15 +174,17 @@ export async function executeActions(
             await shortDelay();
           }
 
-          await client.post("/conversations/messages", {
+          const sent = await client.post<{ messageId?: string }>("/conversations/messages", {
             type: messageType,
             contactId: ctx.contactId,
             message: msg,
           });
+          if (sent?.messageId) messageIds.push(sent.messageId);
         }
 
         await logExecution(supabase, ctx, "send_message", {
           message: messages,
+          message_ids: messageIds,
           parts: messages.length,
           channel: ctx.channel || "SMS",
         });

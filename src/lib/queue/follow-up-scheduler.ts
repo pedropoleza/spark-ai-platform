@@ -10,7 +10,7 @@ import { withRetry } from "@/lib/utils/retry";
 // queue-processor — se o histórico do Spark Leads falhar, o follow-up não pode
 // virar uma re-apresentação fria. Reconstrói do nosso DB.
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
-import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import type { FollowUpConfig } from "@/types/agent";
@@ -431,6 +431,9 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       // INVISÍVEL: o loader (👍/👎) e o anti-eco do F52 identificam "mensagem da
       // IA" por execution_log.send_message — era o "não mostra thumbs no follow-up".
       let sentText: string | null = null;
+      // 2026-07-23 (caso Marina): id do GHL do follow-up enviado → o anti-eco do
+      // F52 casa por id (determinístico), não só por texto.
+      let sentMessageId: string | null = null;
       // Fix Marina 2026-06-18: a IA pode DECIDIR não fazer follow-up (lead adiou/
       // recusou/acabamos de responder) retornando message vazia. Antes o prompt
       // mandava "SEMPRE envie" → virava o "já voltou do Brasil?" 10min depois.
@@ -453,7 +456,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           convId
             ? withRetry(
                 () =>
-                  client.get<{ messages: { messages: { direction: string; body?: string; dateAdded: string; messageType?: string; source?: string | null; userId?: string | null }[] } }>(
+                  client.get<{ messages: { messages: { id?: string; direction: string; body?: string; dateAdded: string; messageType?: string; source?: string | null; userId?: string | null }[] } }>(
                     `/conversations/${convId}/messages`,
                     { locationId: followUp.location_id },
                   ),
@@ -523,8 +526,12 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
               .limit(15);
             const aiTexts = extractAiSentTexts(sentRows);
             const { isHuman } = classifyLastOutbound({
-              lastOutbound: { body: lastOutbound.body, userId: lastOutbound.userId, source: lastOutbound.source },
+              // 2026-07-23 (caso Marina): +id no lastOutbound e sentIds → o gate de
+              // "humano assumiu" antes de mandar follow-up também casa por ID (não
+              // cancela a sequência achando falso-handoff em IG).
+              lastOutbound: { id: lastOutbound.id, body: lastOutbound.body, userId: lastOutbound.userId, source: lastOutbound.source },
               aiTexts,
+              sentIds: extractAiSentIds(sentRows),
             });
             if (isHuman) {
               await supabase
@@ -622,12 +629,13 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             const san = sanitizeOutbound([msgText.trim()], resolveForbiddenTerms(followUp.agent_id, config.forbidden_terms));
             const finalMsg = san.messages.join("\n\n");
             if (san.redacted) console.warn("[Sanitizer/followup] Redacted:", san.hits.join(", "));
-            await client.post("/conversations/messages", {
+            const sentFu = await client.post<{ messageId?: string }>("/conversations/messages", {
               type: outboundType,
               contactId: followUp.contact_id,
               message: finalMsg,
               ...(outboundSubject ? { subject: outboundSubject } : {}),
             });
+            if (sentFu?.messageId) sentMessageId = sentFu.messageId;
             sentText = finalMsg;
           } else {
             aiDecidedSkip = true; // sentinela OU vazio = a IA optou por NÃO mandar
@@ -651,6 +659,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           action_type: "send_message",
           action_payload: {
             message: [sentText.trim()],
+            ...(sentMessageId ? { message_ids: [sentMessageId] } : {}),
             source: "follow_up",
             attempt_number: followUp.attempt_number,
           },

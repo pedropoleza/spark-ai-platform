@@ -319,3 +319,40 @@ export async function notifyWalletBlockOwnerOnce(locationId: string): Promise<vo
     console.warn("[wallet-block] notifyWalletBlockOwnerOnce falhou (não-fatal):", err);
   }
 }
+
+/**
+ * Varredura (2026-07-23): avisa a dona de TODA location bloqueada por saldo.
+ *
+ * Motivação (scan lead-facing 07-23): 11 locations estavam bloqueadas e 9 donas
+ * NUNCA foram avisadas — o `notifyWalletBlockOwnerOnce` só era chamado no
+ * pipeline de LEAD (queue-processor), então location sem tráfego de lead ou
+ * SparkBot-only ficava bloqueada em silêncio por dias. Aqui um cron percorre
+ * TODAS as bloqueadas e dispara o aviso (a função já tem cooldown 24h + CAS +
+ * resolução de dona, então re-chamar é idempotente e barato). Piso de 5min pós-
+ * bloqueio pra dar tempo do clear automático (recarga) rodar antes — não avisa
+ * quem recarregou na hora. Fail-soft. Chamado pelo cron de billing.
+ */
+export async function sweepNotifyBlockedOwners(): Promise<{ scanned: number }> {
+  if (isDisabled()) return { scanned: 0 };
+  try {
+    const supabase = createAdminClient();
+    const blockedBefore = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const notifiedBefore = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: blocked } = await supabase
+      .from("locations")
+      .select("location_id")
+      .not("wallet_blocked_at", "is", null)
+      .lt("wallet_blocked_at", blockedBefore)
+      .or(`wallet_block_notified_at.is.null,wallet_block_notified_at.lt.${notifiedBefore}`)
+      .limit(100);
+    for (const b of blocked || []) {
+      // notifyWalletBlockOwnerOnce se auto-protege (cooldown/CAS/owner) — só avisa
+      // quem realmente falta. Serial pra não estourar rate do canal de entrega.
+      await notifyWalletBlockOwnerOnce((b as { location_id: string }).location_id).catch(() => {});
+    }
+    return { scanned: (blocked || []).length };
+  } catch (err) {
+    console.warn("[wallet-block] sweepNotifyBlockedOwners falhou (não-fatal):", err);
+    return { scanned: 0 };
+  }
+}
