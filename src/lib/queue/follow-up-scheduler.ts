@@ -3,6 +3,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import { buildFollowUpPrompt } from "@/lib/ai/sales-prompt-builder";
 import { sanitizeOutbound, resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
+import { condenseFollowUp } from "@/lib/ai/message-splitter";
 import { processWithAI } from "@/lib/ai/openai-client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { withRetry } from "@/lib/utils/retry";
@@ -14,6 +15,38 @@ import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/li
 import { reportError } from "@/lib/admin-signals/report-error";
 import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import type { FollowUpConfig } from "@/types/agent";
+
+// Piso do 1º toque de follow-up em modo ai_auto (healthcheck 2026-07-23, caso
+// five star ricos): a cliente viu follow-up disparar ~10 min depois do lead
+// escrever ("somente 5 min depois que a pessoa chamou"). Um toque proativo em
+// menos de 1h num canal de CONVERSA é atropelo (mesma lição do fix Marina
+// 2026-06-18, que subiu o DEFAULT pra 60 — aqui vira PISO, pega config baixo).
+// Só ai_auto: modo manual são passos EXPLÍCITOS do admin, respeitados como estão.
+const FIRST_TOUCH_FLOOR_MIN = 60;
+
+/**
+ * Envia UM follow-up pro lead — sempre UMA mensagem (follow-up é um toque, não
+ * uma conversa). Pra texto gerado pela IA, condensa pro tamanho de follow-up
+ * (curto e certeiro); pra custom_message do admin, envia como está (texto
+ * explícito dele). Devolve o array com a mensagem enviada (shape do execution_log).
+ */
+async function sendFollowUpMessage(
+  client: GHLClient,
+  params: { contactId: string; outboundType: string; subject?: string },
+  text: string,
+  opts?: { condense?: boolean },
+): Promise<{ bubbles: string[]; messageId: string | null }> {
+  const msg = opts?.condense ? condenseFollowUp(text) : text.trim();
+  // 2026-07-23 (caso Marina): captura o messageId que o GHL devolve → o anti-eco
+  // do handoff (F52) casa por ID (determinístico), não só por texto.
+  const sent = await client.post<{ messageId?: string }>("/conversations/messages", {
+    type: params.outboundType,
+    contactId: params.contactId,
+    message: msg,
+    ...(params.subject ? { subject: params.subject } : {}),
+  });
+  return { bubbles: [msg], messageId: sent?.messageId ?? null };
+}
 
 /**
  * Agenda follow-ups para uma conversa que ficou inativa.
@@ -79,7 +112,11 @@ export async function scheduleFollowUps(params: {
       // conversa (follow-up disparava 10min depois da nossa própria resposta).
       // Sobe pra 60min. O gate de decisão no runner é a proteção real; isto só
       // evita o toque cedo demais quando o agente não setou delay próprio.
-      const minDelay = followUpConfig.min_delay_minutes || 60;
+      // Piso de 1h no 1º toque (healthcheck 2026-07-23): mesmo com config baixo
+      // (ex: min_delay_minutes=10, causa do "5 min depois" reportado), o primeiro
+      // follow-up nunca sai antes de 1h. attempt 1 usa exatamente minDelay
+      // (t=0 na curva), então floor aqui já resolve o toque cedo demais.
+      const minDelay = Math.max(followUpConfig.min_delay_minutes || 60, FIRST_TOUCH_FLOOR_MIN);
       const maxDelay = followUpConfig.max_delay_minutes || 10080; // 7 dias
       for (let i = 0; i < maxAttempts; i++) {
         const totalDelayMinutes = calculateCumulativeDelay(i + 1, intensity, maxAttempts, minDelay, maxDelay);
@@ -431,6 +468,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       // INVISÍVEL: o loader (👍/👎) e o anti-eco do F52 identificam "mensagem da
       // IA" por execution_log.send_message — era o "não mostra thumbs no follow-up".
       let sentText: string | null = null;
+      let sentBubbles: string[] | null = null;
       // 2026-07-23 (caso Marina): id do GHL do follow-up enviado → o anti-eco do
       // F52 casa por id (determinístico), não só por texto.
       let sentMessageId: string | null = null;
@@ -439,15 +477,16 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       // mandava "SEMPRE envie" → virava o "já voltou do Brasil?" 10min depois.
       let aiDecidedSkip = false;
 
-      // Se tem mensagem customizada, enviar direto
+      // Se tem mensagem customizada, enviar como está (texto explícito do admin).
       if (followUp.custom_message) {
-        await client.post("/conversations/messages", {
-          type: outboundType,
-          contactId: followUp.contact_id,
-          message: followUp.custom_message,
-          ...(outboundSubject ? { subject: outboundSubject } : {}),
-        });
-        sentText = followUp.custom_message;
+        const r = await sendFollowUpMessage(
+          client,
+          { contactId: followUp.contact_id, outboundType, subject: outboundSubject },
+          followUp.custom_message,
+        );
+        sentBubbles = r.bubbles;
+        sentMessageId = r.messageId;
+        sentText = sentBubbles.join("\n\n");
       } else {
         // Buscar contexto recente (últimas 10 msgs + nome) para personalizar o follow-up.
         // Dois fetches em paralelo para minimizar latência do scheduler.
@@ -629,14 +668,17 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             const san = sanitizeOutbound([msgText.trim()], resolveForbiddenTerms(followUp.agent_id, config.forbidden_terms));
             const finalMsg = san.messages.join("\n\n");
             if (san.redacted) console.warn("[Sanitizer/followup] Redacted:", san.hits.join(", "));
-            const sentFu = await client.post<{ messageId?: string }>("/conversations/messages", {
-              type: outboundType,
-              contactId: followUp.contact_id,
-              message: finalMsg,
-              ...(outboundSubject ? { subject: outboundSubject } : {}),
-            });
-            if (sentFu?.messageId) sentMessageId = sentFu.messageId;
-            sentText = finalMsg;
+            // Condensa pro tamanho de follow-up (curto e certeiro) antes de enviar
+            // (healthcheck 2026-07-23). No-op pra follow-up já curto (o normal).
+            const r = await sendFollowUpMessage(
+              client,
+              { contactId: followUp.contact_id, outboundType, subject: outboundSubject },
+              finalMsg,
+              { condense: true },
+            );
+            sentBubbles = r.bubbles;
+            sentMessageId = r.messageId;
+            sentText = sentBubbles.join("\n\n");
           } else {
             aiDecidedSkip = true; // sentinela OU vazio = a IA optou por NÃO mandar
           }
@@ -658,7 +700,10 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           location_id: followUp.location_id,
           action_type: "send_message",
           action_payload: {
-            message: [sentText.trim()],
+            // Bolhas efetivamente enviadas (o texto longo pode ter virado várias);
+            // fallback pro texto único preserva o shape mesmo sem sentBubbles.
+            message: sentBubbles && sentBubbles.length ? sentBubbles : [sentText.trim()],
+            // message_ids (Onda D, caso Marina): anti-eco do handoff casa por ID.
             ...(sentMessageId ? { message_ids: [sentMessageId] } : {}),
             source: "follow_up",
             attempt_number: followUp.attempt_number,
