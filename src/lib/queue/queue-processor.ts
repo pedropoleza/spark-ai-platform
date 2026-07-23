@@ -447,10 +447,23 @@ async function processGroup(
     (convState as { last_ai_response_at?: string | null })?.last_ai_response_at ||
     ((convState as { message_count?: number } | null)?.message_count ?? 0) > 0
   );
+  // H51 (Frente B, 2026-07-22): modo de ativação. Em `trigger_once`, o targeting é
+  // só GATILHO de entrada (1º contato) — uma vez a conversa ATIVA, quem manda é a
+  // conversa até pausa/handoff; NÃO re-avalia targeting. Sem isso, lead ativado por
+  // FRASE (anúncio "Tenho interesse...") tem a folha message neutralizada no
+  // follow-up e, sem tag de perfil, o grupo dá no_match → targeting_skip → "responde
+  // a 1ª e morre" (caso Jussara: 46 conversas travadas). Default `gate_ongoing`
+  // re-checa todo turno (agentes que filtram por tag/campo contínuo) = zero regressão.
+  const activationMode =
+    (config as { activation_mode?: string | null }).activation_mode === "trigger_once"
+      ? "trigger_once"
+      : "gate_ongoing";
+  const targetingIsTriggerOnly = activationMode === "trigger_once" && conversationActive;
   // normalizeTargeting cobre array legado E set v2 (Pedro 2026-06-17); null = sem
   // regra efetiva = responde a todos (não chama o gate).
   if (
     !manuallyResumed &&
+    !targetingIsTriggerOnly &&
     normalizeTargeting(targetingRules) &&
     locationForBilling?.company_id
   ) {
