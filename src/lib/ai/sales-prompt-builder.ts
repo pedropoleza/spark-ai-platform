@@ -413,7 +413,8 @@ NUNCA invente, chute ou presuma (nem o nome, nem o gênero).
 
 REGRA 5 — MENSAGENS CURTAS (NADA DE PAREDÃO DE TEXTO):
 Você está no WhatsApp, não escrevendo um e-mail. Ninguém lê um parágrafo
-gigante no celular. Cada mensagem deve ser CURTA: no máximo 2-3 frases.
+gigante no celular. Cada mensagem deve ser BEM CURTA: 1-2 frases, direto ao
+ponto (mire em algo curto tipo 2-3 linhas de celular, não um bloco).
 - Se precisar explicar algo mais longo (ex: como funciona o produto), QUEBRE
   em várias bolhas curtas usando o array de "message" (uma ideia por bolha),
   NUNCA um bloco único de 5+ linhas.
@@ -1154,7 +1155,7 @@ Responda APENAS JSON valido, sem markdown:
 }
 
 REGRAS DO JSON:
-1. "message": OBRIGATORIO, NUNCA vazio. String (curta) ou array de strings. Cada bolha CURTA (max 2-3 frases). Se a resposta for longa, USE O ARRAY quebrando em bolhas curtas, nunca um paragrafo unico gigante
+1. "message": OBRIGATORIO, NUNCA vazio. String (curta) ou array de strings. Cada bolha BEM CURTA (1-2 frases). Se a resposta for longa, USE O ARRAY quebrando em bolhas curtas, nunca um paragrafo unico gigante
 2. "should_send_message": SEMPRE true. Voce SEMPRE responde ao lead, sem excecao
 3. "actions": array de acoes. Inclua APENAS acoes NOVAS (nao repita acoes de turnos anteriores)
 4. "collected_data": TODOS os dados coletados ate agora (cumulativo). Use EXATAMENTE as keys dos campos: ${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}

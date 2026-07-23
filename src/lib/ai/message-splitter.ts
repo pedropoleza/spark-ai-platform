@@ -20,16 +20,19 @@
  */
 
 // Acima deste tamanho, a bolha é quebrada. Abaixo, passa intacta.
-// p90 do location afetado = 523 chars → 550 deixa a conversa normal intacta e
-// só pega os "walls" (o topo da distribuição, ~8% das mensagens).
-export const SPLIT_TRIGGER_CHARS = 550;
+// Pedro 2026-07-23: "500 chars ainda são muitos" → baixado de 550 pra 320. Como
+// a mediana de atendimento é ~158 chars, isso deixa a troca normal intacta e
+// pega mais cedo qualquer resposta que comece a virar bloco (topo ~15%). Só
+// afeta o atendimento AO VIVO — follow-up tem o seu próprio cap (FOLLOWUP_MAX_CHARS).
+export const SPLIT_TRIGGER_CHARS = 320;
 
 // Alvo de tamanho de cada bolha resultante ao quebrar (empacota frases até aqui).
-const CHUNK_TARGET_CHARS = 300;
+// ~200 chars ≈ 2-3 frases curtas, tamanho de mensagem natural de WhatsApp.
+const CHUNK_TARGET_CHARS = 200;
 
 // Uma frase sozinha acima disso é quebrada por espaço (fallback pra parágrafo
 // sem pontuação — raro, mas evita uma bolha gigante escapar).
-const SENTENCE_HARD_CHARS = 400;
+const SENTENCE_HARD_CHARS = 240;
 
 // Teto de bolhas por turno (anti-spam). Excedente é FUNDIDO na última bolha, não
 // descartado (H52 no-loss). Mesmo teto do splitter do SparkBot (sparkbot-send.ts).
