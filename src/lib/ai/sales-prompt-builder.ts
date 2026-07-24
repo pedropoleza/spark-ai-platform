@@ -129,6 +129,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       : "";
     return [
       buildMetaInstruction(),
+      buildEntryAutomationSection(ctx),            // recepção via automação (five star ricos)
       buildIdentitySection(ctx),                   // identidade humana/IA
       ctx.config.system_prompt_override,
       buildKnowledgeBaseSection(ctx),              // KB
@@ -142,6 +143,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 
   const sections = [
     buildMetaInstruction(),
+    buildEntryAutomationSection(ctx),            // recepção via automação (five star ricos)
     buildTypeFramingSection(ctx),
     buildIdentitySection(ctx),
     // F37: histórico do lead vem ANTES das instruções do admin pra LLM
@@ -451,6 +453,29 @@ detalhes. Quem apresenta o produto é o especialista na ligação.
  * Diferença crítica: sales trata o contato como CLIENTE potencial (compra);
  * recruitment trata como CANDIDATO a oportunidade de carreira (não é venda).
  */
+/**
+ * Entrada por automação (healthcheck five star ricos 2026-07-23). Quando
+ * `entry_by_automation` está ON, uma automação externa já cumprimentou, mandou
+ * um ÁUDIO explicando o produto e listou os dados ANTES da IA. A IA já nem
+ * responde a 1ª mensagem (silêncio na entrada, gate no queue-processor); esta
+ * seção garante que, quando ela ASSUME (da 2ª mensagem em diante), NÃO
+ * re-cumprimente nem re-explique — vai direto pros dados/agendamento. Torna a
+ * REGRA 6 absoluta pra esse fluxo. Vazio quando o flag está OFF (paridade).
+ */
+function buildEntryAutomationSection(ctx: PromptContext): string {
+  if (!ctx.config.entry_by_automation) return "";
+  return `## RECEPÇÃO JÁ FOI FEITA POR AUTOMAÇÃO (REGRA ABSOLUTA)
+ANTES de você, uma automação já recebeu esse lead: cumprimentou, mandou um
+ÁUDIO explicando o produto e listou os dados que a gente precisa. Portanto:
+- NUNCA cumprimente nem se apresente ("oi, sou X", "nós somos...") — já foi feito.
+- NUNCA explique o produto/seguro, NEM se o lead perguntar "o que é / como
+  funciona": o ÁUDIO já explicou. Se insistir, diga curtinho que a especialista
+  mostra os detalhes na ligação e siga.
+- Seu papel é CONCLUIR: pegar os dados que ainda faltam (curto e direto) e
+  agendar. A última coisa antes de um follow-up deve ser o pedido dos dados, nada
+  de textão.`;
+}
+
 function buildTypeFramingSection(ctx: PromptContext): string {
   if (ctx.agentType === "recruitment_agent") {
     return `## NATUREZA DO ATENDIMENTO: RECRUTAMENTO

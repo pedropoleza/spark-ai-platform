@@ -165,6 +165,12 @@ export interface AgentConfig {
   // null (retrocompat antes do deploy da migration).
   lead_history_config?: LeadHistoryConfig | null;
   handoff_policy?: HandoffPolicy | null;
+  // Entrada por automação (healthcheck five star ricos 2026-07-23): quando true,
+  // uma automação externa (GHL) já faz a entrada (saudação + áudio explicando +
+  // pedido de dados). A IA NÃO responde a 1ª mensagem do lead (silêncio na
+  // entrada) e nunca cumprimenta/explica — só assume da 2ª mensagem em diante.
+  // Migration 00127. Default false = comportamento idêntico ao de hoje.
+  entry_by_automation?: boolean | null;
   created_at: string;
   updated_at: string;
 }

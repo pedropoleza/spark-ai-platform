@@ -13,6 +13,7 @@ import { transcribeAudioFromUrl } from "@/lib/ai/audio-transcriber";
 import { processMediaAttachments, type ProcessedMedia } from "@/lib/ai/media-processor";
 import type { MediaAttachment } from "@/lib/ai/media-extractor";
 import { scheduleFollowUps } from "@/lib/queue/follow-up-scheduler";
+import { shouldSuppressEntry } from "@/lib/queue/entry-automation";
 import { generateSummaryNote } from "@/lib/queue/summary-note-generator";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
@@ -459,6 +460,61 @@ async function processGroup(
       ? "trigger_once"
       : "gate_ongoing";
   const targetingIsTriggerOnly = activationMode === "trigger_once" && conversationActive;
+
+  // === Silêncio na entrada por automação (healthcheck five star ricos 2026-07-23) ===
+  // Quando a location usa automação (GHL) pra RECEBER o lead (saudação + áudio
+  // explicando + pedido de dados), a IA NÃO responde a 1ª mensagem — a automação
+  // é dona da entrada. Só marca entry_suppressed_at (pra assumir a partir da
+  // RESPOSTA real do lead) e agenda o follow-up (cobra os dados se o lead sumir).
+  // Salvaguarda em shouldSuppressEntry: se a 1ª msg já traz dado/horário, NÃO
+  // silencia. Flag OFF (default) = zero mudança pros outros agentes.
+  if (
+    !manuallyResumed &&
+    shouldSuppressEntry({
+      enabled: (config as { entry_by_automation?: boolean | null }).entry_by_automation,
+      conversationActive,
+      entrySuppressedAt: (convState as { entry_suppressed_at?: string | null } | null)?.entry_suppressed_at,
+      messageText: group.aggregatedBody,
+      isProactive: !!group.syntheticTrigger,
+    })
+  ) {
+    log("log", "SKIP entry_automation (automação atende a entrada; IA entra na resposta do lead)");
+    const entryNowIso = new Date().toISOString();
+    // Marca que a entrada já passou → o PRÓXIMO inbound do lead é atendido pela IA.
+    await supabase.from("conversation_state").upsert(
+      {
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        entry_suppressed_at: entryNowIso,
+        updated_at: entryNowIso,
+      },
+      { onConflict: "agent_id,contact_id" },
+    );
+    await supabase.from("execution_log").insert({
+      agent_id: agent.id,
+      location_id: group.locationId,
+      contact_id: group.contactId,
+      conversation_id: group.conversationId,
+      action_type: "entry_automation_skip",
+      action_payload: { reason: "automation_owns_entry" },
+      success: true,
+    });
+    // Agenda o follow-up (cobra os dados se o lead não responder). Mesmo gate do
+    // fim do processamento — sem isso, silenciar a entrada mataria a sequência.
+    if (config.follow_up_config?.enabled) {
+      await scheduleFollowUps({
+        agentId: agent.id,
+        locationId: group.locationId,
+        contactId: group.contactId,
+        conversationId: group.conversationId,
+        followUpConfig: config.follow_up_config,
+      });
+    }
+    return;
+  }
+
   // normalizeTargeting cobre array legado E set v2 (Pedro 2026-06-17); null = sem
   // regra efetiva = responde a todos (não chama o gate).
   if (
