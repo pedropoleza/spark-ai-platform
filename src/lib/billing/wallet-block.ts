@@ -20,7 +20,9 @@
  */
 import { createAdminClient } from "@/lib/supabase/admin";
 
-const SUPPORT_PHONE = "+1 (786) 771-7077";
+// Número do suporte Spark (Pedro 2026-07-27): era o telefone PESSOAL do Pedro
+// (+1 786 771-7077) por engano — trocado pelo número oficial do suporte.
+const SUPPORT_PHONE = "+1 (786) 627-6787";
 
 /** Resposta determinística pro REP quando a location dele está sem saldo. */
 export const WALLET_BLOCKED_REP_MESSAGE =

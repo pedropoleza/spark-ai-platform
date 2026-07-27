@@ -118,7 +118,7 @@ async function main() {
     ["owner", WALLET_BLOCKED_OWNER_MESSAGE],
   ] as const) {
     eq(`copy ${label} menciona Spark Leads`, msg.includes("Spark Leads"), true);
-    eq(`copy ${label} tem o telefone do suporte`, msg.includes("+1 (786) 771-7077"), true);
+    eq(`copy ${label} tem o telefone do suporte`, msg.includes("+1 (786) 627-6787"), true);
     eq(`copy ${label} NÃO vaza "GHL"`, /GHL|GoHighLevel/i.test(msg), false);
   }
 
