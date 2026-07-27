@@ -47,6 +47,38 @@ function isDisabled(): boolean {
   return process.env.WALLET_BLOCK_DISABLED === "1";
 }
 
+/**
+ * Auto-drain do residual da wallet (Pedro 2026-07-27) — flag OFF por default.
+ * Quando ligada, o cron de retry tenta zerar o residual encalhado pra disparar
+ * o auto-recharge do HL. Ver charge.ts:drainAndRetry + migration 00127.
+ */
+export function isAutoDrainEnabled(): boolean {
+  return process.env.WALLET_AUTO_DRAIN_ENABLED === "1";
+}
+
+/**
+ * CAS: reivindica a (única) tentativa de auto-drain deste episódio de bloqueio.
+ * Retorna true SÓ pra quem ganha (wallet_drain_attempted_at estava NULL). Garante
+ * ≤1 dreno por episódio (o flag é limpo junto com wallet_blocked_at no
+ * clearWalletBlock) — é o teto do vazamento caso o dreno não zere a wallet.
+ * Fail-soft: qualquer erro = false (não drena, cai no bloqueio normal).
+ */
+export async function claimDrainAttempt(locationId: string): Promise<boolean> {
+  if (!locationId) return false;
+  try {
+    const supabase = createAdminClient();
+    const { data } = await supabase
+      .from("locations")
+      .update({ wallet_drain_attempted_at: new Date().toISOString() })
+      .eq("location_id", locationId)
+      .is("wallet_drain_attempted_at", null)
+      .select("location_id");
+    return !!(data && data.length > 0);
+  } catch {
+    return false;
+  }
+}
+
 // Cache em memória (por lambda warm) — no pior caso 1 query/location/min.
 const cache = new Map<string, { blocked: boolean; at: number }>();
 const CACHE_TTL_MS = 60_000;
@@ -125,11 +157,22 @@ export async function clearWalletBlock(locationId: string): Promise<void> {
     // Âncora do reenqueue (e no-op barato quando nem estava bloqueada).
     const { data: loc } = await supabase
       .from("locations")
-      .select("wallet_blocked_at")
+      .select("wallet_blocked_at, wallet_drain_attempted_at")
       .eq("location_id", locationId)
       .maybeSingle();
     const blockedAt = (loc?.wallet_blocked_at as string | null | undefined) || null;
     if (!blockedAt) {
+      // Não bloqueada. Mas se sobrou um CAS de dreno órfão (o dreno resolveu com
+      // wallet_blocked_at já NULL — ex: falha transiente não-insufficient antes,
+      // que pula o markWalletBlocked), limpa aqui pra não aposentar o auto-drain
+      // nessa location pra sempre. Só escreve se REALMENTE há flag pendente (o
+      // caminho comum, não-bloqueada e sem dreno, continua sendo só o SELECT).
+      if (loc?.wallet_drain_attempted_at) {
+        await supabase
+          .from("locations")
+          .update({ wallet_drain_attempted_at: null })
+          .eq("location_id", locationId);
+      }
       cache.set(locationId, { blocked: false, at: Date.now() });
       return;
     }
@@ -138,6 +181,10 @@ export async function clearWalletBlock(locationId: string): Promise<void> {
       .update({
         wallet_blocked_at: null,
         wallet_block_notified_at: null,
+        // Auto-drain (Pedro 2026-07-27): recarregou → reseta o CAS do dreno pra
+        // um episódio futuro poder tentar de novo (o teto de ≤1 dreno é POR
+        // episódio de bloqueio, não pra sempre).
+        wallet_drain_attempted_at: null,
         updated_at: new Date().toISOString(),
       })
       .eq("location_id", locationId)

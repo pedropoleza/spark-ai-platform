@@ -19,6 +19,8 @@ import {
   isInsufficientFundsError,
   markWalletBlocked,
   clearWalletBlock,
+  isAutoDrainEnabled,
+  claimDrainAttempt,
 } from "./wallet-block";
 
 interface TrackUsageParams {
@@ -242,8 +244,177 @@ function formatDescription(actionType: string): string {
     history_compression: "Compressao de historico",
     proactive: "Acao proativa do Sparkbot",
     sparkbot: "Conversa com Sparkbot",
+    wallet_drain: "Ajuste de saldo (auto-recarga)",
   };
   return map[actionType] || actionType;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto-drain do residual da wallet (Pedro 2026-07-27) — flag WALLET_AUTO_DRAIN_ENABLED
+//
+// Deadlock: o auto-recharge do HL só dispara quando o saldo cruza o limiar ($0).
+// Quando a nossa cobrança excede o saldo, o GHL rejeita INTEIRA e o saldo fica
+// preso num residual (ex: $0,04) que nunca cruza $0 → recharge nunca dispara.
+// Como o GHL NÃO expõe o saldo (endpoints 404 + erro sem valor), zeramos o
+// residual às cegas: cobramos em passos descendentes e, a cada passo que passa,
+// RE-TENTAMOS a cobrança real — quando ela volta a passar é porque o saldo zerou
+// e o HL recarregou (+$10). O sucesso da cobrança REAL é o sinal de "recarregou"
+// (não precisamos ler o saldo). Teto de dreno + ≤1 tentativa/episódio (CAS)
+// limitam o vazamento se a premissa "zerar dispara o recharge" não valer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ChargeOutcome = "ok" | "insufficient" | "error";
+
+export interface DrainDeps {
+  /** Cobra `amountUsd` como microcobrança de dreno (idx dá eventId único). */
+  drainCharge: (amountUsd: number, idx: number) => Promise<ChargeOutcome>;
+  /** Refaz a cobrança REAL do turno (eventId = record.id, idempotente no GHL). */
+  retryReal: () => Promise<ChargeOutcome>;
+  /** Denominações de dreno, maior→menor (default [0.10,0.05,0.02,0.01]). */
+  steps?: number[];
+  /** Teto de dreno em USD por episódio (default 0.50). */
+  maxDrainUsd?: number;
+  /** Teto de cobranças por denominação (guard secundário; default 20). */
+  maxPerStep?: number;
+  /**
+   * Deadline absoluto (Date.now() ms) — para o dreno se estourar, mesmo sem
+   * resolver. Blinda o budget de 60s da lambda (o cron process-queue divide os
+   * 60s com outros jobs). Sem deadline = sem limite de tempo (usado nos testes).
+   */
+  deadline?: number;
+}
+
+export interface DrainResult {
+  resolved: boolean;
+  drainedUsd: number;
+  attempts: number;
+  reason: "resolved" | "max_drain_cap" | "drain_error" | "real_error" | "exhausted" | "deadline";
+}
+
+const DEFAULT_DRAIN_STEPS = [0.1, 0.05, 0.02, 0.01];
+const DEFAULT_MAX_DRAIN_USD = 0.5;
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * Núcleo PURO e testável do dreno: recebe as duas funções de cobrança (dreno e
+ * refazer-real) e roda a escada de denominações. Não sabe nada de GHL/DB —
+ * `scripts/test-wallet-drain.ts` cobre a lógica com mocks.
+ *
+ * Regras: por denominação, cobra enquanto passa (cada sucesso pode ter zerado o
+ * saldo → testa a real); quando o dreno FALHA (saldo < denominação), desce pra
+ * denominação menor; quando a REAL passa, resolvido. Robusto à fronteira "cobrar
+ * == saldo" (se o GHL trata como insuficiente, a denominação menor fecha a conta)
+ * e seguro quando o saldo já é ~0 (nada drena → resolved:false, 0 drenado).
+ */
+export async function drainAndRetry(deps: DrainDeps): Promise<DrainResult> {
+  const steps = deps.steps && deps.steps.length > 0 ? deps.steps : DEFAULT_DRAIN_STEPS;
+  const maxDrain = deps.maxDrainUsd ?? DEFAULT_MAX_DRAIN_USD;
+  const maxPerStep = deps.maxPerStep ?? 20;
+  const EPS = 1e-9;
+  let drained = 0;
+  let attempts = 0;
+  let idx = 0;
+
+  for (const step of steps) {
+    for (let k = 0; k < maxPerStep; k++) {
+      if (deps.deadline !== undefined && Date.now() >= deps.deadline) {
+        return { resolved: false, drainedUsd: round2(drained), attempts, reason: "deadline" };
+      }
+      if (drained + step > maxDrain + EPS) {
+        return { resolved: false, drainedUsd: round2(drained), attempts, reason: "max_drain_cap" };
+      }
+      attempts++;
+      const d = await deps.drainCharge(step, idx++);
+      if (d === "error") {
+        return { resolved: false, drainedUsd: round2(drained), attempts, reason: "drain_error" };
+      }
+      if (d === "insufficient") break; // saldo < step → tenta denominação menor
+      drained += step;
+      // O dreno passou → pode ter zerado o saldo → o HL recarrega → a real passa.
+      const r = await deps.retryReal();
+      if (r === "ok") {
+        return { resolved: true, drainedUsd: round2(drained), attempts, reason: "resolved" };
+      }
+      if (r === "error") {
+        return { resolved: false, drainedUsd: round2(drained), attempts, reason: "real_error" };
+      }
+      // r === "insufficient" → ainda não zerou; continua nesta denominação
+    }
+  }
+  return { resolved: false, drainedUsd: round2(drained), attempts, reason: "exhausted" };
+}
+
+function parseDrainSteps(raw: string | undefined): number[] | undefined {
+  if (!raw) return undefined;
+  const steps = raw
+    .split(",")
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .slice(0, 8); // cap defensivo: config mal-feita (muitos passos) não explode o nº de chamadas
+  return steps.length > 0 ? steps : undefined;
+}
+
+/** Teto de wall-clock do dreno (blinda o budget de 60s da lambda). */
+const DRAIN_DEADLINE_MS = 20_000;
+
+function parsePositiveFloat(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Aplica o dreno numa location: liga o núcleo `drainAndRetry` às cobranças reais
+ * no GHL. Microcobranças de dreno usam eventId ÚNICO (`drain-…`) pra não colidir
+ * com a idempotência; a cobrança real usa `record.id` (idempotente — o GHL não
+ * duplica o turno). Devolve o chargeId da real pro caller marcar o record.
+ * Exportado pra `scripts/probe-wallet-drain.ts` validar ao vivo antes do rollout.
+ */
+export async function attemptWalletDrain(
+  companyId: string,
+  locationId: string,
+  record: { id: string; total_charge_usd: number | string; action_type: string | null },
+): Promise<{ resolved: boolean; drainedUsd: number; reason: string; chargeId: string | null }> {
+  const realAmount = Number(record.total_charge_usd);
+  const salt = Date.now().toString(36);
+  let lastRealChargeId: string | null = null;
+  const classify = (err: unknown): ChargeOutcome =>
+    isInsufficientFundsError(err) ? "insufficient" : "error";
+
+  const result = await drainAndRetry({
+    steps: parseDrainSteps(process.env.WALLET_DRAIN_STEPS),
+    maxDrainUsd: parsePositiveFloat(process.env.WALLET_DRAIN_MAX_USD),
+    deadline: Date.now() + DRAIN_DEADLINE_MS,
+    drainCharge: async (amountUsd, idx) => {
+      try {
+        await chargeWallet(companyId, locationId, amountUsd, "wallet_drain", `drain-${record.id}-${salt}-${idx}`);
+        return "ok";
+      } catch (err) {
+        return classify(err);
+      }
+    },
+    retryReal: async () => {
+      try {
+        lastRealChargeId = await chargeWallet(
+          companyId,
+          locationId,
+          realAmount,
+          record.action_type || "ai_turn",
+          record.id,
+        );
+        return "ok";
+      } catch (err) {
+        return classify(err);
+      }
+    },
+  });
+
+  return {
+    resolved: result.resolved,
+    drainedUsd: result.drainedUsd,
+    reason: result.reason,
+    chargeId: lastRealChargeId,
+  };
 }
 
 /**
@@ -393,6 +564,10 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
   // limite e retornar 400 "Price is not within the allowed range". Records
   // individuais sempre cabem (price médio $0.01-$0.30 por turn).
   // Idempotency: eventId = usage_record.id → GHL não duplica em retry.
+  // Auto-drain (Pedro 2026-07-27): no MÁXIMO 1 dreno por RUN do cron — o dreno é
+  // sequencial (~vários charges) e não pode estourar os 60s da lambda. Outras
+  // locations que deadlockarem no mesmo run caem no bloqueio e drenam no próximo.
+  let drainedThisRun = false;
   for (const record of claimed) {
     try {
       const companyId = await getCompanyId(record.location_id);
@@ -435,7 +610,51 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
       // Wallet block (Pedro 2026-07-17): saldo esgotado → bloqueia a location
       // (idempotente; o retry do reaper re-tenta e desbloqueia quando recarregar).
       if (isInsufficientFundsError(err)) {
-        await markWalletBlocked(record.location_id, msg);
+        // Auto-drain (Pedro 2026-07-27, flag WALLET_AUTO_DRAIN_ENABLED): antes de
+        // bloquear, tenta zerar o residual pra disparar o auto-recharge do HL e
+        // refazer a cobrança. ≤1 dreno por RUN (latência) e ≤1 por EPISÓDIO (CAS
+        // claimDrainAttempt). Se resolver, o record é cobrado e a location NÃO
+        // bloqueia; senão, cai no markWalletBlocked normal (comportamento de hoje).
+        let drainResolved = false;
+        if (isAutoDrainEnabled() && !drainedThisRun) {
+          const companyId = await getCompanyId(record.location_id);
+          if (companyId && (await claimDrainAttempt(record.location_id))) {
+            drainedThisRun = true;
+            const drain = await attemptWalletDrain(companyId, record.location_id, {
+              id: record.id,
+              total_charge_usd: record.total_charge_usd,
+              action_type: record.action_type,
+            }).catch((e) => {
+              console.warn(`[Billing] auto-drain lançou exceção pra ${record.location_id}:`, e);
+              return { resolved: false, drainedUsd: 0, reason: "exception", chargeId: null as string | null };
+            });
+            if (drain.resolved) {
+              // Pós-resolução protegido: um blip do Supabase aqui não pode derrubar
+              // o batch inteiro (a cobrança REAL já passou sob record.id — idempotente;
+              // se markWalletCharged falhar, o reaper reprocessa e o GHL dedupa).
+              try {
+                await markWalletCharged(record.id, drain.chargeId, new Date().toISOString());
+                // clearWalletBlock reseta bloqueio + CAS do dreno + reenfileira engolidos.
+                await clearWalletBlock(record.location_id);
+              } catch (postErr) {
+                console.warn(`[Billing] auto-drain pós-resolução falhou pra ${record.id} (não-fatal):`, postErr);
+              }
+              charged++;
+              failed--; // desfaz o failed++ do topo do catch — a cobrança fechou
+              drainResolved = true;
+              console.log(
+                `[Billing] auto-drain resolveu ${record.location_id}: drenado $${drain.drainedUsd.toFixed(2)}, cobrança real OK (record ${record.id}).`,
+              );
+            } else {
+              console.warn(
+                `[Billing] auto-drain NÃO resolveu ${record.location_id} (${drain.reason}, drenado $${drain.drainedUsd.toFixed(2)}) — bloqueando.`,
+              );
+            }
+          }
+        }
+        if (!drainResolved) {
+          await markWalletBlocked(record.location_id, msg);
+        }
       }
     }
   }
