@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
+import { isChatMessageType } from "@/lib/ghl/message-sources";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import { buildFollowUpPrompt } from "@/lib/ai/sales-prompt-builder";
 import { sanitizeOutbound, resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
@@ -628,6 +629,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         if (historyResult.status === "fulfilled" && historyResult.value) {
           const msgs = historyResult.value.messages?.messages || [];
           recentHistory = msgs
+            .filter((m) => isChatMessageType(m.messageType))
             .filter((m) => m.messageType === "TYPE_CUSTOM_SMS" || m.body)
             .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
             .slice(-10)

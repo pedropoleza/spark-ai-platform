@@ -6,7 +6,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GHLClient } from "@/lib/ghl/client";
-import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
+import { isChatMessageType } from "@/lib/ghl/message-sources";
 import { checkContactMatchesTargeting, normalizeTargeting } from "@/lib/queue/targeting";
 import type { TargetingRules } from "@/types/agent";
 
@@ -223,7 +224,8 @@ async function lastOutboundIsHuman(args: {
   const lastOutbound = [...msgs]
     .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
     .reverse()
-    .find((m) => m.direction === "outbound");
+    // Fix prod 2026-07-28: atividade do CRM/ligação não é outbound de conversa.
+    .find((m) => m.direction === "outbound" && isChatMessageType((m as { messageType?: string }).messageType));
   if (!lastOutbound) return null;
   // Anti-eco precisa dos textos que a IA enviou — busca SEMPRE (mesmo sem body,
   // mídia/áudio), igual ao runtime: a ladder decide via aiTexts, não o !body cru.
@@ -239,6 +241,8 @@ async function lastOutboundIsHuman(args: {
   const { isHuman } = classifyLastOutbound({
     lastOutbound,
     aiTexts: extractAiSentTexts(aiSends || []),
+    // H56: paridade com o runtime — id do nosso envio nunca é "humano".
+    sentIds: extractAiSentIds(aiSends || []),
   });
   return { isHuman, at: lastOutbound.dateAdded };
 }

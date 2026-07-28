@@ -11,6 +11,7 @@ import { withRetry } from "@/lib/utils/retry";
 import { executeActions } from "@/lib/ai/action-executor";
 import { evaluateLeadSilence, stripSilenceMarker } from "@/lib/ai/lead-silence";
 import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
+import { isChatMessageType } from "@/lib/ghl/message-sources";
 
 /**
  * POST /api/agents/test
@@ -231,6 +232,8 @@ export async function POST(request: NextRequest) {
               { locationId: session.locationId },
             );
             return (msgs.messages?.messages || [])
+              // Paridade com prod (fix 2026-07-28): atividade do CRM/ligação fora.
+              .filter((m) => isChatMessageType(m.messageType))
               .filter((m) => m.messageType === "TYPE_CUSTOM_SMS" || m.body)
               .length;
           } catch {

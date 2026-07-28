@@ -107,7 +107,7 @@ check(
   }).isHuman === true,
 );
 
-console.log("\nWiring: o F52 não olha mais atividade/ligação");
+console.log("\nWiring: TODOS os consumidores de mensagem filtram atividade");
 import { readFileSync } from "fs";
 import { resolve } from "path";
 const qp = readFileSync(resolve(__dirname, "..", "src/lib/queue/queue-processor.ts"), "utf8");
@@ -115,6 +115,19 @@ check("lastOutbound filtra por isChatMessageType", qp.includes("isChatMessageTyp
 const lh = readFileSync(resolve(__dirname, "..", "src/lib/queue/lead-history.ts"), "utf8");
 check("lead-history passa aiIds", lh.includes("isHumanOutboundMessage(m, aiTexts, aiIds)"));
 check("recent_messages carrega id", lh.includes("id: typeof m.id === \"string\" ? m.id : undefined"));
+// Fix 2026-07-28 (varredura completa): atividade do CRM contaminava também o
+// histórico do LLM, o pill "quem dirige", o prompt de follow-up, o resumo e o
+// test chat. Todos passam pelo mesmo helper agora.
+const cc = readFileSync(resolve(__dirname, "..", "src/lib/agents/contact-controls.ts"), "utf8");
+const fu = readFileSync(resolve(__dirname, "..", "src/lib/queue/follow-up-scheduler.ts"), "utf8");
+const sn = readFileSync(resolve(__dirname, "..", "src/lib/queue/summary-note-generator.ts"), "utf8");
+const tr = readFileSync(resolve(__dirname, "..", "src/app/api/agents/test/route.ts"), "utf8");
+check("histórico do LLM filtra atividade", qp.includes("filter((m) => isChatMessageType(m.messageType))"));
+check("pill 'quem dirige' filtra atividade", cc.includes("isChatMessageType"));
+check("pill tem paridade H56 (sentIds)", cc.includes("sentIds: extractAiSentIds(aiSends || [])"));
+check("prompt de follow-up filtra atividade", fu.includes("isChatMessageType(m.messageType)"));
+check("resumo da conversa filtra atividade", sn.includes("isChatMessageType(m.messageType)"));
+check("test chat tem paridade com prod", tr.includes("isChatMessageType(m.messageType)"));
 
 console.log(`\n═══ RESULTADO: ${pass} passed · ${fail} failed ═══`);
 process.exit(fail > 0 ? 1 : 0);

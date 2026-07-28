@@ -700,6 +700,10 @@ async function processGroup(
   if (messagesSettled.status === "fulfilled" && messagesSettled.value) {
     const messages = messagesSettled.value.messages?.messages || [];
     conversationTurns = messages
+      // Fix prod 2026-07-28 (Alves Cury): atividade do CRM ("Opportunity created")
+      // e ligação NÃO são fala de ninguém — entravam como turno "assistant" e o
+      // modelo lia isso como coisa que ELE disse (piorava a resposta).
+      .filter((m) => isChatMessageType(m.messageType))
       .filter((m) => m.messageType === "TYPE_CUSTOM_SMS" || m.body)
       .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
       .slice(-30)

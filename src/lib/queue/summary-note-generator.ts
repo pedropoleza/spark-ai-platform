@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { GHLClient } from "@/lib/ghl/client";
+import { isChatMessageType } from "@/lib/ghl/message-sources";
 import { trackAndCharge } from "@/lib/billing/charge";
 
 const INACTIVITY_MINUTES = 30;
@@ -97,10 +98,12 @@ export async function generateSummaryNote(params: SummaryParams): Promise<void> 
       );
       const convId = search.conversations?.[0]?.id;
       if (convId) {
-        const msgs = await ghlClient.get<{ messages: { body: string; direction: string; dateAdded: string }[] }>(
+        const msgs = await ghlClient.get<{ messages: { body: string; direction: string; dateAdded: string; messageType?: string }[] }>(
           `/conversations/${convId}/messages`, { locationId: params.locationId }
         );
         history = (msgs.messages || [])
+          // Fix 2026-07-28: "Opportunity created" & cia não entram no resumo.
+          .filter((m) => isChatMessageType(m.messageType))
           .filter((m) => m.body)
           .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
           .slice(-30)
