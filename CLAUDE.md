@@ -98,7 +98,7 @@ O SparkBot pode falar com o rep pela **engine própria da Spark (SparkZap)** em 
 - **LID**: o engine endereça DM por `@lid` e o `resolveSenderPhone` devolve `""` → descarte SILENCIOSO. Por isso o inbound passa pela ponte do OS (que tem o `wa_lid_map`); quando não resolve, vira signal `unresolved_lid` em vez de sumir.
 - **Botão/lista**: SUPORTADOS pela porta (motor rico do OS, commit `07bfea7` de lá). Falta só validar o rendering em aparelho real (Android+iPhone) antes de usar com rep. 422 da validação → `unsupported` → fallback de TEXTO (opções numeradas). Gate de interativo continua o `STEVO_INTERACTIVE_ENABLED` (vale pros 2 transportes).
 - **Rollback**: `SPARKBOT_WA_TRANSPORT=stevo` + redeploy. Teste: `scripts/test-sparkzap-transport.ts` (59/59).
-- **Pra ligar (👤)**: ver §6 do PLANO — secrets/envs JÁ registrados; falta parear +1 813 407-9657 no SparkZap → webhook da sessão → shadow → 1 conversa real.
+- **Estado (verificado em prod 28/07)**: o número do SparkBot (+1 813 407-9657) **JÁ está pareado** no SparkZap (sessão `RBFxlEQZobaDjlF2i5px`, connected); envio testado ao vivo (mensagem entregue); inbound armado; secrets/envs registrados nos 2 lados. **Falta (👤)**: re-apontar o webhook DA SESSÃO no engine pra `/api/webhooks/wa-sparkbot` (hoje o inbound desse número cai no pipeline do gateway e vira conversa de CLIENTE no Spark Leads do hub — sem isso o SparkZap só ENVIA) → `SPARKBOT_INBOUND_MODE=shadow`→`1` → `SPARKZAP_REPS`+`SPARKBOT_WA_TRANSPORT=sparkzap`. Ver §6 do PLANO.
 
 ### Migrations
 - **Sempre criar arquivo em `supabase/migrations/`** mesmo aplicando via MCP em prod.

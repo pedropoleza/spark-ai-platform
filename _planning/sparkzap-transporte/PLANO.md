@@ -84,24 +84,29 @@ Do lado do OS: `SPARKBOT_ENGINE_SESSION`, `SPARKBOT_INBOUND_{MODE,URL,TOKEN}`
 (o envio não tem env própria — é a fonte `sparkbot` em `integration_sources`,
 fail-closed sem secret).
 
-## 6. Ordem de ligação — resumida
+## 6. Estado real (verificado em prod 2026-07-28)
 
-Secrets e envs **JÁ registrados pelo agente** (acesso completo aos dois lados):
-o hash da fonte `sparkbot` está em `integration_sources`, e as envs
-`SPARK_OS_WA_URL`/`SPARK_OS_WA_TOKEN`/`SPARKZAP_INBOUND_TOKEN` (aqui) +
-`SPARKBOT_INBOUND_URL`/`SPARKBOT_INBOUND_TOKEN` (OS) estão na Vercel. Resta:
+**O número do SparkBot (+1 813 407-9657) JÁ ESTÁ PAREADO no SparkZap** —
+sessão `RBFxlEQZobaDjlF2i5px`, `connected`. Não precisa de QR.
 
-1. 👤 Parear o número do SparkBot (**+1 813 407-9657**) no SparkZap
-   (`/whatsapp` → Números → Conectar → QR). Número SEPARADO do suporte.
-   Manter **antiban OFF** no número (paridade Stevo).
-2. Webhook DA SESSÃO no engine → `<spark-os>/api/webhooks/wa-sparkbot?s=<secret>`.
-3. OS: `SPARKBOT_ENGINE_SESSION=<engine_name>` + `SPARKBOT_INBOUND_MODE=shadow`
-   → conferir `webhook_events source='sparkbot_shadow'` chegando.
-4. Teste de envio `kind:"text"` pro telefone do Pedro; depois `kind:"buttons"`
-   num Android E num iPhone (prova o rendering).
-5. Aqui: `SPARKZAP_REPS=<telefone do Pedro>` + `SPARKBOT_WA_TRANSPORT=sparkzap`
+- ✅ Envio testado ao vivo: a porta devolveu `outboxId` + `sessionId` e a
+  mensagem foi ENTREGUE no WhatsApp. Bearer errado = 401; payload ruim = 422
+  com motivo em pt-BR.
+- ✅ Inbound armado aqui (`armed:true`; 401 sem bearer).
+- ✅ Secrets/envs registrados nos dois lados (hash da fonte `sparkbot` +
+  `SPARK_OS_WA_URL`/`SPARK_OS_WA_TOKEN`/`SPARKZAP_INBOUND_TOKEN`).
+
+**Falta (👤 — mexe em número vivo):**
+1. Re-apontar o webhook DA SESSÃO no engine, de `/api/webhooks/wa-engine` pra
+   `…/api/webhooks/wa-sparkbot?s=<secret>`. Hoje o inbound do número do SparkBot
+   cai no pipeline do gateway (vira conversa de CLIENTE no Spark Leads do hub).
+   Sem isso o SparkZap só ENVIA; o rep continua entrando pelo Stevo.
+2. OS: `SPARKBOT_INBOUND_MODE=shadow` → conferir → `=1`.
+3. Aqui: `SPARKZAP_REPS=<telefone do Pedro>` + `SPARKBOT_WA_TRANSPORT=sparkzap`
    → 1 conversa real ponta a ponta.
-6. OS em `SPARKBOT_INBOUND_MODE=1`. Stevo segue pareado (dual-run).
+4. Botão: testar rendering num Android E num iPhone antes de usar com rep.
+5. Manter **antiban OFF** nesse número (paridade Stevo — o inbound do rep não
+   alimenta o `wa_messages` do gateway, então todo rep parece "novo contato").
 
 **Rollback**: `SPARKBOT_WA_TRANSPORT=stevo` + redeploy. Nada mais.
 
