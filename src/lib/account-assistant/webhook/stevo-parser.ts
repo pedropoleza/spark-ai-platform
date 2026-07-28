@@ -50,6 +50,14 @@ export type ParsedStevoMessage = {
   /** Nome da instância no Stevo (top-level instanceName, ex: "sparkbot").
    *  Só pra audit/logs e pra popular stevo_instances. */
   instanceName: string;
+  /**
+   * Por qual motor a mensagem CHEGOU — e, por consequência, por onde a resposta
+   * SAI (H57, 2026-07-28). Ausente/"stevo" = comportamento de sempre (responde
+   * pela mesma instância Stevo que recebeu, via serverUrl+instanceToken).
+   * "sparkzap" = veio da engine própria, que não devolve credencial no payload:
+   * a resposta sai pela ponte no Spark OS. Ver `wa-transport.ts`.
+   */
+  transport?: "stevo" | "sparkzap";
 } & ParsedStevoContent;
 
 export type ParsedStevoContent =

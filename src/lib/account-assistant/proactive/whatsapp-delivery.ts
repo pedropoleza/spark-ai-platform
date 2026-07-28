@@ -195,11 +195,49 @@ export async function deliverProactiveMessage(
   let sendError: string | null = null;
   let ghlMessageId: string | null = null;
   let ghlConversationId: string | null = null;
-  // Audit: marcado "stevo" quando o envio sai pelo Stevo. O caso "ghl" é
-  // derivado no metadata (sentViaWhatsapp && !sentVia) — não precisa setar aqui.
-  let sentVia: "stevo" | null = null;
+  // Audit: marcado "stevo"/"sparkzap" quando o envio sai por um motor direto de
+  // WhatsApp. O caso "ghl" é derivado no metadata (sentViaWhatsapp && !sentVia).
+  let sentVia: "stevo" | "sparkzap" | null = null;
 
-  // ===== Stevo-first (Pedro 2026-05-20: Stevo é o canal PADRÃO; GHL fallback) =====
+  // ===== SparkZap-first (H57, 2026-07-28) =====
+  // Engine própria. Só entra quando a flag + allowlist mandam ESTE rep pra ela;
+  // fora disso `pickWaTransport` devolve "stevo" e este bloco nem roda. Se
+  // falhar, NÃO é fim de linha: cai no Stevo abaixo e, depois, no Spark Leads —
+  // a escada de fallback existente vira a rede de segurança do transporte novo.
+  if (enabled && rep.phone && !rep.phone.startsWith("webonly:")) {
+    const { pickWaTransport } = await import("../webhook/wa-transport");
+    if (pickWaTransport(rep.phone) === "sparkzap") {
+      try {
+        const { sendSparkZapText } = await import("../webhook/sparkzap-send");
+        const r = await sendSparkZapText({
+          number: rep.phone,
+          text: formattedMessage,
+          // Proativo não tem messageId de origem — a chave vem do contexto do
+          // disparo (fonte + rep + minuto), que é estável num retry da mesma
+          // execução e distinto entre disparos legítimos.
+          dedupeKey: `proactive:${opts.source}:${rep.id}:${Math.floor(Date.now() / 60_000)}`,
+        });
+        if (r.ok) {
+          sentViaWhatsapp = true;
+          sentVia = "sparkzap";
+        } else {
+          sendError = `sparkzap: ${r.error}`;
+          console.warn(
+            `[proactive-delivery] SparkZap falhou pra rep ${rep.id} (${opts.source}), ` +
+              `caindo pro Stevo: ${r.error}`,
+          );
+        }
+      } catch (err) {
+        sendError = `sparkzap: ${err instanceof Error ? err.message : String(err)}`;
+        console.warn(
+          `[proactive-delivery] SparkZap lançou pra rep ${rep.id} (${opts.source}), ` +
+            `caindo pro Stevo: ${sendError}`,
+        );
+      }
+    }
+  }
+
+  // ===== Stevo (Pedro 2026-05-20: Stevo é o canal PADRÃO; GHL fallback) =====
   // Envia o proativo via Stevo direto (mesma instância do hub, de stevo_instances),
   // pelo phone do rep. Só quando STEVO_SEND_ENABLED=1 + temos a config da instância
   // + phone real. Se Stevo falhar OU não houver config, cai no bloco GHL abaixo
@@ -207,7 +245,15 @@ export async function deliverProactiveMessage(
   const stevoEnabled = /^(1|true|yes)$/i.test(
     process.env.STEVO_SEND_ENABLED?.trim() || "",
   );
-  if (enabled && stevoEnabled && rep.phone && !rep.phone.startsWith("webonly:")) {
+  // `!sentViaWhatsapp` (H57): se o SparkZap já entregou acima, NÃO reenviar pelo
+  // Stevo — o rep receberia o mesmo proativo duas vezes.
+  if (
+    !sentViaWhatsapp &&
+    enabled &&
+    stevoEnabled &&
+    rep.phone &&
+    !rep.phone.startsWith("webonly:")
+  ) {
     try {
       const inst = await getStevoInstance(hubLocationId);
       if (inst) {

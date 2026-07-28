@@ -44,6 +44,12 @@ import {
   sendStevoList,
   type StevoSendResult,
 } from "./stevo-send";
+import { pickWaTransport } from "./wa-transport";
+import {
+  sendSparkZapText,
+  sendSparkZapButton,
+  sendSparkZapList,
+} from "./sparkzap-send";
 
 const SPARKBOT_HISTORY_TURNS = 30;
 
@@ -519,6 +525,14 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
   let interactiveError: string | null = null;
   let sendResult: StevoSendResult | null = null;
 
+  // H57 (2026-07-28): por qual motor esta resposta sai. A mensagem que CHEGOU
+  // pelo SparkZap responde pelo SparkZap (o payload dela nem traz credencial do
+  // Stevo); nas demais, decide a flag + allowlist de rollout por rep. Default de
+  // tudo = "stevo" → deployar não muda nada.
+  const transport =
+    parsed.transport === "sparkzap" ? "sparkzap" : pickWaTransport(parsed.phone);
+  const viaLabel = transport === "sparkzap" ? "SparkZap" : "Stevo";
+
   if (sendEnabled && (replyText.trim() || interactive)) {
     const serverUrl = parsed.serverUrl || process.env.STEVO_API_BASE?.trim() || "";
     const apiKey =
@@ -526,72 +540,111 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       process.env.STEVO_SEND_APIKEY?.trim() ||
       process.env.STEVO_INSTANCE_TOKEN?.trim() ||
       "";
+    // Idempotência do lado do SparkZap: a ponte deduplica por esta chave. O
+    // handler roda em waitUntil e pode ser reexecutado — sem ela o rep receberia
+    // a resposta duas vezes. (No Stevo esse papel é do próprio /send/text.)
+    const dedupeKey = parsed.messageId || null;
 
     // Interativo (botão/lista) quando o gate tá ligado e o turno tem payload.
     // Se o envio interativo falhar, cai pro texto (o fallback já traz as opções
-    // numeradas) — rep nunca fica sem resposta.
+    // numeradas) — rep nunca fica sem resposta. No SparkZap esse fallback é o
+    // caminho NORMAL enquanto botão/lista não estiverem homologados lá.
     if (interactiveEnabled && interactive) {
       if (interactive.kind === "buttons") {
         sentKind = "buttons";
-        sendResult = await sendStevoButton({
-          serverUrl,
-          apiKey,
-          number: parsed.phone,
-          title: interactive.title,
-          body: interactive.body,
-          footer: interactive.footer,
-          buttons: interactive.options.map((o) => ({ id: o.id, label: o.label })),
-        });
+        const buttons = interactive.options.map((o) => ({ id: o.id, label: o.label }));
+        sendResult =
+          transport === "sparkzap"
+            ? await sendSparkZapButton({
+                number: parsed.phone,
+                title: interactive.title,
+                body: interactive.body,
+                footer: interactive.footer,
+                buttons,
+                dedupeKey,
+              })
+            : await sendStevoButton({
+                serverUrl,
+                apiKey,
+                number: parsed.phone,
+                title: interactive.title,
+                body: interactive.body,
+                footer: interactive.footer,
+                buttons,
+              });
       } else {
         sentKind = "list";
-        sendResult = await sendStevoList({
-          serverUrl,
-          apiKey,
-          number: parsed.phone,
-          title: interactive.title,
-          body: interactive.body,
-          footer: interactive.footer,
-          buttonText: interactive.buttonText || "Ver opções",
-          sections: [
-            {
-              rows: interactive.options.map((o) => ({
-                rowId: o.id,
-                title: o.label,
-                description: o.description,
-              })),
-            },
-          ],
-        });
+        const sections = [
+          {
+            rows: interactive.options.map((o) => ({
+              rowId: o.id,
+              title: o.label,
+              description: o.description,
+            })),
+          },
+        ];
+        sendResult =
+          transport === "sparkzap"
+            ? await sendSparkZapList({
+                number: parsed.phone,
+                title: interactive.title,
+                body: interactive.body,
+                footer: interactive.footer,
+                buttonText: interactive.buttonText || "Ver opções",
+                sections,
+                dedupeKey,
+              })
+            : await sendStevoList({
+                serverUrl,
+                apiKey,
+                number: parsed.phone,
+                title: interactive.title,
+                body: interactive.body,
+                footer: interactive.footer,
+                buttonText: interactive.buttonText || "Ver opções",
+                sections,
+              });
       }
       if (!sendResult.ok && replyText.trim()) {
         interactiveError = sendResult.error ?? null;
         console.warn(
-          `[stevo-handler] envio ${sentKind} falhou (${interactiveError}) — fallback texto.`,
+          `[stevo-handler] envio ${sentKind} via ${viaLabel} falhou (${interactiveError}) — fallback texto.`,
         );
         sentKind = "text";
-        sendResult = await sendStevoText({ serverUrl, apiKey, number: parsed.phone, text: replyText });
+        sendResult =
+          transport === "sparkzap"
+            ? await sendSparkZapText({ number: parsed.phone, text: replyText, dedupeKey })
+            : await sendStevoText({ serverUrl, apiKey, number: parsed.phone, text: replyText });
       }
     } else {
       sentKind = "text";
-      sendResult = await sendStevoText({ serverUrl, apiKey, number: parsed.phone, text: replyText });
+      sendResult =
+        transport === "sparkzap"
+          ? await sendSparkZapText({ number: parsed.phone, text: replyText, dedupeKey })
+          : await sendStevoText({ serverUrl, apiKey, number: parsed.phone, text: replyText });
     }
 
     if (sendResult.ok) {
       console.log(
-        `[stevo-handler] resposta enviada via Stevo pra ${parsed.phone} (${sentKind}; ${sendResult.sent}/${sendResult.total}).`,
+        `[stevo-handler] resposta enviada via ${viaLabel} pra ${parsed.phone} (${sentKind}; ${sendResult.sent}/${sendResult.total}).`,
       );
     } else {
       console.error(
-        `[stevo-handler] envio via Stevo FALHOU pra ${parsed.phone} (${sentKind}): ${sendResult.error}`,
+        `[stevo-handler] envio via ${viaLabel} FALHOU pra ${parsed.phone} (${sentKind}): ${sendResult.error}`,
       );
       // Hardening 2026-06-17: o LLM rodou (tokens+billing), o rep foi processado,
       // mas a RESPOSTA não chegou — antes só console.error. Vira signal (dedup por title).
       reportError({
-        title: "SparkBot: envio da resposta via Stevo falhou",
-        feature: "sparkbot-inbound-stevo",
+        title: `SparkBot: envio da resposta via ${viaLabel} falhou`,
+        feature: transport === "sparkzap" ? "sparkbot-inbound-sparkzap" : "sparkbot-inbound-stevo",
         severity: "high",
-        description: `Resposta gerada mas o Stevo não entregou (${sentKind}; ${sendResult.sent}/${sendResult.total}): ${sendResult.error}`,
-        metadata: { phone: parsed.phone, sent_kind: sentKind, send_error: sendResult.error },
+        description: `Resposta gerada mas o ${viaLabel} não entregou (${sentKind}; ${sendResult.sent}/${sendResult.total}): ${sendResult.error}`,
+        metadata: {
+          phone: parsed.phone,
+          sent_kind: sentKind,
+          send_error: sendResult.error,
+          transport,
+        },
       });
     }
   } else {
@@ -611,7 +664,9 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
     content: result.text || "(sem resposta)",
     channel: "whatsapp",
     metadata: {
-      source: "stevo",
+      // H57: por onde a mensagem CHEGOU. Mantém "stevo" no caminho de sempre pra
+      // não quebrar query/dashboard existente; "sparkzap" só no transporte novo.
+      source: parsed.transport === "sparkzap" ? "sparkzap" : "stevo",
       model: result.model_used,
       tools: result.tools_executed,
       // H47-F0 (telemetria 2026-07-10): funil de resolução de contato re-rodável
@@ -644,9 +699,9 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       completion_tokens: result.tokens?.completion,
       cached_tokens: result.tokens?.cached,
       llm_failed: result.llm_failed,
-      // Status de envio: sent_via="stevo" quando a resposta saiu de fato.
+      // Status de envio: sent_via = o motor que ENTREGOU ("stevo" | "sparkzap").
       // not_sent=true quando o gate estava off OU o envio falhou (audit claro).
-      sent_via: sendResult?.ok ? "stevo" : null,
+      sent_via: sendResult?.ok ? transport : null,
       sent_kind: sentKind,
       interactive_via: result.interactive_via ?? null,
       interactive_error: interactiveError,

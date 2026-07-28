@@ -93,6 +93,21 @@ export async function runMarinaDailyDigest(opts?: { forDate?: Date; dryRun?: boo
   if (count === 0) return { ok: true, skipped: "no_appointments", count: 0, text };
   if (opts?.dryRun) return { ok: true, skipped: "dry_run", count, text };
 
+  // H57: se este número já está no rollout do SparkZap, o digest sai pela engine
+  // própria (e nem depende de instância Stevo configurada).
+  const { pickWaTransport } = await import("./webhook/wa-transport");
+  if (pickWaTransport(phone) === "sparkzap") {
+    const { sendSparkZapText } = await import("./webhook/sparkzap-send");
+    const r = await sendSparkZapText({
+      number: phone!,
+      text,
+      dedupeKey: `marina-daily:${new Date().toISOString().slice(0, 10)}`,
+    });
+    if (r.ok) return { ok: true, via: "sparkzap", count, text };
+    // Falhou → cai pro Stevo abaixo (rede de segurança do transporte novo).
+    console.warn(`[marina-daily] SparkZap falhou, caindo pro Stevo: ${r.error}`);
+  }
+
   const stevoEnabled = /^(1|true|yes)$/i.test(process.env.STEVO_SEND_ENABLED?.trim() || "");
   if (!stevoEnabled) return { ok: false, skipped: "stevo_disabled", count, text };
 

@@ -91,6 +91,15 @@ Em ordem de precedência:
 - `WhatsApp` quando API for liberada (Meta review).
 - `auto` (futuro) — checa janela 24h + fallback SMS.
 
+### Transporte de WhatsApp do SparkBot: Stevo × SparkZap (H57, Pedro 2026-07-28) — flags OFF
+O SparkBot pode falar com o rep pela **engine própria da Spark (SparkZap)** em vez do Stevo, sem desconectar o Stevo. Federação: o banco daqui continua separado; o **Spark OS** (`spark-os`, Supabase `nsqwgjbgcdqyzozyaltz`) vira o TRANSPORTE e o control plane. Contrato = HTTP + bearer nos dois sentidos; **o token de sessão do WhatsApp nunca vem pra cá**. Planos: `_planning/sparkzap-transporte/PLANO.md` (aqui) + `spark-os/_planning/SPARKBOT_SPARKZAP_BRIDGE.md` (canônico).
+- **Saída**: `webhook/wa-transport.ts` (`pickWaTransport(phone)` → `stevo`|`sparkzap`, com allowlist `SPARKZAP_REPS` pra rollout por rep) + `webhook/sparkzap-send.ts` (mesmo `StevoSendResult` do `stevo-send.ts`, POST na ponte `SPARK_OS_WA_URL` com bearer). Wire em `stevo-handler.ts` (bloco de envio), `proactive/whatsapp-delivery.ts` (SparkZap-first → Stevo → Spark Leads) e `marina-daily.ts`.
+- **Entrada**: `api/webhooks/spark-zap/route.ts` (bearer `SPARKZAP_INBOUND_TOKEN`, fail-closed) → `webhook/sparkzap-parser.ts` traduz o envelope e **reusa `parseStevoWebhook`** → `handleStevoInbound`. **Um parser só** — os fixes de prod (templateButtonReplyMessage, vCard) valem pros 2 transportes. A escada de idempotência de 7 camadas fica INTACTA (o `Info.ID` do WhatsApp é o mesmo nos dois motores → camada 6 mata duplicata no dual-run).
+- **LID**: o engine endereça DM por `@lid` e o `resolveSenderPhone` devolve `""` → descarte SILENCIOSO. Por isso o inbound passa pela ponte do OS (que tem o `wa_lid_map`); quando não resolve, vira signal `unresolved_lid` em vez de sumir.
+- **Botão/lista**: o SparkZap ainda não tem interativo → a ponte devolve 422 `unsupported` e o handler cai no fallback de TEXTO (opções numeradas). Ligar depois = `SPARKZAP_INTERACTIVE=1` **no Spark OS**; o payload já está escrito e testado dos dois lados.
+- **Rollback**: `SPARKBOT_WA_TRANSPORT=stevo` + redeploy. Teste: `scripts/test-sparkzap-transport.ts` (51/51).
+- **Pra ligar (👤)**: ver §6 do PLANO (parear +1 813 407-9657 no SparkZap → webhook da sessão → shadow → secret da fonte → 1 conversa real).
+
 ### Migrations
 - **Sempre criar arquivo em `supabase/migrations/`** mesmo aplicando via MCP em prod.
 - Fresh staging branches dependem disso.
