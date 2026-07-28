@@ -582,6 +582,10 @@ export async function POST(request: NextRequest) {
     const { data: allAgents } = await supabase
       .from("agents")
       .select("id, type, location_id, agent_configs(debounce_seconds, targeting_rules, enabled_channels, deactivation_rules, working_hours)")
+      // MC-10: sem ORDER BY a iteração do roteamento era não-determinística com
+      // 2+ agentes ativos (o comentário acima promete "sales primeiro" mas nada
+      // garantia). created_at ASC = agente mais antigo ganha empates, estável.
+      .order("created_at", { ascending: true })
       .eq("location_id", locationId)
       .eq("status", "active")
       .in("type", ["sales_agent", "recruitment_agent", "custom_agent"]);
@@ -662,6 +666,9 @@ export async function POST(request: NextRequest) {
 
     // 2) Rotear por targeting quando nao houver conversa anterior.
     // Agente COM regra que bate sempre ganha do fallback (sem regra = catch-all).
+    // MC-3: lembra o 1º agente COM regra pro recheck adiado de lead novo (abaixo).
+    let firstWithRules: typeof allAgents[number] | null = null;
+    let deferredTargetingRecheck = false;
     if (!selectedAgent) {
       let fallback: typeof allAgents[number] | null = null;
       let ruleless = 0;
@@ -678,6 +685,7 @@ export async function POST(request: NextRequest) {
           if (!fallback) fallback = candidate; // 1º sem-regra = catch-all
           continue;
         }
+        if (!firstWithRules) firstWithRules = candidate; // MC-3
         // failMode "closed": no ROTEAMENTO, erro de fetch = "não escolhe ESTE
         // agente" (não atende quem talvez não devia — tenta o próximo). messageBody
         // alimenta as folhas type="message" → agente com filtro de mensagem É
@@ -705,12 +713,43 @@ export async function POST(request: NextRequest) {
     }
 
     if (!selectedAgent) {
+      // MC-3 (caso Aurea, review Marcia 2026-07-28): lead NOVO de anúncio pago
+      // chega ANTES do workflow do funil aplicar a tag de targeting → era
+      // DROPADO aqui sem enfileirar, sem retry e sem audit por-location (a 1ª
+      // mensagem do lead se perdia; só recuperava se ele insistisse). Agora, se
+      // o contato é NOVO (zero conversa + zero histórico de fila — checks
+      // locais baratos, sem GET no Spark Leads), enfileira pro 1º agente com
+      // regra com process_after +120s: o gate de targeting do queue-processor
+      // re-avalia com a tag fresca; se ainda não bater, vira `targeting_skip`
+      // AUDITADO em vez de sumiço. Auto-limitante: o próprio enqueue cria
+      // histórico, então inbound seguinte de contato realmente fora do público
+      // não re-adia (cai no drop de sempre).
+      if (firstWithRules && states.length === 0) {
+        const { count: priorRows } = await supabase
+          .from("message_queue")
+          .select("id", { count: "exact", head: true })
+          .eq("location_id", locationId)
+          .eq("contact_id", contactId);
+        if ((priorRows ?? 0) === 0) {
+          selectedAgent = firstWithRules;
+          deferredTargetingRecheck = true;
+          console.log(
+            `[Webhook] Lead novo sem targeting match — recheck adiado 120s (agent=${firstWithRules.id}, contact=${contactId})`,
+          );
+        }
+      }
+    }
+
+    if (!selectedAgent) {
       console.log(`[Webhook] Skipped: no_agent_matched_targeting for contact ${contactId}`);
       // Sweep 2026-06-17: há agentes ativos mas NENHUM casou o targeting deste
       // contato — provável targeting estreito demais (classe de bug F27/RV-W:
       // agente mudo). MEDIUM: empurra push se virar padrão (occ>=20).
       reportError({
-        title: "Inbound: nenhum agente casou o targeting do contato",
+        // MC-10: location no título — o dedup do recorder é por título, e o sinal
+        // global tinha 74k occurrences indistinguíveis (impossível ver QUAL conta
+        // está dropando lead).
+        title: `Inbound: nenhum agente casou o targeting do contato (${locationId})`,
         feature: "inbound-webhook",
         severity: "medium",
         description: "Existem agentes lead-facing ativos mas as targeting_rules de todos excluíram este contato. Se for engano, afrouxe o targeting (tag/etapa/campo).",
@@ -792,10 +831,13 @@ export async function POST(request: NextRequest) {
 
     // ===== DEBOUNCE ATÔMICO: usar RPC ou transação =====
     // Se fora do expediente, process_after = início próximo dia útil.
-    // Senão, debounce normal.
+    // Senão, debounce normal. MC-3: recheck adiado de lead novo sem tag = 120s
+    // (dá tempo do workflow do funil aplicar a tag antes do gate re-avaliar).
     const processAfter = workingHoursDelay
       ? workingHoursDelay
-      : new Date(Date.now() + debounceSeconds * 1000).toISOString();
+      : deferredTargetingRecheck
+        ? new Date(Date.now() + 120_000).toISOString()
+        : new Date(Date.now() + debounceSeconds * 1000).toISOString();
     const now = new Date().toISOString();
 
     // Atualizar pendentes + inserir nova em uma sequência atômica

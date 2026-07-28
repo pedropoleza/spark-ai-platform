@@ -137,6 +137,48 @@ export async function processMessageQueue(): Promise<{
     groups.get(key)!.messages.push(msg);
   }
 
+  // MC-6 (review Marcia 2026-07-28): rajada de inbound virava turnos PARALELOS.
+  // O debounce só empurra process_after de msgs 'pending'; msg que chega com um
+  // turno do MESMO contato in-flight era claimada por outro worker e virava um
+  // 2º turno → respostas empilhadas/contraditórias sem inbound entre elas (21
+  // pares OUT-OUT <90s em 7d; "Já agendei 9:00 AM" + "Vou agendar 2:00 PM").
+  // Fix: se o par (agent,contact) tem OUTRA row 'processing' recente (turno
+  // in-flight de outro claim), devolvemos o grupo pra 'pending' com +30s — a
+  // msg é absorvida num único turno seguinte, já com o histórico do turno que
+  // terminou. Latência extra de até ~30s só pra quem digitou durante um turno.
+  if (groups.size > 0) {
+    const claimedIds = new Set(pendingMessages.map((m) => m.id as string));
+    const contactIds = [...new Set(pendingMessages.map((m) => m.contact_id as string))];
+    const { data: inFlightRows } = await supabase
+      .from("message_queue")
+      .select("id, agent_id, contact_id")
+      .eq("status", "processing")
+      .in("contact_id", contactIds)
+      .gt("updated_at", reaperCutoff); // órfãs velhas não contam (reaper resolve)
+    const inFlightPairs = new Set<string>();
+    for (const r of inFlightRows || []) {
+      const row = r as { id: string; agent_id: string | null; contact_id: string };
+      if (claimedIds.has(row.id)) continue; // nossas próprias rows não são "in-flight"
+      inFlightPairs.add(`${row.agent_id || ""}:${row.contact_id}`);
+    }
+    if (inFlightPairs.size > 0) {
+      for (const [key, group] of Array.from(groups.entries())) {
+        const pairKey = `${group.agentId || ""}:${group.contactId}`;
+        if (!inFlightPairs.has(pairKey)) continue;
+        const ids = group.messages.map((m) => m.id);
+        await supabase
+          .from("message_queue")
+          .update({ status: "pending", process_after: new Date(Date.now() + 30_000).toISOString() })
+          .in("id", ids)
+          .eq("status", "processing");
+        groups.delete(key);
+        console.log(
+          `[Processor] MC-6: turno in-flight pra contact=${group.contactId} — ${ids.length} msg(s) adiada(s) 30s pra absorção num turno único`,
+        );
+      }
+    }
+  }
+
   // Agregar bodies (texto puro + placeholders para midia). Audio e imagens
   // sao processados em processGroup onde temos acesso a config/toggles.
   for (const group of Array.from(groups.values())) {
@@ -748,7 +790,30 @@ async function processGroup(
       const lastOutboundMs = new Date(lastOutbound.dateAdded).getTime();
       const overriddenByManualResume = resumedAtMs > 0 && lastOutboundMs <= resumedAtMs;
 
-      if (isHuman && !overriddenByManualResume && !looksLikeOwnEcho) {
+      // MC-7 (caso Geralda, review Marcia 2026-07-28): o F52 pausava com base em
+      // outbound humano ARBITRARIAMENTE velho — a Geralda foi pausada em 27/07
+      // por uma msg humana de 30/06 (27 dias!). Lead que reengaja semanas depois
+      // (anúncio novo) caía em pausa permanente e ficava mudo. Takeover ativo
+      // REAL sempre tem outbound recente; 72h cobre o fim de semana do humano.
+      const HUMAN_TAKEOVER_STALE_MS = 72 * 60 * 60 * 1000;
+      const humanOutboundIsStale = Date.now() - lastOutboundMs > HUMAN_TAKEOVER_STALE_MS;
+      if (isHuman && humanOutboundIsStale && !overriddenByManualResume && !looksLikeOwnEcho) {
+        log(
+          "log",
+          `F52: outbound humano tem ${Math.round((Date.now() - lastOutboundMs) / 3600_000)}h — velho demais pra takeover, seguindo sem pausar (contato=${group.contactId})`,
+        );
+        await supabase.from("execution_log").insert({
+          agent_id: agent.id,
+          conversation_id: group.conversationId || convId || "",
+          contact_id: group.contactId,
+          location_id: group.locationId,
+          action_type: "stale_human_outbound_ignored",
+          action_payload: { last_human_outbound_at: lastOutbound.dateAdded, threshold_hours: 72 },
+          success: true,
+        });
+      }
+
+      if (isHuman && !humanOutboundIsStale && !overriddenByManualResume && !looksLikeOwnEcho) {
         log("log", `F52 handoff: última outbound não é da IA — humano assumiu, pausando contato=${group.contactId}`);
         const nowIso = new Date().toISOString();
         await supabase.from("conversation_state").upsert(

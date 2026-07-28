@@ -34,6 +34,20 @@ export async function reenqueueInboundsSincePause(
     contactId: string;
     pausedSince: string | null | undefined;
     pausedReason: string | null | undefined;
+    /**
+     * MC-4 (review Marcia 2026-07-28): janela custom em ms. O piso fixo de 24h
+     * deixou de fora tudo engolido nas primeiras ~16h do blackout de wallet de
+     * 40h (19→21/07, jA6u) — ~25-30 contatos sem recuperação. O caller de
+     * wallet passa a janela real do episódio; os demais mantêm o default 24h.
+     */
+    windowMs?: number;
+    /**
+     * MC-5: marca a conversa como retomada manualmente (ai_resumed_at) ANTES do
+     * requeue — o gate de targeting do queue-processor honra manuallyResumed e
+     * não re-engole o recovery quando a tag do contato foi flipada (burst de
+     * 21/07: 25 leads re-enfileirados morreram TODOS no targeting_skip).
+     */
+    bypassTargeting?: boolean;
   },
 ): Promise<{ requeued: number }> {
   const { agentId, contactId, pausedSince, pausedReason } = args;
@@ -55,9 +69,21 @@ export async function reenqueueInboundsSincePause(
     const pausedMs = new Date(pausedSince).getTime();
     if (!Number.isFinite(pausedMs)) return { requeued: 0 };
 
-    // Piso = max(início da pausa, agora-24h). Não ressuscita inbound antigo.
-    const floorIso = new Date(Math.max(pausedMs, Date.now() - REENQUEUE_WINDOW_MS)).toISOString();
+    // Piso = max(início da pausa, agora-janela). Não ressuscita inbound antigo.
+    // MC-4: janela custom do caller (wallet passa a duração real do episódio).
+    const windowMs = args.windowMs && args.windowMs > 0 ? args.windowMs : REENQUEUE_WINDOW_MS;
+    const floorIso = new Date(Math.max(pausedMs, Date.now() - windowMs)).toISOString();
     const nowIso = new Date().toISOString();
+
+    // MC-5: recovery deliberado não pode morrer no targeting (tag flipada
+    // durante a pausa). ai_resumed_at ativa o manuallyResumed do gate (GU-6).
+    if (args.bypassTargeting) {
+      await supabase
+        .from("conversation_state")
+        .update({ ai_resumed_at: nowIso })
+        .eq("agent_id", agentId)
+        .eq("contact_id", contactId);
+    }
 
     const { data, error } = await supabase
       .from("message_queue")

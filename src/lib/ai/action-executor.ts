@@ -302,6 +302,11 @@ async function executeAction(
               ...(meetingLoc ?? {}),
             });
             await tagBookedByAi(client, ctx.contactId); // tag interna (ver nota abaixo)
+            // MC-10 (review Marcia 2026-07-28): o log genérico ({...action}) não
+            // distinguia CREATE de RESCHEDULE — 2 "bookings" em 27s pareciam
+            // double-booking quando o 2º era update do existente. Marca o modo.
+            (action as unknown as Record<string, unknown>).mode = "reschedule";
+            (action as unknown as Record<string, unknown>).rescheduled_from = existingApptForBook.id;
             break;
           } catch {
             try {

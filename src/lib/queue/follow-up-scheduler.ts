@@ -66,23 +66,38 @@ export async function scheduleFollowUps(params: {
   const supabase = createAdminClient();
 
   try {
-    // Cancela os follow-ups pendentes anteriores deste contato.
+    // MC-2 (F47, caso Marcia 2026-07-28): o reset de relógio por turno é o
+    // comportamento DESEJADO, mas cancelar+recriar acumulava lixo sem limite
+    // (3.726 rows 'cancelled' só na Marcia, 130 num contato). Agora:
+    //  (1) 'processing' do par → cancelled: fecha o buraco em que um zumbi de
+    //      claim morto sobrevivia ao reset pra sempre (o cancel antigo só
+    //      pegava 'pending').
+    //  (2) 'pending' do par → DELETE (não UPDATE): fim do churn de rows mortas.
+    //      Os 'cancelled' gravados pelo RUNNER (DND/lead respondeu/objetivo
+    //      cumprido) continuam como audit — só o reset por turno deixa de gerar lixo.
     // F46/F47 (fix review 2026-06-05): supabase-js NÃO lança — devolve {error}.
-    // Se o cancel falhar e a gente recriar mesmo assim, a sequência ACUMULA
-    // (N novos por cima dos N antigos não-cancelados = spam ao lead). Então:
-    // cancel com erro → NÃO recria + sinaliza. Antes o erro era engolido.
-    const { error: cancelErr } = await supabase
+    // Se a limpeza falhar e a gente recriar mesmo assim, a sequência ACUMULA
+    // (N novos por cima dos N antigos = spam ao lead). Erro → NÃO recria + sinaliza.
+    const { error: cancelProcErr } = await supabase
       .from("scheduled_followups")
       .update({ status: "cancelled" })
       .eq("agent_id", agentId)
       .eq("contact_id", contactId)
-      .eq("status", "pending");
-    if (cancelErr) {
+      .eq("status", "processing");
+    const { error: delErr } = cancelProcErr
+      ? { error: cancelProcErr }
+      : await supabase
+          .from("scheduled_followups")
+          .delete()
+          .eq("agent_id", agentId)
+          .eq("contact_id", contactId)
+          .eq("status", "pending");
+    if (delErr) {
       reportError({
-        title: "Follow-up: falha ao cancelar pendentes (abortado p/ não duplicar)",
+        title: "Follow-up: falha ao limpar sequência anterior (abortado p/ não duplicar)",
         feature: "followup-scheduler",
         severity: "high",
-        error: cancelErr,
+        error: delErr,
         metadata: { agentId, contactId, locationId },
       });
       return;
@@ -133,7 +148,20 @@ export async function scheduleFollowUps(params: {
     }
 
     if (rows.length === 0) return;
-    const { error: insErr } = await supabase.from("scheduled_followups").insert(rows);
+    let { error: insErr } = await supabase.from("scheduled_followups").insert(rows);
+    // MC-2: corrida delete→insert entre 2 turnos simultâneos bate no UNIQUE
+    // parcial (migration 00128, code 23505). Retry ÚNICO do ciclo: re-limpa os
+    // pending do par e re-insere — o perdedor da corrida vira o vencedor da
+    // sequência mais nova (latest-wins, que é a semântica do reset de relógio).
+    if (insErr?.code === "23505") {
+      await supabase
+        .from("scheduled_followups")
+        .delete()
+        .eq("agent_id", agentId)
+        .eq("contact_id", contactId)
+        .eq("status", "pending");
+      ({ error: insErr } = await supabase.from("scheduled_followups").insert(rows));
+    }
     if (insErr) {
       reportError({
         title: "Follow-up: falha ao agendar sequência",
@@ -203,8 +231,35 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
   const supabase = createAdminClient();
   let sent = 0;
   let errors = 0;
+  const t0 = Date.now();
 
-  // ATOMIC: marcar como processing e retornar em uma operação
+  // Reaper de 'processing' órfão (MC-1, caso Marcia 2026-07-28): coortes criadas
+  // em lote vencem no MESMO segundo; um tick claimava 20 e a lambda morria por
+  // timeout no meio do loop (LLM + 3 calls GHL por row ÷ 60s compartilhados) →
+  // 16 rows presas em 'processing' pra sempre desde 24/07 (claim só re-pega
+  // 'pending' e o cancel por-turno também só pega 'pending'). Vai pra 'failed'
+  // e NÃO 'pending': a lambda pode ter morrido ENTRE o envio GHL e o update de
+  // status — re-enfileirar reenviaria o toque duplicado ao lead.
+  const reapCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+  const { data: reaped } = await supabase
+    .from("scheduled_followups")
+    .update({ status: "failed" })
+    .eq("status", "processing")
+    .lt("updated_at", reapCutoff)
+    .select("id");
+  if (reaped && reaped.length > 0) {
+    reportError({
+      title: `Follow-up: ${reaped.length} row(s) órfã(s) em 'processing' encerradas pelo reaper`,
+      feature: "followup-scheduler",
+      severity: "medium",
+      error: new Error("lambda provavelmente morreu no meio do loop de follow-up (timeout)"),
+      metadata: { reaped: reaped.length, cutoff: reapCutoff },
+    });
+  }
+
+  // ATOMIC: marcar como processing e retornar em uma operação.
+  // MC-1: limit 20→5 — o tick roda a cada poucos segundos; 5/tick dá vazão de
+  // sobra e garante que o lote cabe no budget da lambda (era o vetor dos zumbis).
   const { data: pending } = await supabase
     .from("scheduled_followups")
     .update({ status: "processing" })
@@ -212,11 +267,22 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
     .lte("scheduled_at", new Date().toISOString())
     .select("*")
     .order("scheduled_at", { ascending: true })
-    .limit(20);
+    .limit(5);
 
   if (!pending || pending.length === 0) return { sent: 0, errors: 0 };
 
-  for (const followUp of pending) {
+  // MC-1: time-budget — se o loop passar de 40s, devolve as rows AINDA NÃO
+  // INICIADAS pra 'pending' e para (o próximo tick continua). Evita morrer com
+  // rows claimadas.
+  const BUDGET_MS = 40_000;
+  let budgetExceededAt = -1;
+
+  for (let fuIdx = 0; fuIdx < pending.length; fuIdx++) {
+    const followUp = pending[fuIdx];
+    if (Date.now() - t0 > BUDGET_MS) {
+      budgetExceededAt = fuIdx;
+      break;
+    }
     try {
       // Verificar se o objetivo ja foi cumprido (cancelar se sim).
       // Buscamos também collected_data e conversation_id para personalizar o follow-up.
@@ -750,6 +816,22 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       });
       await supabase.from("scheduled_followups").update({ status: "failed" }).eq("id", followUp.id);
       errors++;
+    }
+  }
+
+  // MC-1: budget estourou → devolve as rows AINDA NÃO INICIADAS pra 'pending'
+  // (o próximo tick continua de onde parou; nada fica zumbi).
+  if (budgetExceededAt >= 0) {
+    const untouchedIds = pending.slice(budgetExceededAt).map((f) => f.id);
+    if (untouchedIds.length > 0) {
+      await supabase
+        .from("scheduled_followups")
+        .update({ status: "pending" })
+        .in("id", untouchedIds)
+        .eq("status", "processing");
+      console.warn(
+        `[followup] time-budget de ${BUDGET_MS}ms estourado — ${untouchedIds.length} row(s) devolvida(s) pra pending.`,
+      );
     }
   }
 

@@ -224,23 +224,30 @@ async function reenqueueWalletSwallowed(
   blockedAtIso: string,
 ): Promise<void> {
   try {
-    // H52 R2: a janela começa 90s APÓS o bloqueio — o cache de 60s do gate
-    // pode ter deixado msgs logo-pós-bloqueio serem RESPONDIDAS normalmente;
-    // re-enfileirá-las geraria resposta/ação em dobro dias depois.
-    const sinceIso = new Date(new Date(blockedAtIso).getTime() + 90_000).toISOString();
+    // MC-4 (review Marcia 2026-07-28, substitui o head-window do H52 R2): a
+    // janela cega de +90s perdia mensagens decisivas engolidas logo APÓS o
+    // bloqueio (Valéria disse "Quinta 2pm" 45s depois do block e nunca foi
+    // respondida). Agora a janela começa NO bloqueio e o "já foi respondida?"
+    // é decidido POR RESULTADO, não por tempo: o par só é pulado se houve
+    // send_message success DEPOIS do último wallet_blocked_skip dele.
+    const sinceIso = blockedAtIso;
     const { data: skips } = await supabase
       .from("execution_log")
-      .select("agent_id, contact_id")
+      .select("agent_id, contact_id, created_at")
       .eq("location_id", locationId)
       .eq("action_type", "wallet_blocked_skip")
       .gte("created_at", sinceIso)
       .order("created_at", { ascending: false })
       .limit(200);
-    const pairs = new Map<string, { agentId: string; contactId: string }>();
+    const pairs = new Map<string, { agentId: string; contactId: string; lastSkipAt: string }>();
     for (const s of skips || []) {
       const a = (s as { agent_id?: string }).agent_id;
       const c = (s as { contact_id?: string }).contact_id;
-      if (a && c) pairs.set(`${a}|${c}`, { agentId: a, contactId: c });
+      const at = (s as { created_at?: string }).created_at || sinceIso;
+      if (!a || !c) continue;
+      const key = `${a}|${c}`;
+      // skips vêm DESC → o primeiro visto é o mais recente do par.
+      if (!pairs.has(key)) pairs.set(key, { agentId: a, contactId: c, lastSkipAt: at });
     }
     if (pairs.size === 0) return;
     if (pairs.size > 50) {
@@ -249,6 +256,10 @@ async function reenqueueWalletSwallowed(
       );
     }
     const { reenqueueInboundsSincePause } = await import("@/lib/queue/resume-reenqueue");
+    // MC-4: janela real do episódio (blackout de 40h > piso antigo de 24h),
+    // capada em 7d por segurança.
+    const episodeMs = Math.max(0, Date.now() - new Date(blockedAtIso).getTime());
+    const windowMs = Math.min(7 * 24 * 60 * 60 * 1000, episodeMs + 60 * 60 * 1000);
     let total = 0;
     for (const p of [...pairs.values()].slice(0, 50)) {
       // H52 R2: se o registro mais recente da conversa é um OUTBOUND (humano
@@ -262,11 +273,28 @@ async function reenqueueWalletSwallowed(
         .order("received_at", { ascending: false })
         .limit(1);
       if (lastRow?.[0]?.message_direction === "outbound") continue;
+      // MC-4: dedupe POR RESULTADO — se a IA JÁ respondeu depois do último skip
+      // (ex: o cache de 60s deixou um turno passar), não re-enfileira (evita a
+      // resposta em dobro que o head-window de 90s tentava prevenir por tempo).
+      const { data: sentAfter } = await supabase
+        .from("execution_log")
+        .select("id")
+        .eq("agent_id", p.agentId)
+        .eq("contact_id", p.contactId)
+        .eq("action_type", "send_message")
+        .eq("success", true)
+        .gt("created_at", p.lastSkipAt)
+        .limit(1);
+      if (sentAfter && sentAfter.length > 0) continue;
       const r = await reenqueueInboundsSincePause(supabase, {
         agentId: p.agentId,
         contactId: p.contactId,
         pausedSince: sinceIso,
         pausedReason: "wallet_blocked",
+        windowMs,
+        // MC-5: recovery não pode morrer no targeting (a tag pode ter flipado
+        // durante o bloqueio — burst de 21/07 perdeu 25 leads exatamente assim).
+        bypassTargeting: true,
       });
       total += r.requeued;
     }
