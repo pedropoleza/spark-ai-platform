@@ -107,7 +107,13 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 const read = (p: string) => readFileSync(resolve(__dirname, "..", p), "utf8");
 check("action-executor captura + loga message_ids", read("src/lib/ai/action-executor.ts").includes("message_ids: messageIds"));
-check("follow-up-scheduler captura sentMessageId", read("src/lib/queue/follow-up-scheduler.ts").includes("sentMessageId = sentFu.messageId"));
+// Asserção robusta (2026-07-28): o PR de sales renomeou a var do POST; o que
+// importa é capturar o messageId e gravá-lo em message_ids.
+check(
+  "follow-up-scheduler captura messageId e grava message_ids",
+  /sentMessageId\s*=\s*\w+\.messageId/.test(read("src/lib/queue/follow-up-scheduler.ts")) &&
+    read("src/lib/queue/follow-up-scheduler.ts").includes("message_ids: [sentMessageId]"),
+);
 check("queue-processor passa sentIds no F52", read("src/lib/queue/queue-processor.ts").includes("sentIds: extractAiSentIds(aiSends)"));
 check("D1a: sweepNotifyBlockedOwners existe", read("src/lib/billing/wallet-block.ts").includes("export async function sweepNotifyBlockedOwners"));
 check("D1a: cron billing-retry chama o sweep", read("src/app/api/cron/billing-retry/route.ts").includes("sweepNotifyBlockedOwners()"));

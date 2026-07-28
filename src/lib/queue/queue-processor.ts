@@ -18,6 +18,7 @@ import { generateSummaryNote } from "@/lib/queue/summary-note-generator";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
 import { checkContactMatchesTargeting, normalizeTargeting } from "@/lib/queue/targeting";
+import { isChatMessageType } from "@/lib/ghl/message-sources";
 import type { TargetingRules } from "@/types/agent";
 // F27.D (Pedro 2026-05-29): detecção de trigger reativo (msg sintética
 // enfileirada pelo reactive-trigger.ts quando tag/stage muda no GHL).
@@ -782,7 +783,16 @@ async function processGroup(
     const histMsgs = (messagesSettled.value.messages?.messages || [])
       .slice()
       .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime());
-    const lastOutbound = [...histMsgs].reverse().find((m) => m.direction === "outbound");
+    // Fix prod 2026-07-28 (Alves Cury): atividade do CRM ("Opportunity created")
+    // e ligação NÃO são outbound de conversa — entravam aqui como "último
+    // outbound" e a ladder do F52 as lia como handoff humano. Ver isChatMessageType.
+    const lastOutbound = [...histMsgs]
+      .reverse()
+      .find(
+        (m) =>
+          m.direction === "outbound" &&
+          isChatMessageType((m as { messageType?: string }).messageType),
+      );
     if (lastOutbound) {
       // Ladder de discriminação F52 (+ fixes Marcela Lana 2026-06-05 / Alves Cury
       // F56 2026-06-10). FONTE ÚNICA em human-takeover.ts: o pill "quem dirige a

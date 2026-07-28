@@ -18,8 +18,8 @@
  * o turn do bot. Bot apenas perde o awareness, mas responde.
  */
 import { GHLClient } from "@/lib/ghl/client";
-import { isHumanOutboundSource } from "@/lib/ghl/message-sources";
-import { isAiEcho, extractAiSentTexts, hasUnfilledMergeField } from "@/lib/queue/human-takeover";
+import { isHumanOutboundSource, isChatMessageType } from "@/lib/ghl/message-sources";
+import { isAiEcho, extractAiSentTexts, extractAiSentIds, hasUnfilledMergeField } from "@/lib/queue/human-takeover";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { LeadContext, LeadHistoryConfig } from "@/types/agent";
 
@@ -159,10 +159,30 @@ const EMPTY_CONTEXT = (contactId: string, fetchMs: number): LeadContext => ({
  *   fail-open do módulo: na dúvida, a IA segue respondendo em vez de emudecer.
  */
 export function isHumanOutboundMessage(
-  msg: { direction?: string; source?: string | null; body?: string | null; userId?: string | null },
+  msg: {
+    direction?: string;
+    source?: string | null;
+    body?: string | null;
+    userId?: string | null;
+    messageType?: string | null;
+    id?: string | null;
+  },
   aiTexts: string[] | null,
+  /**
+   * IDs que a IA registrou ter enviado (H56). Paridade com classifyLastOutbound:
+   * id bate → é NOSSO, jamais humano. Sem isto, o gate F37 dependia só do
+   * anti-eco por TEXTO (que falha quando o canal mangleia o corpo).
+   */
+  sentIds?: string[],
 ): boolean {
   if (msg.direction !== "outbound") return false;
+  // Fix bug observado em prod 2026-07-28 (Alves Cury, "robô parou do nada"):
+  // atividade do CRM ("Opportunity created") e ligação NÃO são alguém assumindo a
+  // conversa. Vinham como outbound/source="app" e viravam "humano respondeu",
+  // calando a IA por 60min a cada lead novo de anúncio. Ver isChatMessageType.
+  if (!isChatMessageType(msg.messageType)) return false;
+  // H56 (paridade com classifyLastOutbound): id do nosso envio → nunca humano.
+  if (msg.id && sentIds?.includes(String(msg.id))) return false;
   // Automação/api do GHL (welcome/campanha/workflow) NUNCA é humano (Alves Cury).
   const src = String(msg.source || "");
   if (src && !isHumanOutboundSource(src)) return false;
@@ -273,6 +293,8 @@ export async function loadLeadHistory(
       source: m.source,
       userId: m.userId,
       messageType: typeof m.messageType === "string" ? m.messageType : undefined,
+      // H56 (2026-07-28): id pro anti-eco determinístico no gate F37.
+      id: typeof m.id === "string" ? m.id : undefined,
     }));
 
     // Última msg outbound de HUMANO DE VERDADE (rep digitando no inbox do GHL).
@@ -299,9 +321,13 @@ export async function loadLeadHistory(
     // vazio e o eco da própria IA passava como humano. Busca aiTexts quando há
     // outbound humano-ish (app/sem-source); api/automação não precisa.
     const needsEchoCheck = recent_messages.some(
-      (m) => m.direction === "outbound" && (!m.source || isHumanOutboundSource(m.source)),
+      (m) =>
+        m.direction === "outbound" &&
+        isChatMessageType(m.messageType) &&
+        (!m.source || isHumanOutboundSource(m.source)),
     );
     let aiTexts: string[] | null = [];
+    let aiIds: string[] = [];
     if (needsEchoCheck) {
       aiTexts = null; // "não verificável" até a query confirmar (fail-open conservador)
       try {
@@ -316,12 +342,13 @@ export async function loadLeadHistory(
           .order("created_at", { ascending: false })
           .limit(30);
         aiTexts = extractAiSentTexts(aiSends);
+        aiIds = extractAiSentIds(aiSends);
       } catch {
         // fail-soft: sem aiTexts o anti-eco fica conservador (não conta o eco como
         // humano) e não derruba o resto do histórico já carregado do GHL.
       }
     }
-    const lastHumanOutbound = recent_messages.find((m) => isHumanOutboundMessage(m, aiTexts));
+    const lastHumanOutbound = recent_messages.find((m) => isHumanOutboundMessage(m, aiTexts, aiIds));
     const lastInbound = recent_messages.find((m) => m.direction === "inbound");
 
     // Notas
