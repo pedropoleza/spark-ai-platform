@@ -33,6 +33,7 @@ import { reportError } from "@/lib/admin-signals/report-error";
 import {
   findByGhlMessageId,
   insertSparkbotMessage,
+  insertSparkbotMessageResult,
   getSparkbotHistory,
 } from "@/lib/repositories/sparkbot-messages.repo";
 import { upsertStevoInstance } from "@/lib/repositories/stevo-instances.repo";
@@ -335,7 +336,7 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
 
   // 6. Persiste a msg do rep ANTES de processar (assim se LLM crashar, o
   //    próximo turno ainda tem o histórico). Captura 23505 = dedup signal.
-  const insertedUser = await insertSparkbotMessage({
+  const insertedUser = await insertSparkbotMessageResult({
     rep_id: rep.id,
     hub_location_id: hubLocationId,
     agent_id: agentId,
@@ -360,13 +361,30 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
         : {}),
     },
   });
-  // insertSparkbotMessage devolve null em qualquer erro (inclusive 23505). Se a
-  // msg já existia (race com webhook GHL fallback), o dedup upfront geralmente
-  // pega; aqui é defesa extra mas seguimos pra processar de qualquer forma —
-  // pior caso, gera 1 turno duplicado raríssimo (Stevo não faz multi-provider).
-  if (!insertedUser) {
+  // Camada 6 da escada de idempotência, agora COM DENTE (H57, achado P0 do
+  // review adversarial 2026-07-28).
+  //
+  // A premissa do comentário antigo ("seguimos mesmo assim; pior caso 1 turno
+  // duplicado raríssimo — Stevo não faz multi-provider") MORREU: com o SparkZap
+  // o MESMO evento chega por dois caminhos no mesmo número (dual-run). Entre o
+  // SELECT de dedup lá em cima e este INSERT rodam resolvePrimaryHub, identifyRep
+  // e o buildRepInput — que transcreve áudio e parseia PDF, ou seja, SEGUNDOS de
+  // janela. As duas cópias passavam pelo SELECT e as duas processavam: 2× LLM,
+  // 2× cobrança na wallet e, no pior caso, 2× a tool que o rep confirmou (2
+  // sequências de follow-up, 2 lotes de reunião).
+  //
+  // Duplicata (23505 no UNIQUE de ghl_message_id) → ABORTA: quem inseriu primeiro
+  // responde o rep. Erro transitório de banco → SEGUE (fail-open): descartar a
+  // mensagem do corretor por um blip seria trocar um defeito por um pior.
+  if (!insertedUser.ok && insertedUser.duplicate) {
+    console.log(
+      `[stevo-handler] ${parsed.messageId} já foi persistida por outro provedor (dual-run) — abortando esta cópia.`,
+    );
+    return;
+  }
+  if (!insertedUser.ok) {
     console.warn(
-      `[stevo-handler] insert da user msg falhou (messageId ${parsed.messageId}) — seguindo mesmo assim.`,
+      `[stevo-handler] insert da user msg falhou (messageId ${parsed.messageId}): ${insertedUser.error} — seguindo mesmo assim (fail-open).`,
     );
   }
 

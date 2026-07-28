@@ -208,6 +208,29 @@ export async function countMessagesByRole(
 export async function insertSparkbotMessage(
   msg: SparkbotMessageInsert,
 ): Promise<{ id: string } | null> {
+  const r = await insertSparkbotMessageResult(msg);
+  return r.ok ? { id: r.id } : null;
+}
+
+/**
+ * Igual à `insertSparkbotMessage`, mas DISTINGUE duplicata (23505 no UNIQUE de
+ * `ghl_message_id`) de erro transitório de banco. H57 (2026-07-28).
+ *
+ * Por que existe: o `null` genérico obriga o chamador a escolher entre dois
+ * comportamentos errados — seguir sempre (e processar a MESMA mensagem duas
+ * vezes quando dois provedores entregam o mesmo evento) ou abortar sempre (e
+ * DESCARTAR a mensagem do corretor num blip de banco). Com o transporte novo o
+ * mesmo evento passou a chegar por dois caminhos (Stevo + SparkZap no mesmo
+ * número, dual-run), então a diferença virou dinheiro e ação duplicada: 2× LLM,
+ * 2× cobrança e, no pior caso, 2× a tool confirmada pelo rep.
+ */
+export async function insertSparkbotMessageResult(
+  msg: SparkbotMessageInsert,
+): Promise<
+  | { ok: true; id: string }
+  | { ok: false; duplicate: true }
+  | { ok: false; duplicate: false; error: string }
+> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("sparkbot_messages")
@@ -215,10 +238,16 @@ export async function insertSparkbotMessage(
     .select("id")
     .single();
   if (error) {
+    if (error.code === "23505") {
+      console.log(
+        `[sparkbot-messages.repo] duplicata (23505) em ghl_message_id=${msg.ghl_message_id ?? "?"} — outro provedor já entregou este evento.`,
+      );
+      return { ok: false, duplicate: true };
+    }
     console.warn("[sparkbot-messages.repo] insertSparkbotMessage failed:", error.message);
-    return null;
+    return { ok: false, duplicate: false, error: error.message };
   }
-  return data;
+  return { ok: true, id: data.id };
 }
 
 /**
