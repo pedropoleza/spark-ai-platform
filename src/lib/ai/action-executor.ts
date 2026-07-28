@@ -13,6 +13,7 @@ import {
   updateOpportunity,
 } from "@/lib/ghl/operations";
 import { reportError } from "@/lib/admin-signals/report-error";
+import { stripSilenceMarker, type LeadSilenceDecision } from "@/lib/ai/lead-silence";
 import type { AIAction, AIResponse } from "@/types/ai";
 
 // Delay curto entre mensagens (max 1.5s para não causar timeout no serverless)
@@ -47,6 +48,9 @@ interface ExecutionContext {
   collectedData?: Record<string, string>;
   // Termos proibidos (caso Marina): redigidos da saída antes de enviar/logar.
   forbiddenTerms?: string[];
+  // MC-9: decisão de silêncio computada pelo caller (evaluateLeadSilence).
+  // Ausente = gate desligado = comportamento legado (sempre envia).
+  silenceDecision?: LeadSilenceDecision;
 }
 
 // Detecta um canal de contato (WhatsApp/telefone) já coletado — usado pelo gate
@@ -119,10 +123,47 @@ export async function executeActions(
   // 2. Enviar mensagem(ns) pelo mesmo canal (pula no modo teste)
   let messages = normalizeMessages(response.message);
 
-  // Garantia: se mensagem vazia, usar continuacao neutra (nao um cumprimento)
-  if (messages.length === 0) {
-    console.warn("[ActionExecutor] Empty message, using neutral continuation");
-    messages = ["Pode me contar mais sobre isso?"];
+  // MC-9 (review Marcia 2026-07-28): gate de silêncio determinístico. Silêncio
+  // SÓ com sinal EXPLÍCITO do modelo (should_send_message:false ou marcador
+  // [[NAO_ENVIAR]]) + opt-in do agente (allow_silent_turns) + overrides
+  // fail-open-pra-falar (1º turno / pergunta) já computados no caller
+  // (ctx.silenceDecision). Actions/estado/billing rodaram normalmente acima —
+  // silêncio suprime SÓ o envio. Exceção: erro de booking IGNORA o silêncio
+  // (o lead precisa saber que o agendamento falhou).
+  const silence = ctx.silenceDecision;
+  const bookingFailedNeedsVoice =
+    actionsFailed &&
+    (failedActionError.includes("BOOK_GATE_NO_CONTACT") || isBookingConflictError(failedActionError));
+  const silentTurn = !!silence?.silent && !bookingFailedNeedsVoice;
+  if (silence?.silent && bookingFailedNeedsVoice) {
+    await logExecution(supabase, ctx, "silence_overridden", { via: silence.via, reason: "booking_error" });
+  }
+
+  // Strip INCONDICIONAL do marcador (mesmo com gate OFF / turno não-silencioso):
+  // sem isto, um "[[NAO_ENVIAR]]" emitido fora do follow-up iria CRU pro lead.
+  const stripped = stripSilenceMarker(messages);
+  messages = Array.isArray(stripped) ? stripped : stripped ? [stripped] : [];
+
+  if (silentTurn) {
+    await logExecution(supabase, ctx, "silence_decided", {
+      via: silence!.via,
+      messages_suppressed: messages.length,
+    });
+    console.log(`[ActionExecutor] MC-9: turno silencioso (via=${silence!.via}) — nada enviado.`);
+    messages = [];
+  } else if (messages.length === 0) {
+    if (response.should_send_message === false) {
+      // Modelo pediu silêncio mas o gate está OFF (ou override) e não há texto:
+      // NÃO inventa mensagem — audita e segue (hardening B6: o fallback genérico
+      // "Pode me contar mais?" atirado num turno de intake era exatamente a
+      // queixa "mensagem sem sentido depois do lead entregar os dados").
+      await logExecution(supabase, ctx, "empty_response_skip", { model_silent: true, gate_on: !!silence });
+      console.warn("[ActionExecutor] Modelo pediu silêncio sem gate — pulando envio (sem fallback).");
+    } else {
+      // Vazio ACIDENTAL (sem sinal explícito): rede de segurança de sempre.
+      console.warn("[ActionExecutor] Empty message, using neutral continuation");
+      messages = ["Pode me contar mais sobre isso?"];
+    }
   }
 
   // Bloqueio determinístico de termos proibidos (caso Marina 2026-07-01): redige

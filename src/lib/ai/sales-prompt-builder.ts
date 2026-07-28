@@ -1156,7 +1156,13 @@ Responda APENAS JSON valido, sem markdown:
 
 REGRAS DO JSON:
 1. "message": OBRIGATORIO, NUNCA vazio. String (curta) ou array de strings. Cada bolha BEM CURTA (1-2 frases). Se a resposta for longa, USE O ARRAY quebrando em bolhas curtas, nunca um paragrafo unico gigante
-2. "should_send_message": SEMPRE true. Voce SEMPRE responde ao lead, sem excecao
+${
+  // MC-9 (review Marcia 2026-07-28): regra de silêncio GATED por agente.
+  // Com allow_silent_turns OFF (default), o texto é byte-idêntico ao legado.
+  (ctx.config as { allow_silent_turns?: boolean }).allow_silent_turns === true
+    ? `2. "should_send_message": true na imensa maioria dos turnos. EXCEÇÃO — você PODE ficar em silêncio (should_send_message: false + "message": "") quando a última mensagem do lead é SÓ um encerramento que não pede resposta: "ok", "obrigada", "blz", "amém", "👍", um emoji sozinho — e você já disse tudo que precisava. NUNCA fique em silêncio quando: é a primeira mensagem do lead; há uma PERGUNTA (mesmo implícita); o lead entregou um dado novo que você ainda não confirmou; há objeção, dúvida ou hesitação; você prometeu algo neste turno. Na dúvida, RESPONDA.`
+    : `2. "should_send_message": SEMPRE true. Voce SEMPRE responde ao lead, sem excecao`
+}
 3. "actions": array de acoes. Inclua APENAS acoes NOVAS (nao repita acoes de turnos anteriores)
 4. "collected_data": TODOS os dados coletados ate agora (cumulativo). Use EXATAMENTE as keys dos campos: ${ctx.config.data_fields.map((f) => `"${f.key}"`).join(", ")}
 5. "conversation_status": use "active" (em andamento), "qualified" (todos dados coletados), "booked" (agendamento feito), "stale" (lead sumiu/adiou), "handed_off" (pediu humano), "disqualified" (nao quer mais)

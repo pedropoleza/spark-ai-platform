@@ -384,6 +384,59 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
               .in("status", ["pending", "processing"]);
             continue;
           }
+
+          // MC-8 (closed-opp gate no RUNNER — o caminho de maior risco real):
+          // deal fecha na LIGAÇÃO, nenhum inbound novo chega (nada invalida a
+          // sequência) e os toques pendentes cobrariam dados de cotação de um
+          // CLIENTE. Nenhum gate do processGroup cobre este caminho. Fail-open:
+          // erro de fetch → envia normal.
+          try {
+            const [{ data: gateCfg }, oppsResp] = await Promise.all([
+              supabase
+                .from("agent_configs")
+                .select("closed_opp_gate")
+                .eq("agent_id", followUp.agent_id)
+                .maybeSingle(),
+              dndClient.get<{ opportunities?: Array<{ id?: string; status?: string; pipelineId?: string; pipelineStageId?: string }> }>(
+                `/opportunities/search?location_id=${followUp.location_id}&contact_id=${followUp.contact_id}&limit=5`,
+              ),
+            ]);
+            const { evaluateClosedOppGate, isClosedOppGateLogOnly } = await import("./closed-opp-gate");
+            const gateResult = evaluateClosedOppGate(
+              oppsResp?.opportunities,
+              (gateCfg as { closed_opp_gate?: unknown } | null)?.closed_opp_gate,
+            );
+            if (gateResult.skip) {
+              const logOnly = isClosedOppGateLogOnly();
+              await supabase.from("execution_log").insert({
+                agent_id: followUp.agent_id,
+                conversation_id: followUp.conversation_id || "",
+                contact_id: followUp.contact_id,
+                location_id: followUp.location_id,
+                action_type: "opp_closed_skip",
+                action_payload: {
+                  path: "followup_runner",
+                  reason: gateResult.reason,
+                  terminal_count: gateResult.terminal_count,
+                  would_skip_only: logOnly,
+                },
+                success: true,
+              });
+              if (!logOnly) {
+                console.log(`[FollowUp] Opp fechada pra contact=${followUp.contact_id} — cancelando sequência.`);
+                await supabase
+                  .from("scheduled_followups")
+                  .update({ status: "cancelled" })
+                  .eq("agent_id", followUp.agent_id)
+                  .eq("contact_id", followUp.contact_id)
+                  .in("status", ["pending", "processing"]);
+                continue;
+              }
+            }
+          } catch (gateErr) {
+            // Fail-open: gate indisponível nunca segura follow-up legítimo.
+            console.warn(`[FollowUp] closed-opp gate falhou (fail-open):`, gateErr);
+          }
         } catch (err) {
           // Fix bug observado em prod 2026-07-17 (ultra-review P1-9): contato
           // DELETADO do CRM (GHL 400 "Contact not found") caía aqui e falhava

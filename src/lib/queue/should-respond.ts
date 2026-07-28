@@ -84,17 +84,12 @@ export function evaluateShouldRespond(
     }
   }
 
-  // 3. Opp em status fechado
-  if (policy.notify_on_opp_stage_closed && leadContext.has_closed_opp) {
-    const closedOpp = leadContext.opportunities.find((o) =>
-      ["won", "lost", "abandoned"].includes((o.status || "").toLowerCase()),
-    );
-    return {
-      decision: "skip",
-      reason: `opp_closed:${closedOpp?.status || "unknown"}`,
-      notify_rep: false, // silently — lead já tem destino
-    };
-  }
+  // 3. REMOVIDO (MC-8, review Marcia 2026-07-28): o skip por opp fechada saiu
+  // daqui — era opt-in junto do handoff (nunca rodava com handoff OFF) e tinha
+  // a semântica ANY-closed (opp lost antiga silenciava lead re-engajado com opp
+  // nova). Superseded pelo closed-opp-gate STANDALONE (closed-opp-gate.ts),
+  // sempre-ativo, pré-LLM, que cobre também o runner de follow-up e só skipa
+  // quando TODAS as opps são terminais.
 
   // 4. Default
   return { decision: "respond" };

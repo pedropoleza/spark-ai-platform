@@ -9,6 +9,7 @@ import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import { withRetry } from "@/lib/utils/retry";
 import { executeActions } from "@/lib/ai/action-executor";
+import { evaluateLeadSilence, stripSilenceMarker } from "@/lib/ai/lead-silence";
 import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 
 /**
@@ -397,9 +398,23 @@ export async function POST(request: NextRequest) {
   // ==========================================================================
   // 6. SALVAR A AGENT MSG NO DB. Próximo turno vai vê-la automaticamente.
   // ==========================================================================
-  const agentContent = Array.isArray(result.response.message)
-    ? result.response.message.join("\n")
-    : result.response.message;
+  // MC-9: paridade do gate de silêncio com prod — MESMA decisão do queue-processor
+  // (regra do gate de paridade do CLAUDE.md: sem isto, validar o silêncio no test
+  // chat antes de ligar a flag seria impossível).
+  const silenceDecision = evaluateLeadSilence({
+    shouldSendMessage: result.response.should_send_message,
+    message: result.response.message,
+    inboundText: message || "",
+    priorTurnCount: effectivePriorTurnCount,
+    allowSilence: (config as { allow_silent_turns?: boolean }).allow_silent_turns === true,
+  });
+
+  const strippedMsg = stripSilenceMarker(result.response.message);
+  const agentContent = silenceDecision.silent
+    ? ""
+    : Array.isArray(strippedMsg)
+      ? strippedMsg.join("\n")
+      : strippedMsg;
 
   await supabase.from("agent_test_messages").insert({
     session_id: sessionId,
@@ -412,6 +427,7 @@ export async function POST(request: NextRequest) {
       duration_ms: result.duration_ms,
       actions: result.response.actions || [],
       conversation_status: result.response.conversation_status,
+      ...(silenceDecision.silent ? { suppressed: true, silence_via: silenceDecision.via } : {}),
     },
   });
 
@@ -457,6 +473,8 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     session_id: sessionId,
     response: result.response,
+    // MC-9: decisão de silêncio pro chip da UI ("Decidiu ficar em silêncio").
+    silence: silenceDecision,
     prompt_tokens: result.prompt_tokens,
     completion_tokens: result.completion_tokens,
     duration_ms: result.duration_ms,

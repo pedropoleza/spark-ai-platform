@@ -8,6 +8,7 @@ import { processWithAI } from "@/lib/ai/openai-client";
 import type { ImageInput, ConversationTurn } from "@/lib/ai/openai-client";
 import { compressHistory } from "@/lib/ai/history-compressor";
 import { executeActions } from "@/lib/ai/action-executor";
+import { evaluateLeadSilence } from "@/lib/ai/lead-silence";
 import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { transcribeAudioFromUrl } from "@/lib/ai/audio-transcriber";
 import { processMediaAttachments, type ProcessedMedia } from "@/lib/ai/media-processor";
@@ -663,7 +664,8 @@ async function processGroup(
   type SlotsResp = Record<string, unknown>;
 
   const ghlStart = Date.now();
-  const [messagesSettled, contactSettled, slotsSettled] = await Promise.allSettled([
+  type OppsResp = { opportunities?: Array<{ id?: string; status?: string; pipelineId?: string; pipelineStageId?: string }> } | null;
+  const [messagesSettled, contactSettled, slotsSettled, oppsSettled] = await Promise.allSettled([
     // F59: retry no fetch de histórico (igual aos slots). Antes era single-shot —
     // uma falha transitória do Spark Leads zerava o contexto e a IA cold-startava.
     convId
@@ -682,6 +684,11 @@ async function processGroup(
           { maxRetries: 2, baseDelayMs: 200, label: "free-slots" },
         )
       : Promise.resolve<SlotsResp | null>(null),
+    // MC-8: opps do contato pro closed-opp gate — 4ª promise no MESMO settle
+    // (zero latência extra; o fetch mais lento domina). Fail-open via settled.
+    ghlClient.get<OppsResp>(
+      `/opportunities/search?location_id=${group.locationId}&contact_id=${group.contactId}&limit=5`,
+    ) as Promise<OppsResp>,
   ]);
   console.log(`[GHL] parallel fetch done in ${Date.now() - ghlStart}ms`);
 
@@ -709,6 +716,53 @@ async function processGroup(
     }
   } else if (messagesSettled.status === "rejected") {
     console.error("Erro ao buscar historico:", messagesSettled.reason);
+  }
+
+  // MC-8 (review Marcia 2026-07-28): closed-opp gate STANDALONE, pré-LLM.
+  // "Negócio fechado → IA para sozinha", independente do handoff_policy (o gate
+  // antigo no should-respond só rodava com handoff ON — false na frota — e era
+  // cego pra contas que fecham por ESTÁGIO). Skip só quando TODAS as opps do
+  // contato são terminais (≥1 terminal + 0 ativas — opp ativa nova = re-engajou,
+  // responde). Fail-open: fetch falhou → segue normal. Rollout: env
+  // CLOSED_OPP_GATE_LOG_ONLY=1 audita would_skip sem silenciar.
+  {
+    const oppsForGate =
+      oppsSettled.status === "fulfilled" ? oppsSettled.value?.opportunities : null;
+    if (oppsForGate && oppsForGate.length > 0) {
+      const { evaluateClosedOppGate, isClosedOppGateLogOnly } = await import("./closed-opp-gate");
+      const gateResult = evaluateClosedOppGate(
+        oppsForGate,
+        (config as { closed_opp_gate?: unknown }).closed_opp_gate,
+      );
+      if (gateResult.skip) {
+        const logOnly = isClosedOppGateLogOnly();
+        await supabase.from("execution_log").insert({
+          agent_id: agent.id,
+          conversation_id: group.conversationId || convId || "",
+          contact_id: group.contactId,
+          location_id: group.locationId,
+          action_type: "opp_closed_skip",
+          action_payload: {
+            path: "inbound_turn",
+            reason: gateResult.reason,
+            terminal_count: gateResult.terminal_count,
+            would_skip_only: logOnly,
+          },
+          success: true,
+        });
+        if (!logOnly) {
+          log("log", `MC-8: todas as opps do contato ${group.contactId} são terminais — negócio fechado, IA não responde.`);
+          // Cancela follow-ups pendentes (cliente fechado não recebe toque).
+          await supabase
+            .from("scheduled_followups")
+            .update({ status: "cancelled" })
+            .eq("agent_id", agent.id)
+            .eq("contact_id", group.contactId)
+            .in("status", ["pending", "processing"]);
+          return;
+        }
+      }
+    }
   }
 
   // F52 (Fix bug observado em prod 2026-06-04): fallback de handoff por histórico.
@@ -1371,6 +1425,17 @@ async function processGroup(
     console.error("[Processor] Billing failed (non-blocking):", billingError instanceof Error ? billingError.message : billingError);
   }
 
+  // MC-9: decisão de silêncio (opt-in agent_configs.allow_silent_turns; sinal
+  // explícito do modelo + overrides fail-open-pra-falar). Computada AQUI (tem
+  // inbound agregado + turnos) e honrada no executor (suprime só o envio).
+  const silenceDecision = evaluateLeadSilence({
+    shouldSendMessage: aiResult.response.should_send_message,
+    message: aiResult.response.message,
+    inboundText: group.aggregatedBody || "",
+    priorTurnCount: conversationTurns.length,
+    allowSilence: (config as { allow_silent_turns?: boolean }).allow_silent_turns === true,
+  });
+
   // 8. Executar acoes (enviar mensagem, atualizar campos, etc.)
   await executeActions(aiResult.response, {
     companyId: location.company_id,
@@ -1386,6 +1451,7 @@ async function processGroup(
     requireContactBeforeBooking: !!config.post_booking?.require_contact_before_booking,
     collectedData: { ...collectedData, ...(aiResult.response.collected_data || {}) },
     forbiddenTerms: resolveForbiddenTerms(agent.id, config.forbidden_terms),
+    silenceDecision,
   });
 
   // 9. Sincronizar dados coletados pela IA de volta pro GHL
@@ -1431,11 +1497,14 @@ async function processGroup(
     }
   }
 
-  // Agendar follow-ups APENAS se conversa ainda ativa e objetivo nao cumprido
+  // Agendar follow-ups APENAS se conversa ainda ativa e objetivo nao cumprido.
+  // MC-9: turno SILENCIOSO não reseta a cadeia de follow-ups — a IA decidiu não
+  // falar; re-ancorar o relógio aqui faria o silêncio adiar os toques pra sempre.
   if (
     config.follow_up_config?.enabled &&
     !objectiveCompleted &&
-    finalStatus === "active"
+    finalStatus === "active" &&
+    !silenceDecision.silent
   ) {
     await scheduleFollowUps({
       agentId: agent.id,

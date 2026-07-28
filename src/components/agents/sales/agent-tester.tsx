@@ -583,6 +583,20 @@ export function AgentTester({ agentId }: AgentTesterProps) {
         setCollectedData((prev) => ({ ...prev, ...aiResponse.collected_data }));
       }
 
+      // MC-9: turno silencioso (gate allow_silent_turns) — chip discreto no lugar
+      // da bolha, senão o admin não consegue validar o silêncio antes de ligar em prod.
+      if (data.silence?.silent) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "agent",
+            content: `🔇 Decidiu ficar em silêncio (nada seria enviado ao lead) — via ${data.silence.via === "flag" ? "should_send_message" : "[[NAO_ENVIAR]]"}`,
+            timestamp: new Date(),
+          },
+        ]);
+        return;
+      }
+
       // Se IA retornou array de mensagens, renderiza cada uma como balão
       // separado com delay 500-1500ms entre elas (igual SMS separados do prod).
       const bubbles: string[] = Array.isArray(aiResponse.message)

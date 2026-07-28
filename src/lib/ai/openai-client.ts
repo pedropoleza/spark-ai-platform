@@ -711,15 +711,23 @@ function parseAIResponse(text: string): AIResponse | null {
       parsed = repaired;
     }
 
+    // MC-9 (review Marcia 2026-07-28): parar de DESTRUIR o sinal de silêncio do
+    // modelo. Antes: should_send_message era hardcoded true no return e mensagem
+    // vazia virava "Pode me contar mais?" — mesmo quando o modelo explicitamente
+    // pediu silêncio. Agora o sinal passa adiante (pass-through fail-open: só é
+    // false com false LITERAL do modelo); quem decide honrar é o gate opt-in no
+    // executor (agent_configs.allow_silent_turns). Com o gate OFF o executor
+    // envia normalmente — e o fallback de vazio continua cobrindo vazio ACIDENTAL.
+    const modelSilent = parsed.should_send_message === false;
     let message: string | string[] = "";
     const rawMsg = parsed.message || parsed.message_to_user || parsed.response;
     if (Array.isArray(rawMsg)) {
       const filtered = rawMsg.filter((m: unknown) => typeof m === "string" && (m as string).trim());
-      message = filtered.length > 0 ? filtered : "Pode me contar mais?";
+      message = filtered.length > 0 ? filtered : modelSilent ? "" : "Pode me contar mais?";
     } else if (typeof rawMsg === "string" && rawMsg.trim()) {
       message = rawMsg;
     } else {
-      message = "Pode me contar mais?";
+      message = modelSilent ? "" : "Pode me contar mais?";
     }
 
     const rawCollected = parsed.collected_data || parsed.extracted_data || {};
