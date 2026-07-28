@@ -346,7 +346,9 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
     ghl_message_id: parsed.messageId,
     metadata: {
       input_kind: repInput.kind,
-      source: "stevo",
+      // H57: por qual motor a mensagem CHEGOU. Sem isto o turno inteiro fica
+      // rotulado "stevo" mesmo vindo do SparkZap e a telemetria de cutover mente.
+      source: parsed.transport === "sparkzap" ? "sparkzap" : "stevo",
       push_name: parsed.pushName || null,
       // Audit do tap interativo (rep tocou botão/lista em vez de digitar).
       ...(parsed.kind === "interactive"
