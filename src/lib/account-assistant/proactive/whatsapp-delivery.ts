@@ -210,8 +210,11 @@ export async function deliverProactiveMessage(
       try {
         const { sendSparkZapText } = await import("../webhook/sparkzap-send");
         const r = await sendSparkZapText({
+          locationId: hubLocationId,
           number: rep.phone,
           text: formattedMessage,
+          // Proativo (rep não está esperando resposta imediata).
+          priority: 3,
           // Proativo não tem messageId de origem — a chave vem do contexto do
           // disparo (fonte + rep + minuto), que é estável num retry da mesma
           // execução e distinto entre disparos legítimos.

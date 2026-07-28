@@ -556,6 +556,7 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
         sendResult =
           transport === "sparkzap"
             ? await sendSparkZapButton({
+                locationId: hubLocationId,
                 number: parsed.phone,
                 title: interactive.title,
                 body: interactive.body,
@@ -586,6 +587,7 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
         sendResult =
           transport === "sparkzap"
             ? await sendSparkZapList({
+                locationId: hubLocationId,
                 number: parsed.phone,
                 title: interactive.title,
                 body: interactive.body,
@@ -613,14 +615,14 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
         sentKind = "text";
         sendResult =
           transport === "sparkzap"
-            ? await sendSparkZapText({ number: parsed.phone, text: replyText, dedupeKey })
+            ? await sendSparkZapText({ locationId: hubLocationId, number: parsed.phone, text: replyText, dedupeKey })
             : await sendStevoText({ serverUrl, apiKey, number: parsed.phone, text: replyText });
       }
     } else {
       sentKind = "text";
       sendResult =
         transport === "sparkzap"
-          ? await sendSparkZapText({ number: parsed.phone, text: replyText, dedupeKey })
+          ? await sendSparkZapText({ locationId: hubLocationId, number: parsed.phone, text: replyText, dedupeKey })
           : await sendStevoText({ serverUrl, apiKey, number: parsed.phone, text: replyText });
     }
 

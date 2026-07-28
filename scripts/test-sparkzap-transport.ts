@@ -5,9 +5,11 @@
  * Cobre as 3 peças novas SEM tocar a rede (fetch é stubado):
  *   1. `pickWaTransport` — a chave + allowlist de rollout por rep. Um erro aqui
  *      cala um rep, então cada caminho tem caso.
- *   2. `sparkzap-send` — splitter `---`, chaves de idempotência por bolha,
- *      payload de botão/lista e o 422 "interativo indisponível" (que é o
- *      caminho NORMAL enquanto o SparkZap não tem botão) virando fallback.
+ *   2. `sparkzap-send` — o contrato da porta `/api/ingest/wa/send` do Spark OS:
+ *      splitter `---`, dedupeKey por bolha, TRUNCAMENTO client-side (o rich.ts
+ *      do OS REJEITA label >20 em vez de truncar — sem truncar aqui, um 422
+ *      viraria fallback de texto à toa), payload de botão/lista e o mapa de
+ *      resposta ({ok,outboxId} = aceito na fila; duplicate = sucesso).
  *   3. `sparkzap-parser` — os DOIS envelopes, o LID não resolvido (que seria
  *      descarte silencioso) e o `base64` preservado (áudio/PDF do rep).
  *
@@ -53,9 +55,9 @@ function withEnv(env: Record<string, string | undefined>, fn: () => void | Promi
 }
 
 async function main() {
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
   // 1. Chave de transporte
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
   console.log("\npickWaTransport — a chave do rollout");
 
   await withEnv({ SPARKBOT_WA_TRANSPORT: undefined, SPARKZAP_REPS: undefined }, () => {
@@ -76,19 +78,22 @@ async function main() {
     check("allowlist parseada", sparkZapAllowlist().length === 1);
   });
 
-  await withEnv({ SPARKBOT_WA_TRANSPORT: "sparkzap", SPARKZAP_REPS: "17867717077, +15551234567" }, () => {
-    check("allowlist com 2 e espaço", sparkZapAllowlist().length === 2);
-    check("2º da lista casa", pickWaTransport("+15551234567") === "sparkzap");
-  });
+  await withEnv(
+    { SPARKBOT_WA_TRANSPORT: "sparkzap", SPARKZAP_REPS: "17867717077, +15551234567" },
+    () => {
+      check("allowlist com 2 e espaço", sparkZapAllowlist().length === 2);
+      check("2º da lista casa", pickWaTransport("+15551234567") === "sparkzap");
+    },
+  );
 
   await withEnv({ SPARKBOT_WA_TRANSPORT: "STEVO", SPARKZAP_REPS: "+17867717077" }, () => {
     check("flag em stevo ignora allowlist", pickWaTransport("+17867717077") === "stevo");
   });
 
-  // ---------------------------------------------------------------------------
-  // 2. Envio pela ponte
-  // ---------------------------------------------------------------------------
-  console.log("\nsparkzap-send — payload e idempotência");
+  // -------------------------------------------------------------------------
+  // 2. Envio pela porta /api/ingest/wa/send
+  // -------------------------------------------------------------------------
+  console.log("\nsparkzap-send — contrato da porta do Spark OS");
 
   type Captured = { url: string; body: Record<string, unknown>; auth: string };
   const captured: Captured[] = [];
@@ -107,107 +112,135 @@ async function main() {
     }) as typeof fetch;
   }
 
+  const HUB = "RBFxlEQZobaDjlF2i5px";
+
   await withEnv(
-    { SPARK_OS_WA_URL: "https://os.test/api/integrations/wa/agent-send", SPARK_OS_WA_TOKEN: "seg" },
+    { SPARK_OS_WA_URL: "https://os.test/api/ingest/wa/send", SPARK_OS_WA_TOKEN: "seg" },
     async () => {
       captured.length = 0;
-      stubFetch(() => ({ status: 200, body: { status: "sent", wa_message_id: "WA1" } }));
+      stubFetch(() => ({ status: 200, body: { ok: true, outboxId: "OB1" } }));
       const r = await sendSparkZapText({
+        locationId: HUB,
         number: "+17867717077",
         text: "primeira\n---\nsegunda",
         dedupeKey: "MSG123",
       });
       check("splitter `---` vira 2 bolhas", r.total === 2 && r.sent === 2, JSON.stringify(r));
-      check("ok quando todas saem", r.ok === true);
+      check("ok quando todas aceitas", r.ok === true);
       check("bearer no header", captured[0].auth === "Bearer seg");
-      check("URL da ponte", captured[0].url === "https://os.test/api/integrations/wa/agent-send");
+      check("URL da porta", captured[0].url === "https://os.test/api/ingest/wa/send");
+      check("locationId no corpo", captured[0].body.locationId === HUB);
       check("kind=text", captured[0].body.kind === "text");
-      check("dedupe_key por bolha (0)", captured[0].body.dedupe_key === "MSG123:0");
-      check("dedupe_key por bolha (1)", captured[1].body.dedupe_key === "MSG123:1");
+      check("priority 1 (resposta)", captured[0].body.priority === 1);
+      check("dedupeKey por bolha (0)", captured[0].body.dedupeKey === "MSG123:0");
+      check("dedupeKey por bolha (1)", captured[1].body.dedupeKey === "MSG123:1");
       check("texto da 1ª bolha", captured[0].body.text === "primeira");
+      check("outboxId vira id", r.ids[0] === "OB1");
 
-      // 'duplicate' é SUCESSO — a mensagem saiu numa execução anterior.
+      // 'duplicate' é SUCESSO — a mesma dedupeKey já tinha entrado na fila.
       captured.length = 0;
-      stubFetch(() => ({ status: 200, body: { status: "duplicate", wa_message_id: "WA1" } }));
-      const dup = await sendSparkZapText({ number: "+1786", text: "oi", dedupeKey: "M" });
+      stubFetch(() => ({ status: 200, body: { ok: true, duplicate: true } }));
+      const dup = await sendSparkZapText({ locationId: HUB, number: "+1786", text: "oi", dedupeKey: "M" });
       check("'duplicate' conta como enviado", dup.ok === true && dup.sent === 1);
 
       // Falha na 1ª bolha PARA (não manda resposta pela metade duas vezes).
       captured.length = 0;
       stubFetch((n) =>
         n === 0
-          ? { status: 500, body: { status: "failed", error: "engine fora" } }
-          : { status: 200, body: { status: "sent" } },
+          ? { status: 503, body: { ok: false, error: "falha ao enfileirar — tente de novo" } }
+          : { status: 200, body: { ok: true, outboxId: "X" } },
       );
-      const bad = await sendSparkZapText({ number: "+1786", text: "a\n---\nb" });
-      check("falha na 1ª bolha interrompe", bad.ok === false && bad.sent === 0 && captured.length === 1);
-      check("erro da ponte propagado", (bad.error || "").includes("engine fora"));
+      const bad = await sendSparkZapText({ locationId: HUB, number: "+1786", text: "a\n---\nb" });
+      check(
+        "falha na 1ª bolha interrompe",
+        bad.ok === false && bad.sent === 0 && captured.length === 1,
+      );
+      check("erro da porta propagado", (bad.error || "").includes("enfileirar"));
 
-      // Botões.
+      // Botões: shape do rich.ts (title ≤20 TRUNCADO aqui, id estável).
       captured.length = 0;
-      stubFetch(() => ({ status: 200, body: { status: "sent", wa_message_id: "WB1" } }));
+      stubFetch(() => ({ status: 200, body: { ok: true, outboxId: "OB9" } }));
       const btn = await sendSparkZapButton({
+        locationId: HUB,
         number: "+17867717077",
         body: "Confirma?",
         title: "SparkBot",
         buttons: [
-          { id: "confirm", label: "Confirmar ✅" },
+          { id: "confirm", label: "Confirmar mesmo assim ✅" }, // 22 chars → trunca
           { id: "edit", label: "Editar ✏️" },
         ],
         dedupeKey: "MSG9",
       });
-      check("botão ok", btn.ok === true && btn.ids[0] === "WB1");
+      check("botão ok", btn.ok === true && btn.ids[0] === "OB9");
       check("kind=buttons", captured[0].body.kind === "buttons");
+      const bPayload = captured[0].body.payload as {
+        body: string;
+        buttons: Array<{ title: string; id: string }>;
+      };
+      check("payload.body presente", bPayload.body === "Confirma?");
       check(
-        "ids estáveis dos botões preservados",
-        JSON.stringify(captured[0].body.buttons) ===
-          JSON.stringify([
-            { id: "confirm", label: "Confirmar ✅" },
-            { id: "edit", label: "Editar ✏️" },
-          ]),
+        "label truncado a ≤20 (o OS rejeitaria 22)",
+        Array.from(bPayload.buttons[0].title).length <= 20,
+        bPayload.buttons[0].title,
       );
-      check("dedupe_key do interativo", captured[0].body.dedupe_key === "MSG9:btn");
+      check("id estável preservado no truncado", bPayload.buttons[0].id === "confirm");
+      check("2º botão intacto", bPayload.buttons[1].title === "Editar ✏️" && bPayload.buttons[1].id === "edit");
+      check("dedupeKey do interativo", captured[0].body.dedupeKey === "MSG9:btn");
 
-      // Lista (achata as seções).
+      // Lista: rowId preservado, cap 10, descrição truncada.
       captured.length = 0;
-      stubFetch(() => ({ status: 200, body: { status: "sent" } }));
+      stubFetch(() => ({ status: 200, body: { ok: true, outboxId: "OBL" } }));
+      const rows = Array.from({ length: 14 }, (_, i) => ({
+        rowId: `c${i}`,
+        title: `Contato ${i}`,
+        description: "x".repeat(100),
+      }));
       await sendSparkZapList({
+        locationId: HUB,
         number: "+1786",
         body: "Qual deles?",
         buttonText: "Ver opções",
-        sections: [{ rows: [{ rowId: "c1", title: "Fernanda", description: "+55…" }] }],
+        sections: [{ rows }],
       });
       check("kind=list", captured[0].body.kind === "list");
+      const lPayload = captured[0].body.payload as {
+        sections: Array<{ rows: Array<{ rowId: string; title: string; description?: string }> }>;
+      };
+      check("cap de 10 rows aplicado aqui", lPayload.sections[0].rows.length === 10);
+      check("rowId preservado", lPayload.sections[0].rows[0].rowId === "c0");
       check(
-        "rows achatadas com row_id",
-        JSON.stringify(captured[0].body.rows) ===
-          JSON.stringify([{ row_id: "c1", title: "Fernanda", description: "+55…" }]),
+        "descrição truncada a ≤72",
+        Array.from(lPayload.sections[0].rows[0].description || "").length <= 72,
       );
 
-      // 422 unsupported = SparkZap ainda sem botão → chamador cai pro texto.
+      // 422 da validação do OS → unsupported → o handler cai pro texto.
       captured.length = 0;
-      stubFetch(() => ({ status: 422, body: { status: "unsupported", error: "interativo desligado" } }));
+      stubFetch(() => ({
+        status: 422,
+        body: { ok: false, error: "buttons: máximo 3 botões (recebi 4)" },
+      }));
       const uns = await sendSparkZapButton({
+        locationId: HUB,
         number: "+1786",
         body: "x",
         buttons: [{ id: "a", label: "A" }],
       });
-      check("422 unsupported é sinalizado", uns.ok === false && uns.unsupported === true);
+      check("422 é sinalizado como unsupported", uns.ok === false && uns.unsupported === true);
     },
   );
 
   await withEnv({ SPARK_OS_WA_URL: undefined, SPARK_OS_WA_TOKEN: undefined }, async () => {
     captured.length = 0;
-    const r = await sendSparkZapText({ number: "+1786", text: "oi" });
+    const r = await sendSparkZapText({ locationId: HUB, number: "+1786", text: "oi" });
     check("sem env não chama a rede", captured.length === 0);
     check("sem env devolve erro claro", r.ok === false && (r.error || "").includes("SPARK_OS_WA_URL"));
   });
 
   globalThis.fetch = realFetch;
 
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
   // 3. Parser do inbound
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
   console.log("\nsparkzap-parser — os dois envelopes");
 
   const infoOk = {

@@ -93,14 +93,19 @@ export async function runMarinaDailyDigest(opts?: { forDate?: Date; dryRun?: boo
   if (count === 0) return { ok: true, skipped: "no_appointments", count: 0, text };
   if (opts?.dryRun) return { ok: true, skipped: "dry_run", count, text };
 
+  const hub = await resolvePrimaryHub();
+  const hubLocForZap = hub?.locationId || getEnvHubLocationId();
+
   // H57: se este número já está no rollout do SparkZap, o digest sai pela engine
   // própria (e nem depende de instância Stevo configurada).
   const { pickWaTransport } = await import("./webhook/wa-transport");
-  if (pickWaTransport(phone) === "sparkzap") {
+  if (hubLocForZap && pickWaTransport(phone) === "sparkzap") {
     const { sendSparkZapText } = await import("./webhook/sparkzap-send");
     const r = await sendSparkZapText({
+      locationId: hubLocForZap,
       number: phone!,
       text,
+      priority: 3,
       dedupeKey: `marina-daily:${new Date().toISOString().slice(0, 10)}`,
     });
     if (r.ok) return { ok: true, via: "sparkzap", count, text };
@@ -110,8 +115,6 @@ export async function runMarinaDailyDigest(opts?: { forDate?: Date; dryRun?: boo
 
   const stevoEnabled = /^(1|true|yes)$/i.test(process.env.STEVO_SEND_ENABLED?.trim() || "");
   if (!stevoEnabled) return { ok: false, skipped: "stevo_disabled", count, text };
-
-  const hub = await resolvePrimaryHub();
   const hubLoc = hub?.locationId || getEnvHubLocationId();
   const inst = hubLoc ? await getStevoInstance(hubLoc) : null;
   if (!inst) return { ok: false, error: "no_stevo_instance", count, text };
