@@ -103,7 +103,13 @@ function asString(v: unknown): string {
  * precisamos da heurística de normalizePhone — só prefixar o "+".
  */
 function normalizeStevoPhone(sender: string): string {
-  const localPart = sender.split("@")[0] || "";
+  // Fix bug observado em prod 2026-07-28 (H57): o JID pode trazer o SUFIXO DE
+  // APARELHO — "17867717077:6@s.whatsapp.net" — e o `replace(/\D/g)` colava o
+  // "6" no fim, virando +178677170776. Número inexistente → `identifyRep` não
+  // acha o rep → mensagem descartada em silêncio. O Stevo nunca mandou sufixo;
+  // o engine manda (multi-device), então o cutover pro SparkZap acendeu isto.
+  // Cortar no ":" ANTES de extrair dígitos resolve os dois formatos.
+  const localPart = (sender.split("@")[0] || "").split(":")[0] || "";
   const digits = localPart.replace(/\D/g, "");
   return digits ? `+${digits}` : "";
 }

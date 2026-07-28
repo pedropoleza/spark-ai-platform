@@ -347,6 +347,38 @@ async function main() {
     parseSparkZapWebhook({ type: "ReadReceipt", event: {} }).ok === false,
   );
   check("corpo lixo não quebra", parseSparkZapWebhook("nada").ok === false);
+  // Fix prod 2026-07-28: JID com sufixo de APARELHO (multi-device do engine).
+  // O Stevo nunca mandou; o engine manda — e o dígito do device colava no
+  // telefone (+178677170776), matando o reconhecimento do rep em silêncio.
+  const comDevice = parseSparkZapWebhook({
+    event: "Message",
+    instanceName: "sparkbot",
+    data: {
+      Info: { ...infoOk, ID: "DEV1", Sender: "17867717077:6@s.whatsapp.net", Chat: "17867717077:6@s.whatsapp.net" },
+      Message: { conversation: "oi de outro aparelho" },
+    },
+  });
+  check("JID com sufixo de aparelho parseia", comDevice.ok === true);
+  if (comDevice.ok) {
+    check(
+      "sufixo :6 NÃO vira dígito do telefone",
+      comDevice.parsed.phone === "+17867717077",
+      comDevice.parsed.phone,
+    );
+  }
+  const devLongo = parseSparkZapWebhook({
+    event: "Message",
+    instanceName: "sparkbot",
+    data: {
+      Info: { ...infoOk, ID: "DEV2", Sender: "15082028743:49@s.whatsapp.net", Chat: "15082028743:49@s.whatsapp.net" },
+      Message: { conversation: "device de 2 dígitos" },
+    },
+  });
+  check(
+    "sufixo de 2 dígitos também",
+    devLongo.ok === true && devLongo.parsed.phone === "+15082028743",
+  );
+
   check(
     "fromMe (eco do nosso envio) é ignorado",
     parseSparkZapWebhook({
