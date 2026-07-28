@@ -64,9 +64,15 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function channelName(): "telegram" | "slack" | "none" {
+function channelName(): "telegram" | "slack" | "discord" | "none" {
   if (process.env.ALERT_TELEGRAM_BOT_TOKEN && process.env.ALERT_TELEGRAM_CHAT_ID) return "telegram";
   if (process.env.ALERT_SLACK_WEBHOOK) return "slack";
+  // Discord (2026-07-28): a operação já tem canal de OPS no Discord — o Spark OS
+  // manda alerta pra lá há semanas. Sem este ramo, o único canal do SparkBot era
+  // Telegram/Slack, que ninguém tinha setado: o sinal "inbound MUDO" acumulou
+  // 4013 ocorrências desde 18/06 sem NUNCA sair do banco, e o apagão de 17h de
+  // 28/07 passou despercebido. Alerta que só grava linha não é alerta.
+  if (process.env.ALERT_DISCORD_WEBHOOK) return "discord";
   return "none";
 }
 
@@ -94,6 +100,18 @@ async function sendToChannel(text: string): Promise<boolean> {
         headers: { "content-type": "application/json" },
         // Slack usa markdown leve; tira as tags HTML do Telegram.
         body: JSON.stringify({ text: text.replace(/<\/?b>/g, "*").replace(/<\/?i>/g, "_") }),
+      });
+      return r.ok;
+    }
+    const discord = process.env.ALERT_DISCORD_WEBHOOK;
+    if (discord) {
+      // Discord: markdown, `content` limitado a 2000 chars (acima disso a API
+      // devolve 400 e o alerta seria PERDIDO — trunca antes).
+      const body = text.replace(/<\/?b>/g, "**").replace(/<\/?i>/g, "_");
+      const r = await fetch(discord, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: body.slice(0, 1990) }),
       });
       return r.ok;
     }
@@ -290,7 +308,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   //    signal no painel). NÃO marca nada como alertado — o backlog dispara
   //    quando o Pedro setar ALERT_TELEGRAM_* ou ALERT_SLACK_WEBHOOK.
   if (channel === "none") {
-    result.note = "nenhum canal de alerta configurado (set ALERT_TELEGRAM_BOT_TOKEN+ALERT_TELEGRAM_CHAT_ID ou ALERT_SLACK_WEBHOOK)";
+    result.note = "nenhum canal de alerta configurado (set ALERT_TELEGRAM_BOT_TOKEN+ALERT_TELEGRAM_CHAT_ID, ALERT_SLACK_WEBHOOK ou ALERT_DISCORD_WEBHOOK)";
     return NextResponse.json(result);
   }
 

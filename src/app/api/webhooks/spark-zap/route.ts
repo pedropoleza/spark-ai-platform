@@ -89,6 +89,36 @@ export async function POST(req: NextRequest) {
   try {
     const result = parseSparkZapWebhook(parsedJson);
     if (!result.ok) {
+      if (result.reason === "not_processable") {
+        // Achado P0 do review adversarial 2026-07-28: `not_processable` era um
+        // 200 mudo. Só que ele engloba o caso GRAVE — mensagem REAL de corretor
+        // cujo conteúdo não pôde ser lido (áudio/imagem/PDF que chegou sem os
+        // bytes). O rep manda, some, e nem log fica. Eco do nosso envio e grupo
+        // continuam mudos (são descarte legítimo); o resto vira sinal.
+        const info = extractInfo(parsedJson);
+        const descartelegitimo = info.isFromMe || info.isGroup;
+        if (!descartelegitimo && info.id) {
+          console.error(
+            `[sparkzap-webhook] mensagem NÃO processável de ${info.sender} ` +
+              `(MediaType="${info.mediaType}", id=${info.id}) — rep fica sem resposta`,
+          );
+          reportError({
+            title: "SparkBot: mensagem de rep chegou e não pôde ser lida (SparkZap)",
+            feature: "sparkbot-inbound-sparkzap",
+            severity: "high",
+            description:
+              `O evento chegou pela ponte mas o parser não reconheceu conteúdo — tipicamente ` +
+              `mídia sem os bytes (o engine entrega o binário fora de \`event\`; a ponte precisa ` +
+              `injetar em Message.base64). O corretor mandou e ninguém respondeu.`,
+            metadata: {
+              sender: info.sender,
+              message_id: info.id,
+              media_type: info.mediaType,
+            },
+          });
+        }
+        return NextResponse.json({ ok: true, skipped: result.reason });
+      }
       if (result.reason === "unresolved_lid") {
         // Mensagem REAL que não vira telefone → o rep ficaria sem resposta sem
         // ninguém saber. Vira signal (é o descarte silencioso que a ponte existe
@@ -135,6 +165,28 @@ export async function POST(req: NextRequest) {
     );
     return NextResponse.json({ ok: true, error: "internal_non_fatal" });
   }
+}
+
+/** Campos de Info dos DOIS envelopes (ponte e engine cru) — só pro diagnóstico
+ *  do descarte; o parser continua sendo a fonte de verdade. */
+function extractInfo(body: unknown): {
+  id: string;
+  sender: string;
+  mediaType: string;
+  isFromMe: boolean;
+  isGroup: boolean;
+} {
+  const root = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const container = (root.data ?? root.event ?? {}) as Record<string, unknown>;
+  const info = (container.Info ?? {}) as Record<string, unknown>;
+  const s = (v: unknown) => (typeof v === "string" ? v : "");
+  return {
+    id: s(info.ID),
+    sender: s(info.Sender) || s(info.Chat),
+    mediaType: s(info.MediaType) || s(info.Type),
+    isFromMe: info.IsFromMe === true,
+    isGroup: info.IsGroup === true,
+  };
 }
 
 /** Remove binários pesados da AMOSTRA (o parser recebe o corpo íntegro). */
