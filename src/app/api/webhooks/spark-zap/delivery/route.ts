@@ -67,36 +67,62 @@ export async function POST(req: NextRequest) {
   let corrigidas = 0;
 
   for (const f of falhas) {
-    // O dedupeKey é "<messageId do turno>:<índice da bolha>" (ou ":btn"/":list").
-    // O messageId é o que amarra ao turno gravado em sparkbot_messages.
-    const messageId = str(f.dedupe_key).split(":")[0];
+    const chave = str(f.dedupe_key);
     const phone = str(f.phone);
     const erro = str(f.error) || str(f.status) || "não entregue";
-    if (!messageId) continue;
+    if (!chave) continue;
 
     try {
-      // A RESPOSTA do turno não tem ghl_message_id (só a msg do rep tem), então
-      // achamos o turno pelo id da mensagem do REP e corrigimos a resposta que
-      // veio logo depois dele na mesma conversa.
-      const { data: pergunta } = await supabase
-        .from("sparkbot_messages")
-        .select("id, rep_id, created_at")
-        .eq("ghl_message_id", messageId)
-        .maybeSingle();
-
       type Alvo = { id: string; metadata: Record<string, unknown> | null };
       let alvo: Alvo | null = null;
-      if (pergunta) {
-        const { data } = await supabase
+      let messageId = "";
+
+      if (chave.startsWith("proactive:")) {
+        // Proativo NÃO tem messageId de origem — a chave é
+        // "proactive:<fonte>:<repId>:<minutoEpoch>:<bolha>". Acha a resposta do
+        // agente pra AQUELE rep na janela daquele minuto. (Sem este ramo, todo
+        // proativo caía fora da correção — e proativo é justamente o tráfego
+        // que está migrando pro SparkZap agora.)
+        const partes = chave.split(":");
+        const repId = partes[2] || "";
+        const minuto = Number(partes[3] || 0);
+        if (repId && Number.isFinite(minuto) && minuto > 0) {
+          const inicio = new Date(minuto * 60_000 - 60_000).toISOString();
+          const fim = new Date(minuto * 60_000 + 5 * 60_000).toISOString();
+          const { data } = await supabase
+            .from("sparkbot_messages")
+            .select("id, metadata")
+            .eq("rep_id", repId)
+            .eq("role", "agent")
+            .gte("created_at", inicio)
+            .lte("created_at", fim)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          alvo = (data as unknown as Alvo | null) ?? null;
+        }
+      } else {
+        // Resposta a inbound: a chave é "<messageId do rep>:<bolha>". A RESPOSTA
+        // não tem ghl_message_id (só a msg do rep tem), então achamos o turno
+        // pela pergunta e corrigimos a resposta que veio logo depois dela.
+        messageId = chave.split(":")[0];
+        const { data: pergunta } = await supabase
           .from("sparkbot_messages")
-          .select("id, metadata")
-          .eq("rep_id", (pergunta as { rep_id: string }).rep_id)
-          .eq("role", "agent")
-          .gte("created_at", (pergunta as { created_at: string }).created_at)
-          .order("created_at", { ascending: true })
-          .limit(1)
+          .select("id, rep_id, created_at")
+          .eq("ghl_message_id", messageId)
           .maybeSingle();
-        alvo = (data as unknown as Alvo | null) ?? null;
+        if (pergunta) {
+          const { data } = await supabase
+            .from("sparkbot_messages")
+            .select("id, metadata")
+            .eq("rep_id", (pergunta as { rep_id: string }).rep_id)
+            .eq("role", "agent")
+            .gte("created_at", (pergunta as { created_at: string }).created_at)
+            .order("created_at", { ascending: true })
+            .limit(1)
+            .maybeSingle();
+          alvo = (data as unknown as Alvo | null) ?? null;
+        }
       }
 
       if (alvo) {
@@ -127,7 +153,7 @@ export async function POST(req: NextRequest) {
       description:
         `A fila do SparkZap desistiu de entregar (${erro}). O turno tinha sido registrado ` +
         `como enviado — o corretor ficou sem resposta e o histórico mentia.`,
-      metadata: { phone, message_id: messageId, delivery_error: erro.slice(0, 200) },
+      metadata: { phone, dedupe_key: chave, delivery_error: erro.slice(0, 200) },
     });
   }
 
