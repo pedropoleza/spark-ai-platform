@@ -15,6 +15,7 @@ import {
 import { reportError } from "@/lib/admin-signals/report-error";
 import { stripSilenceMarker, type LeadSilenceDecision } from "@/lib/ai/lead-silence";
 import { validateBookingSlot } from "@/lib/ai/slot-guard";
+import { aplicarGuardaDeConfirmacao, claimsBooking } from "@/lib/ai/booking-guard";
 import type { AIAction, AIResponse } from "@/types/ai";
 
 // Delay curto entre mensagens (max 1.5s para não causar timeout no serverless)
@@ -116,11 +117,20 @@ export async function executeActions(
 
   let actionsFailed = false;
   let failedActionError = "";
+  // H58: o guarda de confirmação precisa do desfecho do AGENDAMENTO
+  // especificamente — `actionsFailed` é agregado, então uma falha de booking
+  // ficaria indistinguível de uma falha de update_field.
+  const BOOKING_ACTIONS = new Set(["book_appointment", "reschedule_appointment"]);
+  let tentouAgendar = false;
+  let agendouComSucesso = false;
 
   for (const action of dedupedActions) {
+    const ehAgendamento = BOOKING_ACTIONS.has(action.type);
+    if (ehAgendamento) tentouAgendar = true;
     try {
       await executeAction(client, action, ctx);
       await logExecution(supabase, ctx, action.type, { ...action });
+      if (ehAgendamento) agendouComSucesso = true;
     } catch (error) {
       actionsFailed = true;
       failedActionError = error instanceof Error ? error.message : String(error);
@@ -196,6 +206,51 @@ export async function executeActions(
     messages = split.messages;
     console.log(`[Splitter] Bolha longa quebrada → ${messages.length} bolhas`);
     await logExecution(supabase, ctx, "outbound_split", { parts: messages.length });
+  }
+
+  // H58 (caso Marilia 2026-07-26) — NUNCA afirmar agendamento que não aconteceu.
+  //
+  // O `slot-guard` (caso Alves Cury) impede o booking ERRADO. Este aqui cobre o
+  // que sobra: o booking que falha por QUALQUER outro motivo. O LLM escreve a
+  // mensagem ANTES de saber o desfecho da action — na Marilia o booking falhou
+  // 14:01:53 e ela recebeu "Ótimo, segunda às 4 PM ET tá marcado 🎉" às 14:01:54.
+  //
+  // O tratamento que existia dependia de CLASSIFICAR a string do erro, e uma
+  // string ambígua o desarmou. Este guarda não classifica nada: olha o FATO —
+  // houve booking bem-sucedido neste turno? Se não, a afirmação não sai.
+  // Mesmo princípio do H41 ("só afirmar o count real") e do H50 (booked_label).
+  const guardaConfirm = aplicarGuardaDeConfirmacao(messages, {
+    afirmaAgendamento: messages.some(claimsBooking),
+    tentouAgendar,
+    agendouComSucesso,
+  });
+  if (guardaConfirm.bloqueou) {
+    messages = guardaConfirm.mensagens;
+    console.warn(
+      `[BookingGuard] Afirmação de agendamento BLOQUEADA (${guardaConfirm.motivo}) — trocada por texto honesto.`,
+    );
+    await logExecution(supabase, ctx, "false_booking_claim_blocked", {
+      motivo: guardaConfirm.motivo,
+      tentou_agendar: tentouAgendar,
+      agendou_com_sucesso: agendouComSucesso,
+      erro: failedActionError || null,
+    });
+    reportError({
+      title: "Agente lead-facing: afirmou agendamento sem ter agendado",
+      feature: "lead-booking-guard",
+      severity: "high",
+      description:
+        `O modelo escreveu confirmação de agendamento mas ${
+          tentouAgendar ? "o booking FALHOU" : "nenhuma action de agendamento foi emitida"
+        }. O texto foi trocado antes de sair — a lead não recebeu confirmação falsa.`,
+      metadata: {
+        location_id: ctx.locationId,
+        contact_id: ctx.contactId,
+        agent_id: ctx.agentId,
+        motivo: guardaConfirm.motivo,
+        erro: failedActionError || null,
+      },
+    });
   }
 
   if (!ctx.skipSendMessage && messages.length > 0) {
@@ -390,7 +445,14 @@ async function executeAction(
           if (bookingError instanceof Error &&
               (bookingError.message.includes("available") || bookingError.message.includes("slot") || bookingError.message.includes("422"))) {
             console.log("[BookAppointment] Slot unavailable, attempting next slot...");
-            throw new Error("Calendario nao configurado ou horario indisponivel");
+            // H58 (caso Marilia 2026-07-26): esta frase dizia "Calendario nao
+            // configurado ou horario indisponivel" — as DUAS causas na mesma
+            // string. O isBookingConflictError testa "config" PRIMEIRO e devolve
+            // false, então o guarda que trocaria a confirmação falsa por "não
+            // consegui agendar" nunca disparava: a lead ouviu "tá marcado" 1
+            // segundo depois do booking falhar. A frase escrita pra deixar o
+            // erro acionável foi o que desarmou o tratamento dele.
+            throw new Error("horario indisponivel");
           }
           throw bookingError;
         }

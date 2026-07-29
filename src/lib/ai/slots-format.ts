@@ -59,3 +59,53 @@ export function formatAvailableSlots(
   }
   return lines.join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// H58 (caso Jussara 2026-07-26) — expediente
+// ---------------------------------------------------------------------------
+
+import { horaLocal, EXPEDIENTE_PADRAO, type JanelaExpediente } from "@/lib/ai/booking-guard";
+
+/**
+ * Corta os horários fora do expediente ANTES de o modelo ver.
+ *
+ * Por que na origem: o calendário do Spark Leads não conhece o expediente da
+ * agente (aceita 8h numa operação que atende 9h-21h), então o free-slots devolve
+ * 8h e o modelo oferece de boa fé — foi assim que a Valeria recebeu "segunda às
+ * 8h da manhã" e a Lena acabou marcada 28/07 às 08:00 (e sumiu). Instrução de
+ * prompt não conserta dado errado na entrada; filtrar aqui, sim: o modelo passa
+ * a não ter como oferecer fora da janela.
+ *
+ * Efeito colateral desejado: a lista que alimenta o slot-guard do booking também
+ * fica limitada ao expediente, então um start_time às 8h nem chega a ser aceito.
+ *
+ * Dia que fica sem nenhum horário é REMOVIDO (dia vazio no prompt sugeriria
+ * agenda cheia, que é outra mentira).
+ */
+export function filterSlotsToBusinessHours(
+  slotsResp: Record<string, unknown>,
+  tz: string,
+  janela: JanelaExpediente = EXPEDIENTE_PADRAO,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(slotsResp)) {
+    if (key === "traceId") {
+      out[key] = value;
+      continue;
+    }
+    if (!value || typeof value !== "object") continue;
+    const v = value as Record<string, unknown>;
+    const slots = Array.isArray(v.slots)
+      ? (v.slots as string[])
+      : Array.isArray(value)
+        ? (value as string[])
+        : [];
+    const dentro = slots.filter((s) => {
+      const h = horaLocal(s, tz);
+      // Hora ilegível → mantém (fail-open, mesma postura dos outros guardas).
+      return h === null || (h >= janela.inicio && h <= janela.fim);
+    });
+    if (dentro.length > 0) out[key] = { ...v, slots: dentro };
+  }
+  return out;
+}

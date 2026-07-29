@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
-import { formatAvailableSlots } from "@/lib/ai/slots-format";
+import { formatAvailableSlots, filterSlotsToBusinessHours } from "@/lib/ai/slots-format";
 import { extractSlotIsoList } from "@/lib/ai/slot-guard";
 import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
 import { assembleSystemPrompt, isUnifiedMotorEnabled, templateKeyForAgentType } from "@/lib/agent-platform/assembler";
@@ -975,8 +975,17 @@ async function processGroup(
       // slice(0,8) → agente só via manhã/início de tarde e mentia sobre o
       // último horário do dia. Agora mostra o dia inteiro (cap 30/dia) sempre
       // incluindo o último slot real.
-      availableSlots = formatAvailableSlots(slotsSettled.value, tz);
-      offeredSlotsIso = extractSlotIsoList(slotsSettled.value);
+      // H58 (caso Jussara 2026-07-26): corta o que está FORA DO EXPEDIENTE antes
+      // de o modelo ver. O calendário do Spark Leads não conhece a janela da
+      // agente (aceita 8h numa operação que atende 9h-21h), então o free-slots
+      // devolvia 8h e o agente oferecia de boa fé — a Valeria recebeu "segunda
+      // às 8h da manhã" e a Lena foi marcada 28/07 às 08:00 e sumiu. Instrução
+      // de prompt não conserta dado errado na ENTRADA; filtrar aqui, sim.
+      // Como o slot-guard valida o booking contra ESTA lista, o filtro também
+      // impede que um start_time fora da janela seja aceito.
+      const slotsNaJanela = filterSlotsToBusinessHours(slotsSettled.value, tz);
+      availableSlots = formatAvailableSlots(slotsNaJanela, tz);
+      offeredSlotsIso = extractSlotIsoList(slotsNaJanela);
       const dayCount = availableSlots ? availableSlots.split("\n").length : 0;
       console.log(`[FreeSlots] Formatted ${dayCount} days`);
       if (dayCount === 0) {
