@@ -132,3 +132,54 @@ export async function getStevoInstanceForRep(
     },
   };
 }
+
+/**
+ * Avisa quando a credencial do Stevo está velha demais pra confiar (H57, item 4
+ * do scan 2026-07-28).
+ *
+ * Por que existe: `upsertStevoInstance` só roda quando o inbound chega PELO
+ * STEVO (é de lá que o serverUrl+token vêm). Depois do cutover pro SparkZap
+ * esse caminho não roda mais, e a linha congela na data do último inbound Stevo.
+ * Só que ela continua sendo o insumo do FALLBACK dos proativos — ou seja, a
+ * rede de segurança envelhece sem ninguém ver, e a descoberta viria no pior dia
+ * possível (SparkZap fora do ar E fallback quebrado).
+ *
+ * "Avisar > bloquear" (regra do Pedro): NÃO desativa o fallback. Só torna a
+ * decadência visível, com dedup por título pra não virar ruído.
+ */
+export async function warnIfStevoCredentialStale(
+  hubLocationId: string,
+  maxIdadeDias = Number(process.env.STEVO_CREDENTIAL_STALE_DAYS) || 7,
+): Promise<void> {
+  if (!hubLocationId) return;
+  try {
+    const db = createAdminClient();
+    const { data } = await db
+      .from("stevo_instances")
+      .select("updated_at, instance_name")
+      .eq("hub_location_id", hubLocationId)
+      .maybeSingle();
+    if (!data?.updated_at) return;
+    const dias = (Date.now() - new Date(data.updated_at as string).getTime()) / 86_400_000;
+    if (dias < maxIdadeDias) return;
+
+    const { reportError } = await import("@/lib/admin-signals/report-error");
+    reportError({
+      title: "SparkBot: credencial do Stevo parou de se renovar (fallback envelhecendo)",
+      feature: "sparkbot-inbound-sparkzap",
+      severity: "medium",
+      description:
+        `A credencial Stevo da location ${hubLocationId} não é atualizada há ${Math.floor(dias)} dias. ` +
+        `Ela só se renova com inbound VINDO do Stevo, e o inbound agora chega pelo SparkZap — ` +
+        `então ela vai continuar envelhecendo. É o insumo do fallback dos proativos: se o SparkZap ` +
+        `cair, esse caminho pode não funcionar. Decidir: manter viva de propósito ou aposentar o fallback.`,
+      metadata: {
+        hub_location_id: hubLocationId,
+        dias_sem_atualizar: Math.floor(dias),
+        instance_name: data.instance_name ?? null,
+      },
+    });
+  } catch (err) {
+    console.warn("[stevo-instances] checagem de credencial velha falhou:", err);
+  }
+}

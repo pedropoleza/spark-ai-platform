@@ -59,3 +59,21 @@ export function sparkZapEndpoint(): { url: string; token: string } | null {
   if (!url || !token) return null;
   return { url, token };
 }
+
+/**
+ * Chave-mestra do envio da resposta ao rep — vale pros DOIS transportes.
+ *
+ * Item 3 do scan 2026-07-28: essa chave se chamava `STEVO_SEND_ENABLED`. Com o
+ * cutover isso virou uma armadilha de nome: quem desligasse a env achando que
+ * estava "tirando o Stevo" calaria o SparkZap junto, e o SparkBot ficaria mudo
+ * sem ninguém entender o porquê. O nome novo é `SPARKBOT_SEND_ENABLED`.
+ *
+ * O nome antigo continua sendo lido (retrocompat) — a env velha ainda está em
+ * prod e trocar código e env no mesmo deploy é como se perde o bot no ar.
+ * Quando `SPARKBOT_SEND_ENABLED` estiver setada na Vercel, a antiga pode sair.
+ */
+export function isSparkbotSendEnabled(): boolean {
+  const novo = process.env.SPARKBOT_SEND_ENABLED?.trim();
+  if (novo) return /^(1|true|yes)$/i.test(novo);
+  return /^(1|true|yes)$/i.test(process.env.STEVO_SEND_ENABLED?.trim() || "");
+}

@@ -36,7 +36,10 @@ import {
   insertSparkbotMessageResult,
   getSparkbotHistory,
 } from "@/lib/repositories/sparkbot-messages.repo";
-import { upsertStevoInstance } from "@/lib/repositories/stevo-instances.repo";
+import {
+  upsertStevoInstance,
+  warnIfStevoCredentialStale,
+} from "@/lib/repositories/stevo-instances.repo";
 import { resolveBurstTurn } from "../core/debounce";
 import type { ParsedStevoMessage } from "./stevo-parser";
 import {
@@ -45,7 +48,7 @@ import {
   sendStevoList,
   type StevoSendResult,
 } from "./stevo-send";
-import { pickWaTransport } from "./wa-transport";
+import { pickWaTransport, isSparkbotSendEnabled } from "./wa-transport";
 import {
   sendSparkZapText,
   sendSparkZapButton,
@@ -54,9 +57,13 @@ import {
 
 const SPARKBOT_HISTORY_TURNS = 30;
 
-/** Gate do envio via Stevo (fase 2). Default OFF — ligar só no cutover. */
+/**
+ * Gate do envio da resposta ao rep. Vale pros DOIS transportes (Stevo e
+ * SparkZap) — ver `isSparkbotSendEnabled` em wa-transport.ts, que também
+ * explica por que o nome da env mudou de STEVO_ pra SPARKBOT_.
+ */
 function isStevoSendEnabled(): boolean {
-  return /^(1|true|yes)$/i.test(process.env.STEVO_SEND_ENABLED?.trim() || "");
+  return isSparkbotSendEnabled();
 }
 
 /** Gate do interativo (botões/listas). Default OFF — ligar só no go-live. */
@@ -238,6 +245,13 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       instanceToken: parsed.instanceToken,
       instanceName: parsed.instanceName || null,
     });
+  } else if (parsed.transport === "sparkzap") {
+    // Item 4 do scan 2026-07-28: com o inbound vindo pelo SparkZap, o envelope
+    // não traz credencial do Stevo — então este upsert nunca mais roda e a
+    // `stevo_instances` CONGELA. Ela é justamente o que a rede de segurança dos
+    // proativos usa. Ninguém veria isso apodrecer: falha silenciosa que só
+    // aparece no dia em que a gente precisar do fallback.
+    void warnIfStevoCredentialStale(hubLocationId);
   }
 
   // 2. Dedup upfront por messageId (retry do Stevo com mesmo ID não reprocessa).
