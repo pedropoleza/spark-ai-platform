@@ -10,6 +10,7 @@ import {
   updateOpportunity,
 } from "@/lib/ghl/operations";
 import { reportError } from "@/lib/admin-signals/report-error";
+import { validateBookingSlot } from "@/lib/ai/slot-guard";
 import type { AIAction, AIResponse } from "@/types/ai";
 
 // Delay curto entre mensagens (max 1.5s para não causar timeout no serverless)
@@ -37,6 +38,13 @@ interface ExecutionContext {
   calendarId?: string;         // Calendar ID do config (overrides o que a IA manda)
   skipSendMessage?: boolean;
   testMode?: boolean;
+  /**
+   * H58 (caso Alves Cury 2026-07-29): lista ISO dos free-slots REAIS buscados
+   * neste turno (a mesma injetada no prompt). book/reschedule só aceitam
+   * start_time que bata com um destes. undefined = caller não threadou
+   * (back-compat, permite); [] = fetch falhou/sem slots (bloqueia booking).
+   */
+  offeredSlotsIso?: string[];
 }
 
 // Mapeia canal para o "type" da API de mensagens do GHL
@@ -211,6 +219,13 @@ async function executeAction(
       if (!bookCalendarId) {
         throw new Error("Calendario nao configurado — agendamento impossivel");
       }
+      // H58: start_time TEM que ser um slot real do turno (bloqueia booking
+      // fantasma/fuso trocado; o throw cai em isBookingConflictError → o lead
+      // recebe a correção, não uma falsa confirmação).
+      {
+        const slotCheck = validateBookingSlot(action.start_time, ctx.offeredSlotsIso);
+        if (!slotCheck.ok) throw new Error(`book_appointment bloqueado: ${slotCheck.reason}`);
+      }
       if (bookCalendarId && action.start_time) {
         const existingApptForBook = await findExistingAppointment(client, ctx.contactId, ctx.locationId);
 
@@ -259,6 +274,11 @@ async function executeAction(
     }
 
     case "reschedule_appointment":
+      // H58: reagendamento passa pelo MESMO guard de slot real (lição H42).
+      {
+        const reslotCheck = validateBookingSlot(action.start_time, ctx.offeredSlotsIso);
+        if (!reslotCheck.ok) throw new Error(`reschedule_appointment bloqueado: ${reslotCheck.reason}`);
+      }
       if (action.start_time) {
         // FIX CRITICAL stress test 2026-05-03: usar appointment_id explícito
         // se a IA passou. Antes ignorava e re-buscava — em contatos com 2+
