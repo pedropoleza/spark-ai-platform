@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
 import { formatAvailableSlots } from "@/lib/ai/slots-format";
+import { extractSlotIsoList } from "@/lib/ai/slot-guard";
 import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
 import { assembleSystemPrompt, isUnifiedMotorEnabled, templateKeyForAgentType } from "@/lib/agent-platform/assembler";
 import { processWithAI } from "@/lib/ai/openai-client";
@@ -963,6 +964,10 @@ async function processGroup(
   // 5. Processar slots (e detectar fail irrecuperável para guardrail)
   let availableSlots = "";
   let slotsFetchFailed = false;
+  // H58: lista ISO crua dos slots do turno — vai pro executeActions validar o
+  // start_time de book/reschedule (booking fantasma fora da lista = bloqueado).
+  // undefined quando shouldFetchSlots=false (sem calendário → back-compat).
+  let offeredSlotsIso: string[] | undefined;
   if (shouldFetchSlots) {
     if (slotsSettled.status === "fulfilled" && slotsSettled.value) {
       const tz = location.timezone || "America/New_York";
@@ -971,6 +976,7 @@ async function processGroup(
       // último horário do dia. Agora mostra o dia inteiro (cap 30/dia) sempre
       // incluindo o último slot real.
       availableSlots = formatAvailableSlots(slotsSettled.value, tz);
+      offeredSlotsIso = extractSlotIsoList(slotsSettled.value);
       const dayCount = availableSlots ? availableSlots.split("\n").length : 0;
       console.log(`[FreeSlots] Formatted ${dayCount} days`);
       if (dayCount === 0) {
@@ -978,6 +984,7 @@ async function processGroup(
       }
     } else {
       slotsFetchFailed = true;
+      offeredSlotsIso = []; // fetch falhou → booking bloqueado neste turno (runtime já proíbe)
       console.error(
         `[FreeSlots] All retries failed:`,
         slotsSettled.status === "rejected"
@@ -1466,6 +1473,7 @@ async function processGroup(
     collectedData: { ...collectedData, ...(aiResult.response.collected_data || {}) },
     forbiddenTerms: resolveForbiddenTerms(agent.id, config.forbidden_terms),
     silenceDecision,
+    offeredSlotsIso, // H58: gate de slot real no book/reschedule
   });
 
   // 9. Sincronizar dados coletados pela IA de volta pro GHL

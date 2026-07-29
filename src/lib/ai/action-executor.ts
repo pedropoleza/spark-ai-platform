@@ -14,6 +14,7 @@ import {
 } from "@/lib/ghl/operations";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { stripSilenceMarker, type LeadSilenceDecision } from "@/lib/ai/lead-silence";
+import { validateBookingSlot } from "@/lib/ai/slot-guard";
 import type { AIAction, AIResponse } from "@/types/ai";
 
 // Delay curto entre mensagens (max 1.5s para não causar timeout no serverless)
@@ -51,6 +52,13 @@ interface ExecutionContext {
   // MC-9: decisão de silêncio computada pelo caller (evaluateLeadSilence).
   // Ausente = gate desligado = comportamento legado (sempre envia).
   silenceDecision?: LeadSilenceDecision;
+  /**
+   * H58 (caso Alves Cury 2026-07-29): lista ISO dos free-slots REAIS buscados
+   * neste turno (a mesma injetada no prompt). book/reschedule só aceitam
+   * start_time que bata com um destes. undefined = caller não threadou
+   * (back-compat, permite); [] = fetch falhou/sem slots (bloqueia booking).
+   */
+  offeredSlotsIso?: string[];
 }
 
 // Detecta um canal de contato (WhatsApp/telefone) já coletado — usado pelo gate
@@ -326,6 +334,13 @@ async function executeAction(
       if (!bookCalendarId) {
         throw new Error("Calendario nao configurado — agendamento impossivel");
       }
+      // H58: start_time TEM que ser um slot real do turno (bloqueia booking
+      // fantasma/fuso trocado; o throw cai em isBookingConflictError → o lead
+      // recebe a correção, não uma falsa confirmação).
+      {
+        const slotCheck = validateBookingSlot(action.start_time, ctx.offeredSlotsIso);
+        if (!slotCheck.ok) throw new Error(`book_appointment bloqueado: ${slotCheck.reason}`);
+      }
       // Link da reunião por calendário (caso Marina 2026-06-28): quando o calendário
       // tem link configurado, injeta address+override; senão null = mantém o default
       // histórico ("phone"), sem afetar outros agentes lead-facing.
@@ -384,6 +399,11 @@ async function executeAction(
     }
 
     case "reschedule_appointment":
+      // H58: reagendamento passa pelo MESMO guard de slot real (lição H42).
+      {
+        const reslotCheck = validateBookingSlot(action.start_time, ctx.offeredSlotsIso);
+        if (!reslotCheck.ok) throw new Error(`reschedule_appointment bloqueado: ${reslotCheck.reason}`);
+      }
       if (action.start_time) {
         // FIX CRITICAL stress test 2026-05-03: usar appointment_id explícito
         // se a IA passou. Antes ignorava e re-buscava — em contatos com 2+
