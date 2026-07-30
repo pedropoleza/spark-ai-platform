@@ -35,6 +35,9 @@ export async function getActiveContactContext(
     hubLocationId?: string | null;
     activeLocationId?: string | null;
     recentContacts?: Array<{ id: string; name?: string }>;
+    /** H59: há uma pessoa explicitamente em jogo que ainda não está no CRM?
+     *  Quando sim, um contato antigo NÃO pode ser promovido a foco. */
+    hasPendingSubject?: boolean;
   } = {},
 ): Promise<ActiveContactContext> {
   let focus: FocusContact | null = null;
@@ -70,7 +73,14 @@ export async function getActiveContactContext(
 
   const recent = (opts.recentContacts || []).filter((c) => c.id && c.id !== focus?.id).slice(0, RECENT_CAP);
   // Se não há foco de proativo mas há recente, o mais recente vira o foco (pista mais fraca).
-  if (!focus && recent.length) {
+  //
+  // H59 (caso Paulo Abreu 2026-07-29) — `hasPendingSubject` trava esta promoção.
+  // O rep apresentou uma pessoa que NÃO está no CRM; como ela não tem id, o foco
+  // ficava vazio e o `recent[0]` — um contato de OUTRA conversa — era promovido a
+  // "contato em jogo agora". Foi assim que a Bianca Amorim apareceu no meio de
+  // uma conversa sobre o Paulo. Um contato antigo é pista FRACA; enquanto há
+  // alguém explicitamente em jogo, ele não pode ocupar o lugar dela.
+  if (!focus && recent.length && !opts.hasPendingSubject) {
     focus = { id: recent[0].id, name: recent[0].name, source: "tool_result" };
   }
   return { focus, recent };

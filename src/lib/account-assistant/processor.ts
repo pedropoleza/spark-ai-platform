@@ -17,6 +17,11 @@ import {
   readRecentContacts,
   recordRecentContact,
 } from "./contact-resolver";
+// H59: pessoa em jogo que ainda não virou contato no CRM.
+import {
+  getPendingSubject,
+  renderPendingSubjectBlock,
+} from "./contact-resolver/pending-subject";
 import type { RepIdentity, RepInput } from "@/types/account-assistant";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import {
@@ -657,10 +662,19 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // quando o rep responde "marca o follow-up dele" (caso Fernanda). Pista que se re-valida,
   // nunca id cego. Vai no runtime context (user message, não-cacheada) → não mexe no cache (H44).
   try {
+    // H59 (caso Paulo Abreu): antes do foco por id, checa se há alguém que o rep
+    // acabou de apresentar e que NÃO está no CRM. Essa pessoa não tem id, então
+    // era invisível pro mecanismo do H45 — e o vácuo dela era preenchido por um
+    // contato de outra conversa (a Bianca aparecendo do nada).
+    const pending = await getPendingSubject(supabase, rep.id);
     const activeContact = await getActiveContactContext(supabase, rep.id, {
       activeLocationId,
       recentContacts: readRecentContacts(rep.profile),
+      hasPendingSubject: !!pending,
     });
+    // O assunto pendente vem PRIMEIRO: é o mais fresco e o mais específico.
+    const pendingBlock = renderPendingSubjectBlock(pending);
+    if (pendingBlock) runtimeContext = `${runtimeContext}\n\n${pendingBlock}`;
     const focusBlock = renderContactInFocusBlock(activeContact);
     if (focusBlock) runtimeContext = `${runtimeContext}\n\n${focusBlock}`;
   } catch (err) {

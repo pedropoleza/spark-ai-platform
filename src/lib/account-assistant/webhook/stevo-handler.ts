@@ -187,7 +187,22 @@ async function buildRepInput(parsed: ParsedStevoMessage): Promise<RepInput | nul
 function userMsgContent(input: RepInput): string {
   if (input.kind === "text") return input.text.trim() || "[mensagem vazia]";
   if (input.kind === "audio") return `🎤 "${input.transcribed_text}"`;
-  if (input.kind === "image") return input.caption || "[imagem]";
+  // H59 (caso Paulo Abreu 2026-07-29): a IMAGEM era o ÚNICO tipo cujo conteúdo
+  // sumia do histórico — áudio guarda a transcrição, documento guarda o texto
+  // extraído, imagem guardava só a LEGENDA. O rep compartilhou o cartão de
+  // contato do Paulo (que o WhatsApp do Mac manda como IMAGEM, não como vCard) com
+  // a legenda "Demo amanha 4PM". No turno o bot leu o cartão por visão e acertou
+  // ("Paulo Abreu, +1 561-441-2585"); no turno seguinte o histórico só tinha
+  // "Demo amanha 4PM" e ele respondeu, com toda honestidade, "você falou 'Demo
+  // amanhã 4PM' sem mencionar nenhum contato". Não era alucinação — era amnésia.
+  //
+  // O marcador 🖼️ é o mínimo determinístico: diz ao modelo que HOUVE uma imagem
+  // ali, então ele não afirma que o rep não mandou nada e vai procurar o que ele
+  // mesmo extraiu na resposta anterior. (Persistir o que a visão leu é o passo
+  // seguinte — exige devolver um resumo no result do turno.)
+  if (input.kind === "image") {
+    return input.caption ? `🖼️ [imagem] ${input.caption}` : "🖼️ [imagem]";
+  }
   if (input.kind === "document") {
     return `📎 ${input.filename}${input.extracted_text ? `\n${input.extracted_text.substring(0, 500)}` : ""}`;
   }
