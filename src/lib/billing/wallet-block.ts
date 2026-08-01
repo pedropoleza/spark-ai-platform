@@ -24,17 +24,27 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // (+1 786 771-7077) por engano — trocado pelo número oficial do suporte.
 const SUPPORT_PHONE = "+1 (786) 627-6787";
 
+// H60 (caso Wesley 2026-08-01): o aviso agora ENSINA o caminho da recarga e a
+// recarga automática — antes só dizia "adiciona saldo" e o cliente não sabia
+// onde. ATENÇÃO: a frase "créditos de IA desta conta acabaram" é o MARCADOR do
+// cooldown de 4h (shouldSendWalletBlockedRepMessage casa por conteúdo) — se
+// mudar a copy, preservar esse trecho ou migrar o marcador junto.
+const RECHARGE_HOWTO =
+  "no Spark Leads, abre Configurações → Faturamento → Carteira e Recarga e adiciona saldo " +
+  "— o bot volta sozinho em poucos minutos. 💡 Dica: ativa ali a *recarga automática* " +
+  "(com valor-gatilho acima de $0) pra nunca mais parar.";
+
 /** Resposta determinística pro REP quando a location dele está sem saldo. */
 export const WALLET_BLOCKED_REP_MESSAGE =
   "⚠️ Os créditos de IA desta conta acabaram, então precisei pausar por aqui. " +
-  "Pra reativar, é só adicionar saldo na wallet do Spark Leads. " +
+  `Pra reativar: ${RECHARGE_HOWTO} ` +
   `Qualquer dúvida, chama o suporte: ${SUPPORT_PHONE} 👍`;
 
 /** Aviso (1x/24h) pra dona da conta quando os agentes lead-facing param. */
 export const WALLET_BLOCKED_OWNER_MESSAGE =
   "⚠️ Os créditos de IA da conta acabaram — pausei o SparkBot e os agentes de IA " +
-  "(os leads não estão recebendo resposta automática). Pra reativar: adicionar " +
-  `saldo na wallet do Spark Leads. Dúvidas, chama o suporte: ${SUPPORT_PHONE}`;
+  "(os leads não estão recebendo resposta automática). Pra reativar: " +
+  `${RECHARGE_HOWTO} Dúvidas, chama o suporte: ${SUPPORT_PHONE}`;
 
 /** Detecta o 400 de saldo do GHL sem acoplar no corpo exato do erro. */
 export function isInsufficientFundsError(err: unknown): boolean {
@@ -54,6 +64,106 @@ function isDisabled(): boolean {
  */
 export function isAutoDrainEnabled(): boolean {
   return process.env.WALLET_AUTO_DRAIN_ENABLED === "1";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Carência de débito (H60, caso Wesley 2026-08-01)
+//
+// O GHL rejeita QUALQUER cobrança maior que o saldo — não deixa cruzar o zero.
+// O Wesley tinha $0.31 na wallet, o turno custou $0.40 → 400 "insufficient
+// funds" → a location bloqueava NA PRIMEIRA falha, com saldo visível no painel
+// ("tenho crédito, por que parou?"). Decisão do Pedro (2026-08-01): a falha de
+// cobrança vira DÉBITO do SparkBot até um teto pequeno — o bot continua
+// respondendo (UX preservada, mesmo espírito do cap mensal), o cron de retry
+// (5min) recobra sozinho quando a recarga cai, e só bloqueia de verdade quando
+// o débito acumulado da location cruza a carência. Perda máxima por location =
+// WALLET_GRACE_USD (default $2). WALLET_GRACE_USD=0 restaura o H52 puro
+// (bloqueio na 1ª falha).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_GRACE_USD = 2;
+
+/** Teto de débito tolerado por location antes de bloquear (0 = sem carência). */
+export function walletGraceUsd(): number {
+  const raw = process.env.WALLET_GRACE_USD;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_GRACE_USD;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_GRACE_USD;
+}
+
+/**
+ * Débito em aberto da location: records que JÁ falharam cobrança (têm
+ * charge_fail_reason) e seguem não-cobrados. Janela de 30d — pendência mais
+ * velha que isso é artefato de bug antigo, não débito vivo. Client-side sum:
+ * a carência (~$2) cabe em poucas dezenas de records de $0.01-$0.40.
+ */
+export async function getUnpaidDebtUsd(locationId: string): Promise<number> {
+  const supabase = createAdminClient();
+  const sinceIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from("usage_records")
+    .select("total_charge_usd")
+    .eq("location_id", locationId)
+    .eq("charged_to_wallet", false)
+    .is("charged_at", null)
+    .eq("cap_blocked", false)
+    .eq("uses_custom_key", false)
+    .not("charge_fail_reason", "is", null)
+    .gte("created_at", sinceIso)
+    .limit(500);
+  if (error) throw error;
+  return (data || []).reduce((acc, r) => acc + (Number((r as { total_charge_usd?: unknown }).total_charge_usd) || 0), 0);
+}
+
+export interface GraceDecision {
+  block: boolean;
+  debtUsd: number;
+  graceUsd: number;
+}
+
+/**
+ * Depois de um "insufficient funds": bloquear já, ou segurar em carência?
+ * Chamar DEPOIS do markChargeFailReason do record atual (pra ele contar no
+ * débito). Fail-OPEN: erro lendo o débito NÃO bloqueia (bloquear cliente por
+ * falha de leitura NOSSA é o bug que estamos matando; o teto de perda real
+ * segue sendo o cap mensal).
+ */
+export async function shouldBlockAfterInsufficient(locationId: string): Promise<GraceDecision> {
+  const graceUsd = walletGraceUsd();
+  if (graceUsd <= 0) return { block: true, debtUsd: -1, graceUsd };
+  try {
+    const debtUsd = await getUnpaidDebtUsd(locationId);
+    return { block: debtUsd >= graceUsd, debtUsd, graceUsd };
+  } catch (err) {
+    console.warn("[wallet-block] leitura de débito falhou — mantendo em carência (fail-open):", err);
+    return { block: false, debtUsd: -1, graceUsd };
+  }
+}
+
+/**
+ * Cooldown do aviso ao REP (D3 do diagnóstico 2026-07-20, implementado no H60):
+ * antes, TODA mensagem do rep numa location bloqueada devolvia o "créditos
+ * acabaram" (Jussara levou 6 seguidos). Agora ≤1 a cada 4h por rep — dedup
+ * determinístico pelo próprio histórico persistido (cross-lambda), casando o
+ * MARCADOR da copy. Fail-open: erro de leitura → manda (avisar 2x < nunca).
+ */
+export async function shouldSendWalletBlockedRepMessage(repId: string): Promise<boolean> {
+  if (!repId) return true;
+  try {
+    const supabase = createAdminClient();
+    const cutoff = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+    const { data } = await supabase
+      .from("sparkbot_messages")
+      .select("id")
+      .eq("rep_id", repId)
+      .eq("role", "agent")
+      .ilike("content", "%créditos de IA desta conta acabaram%")
+      .gte("created_at", cutoff)
+      .limit(1);
+    return !(data && data.length > 0);
+  } catch {
+    return true;
+  }
 }
 
 /**

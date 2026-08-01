@@ -365,11 +365,17 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // wallet do Spark Leads. is_internal bypassa (não gera cobrança por design).
   // Desbloqueio é automático quando uma cobrança volta a passar (charge.ts).
   if (rep.is_internal !== true) {
-    const { isWalletBlocked, WALLET_BLOCKED_REP_MESSAGE } = await import(
-      "@/lib/billing/wallet-block"
-    );
+    const { isWalletBlocked, WALLET_BLOCKED_REP_MESSAGE, shouldSendWalletBlockedRepMessage } =
+      await import("@/lib/billing/wallet-block");
     if (await isWalletBlocked(activeLocationId)) {
-      return { text: WALLET_BLOCKED_REP_MESSAGE, should_send: true };
+      // H60 (D3 do diagnóstico 2026-07-20): aviso ≤1×/4h por rep — antes TODA
+      // mensagem numa location bloqueada levava o "créditos acabaram" de novo
+      // (Jussara recebeu 6 seguidos). Dentro do cooldown: silêncio (o rep já
+      // sabe; repetir só irrita e não destrava nada).
+      if (await shouldSendWalletBlockedRepMessage(rep.id)) {
+        return { text: WALLET_BLOCKED_REP_MESSAGE, should_send: true };
+      }
+      return { text: "", should_send: false };
     }
   }
 

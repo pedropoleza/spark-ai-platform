@@ -21,6 +21,7 @@ import {
   clearWalletBlock,
   isAutoDrainEnabled,
   claimDrainAttempt,
+  shouldBlockAfterInsufficient,
 } from "./wallet-block";
 
 interface TrackUsageParams {
@@ -159,11 +160,25 @@ export async function trackAndCharge(params: TrackUsageParams): Promise<void> {
       // Wallet block (Pedro 2026-07-17, ultra-review P0-2): saldo esgotado →
       // marca a location bloqueada; os gates de runtime param de gastar LLM e
       // avisam como recarregar (antes rodava de graça em silêncio).
+      // H60 (caso Wesley 2026-08-01): bloqueio na 1ª falha era brutal demais —
+      // o GHL rejeita cobrança > saldo (não cruza o zero), então a location
+      // travava com residual visível na wallet ($0.31). Agora a falha vira
+      // DÉBITO em carência (teto WALLET_GRACE_USD, default $2): o bot segue
+      // respondendo, o cron de retry recobra quando a recarga cair, e só
+      // bloqueia quando o débito acumulado cruza a carência.
       if (isInsufficientFundsError(error)) {
-        await markWalletBlocked(
-          params.locationId,
-          error instanceof Error ? error.message : String(error),
-        );
+        const gate = await shouldBlockAfterInsufficient(params.locationId);
+        if (gate.block) {
+          await markWalletBlocked(
+            params.locationId,
+            error instanceof Error ? error.message : String(error),
+          );
+        } else {
+          console.warn(
+            `[Billing] insufficient funds na ${params.locationId} — em carência ` +
+              `(débito $${gate.debtUsd.toFixed(2)} < teto $${gate.graceUsd.toFixed(2)}); cron retenta.`,
+          );
+        }
       }
     }
   }
@@ -653,7 +668,17 @@ export async function chargeUnbilledRecords(): Promise<{ charged: number; failed
           }
         }
         if (!drainResolved) {
-          await markWalletBlocked(record.location_id, msg);
+          // H60: mesma carência do caminho inline — o retry falhar de novo não
+          // pode re-bloquear na 1ª batida; só quando o débito cruza o teto.
+          const gate = await shouldBlockAfterInsufficient(record.location_id);
+          if (gate.block) {
+            await markWalletBlocked(record.location_id, msg);
+          } else {
+            console.warn(
+              `[Billing] retry insufficient na ${record.location_id} — em carência ` +
+                `(débito $${gate.debtUsd.toFixed(2)} < teto $${gate.graceUsd.toFixed(2)}).`,
+            );
+          }
         }
       }
     }
