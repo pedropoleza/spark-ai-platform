@@ -64,7 +64,11 @@ export function evaluateLeadSilence(input: LeadSilenceInput): LeadSilenceDecisio
   if (input.priorTurnCount <= 0) {
     return { silent: false, via, overridden: "first_turn" };
   }
-  if (String(input.inboundText || "").includes("?")) {
+  // H61 (2026-08-01): URLs contêm "?" de query-string (ex.: o link do anúncio
+  // na mensagem de contexto CTWA) e forçavam resposta sem haver pergunta real.
+  // Strip de URLs ANTES do check — pergunta de verdade continua forçando fala.
+  const textForQuestionCheck = String(input.inboundText || "").replace(/https?:\/\/\S+/gi, "");
+  if (textForQuestionCheck.includes("?")) {
     return { silent: false, via, overridden: "lead_question" };
   }
   return { silent: true, via, overridden: null };

@@ -674,7 +674,9 @@ function balanceBraces(s: string): string {
   return out;
 }
 
-function parseAIResponse(text: string): AIResponse | null {
+// Exportado pra teste (H61): o pass-through do should_send_message já regrediu
+// uma vez em silêncio (hardcoded true contradizendo o docstring MC-9).
+export function parseAIResponse(text: string): AIResponse | null {
   try {
     let cleaned = text.trim();
     const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -741,7 +743,11 @@ function parseAIResponse(text: string): AIResponse | null {
 
     return {
       message,
-      should_send_message: true,
+      // H61 (2026-08-01): o docstring MC-9 acima prometia pass-through, mas o
+      // return seguia hardcoded true — o sinal de silêncio do modelo morria
+      // aqui e o gate allow_silent_turns nunca via o flag (só o marcador
+      // [[NAO_ENVIAR]] funcionava). Fail-open: só false LITERAL vira false.
+      should_send_message: parsed.should_send_message !== false,
       actions: Array.isArray(parsed.actions) ? parsed.actions : [],
       internal_notes: parsed.internal_notes || "",
       collected_data,

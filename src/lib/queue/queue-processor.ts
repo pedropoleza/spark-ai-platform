@@ -24,6 +24,7 @@ import type { TargetingRules } from "@/types/agent";
 // F27.D (Pedro 2026-05-29): detecção de trigger reativo (msg sintética
 // enfileirada pelo reactive-trigger.ts quando tag/stage muda no GHL).
 import { isReactiveTriggerBody, parseTriggerBody } from "@/lib/account-assistant/proactive/reactive-trigger";
+import { isAdContextBody } from "@/lib/queue/ad-context";
 // F59 (Fix bug observado em prod 2026-06-04): rede de segurança contra
 // cold-start quando o fetch de histórico do Spark Leads falha/vem vazio.
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
@@ -64,6 +65,12 @@ interface MessageGroup {
   // (CONTACTTAGUPDATE / OPPORTUNITYSTAGEUPDATE), processamos como 1ª msg
   // proativa — sem histórico, sem audio, com instrução clara pro LLM.
   syntheticTrigger?: { kind: string; key: string; pipelineId?: string };
+  // H61 (caso Five Star/Marcia 2026-08-01): turno cujo conteúdo é SÓ a mensagem
+  // de contexto de anúncio (CTWA "📢 Veio de anúncio…", composta pelo gateway
+  // no clique — o lead não digitou nada). Com suppress_ad_context_turn no
+  // agente, o processGroup pula o turno (o workflow de welcome é dono do 1º
+  // toque). Qualquer texto real/mídia do lead no grupo → false.
+  adContextOnly?: boolean;
 }
 
 /**
@@ -186,6 +193,12 @@ export async function processMessageQueue(): Promise<{
   // sao processados em processGroup onde temos acesso a config/toggles.
   for (const group of Array.from(groups.values())) {
     const parts: string[] = [];
+    // H61: conta partes de contexto-de-anúncio × partes reais do lead. Só marca
+    // adContextOnly quando o turno inteiro é o clique do anúncio (mídia e
+    // qualquer texto digitado contam como real). O body do anúncio continua
+    // entrando no aggregatedBody — com o gate OFF nada muda de comportamento.
+    let adContextParts = 0;
+    let realParts = 0;
     // F27.D: detecção de trigger reativo. Se QUALQUER msg do grupo é sintética,
     // tratamos o grupo todo como trigger (idempotência garante 1 por evento).
     for (const msg of group.messages) {
@@ -198,6 +211,12 @@ export async function processMessageQueue(): Promise<{
         }
         continue;
       }
+      if (isAdContextBody(body)) {
+        adContextParts++;
+        parts.push(body);
+        continue;
+      }
+      realParts++;
       if (body.startsWith("[audio")) {
         parts.push("[O contato enviou um audio]");
       } else if (body === "[media]") {
@@ -206,6 +225,12 @@ export async function processMessageQueue(): Promise<{
         parts.push(body);
       }
     }
+    // Áudio/mídia com body vazio não passa pelo loop acima — checa cru pra não
+    // engolir um turno que tem voz/imagem real do lead junto do clique.
+    const hasRawMedia = group.messages.some(
+      (m) => !!m.audio_url || (Array.isArray(m.media_attachments) && m.media_attachments.length > 0),
+    );
+    group.adContextOnly = adContextParts > 0 && realParts === 0 && !hasRawMedia && !group.syntheticTrigger;
     if (group.syntheticTrigger) {
       // Substitui aggregatedBody por instrução clara que o LLM lê como "primeira
       // mensagem proativa". O sales-prompt-builder usa isso como user input.
@@ -543,6 +568,33 @@ async function processGroup(
       });
       return;
     }
+  }
+
+  // H61 (fix bug observado em prod 2026-08-01, caso Five Star/Marcia): a mensagem
+  // de CONTEXTO de anúncio (CTWA "📢 Veio de anúncio…") não é o lead falando — é
+  // o clique. Nas contas onde um workflow de boas-vindas já faz o 1º toque, a IA
+  // respondia a explicação completa EM CIMA do bloco da equipe (15-27 leads/dia).
+  // Opt-in por agente (agent_configs.suppress_ad_context_turn, migration 00130);
+  // só dispara quando o turno é 100% contexto de anúncio — qualquer texto/mídia
+  // real do lead responde normal. O lead entra no funil na 1ª mensagem REAL dele.
+  if (
+    group.adContextOnly &&
+    (config as { suppress_ad_context_turn?: boolean | null }).suppress_ad_context_turn === true
+  ) {
+    log("log", "SKIP ad_context (turno é só o clique do anúncio; workflow é dono do 1º toque)");
+    await supabase.from("execution_log").insert({
+      agent_id: agent.id,
+      location_id: group.locationId,
+      contact_id: group.contactId,
+      conversation_id: group.conversationId,
+      action_type: "ad_context_skip",
+      action_payload: {
+        messages: group.messages.length,
+        body_preview: group.aggregatedBody.slice(0, 120),
+      },
+      success: true,
+    });
+    return;
   }
 
   // Custom key check (BYO key skipa cobrança)

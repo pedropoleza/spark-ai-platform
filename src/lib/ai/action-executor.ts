@@ -14,7 +14,7 @@ import {
 } from "@/lib/ghl/operations";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { stripSilenceMarker, type LeadSilenceDecision } from "@/lib/ai/lead-silence";
-import { validateBookingSlot } from "@/lib/ai/slot-guard";
+import { validateBookingSlot, isSameSlotInstant } from "@/lib/ai/slot-guard";
 import { aplicarGuardaDeConfirmacao, claimsBooking } from "@/lib/ai/booking-guard";
 import type { AIAction, AIResponse } from "@/types/ai";
 
@@ -394,7 +394,23 @@ async function executeAction(
       // recebe a correção, não uma falsa confirmação).
       {
         const slotCheck = validateBookingSlot(action.start_time, ctx.offeredSlotsIso);
-        if (!slotCheck.ok) throw new Error(`book_appointment bloqueado: ${slotCheck.reason}`);
+        if (!slotCheck.ok) {
+          // H61 (fix bug observado em prod 2026-08-01, caso Adriana/Five Star):
+          // rajada vira 2 turnos e o 2º re-emite book_appointment pro MESMO
+          // horário — o slot já saiu do free-slots (consumido pelo booking do
+          // turno 1), o guard H58 bloqueava e o lead recebia "não consegui
+          // agendar" 20s depois do "confirmado!". Se o contato JÁ tem
+          // appointment futuro nesse exato start_time, é o próprio booking do
+          // turno anterior → sucesso idempotente (sem erro falso, sem tocar o
+          // calendário). Fetch extra SÓ no caminho que já ia falhar.
+          const dup = await findExistingAppointment(client, ctx.contactId, ctx.locationId).catch(() => null);
+          if (dup && isSameSlotInstant(dup.startTime, action.start_time)) {
+            (action as unknown as Record<string, unknown>).mode = "idempotent_noop";
+            (action as unknown as Record<string, unknown>).existing_appointment_id = dup.id;
+            break;
+          }
+          throw new Error(`book_appointment bloqueado: ${slotCheck.reason}`);
+        }
       }
       // Link da reunião por calendário (caso Marina 2026-06-28): quando o calendário
       // tem link configurado, injeta address+override; senão null = mantém o default
@@ -464,7 +480,20 @@ async function executeAction(
       // H58: reagendamento passa pelo MESMO guard de slot real (lição H42).
       {
         const reslotCheck = validateBookingSlot(action.start_time, ctx.offeredSlotsIso);
-        if (!reslotCheck.ok) throw new Error(`reschedule_appointment bloqueado: ${reslotCheck.reason}`);
+        if (!reslotCheck.ok) {
+          // H61: mesma idempotência do book_appointment — reagendar pro horário
+          // que o contato JÁ tem é duplicata de rajada, não conflito. Sem isto,
+          // o caminho delete-then-create nem chega a rodar mas o lead ganha o
+          // erro falso; e evitar entrar à toa no delete também protege contra
+          // o create pós-delete falhar (reunião sumiria).
+          const dup = await findExistingAppointment(client, ctx.contactId, ctx.locationId).catch(() => null);
+          if (dup && isSameSlotInstant(dup.startTime, action.start_time)) {
+            (action as unknown as Record<string, unknown>).mode = "idempotent_noop";
+            (action as unknown as Record<string, unknown>).existing_appointment_id = dup.id;
+            break;
+          }
+          throw new Error(`reschedule_appointment bloqueado: ${reslotCheck.reason}`);
+        }
       }
       if (action.start_time) {
         // FIX CRITICAL stress test 2026-05-03: usar appointment_id explícito

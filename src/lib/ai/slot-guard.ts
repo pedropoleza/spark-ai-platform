@@ -39,6 +39,23 @@ export function extractSlotIsoList(slotsResp: Record<string, unknown> | null | u
 export type SlotValidation = { ok: true } | { ok: false; reason: string };
 
 /**
+ * Dois ISO representam o MESMO instante (tolerância 60s, igual ao guard)?
+ * H61 (caso Adriana/Five Star 2026-08-01): usado pra reconhecer que o slot
+ * "indisponível" é o appointment que o PRÓPRIO contato acabou de ganhar num
+ * turno anterior da rajada — aí é duplicata, não conflito real.
+ */
+export function isSameSlotInstant(
+  aIso: string | undefined | null,
+  bIso: string | undefined | null,
+  toleranceMs = 60_000,
+): boolean {
+  const a = Date.parse(String(aIso ?? ""));
+  const b = Date.parse(String(bIso ?? ""));
+  if (Number.isNaN(a) || Number.isNaN(b)) return false;
+  return Math.abs(a - b) < toleranceMs;
+}
+
+/**
  * start_time é um dos slots oferecidos? Compara por EPOCH (tolerância 60s) —
  * imune a representação de offset diferente (ex: -04:00 vs Z do mesmo instante).
  * Um wall-clock errado (fuso trocado, dia errado) NÃO bate → bloqueia (é
