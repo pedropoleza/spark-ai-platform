@@ -29,10 +29,13 @@ const SUPPORT_PHONE = "+1 (786) 627-6787";
 // onde. ATENÇÃO: a frase "créditos de IA desta conta acabaram" é o MARCADOR do
 // cooldown de 4h (shouldSendWalletBlockedRepMessage casa por conteúdo) — se
 // mudar a copy, preservar esse trecho ou migrar o marcador junto.
+// Nota: NÃO sugerir "gatilho acima de $0" — o HL trava o auto-recharge em
+// "< $0" (Pedro conferiu o dropdown 2026-07-27); é o auto-drain (00127) que
+// faz esse gatilho disparar zerando o residual.
 const RECHARGE_HOWTO =
   "no Spark Leads, abre Configurações → Faturamento → Carteira e Recarga e adiciona saldo " +
-  "— o bot volta sozinho em poucos minutos. 💡 Dica: ativa ali a *recarga automática* " +
-  "(com valor-gatilho acima de $0) pra nunca mais parar.";
+  "— o bot volta sozinho em poucos minutos. 💡 Dica: deixa a *recarga automática* ativa " +
+  "ali pra não parar de novo.";
 
 /** Resposta determinística pro REP quando a location dele está sem saldo. */
 export const WALLET_BLOCKED_REP_MESSAGE =
