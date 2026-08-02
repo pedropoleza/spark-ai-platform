@@ -11,6 +11,7 @@ import { isSameSlotInstant, validateBookingSlot } from "../src/lib/ai/slot-guard
 import { isAdContextBody } from "../src/lib/queue/ad-context";
 import { evaluateLeadSilence } from "../src/lib/ai/lead-silence";
 import { parseAIResponse } from "../src/lib/ai/openai-client";
+import { pickFutureAppointment } from "../src/lib/ai/action-executor";
 
 let pass = 0;
 let fail = 0;
@@ -41,6 +42,19 @@ const offered = ["2026-08-04T11:00:00-04:00", "2026-08-04T17:00:00-04:00"]; // 1
 const guardBlocks = validateBookingSlot("2026-08-04T16:00:00-04:00", offered);
 check("guard H58 segue bloqueando o slot consumido (pré-condição do fix)", !guardBlocks.ok);
 check("guard H58 segue aceitando slot da lista", validateBookingSlot("2026-08-04T17:00:00-04:00", offered).ok);
+
+// ─── F3 v2: pickFutureAppointment (review adversarial) ───────────────────────
+console.log("\nF3 v2 — pickFutureAppointment (contato com 2+ appointments futuros)");
+const NOW = new Date("2026-08-01T12:00:00Z");
+const apptA = { id: "A", startTime: "2026-08-03T10:00:00-04:00" }; // seg 10h
+const apptB = { id: "B", startTime: "2026-08-04T15:00:00-04:00" }; // ter 15h
+check("prefere o que casa o instante (B), não o primeiro do array", pickFutureAppointment([apptA, apptB], NOW, "2026-08-04T15:00:00-04:00")?.id === "B");
+check("prefere o que casa mesmo com offset diferente (Z)", pickFutureAppointment([apptA, apptB], NOW, "2026-08-04T19:00:00Z")?.id === "B");
+check("sem preferStartTime → primeiro futuro (legado)", pickFutureAppointment([apptA, apptB], NOW)?.id === "A");
+check("prefer sem match → primeiro futuro (fallback legado)", pickFutureAppointment([apptA, apptB], NOW, "2026-08-05T09:00:00-04:00")?.id === "A");
+check("cancelado é filtrado", pickFutureAppointment([{ id: "C", startTime: "2026-08-03T10:00:00-04:00", status: "cancelled" }, apptB], NOW, "2026-08-03T10:00:00-04:00")?.id === "B");
+check("passado é filtrado", pickFutureAppointment([{ id: "P", startTime: "2026-07-30T10:00:00-04:00" }], NOW) === null);
+check("lista vazia → null", pickFutureAppointment([], NOW) === null);
 
 // ─── F4: isAdContextBody ─────────────────────────────────────────────────────
 console.log("\nF4 — isAdContextBody (contexto de anúncio CTWA)");
@@ -90,6 +104,13 @@ const dGateOff = evaluateLeadSilence({ ...silencePedido, inboundText: "ok", allo
 check("gate OFF → nunca silencia (legado intacto)", dGateOff.silent === false);
 const dMarker = evaluateLeadSilence({ ...silencePedido, shouldSendMessage: true, message: "[[NAO_ENVIAR]]", inboundText: "ok" });
 check("marcador [[NAO_ENVIAR]] segue funcionando", dMarker.silent === true && dMarker.via === "marker");
+// v2 (review adversarial): "?" solto no fim de URL é pergunta REAL; gateOn no decision
+const dUrlTrailingQ = evaluateLeadSilence({ ...silencePedido, inboundText: "consegue abrir esse link https://site.com/plano?" });
+check("'?' SOLTO no fim da URL → pergunta real, força resposta (v2)", dUrlTrailingQ.silent === false && dUrlTrailingQ.overridden === "lead_question");
+const dUrlQuery = evaluateLeadSilence({ ...silencePedido, inboundText: "segue https://x.com/a?utm_source=ig obrigada" });
+check("query-string real (?utm=...) segue strippada → silêncio mantido", dUrlQuery.silent === true);
+check("gateOn=true refletido no decision (gate ON)", dUrl.gateOn === true);
+check("gateOn=false refletido no decision (gate OFF)", dGateOff.gateOn === false);
 
 // ─── Resultado ───────────────────────────────────────────────────────────────
 console.log(`\n${pass}/${pass + fail} passaram${fail ? ` — ${fail} FALHARAM` : ""}`);

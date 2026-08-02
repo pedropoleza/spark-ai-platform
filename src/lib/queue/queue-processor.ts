@@ -571,30 +571,42 @@ async function processGroup(
   }
 
   // H61 (fix bug observado em prod 2026-08-01, caso Five Star/Marcia): a mensagem
-  // de CONTEXTO de anúncio (CTWA "📢 Veio de anúncio…") não é o lead falando — é
-  // o clique. Nas contas onde um workflow de boas-vindas já faz o 1º toque, a IA
-  // respondia a explicação completa EM CIMA do bloco da equipe (15-27 leads/dia).
-  // Opt-in por agente (agent_configs.suppress_ad_context_turn, migration 00130);
-  // só dispara quando o turno é 100% contexto de anúncio — qualquer texto/mídia
-  // real do lead responde normal. O lead entra no funil na 1ª mensagem REAL dele.
+  // de CONTEXTO de anúncio (CTWA "📢 Veio de anúncio…") vem do clique — nas contas
+  // onde um workflow de boas-vindas já faz o 1º toque, a IA respondia a explicação
+  // completa EM CIMA do bloco da equipe (15-27 leads/dia). v2 (review adversarial
+  // 2026-08-01): era SKIP duro, mas o wrapper CTWA carrega o texto REAL que o lead
+  // mandou (pre-fill do anúncio OU pergunta/dados que ele DIGITOU — o gateway não
+  // distingue), então pular o turno engolia pergunta genuína, consumia a frase de
+  // ativação de agente trigger_once-por-frase e tirava o lead da cadeia de
+  // follow-up. Agora o turno RODA com instrução determinística injetada no lugar
+  // do corpo: não re-apresentar (o workflow é dono do 1º toque), 1 linha pro
+  // pre-fill padrão, resposta real se o lead digitou algo próprio. Opt-in por
+  // agente (agent_configs.suppress_ad_context_turn, migration 00130). O targeting
+  // acima já rodou com o body ORIGINAL (frase de ativação intacta).
   if (
     group.adContextOnly &&
     (config as { suppress_ad_context_turn?: boolean | null }).suppress_ad_context_turn === true
   ) {
-    log("log", "SKIP ad_context (turno é só o clique do anúncio; workflow é dono do 1º toque)");
+    log("log", "ad_context_softened (turno é o clique do anúncio; instrução anti-duplicação injetada)");
     await supabase.from("execution_log").insert({
       agent_id: agent.id,
       location_id: group.locationId,
       contact_id: group.contactId,
       conversation_id: group.conversationId,
-      action_type: "ad_context_skip",
+      action_type: "ad_context_softened",
       action_payload: {
         messages: group.messages.length,
         body_preview: group.aggregatedBody.slice(0, 120),
       },
       success: true,
     });
-    return;
+    group.aggregatedBody =
+      "[CONTEXTO DE ANÚNCIO — esta é a mensagem automática do clique no anúncio. O texto abaixo pode ser " +
+      "só o pré-preenchido do anúncio OU algo que o lead digitou. A equipe JÁ envia a apresentação " +
+      "automática (áudio + bloco pedindo os dados). NÃO se apresente, NÃO explique o produto e NÃO repita " +
+      "o pedido de dados. Se for só o texto padrão do anúncio, responda 1 linha curta de acolhimento; se o " +
+      "lead digitou pergunta ou dados próprios, responda APENAS a isso, curto.]\n" +
+      group.aggregatedBody;
   }
 
   // Custom key check (BYO key skipa cobrança)

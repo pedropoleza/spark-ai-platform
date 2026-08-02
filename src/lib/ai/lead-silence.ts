@@ -42,6 +42,11 @@ export interface LeadSilenceDecision {
   via: "flag" | "marker" | null;
   /** Override que FORÇOU resposta apesar do sinal de silêncio (auditoria). */
   overridden: "first_turn" | "lead_question" | null;
+  /** H61 v2: estado REAL do gate (allow_silent_turns do agente). O executor usa
+   * pra decidir a rede do vazio: gate OFF = frota não optou por silêncio →
+   * mantém o fallback legado; e o audit passa a registrar o estado verdadeiro
+   * (antes logava `!!silence`, sempre true). */
+  gateOn: boolean;
 }
 
 function messageHasMarker(message: string | string[]): boolean {
@@ -53,25 +58,32 @@ function messageHasMarker(message: string | string[]): boolean {
 }
 
 export function evaluateLeadSilence(input: LeadSilenceInput): LeadSilenceDecision {
-  if (!input.allowSilence) return { silent: false, via: null, overridden: null };
+  const gateOn = !!input.allowSilence;
+  if (!gateOn) return { silent: false, via: null, overridden: null, gateOn };
 
   const viaFlag = input.shouldSendMessage === false;
   const viaMarker = messageHasMarker(input.message);
-  if (!viaFlag && !viaMarker) return { silent: false, via: null, overridden: null };
+  if (!viaFlag && !viaMarker) return { silent: false, via: null, overridden: null, gateOn };
   const via = viaFlag ? "flag" : "marker";
 
   // Overrides fail-open-pra-falar: nunca deixar lead sem resposta onde importa.
   if (input.priorTurnCount <= 0) {
-    return { silent: false, via, overridden: "first_turn" };
+    return { silent: false, via, overridden: "first_turn", gateOn };
   }
   // H61 (2026-08-01): URLs contêm "?" de query-string (ex.: o link do anúncio
   // na mensagem de contexto CTWA) e forçavam resposta sem haver pergunta real.
-  // Strip de URLs ANTES do check — pergunta de verdade continua forçando fala.
-  const textForQuestionCheck = String(input.inboundText || "").replace(/https?:\/\/\S+/gi, "");
+  // Strip de URLs ANTES do check. v2 (review): a query-string só é strippada
+  // quando o "?" tem conteúdo depois (utm etc.) — um "?" SOLTO no fim da URL
+  // ("abre esse link https://site.com/plano?") é pontuação de pergunta REAL e
+  // continua forçando fala.
+  const textForQuestionCheck = String(input.inboundText || "").replace(
+    /https?:\/\/[^\s?]*(?:\?\S+)?/gi,
+    "",
+  );
   if (textForQuestionCheck.includes("?")) {
-    return { silent: false, via, overridden: "lead_question" };
+    return { silent: false, via, overridden: "lead_question", gateOn };
   }
-  return { silent: true, via, overridden: null };
+  return { silent: true, via, overridden: null, gateOn };
 }
 
 /**

@@ -170,15 +170,22 @@ export async function executeActions(
     console.log(`[ActionExecutor] MC-9: turno silencioso (via=${silence!.via}) — nada enviado.`);
     messages = [];
   } else if (messages.length === 0) {
-    if (response.should_send_message === false) {
-      // Modelo pediu silêncio mas o gate está OFF (ou override) e não há texto:
-      // NÃO inventa mensagem — audita e segue (hardening B6: o fallback genérico
-      // "Pode me contar mais?" atirado num turno de intake era exatamente a
-      // queixa "mensagem sem sentido depois do lead entregar os dados").
-      await logExecution(supabase, ctx, "empty_response_skip", { model_silent: true, gate_on: !!silence });
-      console.warn("[ActionExecutor] Modelo pediu silêncio sem gate — pulando envio (sem fallback).");
+    if (response.should_send_message === false && silence?.gateOn) {
+      // Gate ON: o agente OPTOU por silêncio — modelo pediu (flag) e não há
+      // texto: audita e segue sem inventar mensagem (hardening B6: o fallback
+      // genérico "Pode me contar mais?" atirado num turno de intake era
+      // exatamente a queixa "mensagem sem sentido depois do lead dar os dados").
+      await logExecution(supabase, ctx, "empty_response_skip", { model_silent: true, gate_on: true });
+      console.warn("[ActionExecutor] Modelo pediu silêncio (gate ON) — pulando envio (sem fallback).");
     } else {
-      // Vazio ACIDENTAL (sem sinal explícito): rede de segurança de sempre.
+      // Vazio acidental OU flag=false SEM opt-in do agente (H61 v2, review
+      // adversarial 2026-08-01): a frota gate-OFF não escolheu mudez — com o
+      // pass-through do flag restaurado, engolir o envio aqui deixaria lead
+      // sem resposta (pior que o fallback feio). Mantém a rede legada =
+      // byte-idêntico ao prod pré-H61 pra quem não ligou allow_silent_turns.
+      if (response.should_send_message === false) {
+        await logExecution(supabase, ctx, "model_silent_fallback", { gate_on: false });
+      }
       console.warn("[ActionExecutor] Empty message, using neutral continuation");
       messages = ["Pode me contar mais sobre isso?"];
     }
@@ -402,8 +409,9 @@ async function executeAction(
           // agendar" 20s depois do "confirmado!". Se o contato JÁ tem
           // appointment futuro nesse exato start_time, é o próprio booking do
           // turno anterior → sucesso idempotente (sem erro falso, sem tocar o
-          // calendário). Fetch extra SÓ no caminho que já ia falhar.
-          const dup = await findExistingAppointment(client, ctx.contactId, ctx.locationId).catch(() => null);
+          // calendário). Fetch extra SÓ no caminho que já ia falhar. v2:
+          // preferStartTime resolve contato com 2+ appointments futuros.
+          const dup = await findExistingAppointment(client, ctx.contactId, ctx.locationId, action.start_time).catch(() => null);
           if (dup && isSameSlotInstant(dup.startTime, action.start_time)) {
             (action as unknown as Record<string, unknown>).mode = "idempotent_noop";
             (action as unknown as Record<string, unknown>).existing_appointment_id = dup.id;
@@ -485,9 +493,13 @@ async function executeAction(
           // que o contato JÁ tem é duplicata de rajada, não conflito. Sem isto,
           // o caminho delete-then-create nem chega a rodar mas o lead ganha o
           // erro falso; e evitar entrar à toa no delete também protege contra
-          // o create pós-delete falhar (reunião sumiria).
-          const dup = await findExistingAppointment(client, ctx.contactId, ctx.locationId).catch(() => null);
-          if (dup && isSameSlotInstant(dup.startTime, action.start_time)) {
+          // o create pós-delete falhar (reunião sumiria). v2 (review): quando o
+          // LLM passou appointment_id, o noop SÓ vale se a duplicata é AQUELE
+          // appointment — sem isso, "mover B pro horário do A" virava falso
+          // sucesso sem mover nada.
+          const dup = await findExistingAppointment(client, ctx.contactId, ctx.locationId, action.start_time).catch(() => null);
+          const sameTarget = !action.appointment_id || (dup && String(dup.id) === String(action.appointment_id));
+          if (dup && sameTarget && isSameSlotInstant(dup.startTime, action.start_time)) {
             (action as unknown as Record<string, unknown>).mode = "idempotent_noop";
             (action as unknown as Record<string, unknown>).existing_appointment_id = dup.id;
             break;
@@ -593,10 +605,34 @@ async function tagBookedByAi(client: GHLClient, contactId: string): Promise<void
  * Busca appointment existente (futuro) para um contato.
  * Tenta multiplos endpoints da GHL API.
  */
+/**
+ * H61 v2 (review adversarial 2026-08-01): entre os appointments futuros válidos,
+ * prioriza o que casa o instante pedido (±60s) — sem isso, contato com 2+
+ * appointments futuros fazia o check idempotente comparar contra o PRIMEIRO do
+ * array (ordem do GHL, não garantida), errando pros dois lados: não disparava
+ * na duplicata real E podia casar o appointment errado. Puro, exportado pra teste.
+ */
+export function pickFutureAppointment<
+  T extends { startTime: string; status?: string; appointmentStatus?: string },
+>(items: T[], now: Date, preferStartTime?: string): T | null {
+  const futures = items.filter((e) => {
+    const start = new Date(e.startTime);
+    const status = (e.status || e.appointmentStatus || "").toLowerCase();
+    return start > now && status !== "cancelled" && status !== "deleted";
+  });
+  if (futures.length === 0) return null;
+  if (preferStartTime) {
+    const match = futures.find((e) => isSameSlotInstant(e.startTime, preferStartTime));
+    if (match) return match;
+  }
+  return futures[0];
+}
+
 async function findExistingAppointment(
   client: GHLClient,
   contactId: string,
-  locationId: string
+  locationId: string,
+  preferStartTime?: string,
 ): Promise<{ id: string; title: string; calendarId: string; startTime: string } | null> {
   // H6 (review 2026-04-28): GHL API tem formato variável; antes deste fix,
   // chamávamos os 3 endpoints SEQUENCIAL (~400ms p99 desnecessário em
@@ -626,12 +662,7 @@ async function findExistingAppointment(
       console.log(`[FindAppointment] ${ep.path} returned ${items.length} items`);
 
       if (items.length === 0) return null;
-      const future = items.find((e) => {
-        const start = new Date(e.startTime);
-        const status = (e.status || e.appointmentStatus || "").toLowerCase();
-        return start > now && status !== "cancelled" && status !== "deleted";
-      });
-      return future || null;
+      return pickFutureAppointment(items, now, preferStartTime);
     }),
   );
 

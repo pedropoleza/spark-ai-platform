@@ -98,3 +98,16 @@ Três camadas (todas confirmadas no código):
 | F10 | Reativar o agente da Marcia SÓ depois de F1-F3 no ar + teste | — | 🤝 |
 
 Ordem sugerida: F1+F2 (imediato, config) → F3 (P0 de código) → F6 → F4/F5 → reativar (F10) → F7/F8/F9 em paralelo.
+
+## Execução (2026-08-01/02) + review adversarial
+
+- **F1+F2 aplicados** (override +seção LEAD DE ANÚNCIO; lead_history ON). **F3/F4/F5** implementados em worktree limpa (commits na branch `fix/marcia-incidente-0108`); **F6** no spark-os. Migration 00130 aplicada em prod; `suppress_ad_context_turn=true` na Marcia.
+- **Review adversarial (workflow 20 agentes, 5 lentes × refutação): 14 achados confirmados** → rodada v2 aplicada:
+  - Ad-gate: skip duro → **transformação** (`ad_context_softened`) — o wrapper CTWA carrega o texto REAL do lead (pre-fill OU digitado); skip engolia pergunta genuína, consumia frase de ativação (trigger_once-por-frase) e tirava o lead do follow-up.
+  - Booking: `pickFutureAppointment` prefere o appointment que casa o instante (2+ futuros); reschedule-noop exige `appointment_id` batendo.
+  - Silêncio: gate-OFF mantém fallback legado (mudez só opt-in); audit `gate_on` real + `model_silent_fallback`; regex de URL preserva "?" solto.
+  - spark-os: name vira **auto-heal** (novo OU sem nome ganha pushName; nome editado intocável) + retry.
+- **Pendências novas (do review, pré-existentes, NÃO corrigidas agora):**
+  - [ ] **MC-3 dropa a 2ª msg do lead** na janela de 120s (`inbound-message/route.ts:728-733` conta pending sem filtro de status) — lead novo sem tag que digita 2ª mensagem antes do tag do workflow perde a mensagem. Classe própria de fix; tocar com cuidado (rota compartilhada).
+  - [ ] **`lead_history` de agente com override só funciona com `LEAD_CACHE_OPTIMIZED=1`** (gap F37: caminho de override não inclui `buildLeadHistorySection`; só entra via runtime-context cacheOptimized). NÃO desligar essa env sem saber que mata a memória do lead da Marcia/afins — o `lead_history_loaded` continuaria logando como se nada.
+  - [ ] Silence-gate 8/10 e lead-awareness 35/36 falham em origin/main (pré-existente, não relacionado).
