@@ -300,6 +300,10 @@ export interface AutomationAction {
  * Trigger (condicao de disparo) de uma automation.
  * - event-based: dispara em eventos de conversation_status (qualified, booked, etc)
  * - data-field-based: dispara quando um campo do collected_data muda para um valor
+ * - agent_activated (H62, Pedro 2026-08-03): dispara quando o agente é ATIVADO pro
+ *   contato — 1º turno processado (regra de ativação/targeting) OU ligar manual na
+ *   UI (contact-pause resume / contact-activate), o que vier primeiro. 1× por
+ *   (agente, contato), dedup no triggered_automations como os demais.
  */
 export type AutomationTrigger =
   | {
@@ -312,6 +316,9 @@ export type AutomationTrigger =
       field_key: string;
       operator: "any_value" | "equals" | "contains" | "matches_regex";
       value?: string;
+    }
+  | {
+      kind: "agent_activated";
     };
 
 export interface AutomationRule {

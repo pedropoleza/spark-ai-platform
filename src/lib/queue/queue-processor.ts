@@ -18,6 +18,7 @@ import { scheduleFollowUps } from "@/lib/queue/follow-up-scheduler";
 import { generateSummaryNote } from "@/lib/queue/summary-note-generator";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
+import { pickAgentActivatedRules } from "@/lib/queue/agent-activated-automation";
 import { checkContactMatchesTargeting, normalizeTargeting } from "@/lib/queue/targeting";
 import { isChatMessageType } from "@/lib/ghl/message-sources";
 import type { TargetingRules } from "@/types/agent";
@@ -1616,14 +1617,34 @@ async function processGroup(
   if (config.automations && Array.isArray(config.automations) && config.automations.length > 0) {
     const rules = config.automations as AutomationRule[];
 
-    // Dedup COMPARTILHADO entre os dois ramos (cada regra dispara 1× por
-    // conversa). Lido 1× no início e mergeado num ÚNICO update no fim — evita
-    // que um ramo sobrescreva o triggered_automations do outro.
-    const alreadyTriggered = new Set<string>(
+    // Dedup COMPARTILHADO entre os ramos (cada regra dispara 1× por conversa).
+    // Review H62 (2026-08-03): lido FRESCO aqui (não do convState do início do
+    // turno) — com as rotas manuais virando um SEGUNDO escritor de
+    // triggered_automations, a base do início do turno (10-60s atrás, LLM no
+    // meio) podia (a) não ver um disparo manual → double-fire de ação
+    // não-idempotente (send_text) e (b) sobrescrever ids no last-write-wins.
+    // Mesmo padrão do re-read fresco de ai_resumed_at (GU-6×F52). Fail-soft:
+    // erro na releitura cai pro valor do início do turno (comportamento antigo).
+    let alreadyTriggered = new Set<string>(
       Array.isArray(convState?.triggered_automations)
         ? (convState.triggered_automations as string[])
         : []
     );
+    try {
+      const { data: freshSt } = await supabase
+        .from("conversation_state")
+        .select("triggered_automations")
+        .eq("agent_id", agent.id)
+        .eq("contact_id", group.contactId)
+        .maybeSingle();
+      if (freshSt && Array.isArray((freshSt as { triggered_automations?: unknown }).triggered_automations)) {
+        alreadyTriggered = new Set<string>(
+          (freshSt as { triggered_automations: string[] }).triggered_automations
+        );
+      }
+    } catch {
+      // fica com a base do início do turno
+    }
     const reactionCtx = {
       agentId: agent.id,
       locationId: group.locationId,
@@ -1668,9 +1689,53 @@ async function processGroup(
       justExecuted.push(...executedRuleIds);
     }
 
-    // Persiste o dedup uma única vez (merge dos dois ramos).
+    // 11c. H62 (Pedro 2026-08-03): trigger "agente ativado pro contato".
+    // `conversationActive` foi lido no INÍCIO do turno (antes do executeActions
+    // atualizar o estado) — false aqui = este turno é a 1ª vez que ESTE agente
+    // assume o contato (a regra de ativação deixou passar), exatamente a mesma
+    // transição que o trigger_once (H51) usa. Ativação MANUAL pela UI dispara
+    // nas rotas contact-pause/contact-activate (agent-activated-automation.ts);
+    // o dedup compartilhado em triggered_automations evita disparo em dobro.
+    const activatedRules = pickAgentActivatedRules(rules, alreadyTriggered);
+    if (!conversationActive && activatedRules.length > 0) {
+      const { executedRuleIds } = await executeReactionRules(activatedRules, reactionCtx);
+      justExecuted.push(...executedRuleIds);
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "agent_activated_automation",
+        action_payload: { source: "first_turn", rule_ids: executedRuleIds, attempted: activatedRules.length },
+        success: executedRuleIds.length === activatedRules.length,
+      });
+    }
+
+    // Persiste o dedup uma única vez (merge dos ramos).
     if (justExecuted.length > 0) {
-      const merged = Array.from(new Set<string>([...alreadyTriggered, ...justExecuted]));
+      // Review H62: UNIÃO com releitura fresca imediatamente antes do write —
+      // se uma rota manual gravou ids enquanto as ações deste bloco rodavam,
+      // o last-write-wins não pode apagá-los (id apagado = regra re-dispara
+      // na próxima ativação = mensagem em dobro pro lead). Fail-soft: erro na
+      // releitura usa a base já lida no início do bloco.
+      let base = alreadyTriggered;
+      try {
+        const { data: freshSt } = await supabase
+          .from("conversation_state")
+          .select("triggered_automations")
+          .eq("agent_id", agent.id)
+          .eq("contact_id", group.contactId)
+          .maybeSingle();
+        if (freshSt && Array.isArray((freshSt as { triggered_automations?: unknown }).triggered_automations)) {
+          base = new Set<string>([
+            ...alreadyTriggered,
+            ...((freshSt as { triggered_automations: string[] }).triggered_automations),
+          ]);
+        }
+      } catch {
+        // fica com a base do início do bloco
+      }
+      const merged = Array.from(new Set<string>([...base, ...justExecuted]));
       await supabase
         .from("conversation_state")
         .update({ triggered_automations: merged })

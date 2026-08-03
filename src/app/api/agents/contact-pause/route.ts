@@ -21,8 +21,12 @@ import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { resolveAgentForContact, agentBelongsToLocation } from "@/lib/agents/contact-controls";
 import { reenqueueInboundsSincePause } from "@/lib/queue/resume-reenqueue";
+import { runAgentActivatedAutomations } from "@/lib/queue/agent-activated-automation";
+import { withDeadline } from "@/lib/utils/deadline";
 
-export const maxDuration = 20;
+// H62: 20→30 — o resume agora roda as automações de ativação em série (webhook
+// da regra pode segurar até 8s) e a rota precisa sobrar tempo pra responder.
+export const maxDuration = 30;
 
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeadersFor(request, "POST, OPTIONS") });
@@ -107,8 +111,20 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Retomou → recupera inbounds engolidos durante a pausa (fail-soft).
     if (!paused) {
+      // H62: ligar o agente pro contato MANUALMENTE também é "ativação" —
+      // dispara as automações de trigger agent_activated (dedup 1× por
+      // agente+contato dentro do runner; fail-soft, nunca quebra a rota).
+      // ANTES do reenqueue de propósito (review H62): o requeue seta
+      // process_after=now e um worker pode processar o turno em segundos — o
+      // dedup precisa estar persistido antes, senão o ramo 11c re-dispara as
+      // mesmas regras (double-fire). Deadline blinda o budget da rota.
+      await withDeadline(
+        runAgentActivatedAutomations({ agentId, locationId, contactId, source: "manual_resume" }),
+        12_000,
+        "agent-activated-automation",
+      ).catch((err) => console.warn("[contact-pause] automação de ativação estourou o deadline:", err));
+      // Retomou → recupera inbounds engolidos durante a pausa (fail-soft).
       await reenqueueInboundsSincePause(supabase, {
         agentId,
         contactId,

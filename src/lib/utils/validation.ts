@@ -210,6 +210,10 @@ export const updateAgentConfigSchema = z.object({
           operator: z.enum(["any_value", "equals", "contains", "matches_regex"]),
           value: z.string().optional(),
         }),
+        // H62: trigger "agente ativado pro contato" (sem params).
+        z.object({
+          kind: z.literal("agent_activated"),
+        }),
       ])
       .optional(),
     actions: z.array(

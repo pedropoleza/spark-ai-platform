@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/sso";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reenqueueInboundsSincePause } from "@/lib/queue/resume-reenqueue";
+import { runAgentActivatedAutomations } from "@/lib/queue/agent-activated-automation";
+import { withDeadline } from "@/lib/utils/deadline";
+
+// H62: o resume roda as automações de ativação em série (webhook da regra pode
+// segurar até 8s) — garante folga pra rota responder.
+export const maxDuration = 30;
 
 /**
  * Retoma a IA de uma conversa de lead pausada: limpa ai_paused_at/
@@ -56,6 +62,21 @@ export async function POST(request: NextRequest) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // H62: retomar pela aba Pausadas também é "ativação" do agente pro contato —
+  // dispara as automações de trigger agent_activated (dedup no runner; fail-soft).
+  // ANTES do reenqueue: o dedup precisa persistir antes de um worker pegar o
+  // turno recuperado (senão o ramo 11c re-dispara — double-fire).
+  await withDeadline(
+    runAgentActivatedAutomations({
+      agentId,
+      locationId: session.locationId,
+      contactId,
+      source: "manual_resume",
+    }),
+    12_000,
+    "agent-activated-automation",
+  ).catch((err) => console.warn("[conversations/resume] automação de ativação estourou o deadline:", err));
 
   // Recupera inbounds que chegaram durante a pausa e foram engolidos (marcados
   // completed sem resposta). Fail-soft: não quebra o resume.

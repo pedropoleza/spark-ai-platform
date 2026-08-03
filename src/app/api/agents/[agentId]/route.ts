@@ -61,6 +61,10 @@ export async function PUT(
 
   // Ao ATIVAR: limpar pausas de conversas para que o agente volte a
   // responder contatos que estavam pausados antes da desativacao.
+  // H62 (decisão deliberada): esta despausa EM MASSA NÃO dispara as automações
+  // de trigger agent_activated — religar o AGENTE inteiro não é "ativar pro
+  // contato" (semântica per-contato) e dispararia N chamadas GHL de uma vez.
+  // Contatos NOVOS depois do religar disparam normal no 1º turno (ramo 11c).
   if (body.status === "active") {
     await supabase
       .from("conversation_state")

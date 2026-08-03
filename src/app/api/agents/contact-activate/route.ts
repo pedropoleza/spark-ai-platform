@@ -23,8 +23,12 @@ import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { LEAD_FACING_TYPES, agentBelongsToLocation } from "@/lib/agents/contact-controls";
 import { reenqueueInboundsSincePause } from "@/lib/queue/resume-reenqueue";
+import { runAgentActivatedAutomations } from "@/lib/queue/agent-activated-automation";
+import { withDeadline } from "@/lib/utils/deadline";
 
-export const maxDuration = 20;
+// H62: 20→30 — o switch agora roda as automações de ativação em série (webhook
+// da regra pode segurar até 8s) e a rota precisa sobrar tempo pra responder.
+export const maxDuration = 30;
 
 export async function OPTIONS(request: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeadersFor(request, "POST, OPTIONS") });
@@ -69,8 +73,14 @@ export async function POST(request: NextRequest) {
     const nowIso = new Date().toISOString();
 
     // Liga o escolhido (UPDATE-then-INSERT: precisa existir pra dirigir).
+    // Review H62: o reenqueue saiu de dentro do setActive — a ordem aqui é
+    // deliberada: (1) liga o novo, (2) pausa os outros JÁ (a janela "2 agentes
+    // ativos" tem que ficar em ms — invariante GU-7; a automação pode levar
+    // segundos), (3) automações de ativação, (4) reenqueue por último (quando
+    // um worker pegar o turno recuperado, o dedup das automações já persistiu).
+    let prevPause: { ai_paused_at: string | null; ai_paused_reason: string | null } | null = null;
     if (agentId) {
-      await setActive(supabase, { agentId, contactId, locationId, nowIso });
+      prevPause = await setActive(supabase, { agentId, contactId, locationId, nowIso });
     }
 
     // Pausa todos os OUTROS que já têm linha (não cria linha vazia).
@@ -90,6 +100,25 @@ export async function POST(request: NextRequest) {
         .is("ai_paused_at", null); // só os que estavam ligados (evita writes à toa)
     }
 
+    if (agentId) {
+      // H62: escolher este agente pro contato é "ativação" — dispara as
+      // automações de trigger agent_activated (dedup no runner; fail-soft;
+      // deadline blinda o budget da rota).
+      await withDeadline(
+        runAgentActivatedAutomations({ agentId, locationId, contactId, source: "manual_switch" }),
+        12_000,
+        "agent-activated-automation",
+      ).catch((err) => console.warn("[contact-activate] automação de ativação estourou o deadline:", err));
+
+      // Recupera inbounds engolidos durante a pausa (fail-soft).
+      await reenqueueInboundsSincePause(supabase, {
+        agentId,
+        contactId,
+        pausedSince: prevPause?.ai_paused_at,
+        pausedReason: prevPause?.ai_paused_reason,
+      });
+    }
+
     return json({ ok: true, activeAgentId: agentId });
   } catch (err) {
     console.error("[contact-activate] erro:", err instanceof Error ? err.message : err);
@@ -100,11 +129,16 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** Liga UM agente pro contato (UPDATE-then-INSERT preserva conversation_id). */
+/**
+ * Liga UM agente pro contato (UPDATE-then-INSERT preserva conversation_id).
+ * Devolve a janela de pausa anterior — o REENQUEUE ficou com o caller (review
+ * H62: precisa rodar DEPOIS das automações de ativação, senão um worker pega o
+ * turno recuperado antes do dedup persistir).
+ */
 async function setActive(
   supabase: ReturnType<typeof createAdminClient>,
   args: { agentId: string; contactId: string; locationId: string; nowIso: string },
-) {
+): Promise<{ ai_paused_at: string | null; ai_paused_reason: string | null } | null> {
   const { agentId, contactId, locationId, nowIso } = args;
   // Captura a janela de pausa ANTES de limpar — pra recuperar inbounds engolidos
   // durante a pausa (Fix prod 2026-06-18, caso Marina).
@@ -138,11 +172,5 @@ async function setActive(
     });
   }
 
-  // Recupera inbounds engolidos durante a pausa (fail-soft).
-  await reenqueueInboundsSincePause(supabase, {
-    agentId,
-    contactId,
-    pausedSince: (prev as { ai_paused_at: string | null } | null)?.ai_paused_at,
-    pausedReason: (prev as { ai_paused_reason: string | null } | null)?.ai_paused_reason,
-  });
+  return (prev as { ai_paused_at: string | null; ai_paused_reason: string | null } | null) ?? null;
 }

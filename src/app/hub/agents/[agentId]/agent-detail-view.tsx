@@ -1837,6 +1837,7 @@ const ACTION_OPTS: { v: AutomationAction["type"]; l: string }[] = [
 function triggerEvent(a: AutomationRule): string {
   if (a.trigger?.kind === "event") return a.trigger.event;
   if (a.trigger?.kind === "on_data_field_set") return "__field__";
+  if (a.trigger?.kind === "agent_activated") return "__activated__";
   return a.event || "qualified";
 }
 function CatAutomations({ e, patch }: { e: Editable; patch: (p: Partial<Editable>) => void }) {
@@ -1847,6 +1848,7 @@ function CatAutomations({ e, patch }: { e: Editable; patch: (p: Partial<Editable
 
   const setTrigger = (i: number, v: string) => {
     if (v === "__field__") upd(i, { trigger: { kind: "on_data_field_set", field_key: "", operator: "any_value" }, event: undefined });
+    else if (v === "__activated__") upd(i, { trigger: { kind: "agent_activated" }, event: undefined });
     else upd(i, { trigger: { kind: "event", event: v }, event: undefined });
   };
   const setActions = (i: number, actions: AutomationAction[]) => upd(i, { actions });
@@ -1858,6 +1860,7 @@ function CatAutomations({ e, patch }: { e: Editable; patch: (p: Partial<Editable
         {list.map((a, i) => {
           const ev = triggerEvent(a);
           const isField = a.trigger?.kind === "on_data_field_set";
+          const isActivated = a.trigger?.kind === "agent_activated";
           return (
             <div key={a.id} className="card card--flat" style={{ padding: 12, background: "var(--surface-2)" }}>
               <div className="row between" style={{ marginBottom: 8 }}>
@@ -1866,9 +1869,15 @@ function CatAutomations({ e, patch }: { e: Editable; patch: (p: Partial<Editable
               </div>
               <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
                 <select className="select" aria-label="Evento que dispara a automação" value={ev} onChange={(evt) => setTrigger(i, evt.target.value)} style={{ width: 200 }}>
+                  <option value="__activated__">Agente ativado pro contato</option>
                   {EVENT_OPTS.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
                   <option value="__field__">Campo preenchido…</option>
                 </select>
+                {isActivated && (
+                  <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>
+                    Dispara 1× por contato, quando este agente assume a conversa — pela regra de ativação ou ligado manualmente.
+                  </span>
+                )}
                 {isField && a.trigger?.kind === "on_data_field_set" && (<>
                   <input className="input" value={a.trigger.field_key} onChange={(evt) => upd(i, { trigger: { ...a.trigger as Extract<AutomationRule["trigger"], { kind: "on_data_field_set" }>, field_key: evt.target.value } })} placeholder="chave do campo" style={{ width: 150 }} />
                   <select className="select" aria-label="Operador da condição" value={a.trigger.operator} onChange={(evt) => upd(i, { trigger: { ...a.trigger as Extract<AutomationRule["trigger"], { kind: "on_data_field_set" }>, operator: evt.target.value as "any_value" | "equals" | "contains" | "matches_regex" } })} style={{ width: 140 }}>
@@ -1898,15 +1907,25 @@ function ActionList({ actions, onChange }: { actions: AutomationAction[]; onChan
           <select className="select" aria-label="Ação da automação" value={a.type} onChange={(ev) => upd(i, { type: ev.target.value as AutomationAction["type"] })} style={{ width: 170 }}>
             {ACTION_OPTS.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
           </select>
-          {(a.type === "add_tag" || a.type === "remove_tag") && <input className="input grow" value={a.tag || ""} onChange={(ev) => upd(i, { tag: ev.target.value })} placeholder="nome da tag" />}
-          {a.type === "move_pipeline" && (<>
-            <input className="input" value={a.pipeline_id || ""} onChange={(ev) => upd(i, { pipeline_id: ev.target.value })} placeholder="ID do funil" style={{ width: 150 }} />
-            <input className="input grow" value={a.stage_id || ""} onChange={(ev) => upd(i, { stage_id: ev.target.value })} placeholder="ID da etapa" />
-          </>)}
-          {a.type === "update_field" && (<>
-            <input className="input" value={a.field_key || ""} onChange={(ev) => upd(i, { field_key: ev.target.value })} placeholder="campo" style={{ width: 150 }} />
-            <input className="input grow" value={a.field_value || ""} onChange={(ev) => upd(i, { field_value: ev.target.value })} placeholder="valor" />
-          </>)}
+          {/* H62: pickers dinâmicos (F35) no lugar de IDs à mão — tags, funis/etapas
+              e campos REAIS da conta; API offline degrada pra texto livre. */}
+          {(a.type === "add_tag" || a.type === "remove_tag") && <TagPicker value={a.tag || ""} onChange={(v) => upd(i, { tag: v })} placeholder="nome da tag" />}
+          {a.type === "move_pipeline" && (
+            <PipelineStagePicker
+              pipelineId={a.pipeline_id || ""}
+              stageId={a.stage_id || ""}
+              onChange={(next) => upd(i, { pipeline_id: next.pipeline_id, stage_id: next.pipeline_stage_id })}
+            />
+          )}
+          {a.type === "update_field" && (
+            <CustomFieldPicker
+              fieldKey={a.field_key || ""}
+              fieldValue={a.field_value || ""}
+              preferId
+              valuePlaceholder="valor a gravar"
+              onChange={(next) => upd(i, { field_key: next.custom_field_key, field_value: next.custom_field_value })}
+            />
+          )}
           {a.type === "send_text_fixed" && <input className="input grow" value={a.text || ""} onChange={(ev) => upd(i, { text: ev.target.value })} placeholder="mensagem a enviar" />}
           {a.type === "send_media" && (<>
             <input className="input" value={a.media_id || ""} onChange={(ev) => upd(i, { media_id: ev.target.value })} placeholder="ID da mídia" style={{ width: 150 }} />

@@ -282,10 +282,22 @@ export function CustomFieldPicker({
   fieldKey,
   fieldValue,
   onChange,
+  preferId = false,
+  valuePlaceholder = "valor (vazio = qualquer)",
 }: {
   fieldKey: string;
   fieldValue: string;
   onChange: (next: { custom_field_key: string; custom_field_value: string }) => void;
+  /**
+   * H62: em contexto de ESCRITA (automação update_field), campo custom precisa
+   * ir como ID (UUID) — o slug `contact.x` de custom seria tratado como campo
+   * padrão pelo executor e DESCARTADO em silêncio pelo Spark Leads. Padrão
+   * continua como fieldKey (`contact.firstName`). Default false = leitura
+   * (targeting), comportamento antigo.
+   */
+  preferId?: boolean;
+  /** Placeholder do input de valor (a copy default é do contexto de targeting). */
+  valuePlaceholder?: string;
 }) {
   const [fields, setFields] = useState<GhlCustomField[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -316,14 +328,24 @@ export function CustomFieldPicker({
           className="input grow"
           value={fieldValue}
           onChange={(ev) => onChange({ custom_field_key: fieldKey, custom_field_value: ev.target.value })}
-          placeholder="valor (vazio = qualquer)"
+          placeholder={valuePlaceholder}
         />
       </>
     );
   }
 
   // O valor que salvamos pode ser id ou fieldKey conforme schema GHL — preferimos
-  // o que o usuário escolheu via select (preservando retrocompat).
+  // o que o usuário escolheu via select (preservando retrocompat). Com preferId,
+  // custom sai como id (ver doc do prop).
+  const optValue = (f: GhlCustomField) => (preferId && !f.isStandard ? f.id : f.fieldKey || f.id);
+  // Review H62: valor JÁ SALVO que não bate com nenhuma option (ex: regra
+  // antiga gravada com o slug do campo custom, e preferId lista por id) —
+  // sem isto o select renderizava EM BRANCO e o admin perdia o que estava
+  // configurado. Mantém o valor legado visível; re-escolher migra pro formato novo.
+  const known = new Set(fields.map(optValue));
+  const legacyLabel = fieldKey && !known.has(fieldKey)
+    ? (fields.find((f) => f.fieldKey === fieldKey || f.id === fieldKey)?.name || fieldKey)
+    : null;
   return (
     <>
       <select
@@ -335,16 +357,17 @@ export function CustomFieldPicker({
         aria-label="Campo personalizado"
       >
         <option value="">{loaded ? "Escolha o campo…" : "carregando…"}</option>
+        {legacyLabel && <option value={fieldKey}>{legacyLabel}</option>}
         <optgroup label="Padrão">
           {fields.filter((f) => f.isStandard).map((f) => (
-            <option key={f.id} value={f.fieldKey || f.id}>
+            <option key={f.id} value={optValue(f)}>
               {f.name || f.fieldKey || f.id}
             </option>
           ))}
         </optgroup>
         <optgroup label="Personalizados">
           {fields.filter((f) => !f.isStandard).map((f) => (
-            <option key={f.id} value={f.fieldKey || f.id}>
+            <option key={f.id} value={optValue(f)}>
               {f.name || f.fieldKey || f.id}
             </option>
           ))}
@@ -354,7 +377,7 @@ export function CustomFieldPicker({
         className="input grow"
         value={fieldValue}
         onChange={(ev) => onChange({ custom_field_key: fieldKey, custom_field_value: ev.target.value })}
-        placeholder="valor (vazio = qualquer)"
+        placeholder={valuePlaceholder}
       />
     </>
   );
