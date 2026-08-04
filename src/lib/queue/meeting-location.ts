@@ -107,17 +107,24 @@ export function explicitLocationFromConfig(
   if (!cfg) return null;
   const type = meetingLocationTypeFromKind(cfg.kind);
   if (!type || !cfg.meetingId) return null;
-  const payload: ExplicitMeetingLocation = {
+  // 'custom'/'address' guardam o valor literal (link fixo do Zoom, endereço
+  // físico) no próprio config. Sem valor salvo não há NADA pra herdar — mandar
+  // o tipo sozinho só faz um update que não muda nada (visto em prod 04/08 no
+  // "4.5 - REUNIÃO: PESSOAL": custom com location vazio).
+  if (type === "custom" || type === "address") {
+    if (!cfg.location) return null;
+    return {
+      meetingLocationType: type,
+      meetingLocationId: cfg.meetingId,
+      overrideLocationConfig: true,
+      address: cfg.location,
+    };
+  }
+  return {
     meetingLocationType: type,
     meetingLocationId: cfg.meetingId,
     overrideLocationConfig: true,
   };
-  // 'custom'/'address' guardam o valor literal (link fixo do Zoom, endereço
-  // físico) no próprio config — sem repassar, o local voltaria vazio.
-  if ((type === "custom" || type === "address") && cfg.location) {
-    payload.address = cfg.location;
-  }
-  return payload;
 }
 
 // Cache do detalhe do calendário: a cura roda dentro do turno (budget 45s) e
@@ -171,17 +178,23 @@ export async function healMissingMeetingLocation(
   client: GHLClient,
   appointmentId: string,
   calendarId: string | undefined,
-): Promise<"filled" | "already_had" | "unknown_config" | "error"> {
-  try {
+): Promise<{
+  status: "filled" | "already_had" | "unknown_config" | "no_effect" | "error";
+  address?: string;
+}> {
+  const ler = async () => {
     const res = await client.get<{
       appointment?: { address?: string; assignedUserId?: string; calendarId?: string };
     }>(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`);
-    const appt = res.appointment;
-    if (!appt) return "error";
-    if (appt.address) return "already_had";
+    return res.appointment;
+  };
+  try {
+    const appt = await ler();
+    if (!appt) return { status: "error" };
+    if (appt.address) return { status: "already_had", address: appt.address };
     const calId = calendarId || appt.calendarId;
     const loc = await resolveCalendarDefaultLocation(client, calId, appt.assignedUserId);
-    if (!loc) return "unknown_config";
+    if (!loc) return { status: "unknown_config" };
     await client.put(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`, {
       calendarId: calId,
       toNotify: false,
@@ -189,8 +202,15 @@ export async function healMissingMeetingLocation(
       ignoreDateRange: true,
       ...loc,
     });
-    return "filled";
+    // Confere o RESULTADO em vez de confiar no 200 do update (mesmo princípio
+    // do H50/H41: só afirmar o que aconteceu de fato). Em prod 04/08 o update
+    // de `zoom_conference` foi aceito e mesmo assim o local seguiu vazio — o
+    // Spark Leads só gera a sala do Zoom na CRIAÇÃO.
+    const depois = await ler();
+    return depois?.address
+      ? { status: "filled", address: depois.address }
+      : { status: "no_effect" };
   } catch {
-    return "error";
+    return { status: "error" };
   }
 }

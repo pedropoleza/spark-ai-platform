@@ -43,6 +43,7 @@ async function main() {
   let vazias = 0,
     curadas = 0,
     semConfig = 0,
+    semEfeito = 0,
     erros = 0;
 
   for (const cal of cals.calendars || []) {
@@ -59,6 +60,11 @@ async function main() {
     console.log(`\n### ${cal.name} — ${eventos.length} reuniões futuras`);
 
     for (const ev of eventos) {
+      // Instância de evento RECORRENTE (id no formato `<masterId>_<epoch>_<dur>`):
+      // são as reuniões de time que se repetem toda semana, não booking de lead.
+      // Patchar instância a instância mexeria em dezenas de eventos internos —
+      // fora do escopo da cura (caso Five Star: 88 de 101 eram isso).
+      if (/_\d{10,}_/.test(ev.id)) continue;
       const detail = await client
         .get<{ appointment?: { address?: string; startTime?: string; contactId?: string } }>(
           `/calendars/events/appointments/${ev.id}`,
@@ -72,16 +78,18 @@ async function main() {
         continue;
       }
       const r = await healMissingMeetingLocation(client, ev.id, cal.id);
-      if (r === "filled") {
-        const pos = await client
-          .get<{ appointment?: { address?: string } }>(`/calendars/events/appointments/${ev.id}`)
-          .catch(() => null);
+      if (r.status === "filled") {
         curadas++;
-        console.log(`  ✅ ${appt.startTime} → ${pos?.appointment?.address || "(vazio ainda?)"}`);
-      } else if (r === "unknown_config") {
+        console.log(`  ✅ ${appt.startTime} → ${r.address}`);
+      } else if (r.status === "unknown_config") {
         semConfig++;
-        console.log(`  ⏭️  ${appt.startTime} — calendário sem config de local reconhecível`);
-      } else if (r === "error") {
+        console.log(`  ⏭️  ${appt.startTime} — calendário sem local default reconhecível`);
+      } else if (r.status === "no_effect") {
+        semEfeito++;
+        console.log(
+          `  ⏭️  ${appt.startTime} — update aceito mas o local seguiu vazio (o Spark Leads não regenera sala de Zoom em update)`,
+        );
+      } else if (r.status === "error") {
         erros++;
         console.log(`  ❌ ${appt.startTime} — erro ao curar`);
       }
@@ -89,7 +97,7 @@ async function main() {
   }
 
   console.log(
-    `\nfuturas sem local: ${vazias} | curadas: ${curadas} | sem config: ${semConfig} | erros: ${erros}`,
+    `\nfuturas sem local: ${vazias} | curadas: ${curadas} | sem config: ${semConfig} | sem efeito: ${semEfeito} | erros: ${erros}`,
   );
   if (!apply && vazias > 0) console.log("(dry-run — rode com --apply pra corrigir)");
 }

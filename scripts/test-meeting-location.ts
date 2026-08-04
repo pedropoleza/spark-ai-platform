@@ -150,9 +150,20 @@ check(
     }),
 );
 check(
-  "custom SEM link salvo → sem address (não inventa)",
-  explicitLocationFromConfig({ kind: "custom", meetingId: "custom_0", location: "" })?.address ===
-    undefined,
+  "custom SEM link salvo → null (não há o que herdar; update seria no-op)",
+  explicitLocationFromConfig({ kind: "custom", meetingId: "custom_0", location: "" }) === null,
+);
+check(
+  "address SEM endereço salvo → null",
+  explicitLocationFromConfig({ kind: "physical", meetingId: "physical_0" }) === null,
+);
+check(
+  "inbound_call (ligação, caso Five Star) → null: o default da conta não é link",
+  explicitLocationFromConfig({
+    kind: "inbound_call",
+    meetingId: "inbound_call_0",
+    location: "{{location.phone}}",
+  }) === null,
 );
 check("config null → null", explicitLocationFromConfig(null) === null);
 check(
