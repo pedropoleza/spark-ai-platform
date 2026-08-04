@@ -55,7 +55,7 @@ async function resolveOwnerRep(
   locationId: string,
   leadCtx: LeadContext,
 ): Promise<RepRow | null> {
-  const assignedTo = leadCtx.contact.assignedUserId;
+  const assignedTo = leadCtx.contact?.assignedUserId;
 
   // Tenta por ghl_user_id (JSONB array)
   if (assignedTo) {
@@ -73,7 +73,11 @@ async function resolveOwnerRep(
   // tem uma opportunity atribuída a um user, usa esse user como dono. Antes ficava
   // "pra fase 2" e caía direto no fallback (notificava o rep ERRADO em location
   // multi-rep).
-  const oppOwner = leadCtx.opportunities.find((o) => o.assignedTo)?.assignedTo;
+  // Ultra-review 2026-08-03: LeadContext pode chegar PARCIAL (lead-history
+  // fail-soft ou o caminho do auto-pause monta só {contact}) — o acesso cru a
+  // .opportunities lançava TypeError havia 17 dias (480 ocorrências) e a
+  // notificação se perdia. Guard defensivo em vez de confiar no shape.
+  const oppOwner = (leadCtx.opportunities || []).find((o) => o.assignedTo)?.assignedTo;
   if (oppOwner && oppOwner !== assignedTo) {
     const { data: byOpp } = await supabase
       .from("rep_identities")

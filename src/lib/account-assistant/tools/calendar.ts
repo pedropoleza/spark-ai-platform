@@ -1212,17 +1212,24 @@ const createAppointment: ToolEntry = {
     // própria agenda pelo gate de override). Best-effort: se a busca falhar, o
     // fluxo segue e o catch genérico abaixo reporta.
     const willAssignRep = !assignedUserId || assignedUserId === knownRepUserId;
-    if (repIsAdmin(ctx) && willAssignRep) {
+    // Ultra-review 2026-08-03 (caso Legacy Agency): o fix H42 era gated em
+    // repIsAdmin e um rep com role='user' que não é membro do calendário ficou
+    // 2 DIAS sem conseguir marcar NENHUMA reunião (10× 422 "user id not part of
+    // calendar team"). A resolução assignee→dono só roda quando a reunião iria
+    // pro PRÓPRIO rep e ele NÃO é membro — cenário em que o booking falharia
+    // 100% de qualquer jeito — então vale pra QUALQUER role. Os gates de
+    // override (agenda de outro user, toNotify) continuam admin-only intactos.
+    if (willAssignRep) {
       try {
         const calDet = await getCalendarDetails(ctx.ghlClient, calendarId);
         const members = (calDet.calendar?.teamMembers || [])
           .map((tm) => tm.userId)
           .filter((id): id is string => !!id);
         if (members.length > 0 && (!knownRepUserId || !members.includes(knownRepUserId))) {
-          // rep admin não é membro do calendário → atribui ao dono (team member).
+          // rep não é membro do calendário → atribui ao dono (team member).
           assignedUserId = members[0];
           console.warn(
-            `[create_appointment] admin ${ctx.rep.id} não é membro do calendar ${calendarId}; atribuindo ao dono ${members[0]} (loc ${ctx.locationId}).`,
+            `[create_appointment] rep ${ctx.rep.id} não é membro do calendar ${calendarId}; atribuindo ao dono ${members[0]} (loc ${ctx.locationId}).`,
           );
         }
       } catch (e) {

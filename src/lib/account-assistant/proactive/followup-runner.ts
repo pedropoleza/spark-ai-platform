@@ -53,6 +53,12 @@ export async function runFollowupTick(): Promise<RunnerTickResult> {
       "id, sequence_id, position, message_text, scheduled_at, status, requires_final_check, followup_sequences!inner(status, contact_id, contact_name, contact_phone, location_id, rep_id, agent_id, delivery_channel, stop_on_reply, started_at)",
     )
     .eq("status", "pending")
+    // Ultra-review 2026-08-03 (P0): o filtro de status da sequência era SÓ
+    // client-side — 62 mensagens 'pending' de sequências mortas ocupavam as 60
+    // vagas do LIMIT pra sempre (head-of-line) e NADA atrás delas rodava: o
+    // motor rep-side ficou MORTO de 29/07 a 04/08 com o cron "verde". O !inner
+    // permite filtrar no embedded — o lixo sai da janela no servidor.
+    .in("followup_sequences.status", ["scheduled", "running"])
     .lte("scheduled_at", nowIso)
     .order("scheduled_at", { ascending: true })
     .limit(MAX_PER_TICK * 2);

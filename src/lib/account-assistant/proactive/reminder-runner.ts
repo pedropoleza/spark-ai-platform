@@ -226,12 +226,19 @@ async function fireOne(task: ScheduledTaskRow): Promise<"fired" | "failed" | "sk
 
   // WhatsApp: V3 enviaria pelo Hub real; por enquanto registra como
   // 'system' channel='whatsapp' pra histórico (e V3 envia depois).
+  let deliveredWhatsapp = false;
   if (channels.includes("whatsapp")) {
-    await deliverReminderWhatsapp(task, finalMessage, title);
+    deliveredWhatsapp = await deliverReminderWhatsapp(task, finalMessage, title);
   }
 
-  // Persiste o counter increment + warning marker
-  await recordProactiveSent(supabase, task.rep_id, decision);
+  // Persiste o counter increment + warning marker.
+  // Ultra-review 2026-08-03: só conta "silêncio" o que COMPROVADAMENTE saiu no
+  // WhatsApp (paridade com o dispatcher) — proativa que falhou envio não é
+  // ignorada; foi essa contagem cega que pausou 11 reps por silêncio FANTASMA
+  // na semana do 479 (Daniely/Jussara, top-5 de uso). Fallback web não infla.
+  if (deliveredWhatsapp) {
+    await recordProactiveSent(supabase, task.rep_id, decision);
+  }
   await advanceTask(task);
   return "fired";
 }
@@ -279,19 +286,19 @@ async function deliverReminderWhatsapp(
   task: ScheduledTaskRow,
   message: string,
   title: string | undefined,
-): Promise<void> {
+): Promise<boolean> {
   // Refatorado 2026-05-04: extraído pra whatsapp-delivery.ts pra reutilizar
   // entre lembretes (esta função) e regras proativas (dispatcher mode='real').
   // Comportamento e env vars iguais (WHATSAPP_DELIVERY_ENABLED, etc).
   const rep = await findRepPhoneById(task.rep_id);
   if (!rep) {
     console.warn(`[reminder-runner] rep ${task.rep_id} não encontrado — pulando entrega`);
-    return;
+    return false;
   }
 
   const formattedMessage = `🔔 ${title || "Lembrete"}\n\n${message}`;
   const { deliverProactiveMessage } = await import("./whatsapp-delivery");
-  await deliverProactiveMessage(rep, formattedMessage, {
+  const dr = await deliverProactiveMessage(rep, formattedMessage, {
     activeLocationId: task.location_id,
     source: "scheduled_reminder",
     reminderId: task.id,
@@ -303,6 +310,7 @@ async function deliverReminderWhatsapp(
       ...(task.task_payload?.contact_name ? { contact_name: task.task_payload.contact_name } : {}),
     },
   });
+  return dr?.via === "whatsapp";
 }
 
 async function deliverReminderTestSession(

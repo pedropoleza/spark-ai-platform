@@ -871,12 +871,15 @@ async function processGroup(
       // discriminador no docstring da função. lastOutbound (GHLMessage) carrega
       // userId/source em runtime mesmo sem o tipo declará-los; a função lê via
       // campos opcionais.
+      // Ultra-review 2026-08-03: inclui os 2 send-paths de erro/gate — antes o
+      // "posso sugerir outro?" do PRÓPRIO bot não entrava aqui e o F52 pausava a
+      // IA lendo a resposta do lead como handoff humano.
       const { data: aiSends } = await supabase
         .from("execution_log")
         .select("action_payload, created_at")
         .eq("location_id", group.locationId)
         .eq("contact_id", group.contactId)
-        .eq("action_type", "send_message")
+        .in("action_type", ["send_message", "send_error_message", "book_blocked_no_contact"])
         .eq("success", true)
         .order("created_at", { ascending: false })
         .limit(30);

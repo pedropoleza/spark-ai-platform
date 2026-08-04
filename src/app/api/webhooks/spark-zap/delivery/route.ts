@@ -141,6 +141,59 @@ export async function POST(req: NextRequest) {
           })
           .eq("id", alvo.id);
         corrigidas++;
+
+        // Ultra-review 2026-08-03: a falha de entrega precisa DESFAZER os efeitos
+        // colaterais que o enqueue otimista causou — foi assim que a semana do 479
+        // pausou 11 reps por "silêncio" de mensagens que nunca chegaram e perdeu
+        // o handoff da Mila (negócio perdido) atrás de um cooldown de 4h.
+
+        // (a) Silêncio fantasma: proativa que morreu não conta como ignorada —
+        // devolve o ponto do counter e, se a pausa derivou dele, despausa.
+        // Enviesado de propósito pra NÃO calar (na dúvida, o rep recebe).
+        if (chave.startsWith("proactive:")) {
+          const repId = chave.split(":")[2] || "";
+          if (repId) {
+            try {
+              const { data: rep } = await supabase
+                .from("rep_identities")
+                .select("consecutive_proactive_without_reply, proactive_paused_at")
+                .eq("id", repId)
+                .maybeSingle();
+              const cur = (rep as { consecutive_proactive_without_reply?: number } | null)
+                ?.consecutive_proactive_without_reply;
+              if (typeof cur === "number" && cur > 0) {
+                const novo = cur - 1;
+                const patch: Record<string, unknown> = {
+                  consecutive_proactive_without_reply: novo,
+                };
+                if (novo < 3 && (rep as { proactive_paused_at?: string | null })?.proactive_paused_at) {
+                  patch.proactive_paused_at = null;
+                }
+                await supabase.from("rep_identities").update(patch).eq("id", repId);
+              }
+            } catch (silErr) {
+              console.warn("[sparkzap-delivery] desconto de silêncio falhou (não-fatal):", silErr);
+            }
+          }
+        }
+
+        // (b) Handoff perdido: solta o cooldown de 4h pra próxima ocorrência
+        // re-notificar (o registro foi gravado no enqueue, antes da fila desistir).
+        const handoffReason = typeof meta.handoff_reason === "string" ? meta.handoff_reason : "";
+        const leadContactId = typeof meta.lead_contact_id === "string" ? meta.lead_contact_id : "";
+        if (handoffReason && leadContactId) {
+          try {
+            const cutoff = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+            await supabase
+              .from("handoff_notifications")
+              .delete()
+              .eq("contact_id", leadContactId)
+              .eq("reason", handoffReason)
+              .gte("created_at", cutoff);
+          } catch (hoErr) {
+            console.warn("[sparkzap-delivery] liberação de cooldown de handoff falhou (não-fatal):", hoErr);
+          }
+        }
       }
     } catch (err) {
       console.error("[sparkzap-delivery] correção do turno falhou:", err);

@@ -11,6 +11,7 @@ import {
   isBookingConflictError,
   findContactOpportunityId,
   updateOpportunity,
+  resolvePipelineStage,
 } from "@/lib/ghl/operations";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { stripSilenceMarker, type LeadSilenceDecision } from "@/lib/ai/lead-silence";
@@ -269,20 +270,30 @@ export async function executeActions(
       const isBookingError = !isBookGateBlocked && actionsFailed && isBookingConflictError(failedActionError);
       if (isBookGateBlocked) {
         const askMsg = "Boa! Pra eu confirmar teu lugar no encontro, me passa teu WhatsApp por aqui? 😊";
-        await client.post("/conversations/messages", {
+        // Ultra-review 2026-08-03: estes 2 branches eram os ÚNICOS send-paths sem
+        // message_ids no log → o anti-eco (F52/H56) não reconhecia a mensagem
+        // como NOSSA e pausava a IA achando que um humano assumiu — o bot
+        // perguntava "posso sugerir outro?" e IGNORAVA a resposta do lead.
+        const sentAsk = await client.post<{ messageId?: string }>("/conversations/messages", {
           type: messageType,
           contactId: ctx.contactId,
           message: askMsg,
         });
-        await logExecution(supabase, ctx, "book_blocked_no_contact", { message: askMsg });
+        await logExecution(supabase, ctx, "book_blocked_no_contact", {
+          message: askMsg,
+          ...(sentAsk?.messageId ? { message_ids: [sentAsk.messageId] } : {}),
+        });
       } else if (isBookingError) {
         const errorMsg = "Desculpa, nao consegui agendar nesse horario. Posso sugerir outro?";
-        await client.post("/conversations/messages", {
+        const sentErr = await client.post<{ messageId?: string }>("/conversations/messages", {
           type: messageType,
           contactId: ctx.contactId,
           message: errorMsg,
         });
-        await logExecution(supabase, ctx, "send_error_message", { message: errorMsg });
+        await logExecution(supabase, ctx, "send_error_message", {
+          message: errorMsg,
+          ...(sentErr?.messageId ? { message_ids: [sentErr.messageId] } : {}),
+        });
       } else {
         // 2026-07-23 (caso Marina): captura o messageId que o GHL retorna em cada
         // envio → grava em message_ids no log. O anti-eco do handoff (F52) casa por
@@ -542,13 +553,22 @@ async function executeAction(
             ...(resolveMeetingLocation(ctx.calendarId || targetCalId) ?? { meetingLocationType: "phone" }),
           });
         } else {
+          // Ultra-review 2026-08-03: sem appointment existente E sem calendário
+          // conhecido, o POST saía com calendarId "" → 422 do GHL (3× na semana,
+          // 2 agentes) e o lead ficava com a remarcação "feita" que falhou.
+          // Resolve na ordem action → config; sem nenhum, erro CLARO que o guard
+          // H58 traduz em mensagem honesta pro lead.
+          const rescheduleCalId = action.calendar_id || ctx.calendarId;
+          if (!rescheduleCalId) {
+            throw new Error("horario indisponivel: reagendamento sem calendario conhecido");
+          }
           await client.post("/calendars/events/appointments", {
-            calendarId: action.calendar_id || "",
+            calendarId: rescheduleCalId,
             locationId: ctx.locationId,
             contactId: ctx.contactId,
             startTime: action.start_time,
             title: "Reuniao agendada via AI",
-            ...(resolveMeetingLocation(action.calendar_id) ?? { meetingLocationType: "phone" }),
+            ...(resolveMeetingLocation(rescheduleCalId) ?? { meetingLocationType: "phone" }),
           });
         }
       }
@@ -556,6 +576,20 @@ async function executeAction(
 
     case "move_pipeline":
       if (action.pipeline_id && action.stage_id) {
+        // Ultra-review 2026-08-03: LLM/automação às vezes passa o NOME do funil
+        // ou da etapa no campo de id → GHL falha/ignora em silêncio e o lead
+        // nunca anda no funil (7 falhas, 2 agentes). Resolve id-ou-nome ANTES.
+        const resolved = await resolvePipelineStage(
+          client,
+          ctx.locationId,
+          String(action.pipeline_id),
+          String(action.stage_id),
+        );
+        if (!resolved) {
+          throw new Error(
+            `move_pipeline: funil/etapa "${action.pipeline_id}"/"${action.stage_id}" não existe na location`,
+          );
+        }
         // Fix bug observado em prod 2026-06-10: move_pipeline fazia
         // PUT /opportunities/ sem oppId → 4xx → throw silencioso → etapa
         // NUNCA mudava (lead recebia "movi você" sem ter movido). A GHL
@@ -564,7 +598,7 @@ async function executeAction(
           client,
           ctx.locationId,
           ctx.contactId,
-          action.pipeline_id,
+          resolved.pipelineId,
         );
         if (!oppId) {
           console.warn(
@@ -573,8 +607,8 @@ async function executeAction(
           break;
         }
         await updateOpportunity(client, oppId, {
-          pipelineId: action.pipeline_id,
-          pipelineStageId: action.stage_id,
+          pipelineId: resolved.pipelineId,
+          pipelineStageId: resolved.stageId,
         });
       }
       break;

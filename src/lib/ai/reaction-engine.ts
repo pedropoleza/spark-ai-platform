@@ -15,7 +15,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
-import { findContactOpportunityId, updateOpportunity } from "@/lib/ghl/operations";
+import { findContactOpportunityId, updateOpportunity, resolvePipelineStage } from "@/lib/ghl/operations";
 import type { AutomationRule, AutomationAction } from "@/types/agent";
 
 const BUCKET = "agent-media";
@@ -155,6 +155,20 @@ async function executeOne(
     }
     case "move_pipeline": {
       if (!action.pipeline_id || !action.stage_id) return;
+      // Ultra-review 2026-08-03: automações salvas com NOME de funil/etapa no
+      // campo de id falhavam 100% em silêncio (Maria/Marina e Gian) — resolve
+      // id-ou-nome antes; não achou = throw (vira reaction_* no execution_log).
+      const resolved = await resolvePipelineStage(
+        client,
+        ctx.locationId,
+        String(action.pipeline_id),
+        String(action.stage_id),
+      );
+      if (!resolved) {
+        throw new Error(
+          `move_pipeline: funil/etapa "${action.pipeline_id}"/"${action.stage_id}" não existe na location`,
+        );
+      }
       // Fix bug observado em prod 2026-06-10: move_pipeline fazia
       // PUT /opportunities/ sem oppId → 4xx → etapa NUNCA mudava. A GHL
       // exige o oppId no path; resolvemos a opp do contato antes do PUT.
@@ -162,7 +176,7 @@ async function executeOne(
         client,
         ctx.locationId,
         ctx.contactId,
-        action.pipeline_id,
+        resolved.pipelineId,
       );
       if (!oppId) {
         console.warn(
@@ -171,8 +185,8 @@ async function executeOne(
         return;
       }
       await updateOpportunity(client, oppId, {
-        pipelineId: action.pipeline_id,
-        pipelineStageId: action.stage_id,
+        pipelineId: resolved.pipelineId,
+        pipelineStageId: resolved.stageId,
       });
       break;
     }

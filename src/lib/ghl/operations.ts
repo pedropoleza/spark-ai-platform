@@ -420,6 +420,51 @@ export async function getPipelines(
   }>("/opportunities/pipelines", { locationId });
 }
 
+/**
+ * Núcleo PURO da resolução pipeline/etapa por id OU nome (ultra-review
+ * 2026-08-03): automações e o LLM às vezes passam o NOME do funil/etapa no
+ * campo de id — o GHL rejeita (ou ignora) em silêncio e o lead nunca anda no
+ * funil (7 falhas/2 agentes na semana + automações Maria/Marina/Gian com nome
+ * inexistente). Match: id exato → nome case-insensitive/trim. Etapa resolvida
+ * DENTRO do pipeline resolvido. Devolve null quando não achou (caller loga).
+ */
+export function matchPipelineStage(
+  pipelines: Array<{ id: string; name?: string; stages?: Array<{ id: string; name?: string }> }>,
+  pipelineRef: string,
+  stageRef: string,
+): { pipelineId: string; stageId: string } | null {
+  const norm = (s: string) => s.trim().toLowerCase();
+  const p =
+    pipelines.find((x) => x.id === pipelineRef) ||
+    pipelines.find((x) => norm(x.name || "") === norm(pipelineRef));
+  if (!p) return null;
+  const stages = p.stages || [];
+  const s =
+    stages.find((x) => x.id === stageRef) ||
+    stages.find((x) => norm(x.name || "") === norm(stageRef));
+  if (!s) return null;
+  return { pipelineId: p.id, stageId: s.id };
+}
+
+/** Resolve pipeline/etapa por id-ou-nome consultando o Spark Leads (1 GET). */
+export async function resolvePipelineStage(
+  client: GHLClient,
+  locationId: string,
+  pipelineRef: string,
+  stageRef: string,
+): Promise<{ pipelineId: string; stageId: string } | null> {
+  try {
+    const res = await getPipelines(client, locationId);
+    return matchPipelineStage(res.pipelines || [], pipelineRef, stageRef);
+  } catch (e) {
+    console.warn(
+      "[resolvePipelineStage] fetch de pipelines falhou:",
+      e instanceof Error ? e.message : e,
+    );
+    return null;
+  }
+}
+
 export async function searchOpportunities(
   client: GHLClient,
   params: Record<string, string>,

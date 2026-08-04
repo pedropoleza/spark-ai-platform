@@ -234,7 +234,10 @@ async function lastOutboundIsHuman(args: {
     .select("action_payload")
     .eq("location_id", locationId)
     .eq("contact_id", contactId)
-    .eq("action_type", "send_message")
+    // Ultra-review 2026-08-03: paridade com o runtime — os send-paths de
+    // erro/gate também são envios NOSSOS (o F52 pausava lendo o próprio
+    // "posso sugerir outro?" como humano).
+    .in("action_type", ["send_message", "send_error_message", "book_blocked_no_contact"])
     .eq("success", true)
     .order("created_at", { ascending: false })
     .limit(30);
