@@ -1551,6 +1551,7 @@ async function processGroup(
     forbiddenTerms: resolveForbiddenTerms(agent.id, config.forbidden_terms),
     silenceDecision,
     offeredSlotsIso, // H58: gate de slot real no book/reschedule
+    timezone: locationTz, // H66: corrige offset do start_time pro fuso da conta
   });
 
   // 9. Sincronizar dados coletados pela IA de volta pro GHL

@@ -16,7 +16,29 @@ import {
 } from "@/lib/ghl/operations";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { stripSilenceMarker, type LeadSilenceDecision } from "@/lib/ai/lead-silence";
-import { validateBookingSlot, isSameSlotInstant } from "@/lib/ai/slot-guard";
+import { validateBookingSlot, isSameSlotInstant, coerceStartTimeToTimezone } from "@/lib/ai/slot-guard";
+
+/**
+ * H66: corrige o OFFSET do start_time emitido pelo LLM pro fuso da conta ANTES
+ * do guard H58 — o wall-clock do ISO é o que o LLM FALOU pro lead; offset de
+ * outro fuso (ex.: -03:00) deslocava a reunião 1h na agenda e o guard não
+ * pegava quando o instante deslocado caía em OUTRO slot livre. Muta a action
+ * (start_time corrigido + rastro no log) e devolve o ISO corrigido.
+ */
+function coerceActionStartTime(
+  action: { start_time?: string },
+  ctx: ExecutionContext,
+  label: string,
+): void {
+  if (!action.start_time) return;
+  const tz = ctx.timezone || "America/New_York";
+  const co = coerceStartTimeToTimezone(action.start_time, tz);
+  if (co.coerced) {
+    (action as unknown as Record<string, unknown>).offset_coerced_from = co.original;
+    action.start_time = co.iso;
+    console.warn(`[${label}] H66: start_time com offset fora do fuso da conta (${tz}) — corrigido: ${co.original} → ${co.iso}`);
+  }
+}
 import { aplicarGuardaDeConfirmacao, claimsBooking } from "@/lib/ai/booking-guard";
 import type { AIAction, AIResponse } from "@/types/ai";
 
@@ -62,6 +84,12 @@ interface ExecutionContext {
    * (back-compat, permite); [] = fetch falhou/sem slots (bloqueia booking).
    */
   offeredSlotsIso?: string[];
+  /**
+   * H66: timezone IANA da location — usado pra corrigir o OFFSET do start_time
+   * emitido pelo LLM (o wall-clock é o que ele falou; o offset às vezes vem de
+   * outro fuso, ex. -03:00 Brasília). Ausente = America/New_York.
+   */
+  timezone?: string;
 }
 
 // Detecta um canal de contato (WhatsApp/telefone) já coletado — usado pelo gate
@@ -408,6 +436,9 @@ async function executeAction(
       if (!bookCalendarId) {
         throw new Error("Calendario nao configurado — agendamento impossivel");
       }
+      // H66: offset do ISO corrigido pro fuso da conta ANTES do guard (caso
+      // +1 267 746: LLM falou "1 PM ET" e emitiu -03:00 → agenda 1h deslocada).
+      coerceActionStartTime(action, ctx, "BookAppointment");
       // H58: start_time TEM que ser um slot real do turno (bloqueia booking
       // fantasma/fuso trocado; o throw cai em isBookingConflictError → o lead
       // recebe a correção, não uma falsa confirmação).
@@ -512,6 +543,8 @@ async function executeAction(
     }
 
     case "reschedule_appointment":
+      // H66: mesma correção de offset do book (o caso real foi num reschedule).
+      coerceActionStartTime(action, ctx, "RescheduleAppointment");
       // H58: reagendamento passa pelo MESMO guard de slot real (lição H42).
       {
         const reslotCheck = validateBookingSlot(action.start_time, ctx.offeredSlotsIso);

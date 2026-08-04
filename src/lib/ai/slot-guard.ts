@@ -38,6 +38,66 @@ export function extractSlotIsoList(slotsResp: Record<string, unknown> | null | u
 
 export type SlotValidation = { ok: true } | { ok: false; reason: string };
 
+/** Offset (minutos, local−UTC) de um instante num timezone IANA — DST-correct via Intl. */
+function zoneOffsetMinutes(utcMs: number, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = Object.fromEntries(dtf.formatToParts(new Date(utcMs)).map((p) => [p.type, p.value]));
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    parts.hour === "24" ? 0 : Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  return (asUtc - utcMs) / 60_000;
+}
+
+/**
+ * H66 (fix bug observado em prod 2026-08-04, caso +1 267 746 / Five Star): o LLM
+ * FALA o horário certo pro lead ("1:00 PM ET") mas às vezes emite o ISO com
+ * offset ERRADO (-03:00, Brasília) → a reunião cai 1h deslocada na agenda, e o
+ * guard H58 não pega quando o instante deslocado coincide com OUTRO slot livre
+ * (ele valida "é um slot real", não "é o slot que você falou"). Mesma classe do
+ * H50 (weekday) — a defesa por prompt não basta.
+ *
+ * Correção determinística: o WALL-CLOCK do ISO é a intenção (é o que o LLM
+ * falou); o offset é descartado e recalculado pro fuso da CONTA (DST-aware).
+ * "2026-08-04T13:00:00-03:00" em America/New_York → "2026-08-04T13:00:00-04:00".
+ * ISO sem offset ou com Z recebe o mesmo tratamento (wall-clock no fuso da
+ * conta). ISO não-parseável passa intocado (o slot-guard rejeita depois).
+ * PURO, sem I/O.
+ */
+export function coerceStartTimeToTimezone(
+  iso: string | undefined | null,
+  timeZone: string,
+): { iso: string; coerced: boolean; original?: string } {
+  const raw = String(iso ?? "");
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return { iso: raw, coerced: false };
+  const [, Y, Mo, D, H, Mi, S] = m;
+  const wallAsUtc = Date.UTC(Number(Y), Number(Mo) - 1, Number(D), Number(H), Number(Mi), Number(S || 0));
+  // 2 passadas convergem o offset pro wall-clock (borda de DST inclusa).
+  let off = zoneOffsetMinutes(wallAsUtc, timeZone);
+  off = zoneOffsetMinutes(wallAsUtc - off * 60_000, timeZone);
+  const sign = off < 0 ? "-" : "+";
+  const abs = Math.abs(off);
+  const offStr = `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+  const out = `${Y}-${Mo}-${D}T${H}:${Mi}:${S || "00"}${offStr}`;
+  const origInstant = Date.parse(raw);
+  const coerced = Number.isNaN(origInstant) || Date.parse(out) !== origInstant;
+  return coerced ? { iso: out, coerced: true, original: raw } : { iso: out, coerced: false };
+}
+
 /**
  * Dois ISO representam o MESMO instante (tolerância 60s, igual ao guard)?
  * H61 (caso Adriana/Five Star 2026-08-01): usado pra reconhecer que o slot
