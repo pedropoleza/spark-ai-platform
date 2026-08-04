@@ -637,6 +637,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     aiTexts: null, aiContactId: null, // GU-3: textos que a IA mandou (anti-eco p/ marcar bolhas)
     resolvedContactId: null, resolvedForConvId: null, resolvePromise: null, // GU-4: conv→contato
     agents: [], activeAgentId: null, iconState: "idle", // GU-7: seletor único + cor do ícone
+    placement: null, // onde o pill está (inline/<estratégia> ou floating) — loga só na mudança
   };
 
   // ---------- Detecção de contexto (resiliente, SPA) ----------
@@ -745,8 +746,9 @@ const AGENT_CONTROLS_SOURCE = `(function () {
         cursor: pointer; user-select: none; position: relative;
         transition: transform .15s ease, box-shadow .15s ease, opacity .2s ease, color .2s ease, border-color .2s ease, background .2s ease;
       }
-      /* GU-5: inline na toolbar do topo (perto do "Call"). */
-      #spark-agent-pill.sap-inline { margin: 0 10px; flex-shrink: 0; }
+      /* GU-5: inline no header da conversa, colado à esquerda dos ícones de ação.
+         Margem pequena só à direita — o espaçamento do grupo (gap) faz o resto. */
+      #spark-agent-pill.sap-inline { margin: 0 2px 0 0; flex-shrink: 0; }
       /* Fallback: flutuante no canto, se a toolbar não for achada. */
       #spark-agent-pill.sap-floating { position: fixed; left: 20px; bottom: 20px; z-index: 999997; box-shadow: 0 4px 18px rgba(15,23,42,0.14); }
       #spark-agent-pill:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(15,23,42,0.16); }
@@ -981,27 +983,70 @@ const AGENT_CONTROLS_SOURCE = `(function () {
       .catch(function (e) { console.warn("[spark-agent] agents erro:", e && e.message); return null; });
   }
 
-  // GU-5: âncora resiliente — acha o botão "Call"/"Ligar" da toolbar do contato
-  // por TEXTO (o DOM do GHL é ofuscado, sem id/classe estável) e sobe até o pai
-  // flex 'justify-between' (a linha do header: nome à esquerda, ações à direita).
-  // Insere o pill como filho do meio → cai no espaço entre o nome e o Call.
+  // GU-5 (reescrito 2026-08-04, queixa do Pedro): âncora do header da conversa.
+  //
+  // A 1ª versão achava a barra pelo TEXTO do botão "Call"/"Ligar". Esse botão
+  // DEIXOU DE EXISTIR — o header do Spark Leads virou 100% ícone — então a
+  // âncora voltava null e o pill caía no fallback flutuante, no canto INFERIOR
+  // ESQUERDO da tela, longe do chat. Confirmado no DOM real: nenhum botão com
+  // esse texto na página, pill com classe sap-floating em left:20/bottom:20.
+  // (Sem crase nos comentários daqui: o script inteiro é um template literal.)
+  //
+  // O DOM é ofuscado (classes utilitárias, wrapper sem id), MAS os botões de
+  // ação do header têm **id semântico e estável, independente de idioma**:
+  // #chat-filter, #star-toggle, #read-toggle, #delete-conversation. É neles que
+  // a gente ancora agora. Estratégias, da mais estável pra menos:
+  //   1) id semântico → sobe até a linha do header (flex + space-between)
+  //   2) texto "Call"/"Ligar" (skins antigas do GHL — mantido por segurança)
+  //   3) geometria: a faixa flex + space-between mais alta do painel
+  var AC_ACTION_IDS = ["star-toggle", "read-toggle", "chat-filter", "delete-conversation"];
+
+  // Sobe do elemento até a LINHA do header (flex + justify-between: nome à
+  // esquerda, ações à direita) e devolve o filho dessa linha que contém a semente
+  // (= grupo de ações).
+  function acClimbToHeaderRow(seed) {
+    var el = seed;
+    for (var j = 0; j < 8 && el && el.parentElement; j++) {
+      var pcs = window.getComputedStyle(el.parentElement);
+      if (pcs.display === "flex" && pcs.justifyContent === "space-between") {
+        return { toolbar: el.parentElement, actionsGroup: el };
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }
+
   function acFindToolbarAnchor() {
     try {
-      var btns = document.querySelectorAll("button");
-      var call = null;
-      for (var i = 0; i < btns.length; i++) {
-        var t = (btns[i].textContent || "").trim();
-        var r = btns[i].getBoundingClientRect();
-        if ((t === "Call" || t === "Ligar") && r.width > 0 && r.top < 220) { call = btns[i]; break; }
-      }
-      if (!call) return null;
-      var el = call;
-      for (var j = 0; j < 8 && el && el.parentElement; j++) {
-        var pcs = window.getComputedStyle(el.parentElement);
-        if (pcs.display === "flex" && pcs.justifyContent === "space-between") {
-          return { toolbar: el.parentElement, actionsGroup: el };
+      for (var i = 0; i < AC_ACTION_IDS.length; i++) {
+        var seed = document.getElementById(AC_ACTION_IDS[i]);
+        if (seed && seed.getBoundingClientRect().width > 0) {
+          var a1 = acClimbToHeaderRow(seed);
+          if (a1) { a1.via = "id:" + AC_ACTION_IDS[i]; return a1; }
         }
-        el = el.parentElement;
+      }
+      var btns = document.querySelectorAll("button");
+      for (var k = 0; k < btns.length; k++) {
+        var t = (btns[k].textContent || "").trim();
+        var r = btns[k].getBoundingClientRect();
+        if ((t === "Call" || t === "Ligar") && r.width > 0 && r.top < 220) {
+          var a2 = acClimbToHeaderRow(btns[k]);
+          if (a2) { a2.via = "texto:call"; return a2; }
+        }
+      }
+      var best = null;
+      var divs = document.querySelectorAll("div");
+      for (var m = 0; m < divs.length; m++) {
+        var rr = divs[m].getBoundingClientRect();
+        if (rr.top < 60 || rr.top > 260 || rr.width < 380 || rr.height < 40 || rr.height > 88) continue;
+        if (divs[m].children.length < 2) continue;
+        var cs = window.getComputedStyle(divs[m]);
+        if (cs.display !== "flex" || cs.justifyContent !== "space-between") continue;
+        if (!best || rr.top < best.top) best = { el: divs[m], top: rr.top };
+      }
+      if (best) {
+        var last = best.el.children[best.el.children.length - 1];
+        if (last) return { toolbar: best.el, actionsGroup: last, via: "geometria" };
       }
       return null;
     } catch (e) { return null; }
@@ -1015,14 +1060,35 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     if (a && a.toolbar && a.actionsGroup) {
       pill.classList.remove("sap-floating");
       pill.classList.add("sap-inline");
-      if (pill.parentElement !== a.toolbar || pill.nextElementSibling !== a.actionsGroup) {
+      // DENTRO do grupo de ações, colado à esquerda dos ícones — é ali que o rep
+      // procura o robô (queixa Pedro 2026-08-04). Só entra dentro se o grupo for
+      // um CONTAINER; se a âncora for o próprio botão (skin antiga), volta a
+      // inserir como irmão antes dele. Idempotente: o watcher re-chama a cada
+      // tick e só mexe se o pill não estiver no lugar.
+      var container =
+        a.actionsGroup.tagName !== "BUTTON" &&
+        a.actionsGroup.tagName !== "A" &&
+        a.actionsGroup.children.length > 0;
+      if (container) {
+        if (pill.parentElement !== a.actionsGroup || a.actionsGroup.firstElementChild !== pill) {
+          a.actionsGroup.insertBefore(pill, a.actionsGroup.firstElementChild);
+        }
+      } else if (pill.parentElement !== a.toolbar || pill.nextElementSibling !== a.actionsGroup) {
         a.toolbar.insertBefore(pill, a.actionsGroup);
       }
+      // Log só na MUDANÇA (o watcher roda a cada tick) — deixa rastro de qual
+      // estratégia pegou, pra próxima vez que o Spark Leads mexer no header.
+      var via = "inline/" + (a.via || "?");
+      if (AC.placement !== via) { AC.placement = via; console.log("[spark-agent] pill " + via); }
       return "inline";
     }
     pill.classList.remove("sap-inline");
     pill.classList.add("sap-floating");
     if (document.body && pill.parentElement !== document.body) document.body.appendChild(pill);
+    if (AC.placement !== "floating") {
+      AC.placement = "floating";
+      console.warn("[spark-agent] header da conversa não encontrado — pill flutuando no canto");
+    }
     return "floating";
   }
 
