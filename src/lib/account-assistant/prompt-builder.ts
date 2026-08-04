@@ -12,6 +12,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isGuidedOutreachEnabled } from "./proactive/guided-outreach";
 import { isTaskOrchestratorEnabled } from "./task-orchestrator/config";
+import { buildCalendarGrounding } from "./calendar-grounding";
 import type { RepIdentity, RepProfile } from "@/types/account-assistant";
 import type { KnowledgeBaseItem } from "@/lib/ai/sales-prompt-builder";
 import {
@@ -1238,9 +1239,16 @@ export function buildSparkbotRuntimeContext(args: {
   // F1 (cost-reduction 2026-06): os 5 blocos voláteis vêm DEPOIS do contexto de data/canal,
   // na user message não-cacheada. Mesmas strings que estavam no system (parity de comportamento).
   const cl = args.conversationalLayer;
+  // H67 (caso Milton 2026-08-04): o [Agora] acima já dava o dia-da-semana CERTO
+  // de hoje e mesmo assim o modelo derivava os OUTROS dias pelo calendário de
+  // 2025 (16/16 dos erros da frota batiam com 2025, zero com 2026). Aqui vai a
+  // tabela pronta pra ele COPIAR, em vez de calcular. Ver calendar-grounding.ts.
+  const cal = buildCalendarGrounding(now, args.locationTimezone);
+
   return [
     `[Agora: ${dateStr} (${args.locationTimezone}, offset ${offsetStr})]`,
     `[ISO agora: ${localIso}]`,
+    cal.block,
     `[Canal atual: ${args.channel || "whatsapp"}]`,
     `[Ao criar task com due_at, use ISO 8601 com offset ${offsetStr}. Ex: segunda-feira 10h seria calculado a partir deste momento e emitido como AAAA-MM-DDT10:00:00${offsetStr}]`,
     args.repContextBlock || "",

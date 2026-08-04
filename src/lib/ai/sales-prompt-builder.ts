@@ -1,5 +1,6 @@
 import type { AgentConfig, DataField } from "@/types/agent";
 import { getTimezoneFromState, getCurrentTimeInTimezone } from "@/lib/utils/timezone";
+import { buildCalendarGrounding } from "@/lib/account-assistant/calendar-grounding";
 import { composePersonalityProfile } from "@/lib/ai/behavior-blocks";
 import { isHumanOutboundSource } from "@/lib/ghl/message-sources";
 
@@ -292,8 +293,16 @@ NÃO invente horários. NÃO inclua action book_appointment neste turno.`);
       }
 
       const currentTime = getCurrentTimeInTimezone(effectiveTimezone);
+      // H67 (2026-08-04): o modelo mapeia dia-da-semana ↔ data pelo calendário
+      // do ANO ANTERIOR quando deriva de cabeça. Medido na frota em 21 dias:
+      // 73 pares errados, 73 batendo com 2025 e nenhum com 2026. Aqui o lado
+      // lead-facing erra pouco (7 de 84) justamente porque quase sempre COPIA
+      // da lista de slots, que é gerada por código — a tabela abaixo fecha o
+      // resto (quando o lead pede um dia que não está na lista).
+      const calLead = buildCalendarGrounding(new Date(), effectiveTimezone);
       parts.push(`### HORÁRIOS DISPONÍVEIS (use APENAS estes — não invente)
 Agora no timezone do lead: ${currentTime}
+${calLead.block}
 ${ctx.availableSlots}
 
 Ao PROPOR, ofereça 2 opções ESPAÇADAS da lista (datas OU horários diferentes) — nunca duas coladas tipo "11:30 ou 12:00". Se a lista só tiver 1 opção, ofereça 1 (não invente uma segunda).
