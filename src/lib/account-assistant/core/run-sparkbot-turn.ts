@@ -76,6 +76,8 @@ export function buildToolCtx(params: {
   confirmationMode?: "always" | "medium_and_high" | "high_only";
   enabledKbs?: string[];
   attachment?: RepInput | null;
+  /** H67: fala do rep neste turno — a trava weekday↔data infere dela. */
+  repMessage?: string | null;
 }): ToolContext {
   return {
     rep: params.rep,
@@ -86,6 +88,7 @@ export function buildToolCtx(params: {
     confirmationMode: params.confirmationMode ?? "high_only",
     enabledKbs: params.enabledKbs,
     attachment: params.attachment ?? null,
+    repMessage: params.repMessage ?? null,
   };
 }
 

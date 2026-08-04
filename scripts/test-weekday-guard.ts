@@ -11,6 +11,8 @@ import {
   nextDateForWeekday,
   formatWeekdayDate,
   checkWeekdayMatchesDate,
+  inferExpectedWeekday,
+  checkDayOfMonthMatches,
 } from "../src/lib/account-assistant/weekday-guard";
 
 const TZ = "America/New_York";
@@ -78,6 +80,81 @@ ok("ACEITA 'segunda' em 20/07 (bate)", checkWeekdayMatchesDate("2026-07-20T17:30
 // SEM dia nomeado → não valida (não bloqueia data explícita/amanhã).
 ok("SKIP quando expected='amanhã' (não é dia)", checkWeekdayMatchesDate("2026-07-16T20:00:00-04:00", "amanhã", TZ, NOW).ok === true);
 ok("SKIP quando expected='' ", checkWeekdayMatchesDate("2026-07-16T20:00:00-04:00", "", TZ, NOW).ok === true);
+
+
+// ── H67 (2026-08-04, caso Sidney): inferir o dia-da-semana da fala do rep ─────
+// A trava do H50 só valia se o LLM lembrasse de passar expected_weekday. Ele
+// esquece — e foi assim que a reunião do Sidney nasceu na sexta quando ele
+// pediu quinta. Agora o servidor tira da fala do rep.
+console.log("\n9. inferExpectedWeekday — servidor não depende do LLM lembrar");
+ok(
+  "fala do Sidney (verbatim): pega 'quinta'",
+  inferExpectedWeekday(
+    "Spark, cria uma agenda para mim, com a Eva Aracy, para quinta-feira, às 10 horas da manhã. Reunião inicial, trava a minha agenda nesse horário.",
+  ) === "quinta",
+);
+ok(
+  "fala do Milton (verbatim): 'quinta-feira, dia 6' tem data explícita → NÃO infere",
+  inferExpectedWeekday(
+    "Fazer agendamento de apresentação de produto para quinta-feira, dia 6 de agosto, às 5 PM, com Anderson Nunes.",
+  ) === null,
+);
+ok("sem dia nomeado → null", inferExpectedWeekday("marca pra amanhã às 10") === null);
+ok("dois dias citados → null (ambíguo)", inferExpectedWeekday("remarca de segunda pra quarta") === null);
+ok("data dd/mm na fala → null (o rep já deu a data)", inferExpectedWeekday("marca quinta 06/08 às 5pm") === null);
+ok("acento e maiúscula não atrapalham", inferExpectedWeekday("Marca na TERÇA-FEIRA às 9") === "terca");
+ok("sábado sem acento", inferExpectedWeekday("pode ser sabado de manha") === "sabado");
+ok("vazio/nulo → null", inferExpectedWeekday("") === null && inferExpectedWeekday(null) === null);
+ok(
+  "o inferido alimenta a trava: 'quinta' + 17/07 (que é sexta) REJEITA",
+  checkWeekdayMatchesDate(
+    "2026-07-17T10:00:00-04:00",
+    inferExpectedWeekday("cria uma agenda para quinta-feira às 10 da manhã")!,
+    TZ,
+    NOW,
+  ).ok === false,
+);
+ok(
+  "e a data certa passa: 'quinta' + 16/07",
+  checkWeekdayMatchesDate(
+    "2026-07-16T10:00:00-04:00",
+    inferExpectedWeekday("cria uma agenda para quinta-feira às 10 da manhã")!,
+    TZ,
+    NOW,
+  ).ok === true,
+);
+
+
+// ── H67 (caso Milton): o "dia N" que o rep falou tem que ser o dia gravado ────
+console.log("\n10. checkDayOfMonthMatches — a data que o REP falou manda");
+const FALA_MILTON =
+  "Fazer agendamento de apresentação de produto para quinta-feira, dia 6 de agosto, às 5 PM, com Anderson Nunes.";
+ok(
+  "rep disse 'dia 6' e o bot tentou 07/08 → REJEITA (o erro real)",
+  checkDayOfMonthMatches("2026-08-07T17:00:00-04:00", FALA_MILTON, TZ).ok === false,
+);
+ok(
+  "mesma fala, data certa 06/08 → passa",
+  checkDayOfMonthMatches("2026-08-06T17:00:00-04:00", FALA_MILTON, TZ).ok === true,
+);
+ok(
+  "a correção cita o dia que o rep falou",
+  (checkDayOfMonthMatches("2026-08-07T17:00:00-04:00", FALA_MILTON, TZ).message || "").includes("dia 6"),
+);
+ok("sem 'dia N' na fala → não opina", checkDayOfMonthMatches("2026-08-07T17:00:00-04:00", "marca quinta às 5", TZ).ok === true);
+ok(
+  "dois 'dia N' diferentes → não opina (ambíguo)",
+  checkDayOfMonthMatches("2026-08-07T17:00:00-04:00", "falei dia 3 e agora quero dia 6", TZ).ok === true,
+);
+ok(
+  "dd/mm completo na fala → não opina (o LLM só copia)",
+  checkDayOfMonthMatches("2026-08-07T17:00:00-04:00", "marca 06/08 às 5pm", TZ).ok === true,
+);
+ok(
+  "usa o fuso do rep: 23:30 EDT do dia 6 não vira dia 7",
+  checkDayOfMonthMatches("2026-08-07T03:30:00Z", "marca dia 6 às 23:30", TZ).ok === true,
+);
+ok("fala vazia → não opina", checkDayOfMonthMatches("2026-08-07T17:00:00-04:00", "", TZ).ok === true);
 
 console.log(`\n${pass}/${pass + fail} passaram${fail ? ` — ${fail} FALHARAM` : " ✅"}`);
 process.exit(fail ? 1 : 0);

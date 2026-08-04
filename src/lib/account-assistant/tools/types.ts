@@ -41,6 +41,13 @@ export interface ToolContext {
    * Default no caller (processor/dispatcher): ambas habilitadas.
    */
   enabledKbs?: string[];
+  /**
+   * Texto do rep NESTE turno (transcrição do áudio incluída). H67: as tools de
+   * horário usam pra inferir o dia-da-semana que o rep nomeou quando o LLM
+   * esquece de passar `expected_weekday` — sem isso a trava do H50 depende da
+   * boa vontade do modelo. Ver inferExpectedWeekday em weekday-guard.ts.
+   */
+  repMessage?: string | null;
 }
 
 export type ToolHandler = (ctx: ToolContext, args: Record<string, unknown>) => Promise<ToolResult>;
