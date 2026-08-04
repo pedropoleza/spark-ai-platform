@@ -52,29 +52,46 @@ async function cancelPending(ghlTaskId: string): Promise<void> {
   if (error) console.warn(`[task-reminder] cancel falhou (${ghlTaskId}): ${error.message}`);
 }
 
+/** Resultado do agendamento — H63: as tools narram a partir DISTO (verdade, não promessa). */
+export interface TaskReminderResult {
+  scheduled: boolean;
+  /** ISO de quando o lembrete dispara (quando scheduled). */
+  fireAt?: string;
+  /** Motivo do skip (quando !scheduled). */
+  reason?:
+    | "no_due"
+    | "invalid_due"
+    | "no_assignee"
+    | "assignee_not_rep"
+    | "rep_inactive"
+    | "pref_off"
+    | "fires_in_past"
+    | "insert_failed";
+}
+
 /** Agenda (ou reagenda) o lembrete de uma task do GHL em due − lead_min. */
-export async function scheduleTaskReminder(ev: TaskEvent): Promise<void> {
-  if (!ev.ghlTaskId) return;
+export async function scheduleTaskReminder(ev: TaskEvent): Promise<TaskReminderResult> {
+  if (!ev.ghlTaskId) return { scheduled: false, reason: "invalid_due" };
 
   // D3: sem due date → não lembra.
   if (!ev.dueAt) {
     console.log(`[task-reminder] task ${ev.ghlTaskId} sem dueDate — não agenda`);
-    return;
+    return { scheduled: false, reason: "no_due" };
   }
   const dueMs = Date.parse(ev.dueAt);
   if (!Number.isFinite(dueMs)) {
     console.log(`[task-reminder] task ${ev.ghlTaskId} dueDate inválido (${ev.dueAt}) — skip`);
-    return;
+    return { scheduled: false, reason: "invalid_due" };
   }
   if (!ev.assignedTo) {
     console.log(`[task-reminder] task ${ev.ghlTaskId} sem assignedTo — não dá pra achar o rep`);
-    return;
+    return { scheduled: false, reason: "no_assignee" };
   }
 
   const rep = await findRepByGhlUser(ev.assignedTo);
   if (!rep) {
     console.log(`[task-reminder] assignedTo ${ev.assignedTo} não é rep SparkBot — skip`);
-    return;
+    return { scheduled: false, reason: "assignee_not_rep" };
   }
 
   // Só reps ATIVOS no SparkBot (Pedro 2026-05-21): T&C aceito (e não rejeitado)
@@ -83,13 +100,13 @@ export async function scheduleTaskReminder(ev: TaskEvent): Promise<void> {
   // (backfill E webhook de task nova).
   if (!rep.terms_accepted_at || rep.terms_rejected_at || !rep.last_inbound_at) {
     console.log(`[task-reminder] rep ${rep.id} não-ativo (terms/atividade) — skip`);
-    return;
+    return { scheduled: false, reason: "rep_inactive" };
   }
 
   const pref = resolveProactivityPref(rep, "task_reminder");
   if (!pref.enabled) {
     console.log(`[task-reminder] rep ${rep.id} com task_reminder OFF — skip`);
-    return;
+    return { scheduled: false, reason: "pref_off" };
   }
 
   const leadMin = taskReminderLeadMin(rep);
@@ -97,7 +114,7 @@ export async function scheduleTaskReminder(ev: TaskEvent): Promise<void> {
   if (fireMs <= Date.now()) {
     // Vence em menos de lead_min (ou já venceu) → não faz sentido o "X min antes".
     console.log(`[task-reminder] task ${ev.ghlTaskId} fire no passado (vence cedo demais) — skip`);
-    return;
+    return { scheduled: false, reason: "fires_in_past" };
   }
 
   // Reagendamento idempotente: cancela o pendente antigo antes de inserir o novo.
@@ -109,6 +126,7 @@ export async function scheduleTaskReminder(ev: TaskEvent): Promise<void> {
     `Quer que eu marque como concluída, adie ou veja os detalhes?`;
 
   const sb = createAdminClient();
+  const fireAtIso = new Date(fireMs).toISOString();
   const { error } = await sb.from("assistant_scheduled_tasks").insert({
     rep_id: rep.id,
     location_id: ev.locationId || rep.active_location_id || "",
@@ -121,17 +139,18 @@ export async function scheduleTaskReminder(ev: TaskEvent): Promise<void> {
       contact_id: ev.contactId ?? null,
       due_at: ev.dueAt,
     },
-    next_run_at: new Date(fireMs).toISOString(),
+    next_run_at: fireAtIso,
     status: "pending",
   });
   if (error) {
     console.warn(`[task-reminder] insert falhou (${ev.ghlTaskId}): ${error.message}`);
-    return;
+    return { scheduled: false, reason: "insert_failed" };
   }
   console.log(
     `[task-reminder] agendado rep=${rep.id} task=${ev.ghlTaskId} ` +
-      `fire=${new Date(fireMs).toISOString()} (lead ${leadMin}min)`,
+      `fire=${fireAtIso} (lead ${leadMin}min)`,
   );
+  return { scheduled: true, fireAt: fireAtIso };
 }
 
 /** Cancela o lembrete pendente quando a task é concluída/apagada no GHL. */

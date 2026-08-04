@@ -3,6 +3,15 @@
  *
  * GOTCHA: GHL exige `completed: false` no payload do create (descobrimos via
  * 422 em testes). Já tá no handler.
+ *
+ * H63 (caso Milton 2026-08-03): o lembrete da task é agendado INLINE aqui —
+ * antes dependia 100% do webhook TASKCREATE do Spark Leads, que só chega de
+ * location com o app do marketplace instalado. Na location do Milton o webhook
+ * nunca chegou → o bot dizia "⚡ Task criada! Lembrete pra ligar..." e NENHUM
+ * lembrete existia (zero ghl_task_reminder na location, contra 2.297 na m4qw).
+ * Como o `scheduleTaskReminder` cancela o pendente da mesma task antes de
+ * inserir, inline + webhook não duplicam. O resultado (`reminder`) vai no data
+ * da tool pro LLM narrar a VERDADE (mesmo princípio do H50 booked_label).
  */
 
 import type { ToolEntry } from "./types";
@@ -14,6 +23,39 @@ import {
   completeTaskOnContact,
   deleteTaskOnContact,
 } from "@/lib/ghl/operations";
+import type { ToolContext } from "./types";
+
+/** Agenda/reagenda o lembrete da task (fail-soft: nunca quebra a tool). */
+async function syncTaskReminder(
+  ctx: ToolContext,
+  task: { id: string; title: string | null; dueAt: string | null; assignedTo: string | null; contactId: string | null },
+): Promise<{ scheduled: boolean; fire_at?: string; reason?: string }> {
+  try {
+    const { scheduleTaskReminder } = await import("@/lib/account-assistant/proactive/task-reminders");
+    const r = await scheduleTaskReminder({
+      ghlTaskId: task.id,
+      title: task.title,
+      dueAt: task.dueAt,
+      assignedTo: task.assignedTo,
+      contactId: task.contactId,
+      locationId: ctx.locationId,
+    });
+    return { scheduled: r.scheduled, fire_at: r.fireAt, reason: r.reason };
+  } catch (err) {
+    console.warn("[tasks] syncTaskReminder falhou (não-fatal):", err);
+    return { scheduled: false, reason: "error" };
+  }
+}
+
+/** Cancela o lembrete pendente da task (fail-soft). */
+async function dropTaskReminder(ghlTaskId: string): Promise<void> {
+  try {
+    const { cancelTaskReminder } = await import("@/lib/account-assistant/proactive/task-reminders");
+    await cancelTaskReminder(ghlTaskId);
+  } catch (err) {
+    console.warn("[tasks] dropTaskReminder falhou (não-fatal):", err);
+  }
+}
 
 const createTask: ToolEntry = {
   def: {
@@ -24,7 +66,8 @@ const createTask: ToolEntry = {
       "  - 'self' / 'me' / 'eu' → rep ativo (default, redundante)\n" +
       "  - ghl_user_id válido (~20 chars alfanuméricos) → atribui a esse user\n" +
       "Se rep falar nome ('cria task pro João'), chame `list_users` ANTES pra resolver o ghl_user_id correto. NUNCA invente ID.\n\n" +
-      "TASKS FUTURAS/RECORRENTES: pra 'agenda 3 tasks pro João amanhã 9h/14h/18h', faça 3 chamadas separadas com mesmo `contact_id` + `assigned_to` + `due_at` diferentes. O Spark Leads aceita dueDate futuro nativamente — não precisa de cron separado.",
+      "TASKS FUTURAS/RECORRENTES: pra 'agenda 3 tasks pro João amanhã 9h/14h/18h', faça 3 chamadas separadas com mesmo `contact_id` + `assigned_to` + `due_at` diferentes. O Spark Leads aceita dueDate futuro nativamente — não precisa de cron separado.\n\n" +
+      "LEMBRETE (H63): a task ganha lembrete automático ~15min ANTES do vencimento — o resultado traz `reminder.scheduled` e `reminder.fire_at`. Narre a partir DELES: se scheduled=true, diga que o lembrete vem ~15min antes (não invente outro horário); se scheduled=false, NÃO prometa lembrete (diga só que a task foi criada no Spark Leads). Se o rep quer ser lembrado num HORÁRIO específico diferente, chame TAMBÉM schedule_reminder.",
     risk: "medium",
     parameters: {
       type: "object",
@@ -67,12 +110,23 @@ const createTask: ToolEntry = {
         completed: false, // GHL exige campo explícito
         ...(assignedTo ? { assignedTo } : {}),
       });
+      // H63: lembrete inline (não depende do webhook TASKCREATE — ver header).
+      const reminder = res.id
+        ? await syncTaskReminder(ctx, {
+            id: res.id,
+            title,
+            dueAt: isoDueAt,
+            assignedTo: assignedTo || null,
+            contactId,
+          })
+        : { scheduled: false, reason: "no_task_id" };
       return {
         status: "ok",
         data: {
           task_id: res.id,
           due_at: isoDueAt,
           assigned_to: assignedTo || null,
+          reminder,
         },
       };
     } catch (err) {
@@ -171,7 +225,26 @@ const updateTask: ToolEntry = {
 
     try {
       await updateTaskOnContact(ctx.ghlClient, contactId, taskId, body);
-      return { status: "ok", data: { task_id: taskId, updated: Object.keys(body) } };
+      // H63: mudou due/assignee → reagenda o lembrete com o estado REAL da task
+      // (1 GET; scheduleTaskReminder cancela o pendente antigo — idempotente).
+      let reminder: { scheduled: boolean; fire_at?: string; reason?: string } | undefined;
+      if (body.dueDate || body.assignedTo) {
+        try {
+          const fresh = await getTaskOnContact(ctx.ghlClient, contactId, taskId);
+          if (fresh.task && !fresh.task.completed) {
+            reminder = await syncTaskReminder(ctx, {
+              id: taskId,
+              title: fresh.task.title ?? null,
+              dueAt: fresh.task.dueDate ?? null,
+              assignedTo: fresh.task.assignedTo ?? null,
+              contactId,
+            });
+          }
+        } catch (reminderErr) {
+          console.warn("[tasks] reagendamento de lembrete pós-update falhou (não-fatal):", reminderErr);
+        }
+      }
+      return { status: "ok", data: { task_id: taskId, updated: Object.keys(body), ...(reminder ? { reminder } : {}) } };
     } catch (err) {
       return ghlErrorToResult(err, "edição de task");
     }
@@ -202,6 +275,26 @@ const completeTask: ToolEntry = {
 
     try {
       await completeTaskOnContact(ctx.ghlClient, contactId, taskId, completed);
+      // H63: concluiu → o lembrete pendente morre junto (senão o bot lembra de
+      // task já feita). Desmarcou → reagenda com o estado real.
+      if (completed) {
+        await dropTaskReminder(taskId);
+      } else {
+        try {
+          const fresh = await getTaskOnContact(ctx.ghlClient, contactId, taskId);
+          if (fresh.task) {
+            await syncTaskReminder(ctx, {
+              id: taskId,
+              title: fresh.task.title ?? null,
+              dueAt: fresh.task.dueDate ?? null,
+              assignedTo: fresh.task.assignedTo ?? null,
+              contactId,
+            });
+          }
+        } catch (reminderErr) {
+          console.warn("[tasks] reagendamento pós-desmarcar falhou (não-fatal):", reminderErr);
+        }
+      }
       return { status: "ok", data: { task_id: taskId, completed } };
     } catch (err) {
       return ghlErrorToResult(err, "marcação de task como completa");
@@ -231,6 +324,8 @@ const deleteTask: ToolEntry = {
 
     try {
       await deleteTaskOnContact(ctx.ghlClient, contactId, taskId);
+      // H63: task apagada → lembrete pendente morre junto.
+      await dropTaskReminder(taskId);
       return { status: "ok", data: { deleted: taskId } };
     } catch (err) {
       return ghlErrorToResult(err, "deleção de task");
