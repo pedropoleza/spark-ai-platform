@@ -163,7 +163,9 @@ export async function resolveCalendarDefaultLocation(
  * Cura uma reunião que ficou SEM local (nasceu antes do H65, ou veio de um
  * update que não regenera). Best-effort e silenciosa: só age quando o
  * `address` está vazio, e nunca sobrescreve um local já preenchido (o rep
- * pode ter editado à mão). `toNotify:false` → não dispara automação.
+ * pode ter editado à mão). `toNotify:false` segura as automações NO UPDATE
+ * (validado em prod 04/08: as reuniões curadas não geraram mensagem) — o lead
+ * não recebe uma segunda confirmação por causa da cura.
  */
 export async function healMissingMeetingLocation(
   client: GHLClient,

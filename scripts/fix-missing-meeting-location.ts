@@ -7,9 +7,12 @@
  * confirmação com "Local do nosso encontro:" em branco. O fix no código só vale
  * pras próximas; este script conserta as que já estão marcadas.
  *
- * Só mexe em reunião FUTURA e SEM local. Nunca sobrescreve local preenchido
- * (o rep pode ter editado à mão) e usa `toNotify:false` — nenhuma automação
- * dispara, ninguém recebe mensagem.
+ * Só mexe em reunião FUTURA e SEM local, e só por UPDATE — nunca cria nem
+ * recria nada. Nunca sobrescreve local preenchido (o rep pode ter editado à
+ * mão). O `toNotify:false` segura as automações no update: validado em prod
+ * 04/08 — as 2 reuniões curadas no Liberty não geraram nenhuma mensagem pros
+ * contatos. (No CREATE o mesmo flag NÃO segura o workflow de confirmação
+ * desta conta; por isso a cura é sempre update.)
  *
  *   npx tsx -r tsconfig-paths/register scripts/fix-missing-meeting-location.ts <locationId>
  *   npx tsx -r tsconfig-paths/register scripts/fix-missing-meeting-location.ts <locationId> --apply

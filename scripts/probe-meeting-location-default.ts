@@ -17,8 +17,13 @@
  *   overrideLocationConfig → "false se só meetingLocationId; true se só meetingLocationType"
  * Ou seja: NÃO mandar nada = usar o default do calendário.
  *
- * Este script cria 1 appointment por variante com `toNotify:false` (automações
- * NÃO rodam — ninguém recebe mensagem), lê o `address` resultante e DELETA.
+ * Este script cria 1 appointment por variante, lê o `address` resultante e
+ * DELETA.
+ *
+ * ⚠️ USE SÓ COM CONTATO DE TESTE: o `toNotify:false` NÃO segurou o workflow de
+ * confirmação desta conta — as criações dispararam a mensagem "Local do nosso
+ * encontro" pro contato (validado na rodada de 04/08). No UPDATE ele segura
+ * (a cliente real cujo appointment foi curado não recebeu nada).
  *
  *   npx tsx -r tsconfig-paths/register scripts/test-meeting-location-default.ts
  */
