@@ -728,6 +728,8 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
     // (stripOptionEcho) pra não conferir o bot contra ele mesmo, e a regra de
     // "um único dia-da-semana citado" descarta janela ambígua.
     repMessage: [...recentUserMessages, userText].map(stripOptionEcho).join("\n"),
+    // Mesmo fuso que alimenta a tabela [CALENDÁRIO REAL] do prompt.
+    repTz: timezone,
   });
 
   // P2 (2026-05-20): usa runSparkbotTurn (helper compartilhado com dispatcher).

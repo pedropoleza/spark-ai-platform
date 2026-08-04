@@ -8,7 +8,7 @@
  */
 
 import type { ToolContext, ToolEntry } from "./types";
-import { validateGhlId, validateIso8601, getRepGhlUserId, repIsAdmin, ghlErrorToResult, resolveAssignedUserId } from "./types";
+import { validateGhlId, validateIso8601, getRepGhlUserId, getRepTimezone, repIsAdmin, ghlErrorToResult, resolveAssignedUserId } from "./types";
 import {
   listCalendars as ghlListCalendars,
   getCalendarFreeSlots,
@@ -32,7 +32,7 @@ import {
   checkWeekdayMatchesDate,
   checkDayOfMonthMatches,
   formatWeekdayDate,
-  inferExpectedWeekday,
+  resolveExpectedWeekday as resolveExpectedWd,
 } from "../weekday-guard";
 
 /**
@@ -57,27 +57,9 @@ const FORCE_SLOT_LEARN_THRESHOLD = 5;
 // H50 (2026-07-15): fuso do rep pra a guarda weekday↔data e o rótulo do confirm.
 // Mesmo default do resto do agendamento (ctx.rep.timezone || America/New_York).
 function getRepTz(ctx: ToolContext): string {
-  return ctx.rep.timezone || "America/New_York";
+  return getRepTimezone(ctx);
 }
 
-/**
- * Dia-da-semana esperado pra esta operação: o que o LLM passou em
- * `expected_weekday` ou, se ele esqueceu, o que o REP nomeou na fala do turno.
- *
- * H67 (2026-08-04): a trava do H50 era opt-in do modelo — e ele esquece. Caso
- * Sidney (14/07): rep pediu "quinta-feira às 10h", o LLM mandou 17/07 (sexta em
- * 2026; quinta no calendário de 2025, de onde ele tira de memória) SEM
- * `expected_weekday`, e a reunião nasceu no dia errado. Agora o servidor infere.
- */
-function resolveExpectedWeekday(
-  ctx: ToolContext,
-  passado: unknown,
-): { wd: string; inferido: boolean } | null {
-  const s = typeof passado === "string" ? passado.trim() : "";
-  if (s) return { wd: s, inferido: false };
-  const inferido = inferExpectedWeekday(ctx.repMessage);
-  return inferido ? { wd: inferido, inferido: true } : null;
-}
 
 /**
  * Resolve qual calendário usar pra agendar SEM perguntar (parte code-side da
@@ -1164,7 +1146,7 @@ const createAppointment: ToolEntry = {
     // H50 (2026-07-15, caso Caua): guarda determinística weekday↔data. O LLM
     // calculava a data do dia nomeado ("segunda") e errava (marcou no dia
     // errado, off-by-one). Aqui o servidor confere e devolve a correção exata.
-    const expectedWd = resolveExpectedWeekday(ctx, args.expected_weekday);
+    const expectedWd = resolveExpectedWd(args.expected_weekday, ctx.repMessage);
     if (expectedWd) {
       const wdCheck = checkWeekdayMatchesDate(
         String(args.start_time), expectedWd.wd, getRepTz(ctx), new Date(), expectedWd.inferido,
@@ -1554,7 +1536,7 @@ const blockCalendarSlot: ToolEntry = {
     if (endInvalid) return endInvalid;
 
     // H50 (2026-07-15): guarda weekday↔data (mesma do create_appointment).
-    const expectedWdBlock = resolveExpectedWeekday(ctx, args.expected_weekday);
+    const expectedWdBlock = resolveExpectedWd(args.expected_weekday, ctx.repMessage);
     if (expectedWdBlock) {
       const wdCheck = checkWeekdayMatchesDate(
         String(args.start_time), expectedWdBlock.wd, getRepTz(ctx), new Date(), expectedWdBlock.inferido,
@@ -1682,7 +1664,7 @@ const updateAppointment: ToolEntry = {
       const startInvalid = validateIso8601(String(args.start_time), "start_time");
       if (startInvalid) return startInvalid;
       // H50 (2026-07-15): guarda weekday↔data no reagendamento.
-      const expectedWdUpd = resolveExpectedWeekday(ctx, args.expected_weekday);
+      const expectedWdUpd = resolveExpectedWd(args.expected_weekday, ctx.repMessage);
       if (expectedWdUpd) {
         const wdCheck = checkWeekdayMatchesDate(
           String(args.start_time), expectedWdUpd.wd, getRepTz(ctx), new Date(), expectedWdUpd.inferido,
@@ -2065,7 +2047,7 @@ const createAppointmentsBatch: ToolEntry = {
       }
       // H50 (2026-07-15): guarda weekday↔data por item (crítico na criação em
       // massa a partir de template — 1 data errada iria pra vários contatos).
-      const expectedWdItem = resolveExpectedWeekday(ctx, it.expected_weekday);
+      const expectedWdItem = resolveExpectedWd(it.expected_weekday, ctx.repMessage);
       if (expectedWdItem) {
         const wdCheck = checkWeekdayMatchesDate(
           startStr, expectedWdItem.wd, getRepTz(ctx), new Date(), expectedWdItem.inferido,

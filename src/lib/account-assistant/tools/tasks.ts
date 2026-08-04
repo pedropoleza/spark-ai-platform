@@ -15,7 +15,8 @@
  */
 
 import type { ToolEntry } from "./types";
-import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult, resolveAssignedUserId } from "./types";
+import { validateGhlId, validateIso8601, getRepGhlUserId, getRepTimezone, ghlErrorToResult, resolveAssignedUserId } from "./types";
+import { guardDateAgainstRep } from "../weekday-guard";
 import {
   createTaskOnContact,
   getTaskOnContact,
@@ -75,6 +76,7 @@ const createTask: ToolEntry = {
         contact_id: { type: "string" },
         title: { type: "string" },
         due_at: { type: "string", description: "ISO 8601 com offset (ex: 2026-04-28T10:00:00-05:00) ou Z." },
+        expected_weekday: { type: "string", description: "OPCIONAL mas IMPORTANTE: o dia-da-semana que o REP falou ('quinta-feira', 'segunda'), com a palavra dele. O servidor confere se a data que você mandou cai mesmo nesse dia. Copie o par dia/data do bloco [CALENDÁRIO REAL] — não calcule." },
         body: { type: "string", description: "Descrição opcional." },
         assigned_to: {
           type: "string",
@@ -96,6 +98,15 @@ const createTask: ToolEntry = {
     const dateInvalid = validateIso8601(dueAt, "due_at");
     if (dateInvalid) return dateInvalid;
     const isoDueAt = new Date(dueAt).toISOString();
+    // H68 (onda 0): a task vira lembrete inline (H63) — data errada aqui vira
+    // cobrança no dia errado.
+    const guardT = guardDateAgainstRep({
+      iso: isoDueAt,
+      expectedRaw: args.expected_weekday,
+      repMessage: ctx.repMessage,
+      tz: getRepTimezone(ctx),
+    });
+    if (!guardT.ok) return { status: "error", message: guardT.message, retryable: true };
 
     // Resolve assigned_to: 'self'/'me'/'eu' → rep, UUID → as-is, vazio → rep default
     const resolved = resolveAssignedUserId(ctx, args.assigned_to);
@@ -191,6 +202,7 @@ const updateTask: ToolEntry = {
         title: { type: "string" },
         body: { type: "string" },
         due_at: { type: "string", description: "ISO 8601" },
+        expected_weekday: { type: "string", description: "OPCIONAL mas IMPORTANTE: o dia-da-semana que o REP falou ('quinta-feira', 'segunda'), com a palavra dele. O servidor confere se a data que você mandou cai mesmo nesse dia. Copie o par dia/data do bloco [CALENDÁRIO REAL] — não calcule." },
         assigned_to: {
           type: "string",
           description:
@@ -213,6 +225,14 @@ const updateTask: ToolEntry = {
       const dateInvalid = validateIso8601(String(args.due_at), "due_at");
       if (dateInvalid) return dateInvalid;
       body.dueDate = new Date(String(args.due_at)).toISOString();
+      // H68 (onda 0): mesma trava do create — reagendar pro dia errado é igual.
+      const guardU = guardDateAgainstRep({
+        iso: String(body.dueDate),
+        expectedRaw: args.expected_weekday,
+        repMessage: ctx.repMessage,
+        tz: getRepTimezone(ctx),
+      });
+      if (!guardU.ok) return { status: "error", message: guardU.message, retryable: true };
     }
     if (args.assigned_to !== undefined) {
       const resolved = resolveAssignedUserId(ctx, args.assigned_to);

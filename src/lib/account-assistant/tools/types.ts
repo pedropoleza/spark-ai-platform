@@ -48,6 +48,13 @@ export interface ToolContext {
    * boa vontade do modelo. Ver inferExpectedWeekday em weekday-guard.ts.
    */
   repMessage?: string | null;
+  /**
+   * Fuso EFETIVO do rep, resolvido igual ao do prompt
+   * (rep.timezone || location.timezone || NY). H68: sem isso a tabela
+   * [CALENDÁRIO REAL] e a trava de data podiam discordar quando o rep não tem
+   * fuso próprio — a tabela caía no da location e a trava, em Nova York.
+   */
+  repTz?: string | null;
 }
 
 export type ToolHandler = (ctx: ToolContext, args: Record<string, unknown>) => Promise<ToolResult>;
@@ -99,6 +106,12 @@ export function validateIso8601(value: string, fieldName: string): ToolResult | 
     };
   }
   return null;
+}
+
+/** Fuso do rep pra QUALQUER tool que grave ou rotule horário (H68). Mesma
+ *  resolução do prompt, pra tabela de calendário e trava não divergirem. */
+export function getRepTimezone(ctx: ToolContext): string {
+  return ctx.repTz || ctx.rep.timezone || "America/New_York";
 }
 
 /** Helper pra extrair o ghl_user_id do rep na location ativa. */

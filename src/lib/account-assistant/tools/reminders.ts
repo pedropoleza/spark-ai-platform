@@ -15,7 +15,8 @@
  */
 
 import type { ToolEntry } from "./types";
-import { validateGhlId, validateIso8601 } from "./types";
+import { validateGhlId, validateIso8601, getRepTimezone } from "./types";
+import { guardDateAgainstRep } from "../weekday-guard";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizeForRepeat } from "../core/repeat-guard";
 
@@ -55,6 +56,10 @@ const scheduleReminder: ToolEntry = {
           description:
             "Onde entregar o lembrete. 'whatsapp' = WhatsApp do rep (default p/ requests vindos do WhatsApp). 'web_ui' = só no painel do Spark Leads (computador). 'both' = nos dois lugares. Pra requests vindos do Web UI, PERGUNTE ao rep antes de chamar.",
         },
+        expected_weekday: {
+          type: "string",
+          description: "OPCIONAL mas IMPORTANTE: o dia-da-semana que o REP falou ('quinta-feira', 'segunda'), com a palavra dele. O servidor confere se a data que você mandou cai mesmo nesse dia e te devolve a correção se não cair. Copie o par dia/data do bloco [CALENDÁRIO REAL] — não calcule. Omita só quando o rep der data explícita ('20/07') ou 'hoje/amanhã'.",
+        },
       },
       required: ["message", "remind_at"],
     },
@@ -73,6 +78,16 @@ const scheduleReminder: ToolEntry = {
         retryable: false,
       };
     }
+    // H68 (onda 0): a trava do H50 nunca chegou aqui. Rep pediu "Sexta feira
+    // 1pm" e o lembrete tocou no SÁBADO 18/07 (task ceba8e19).
+    const guardR = guardDateAgainstRep({
+      iso: isoRemind,
+      expectedRaw: args.expected_weekday,
+      repMessage: ctx.repMessage,
+      tz: getRepTimezone(ctx),
+    });
+    if (!guardR.ok) return { status: "error", message: guardR.message, retryable: true };
+
     const recurrence = args.recurrence ? String(args.recurrence).trim() : null;
     if (recurrence && !/^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/.test(recurrence)) {
       return {

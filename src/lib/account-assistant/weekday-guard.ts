@@ -265,6 +265,63 @@ export interface WeekdayGuardResult {
 }
 
 /**
+ * Dia-da-semana esperado: o que o LLM passou ou, se esqueceu, o que o rep
+ * nomeou na fala. Puro (sem ToolContext) pra poder ser usado por qualquer tool.
+ */
+export function resolveExpectedWeekday(
+  passado: unknown,
+  repMessage: string | null | undefined,
+): { wd: string; inferido: boolean } | null {
+  const s = typeof passado === "string" ? passado.trim() : "";
+  if (s) return { wd: s, inferido: false };
+  const inferido = inferExpectedWeekday(repMessage);
+  return inferido ? { wd: inferido, inferido: true } : null;
+}
+
+/**
+ * Trava de data para QUALQUER tool que grave um horário — não só as de
+ * calendário (H68, onda 0).
+ *
+ * O H50 instrumentou só as 4 tools de agendamento. `schedule_reminder`,
+ * `schedule_message_to_contact`, `create_task`/`update_task` e o reagendamento
+ * de follow-up seguiam recebendo o ISO que o LLM calculou de cabeça, sem
+ * nenhuma conferência. O contraste isola a causa: no caminho de calendário, pós
+ * H50, ZERO divergências dia↔data; nesse outro caminho, 4 execuções no dia
+ * errado em 21 dias — e **3 delas eram mensagem entregue ao LEAD**:
+ *   · rep pediu "terça 9h"        → disparou quarta 22/07 (Paula Gomes)
+ *   · rep pediu "terça 11h"       → disparou quarta 22/07 (Niuzete)
+ *   · rep pediu "quarta ao meio-dia" → disparou quinta 23/07 (Paula Gomes)
+ *   · rep digitou "Sexta feira 1pm" → lembrete tocou SÁBADO 18/07
+ * Pior que reunião no dia errado: aqui o cliente recebe, e o rep não fica
+ * sabendo — ele leu "terça 22/07" na confirmação e ficou satisfeito.
+ *
+ * Devolve também o RÓTULO determinístico pra tool narrar a partir dele (mesma
+ * escola do `booked_label` do H50) em vez de o LLM reescrever a data.
+ */
+export function guardDateAgainstRep(input: {
+  iso: string;
+  /** `expected_weekday` que o LLM passou, se passou. */
+  expectedRaw?: unknown;
+  /** Fala recente do rep (já sem o eco do menu). */
+  repMessage?: string | null;
+  tz: string;
+  now?: Date;
+}): { ok: true; label: string | null } | { ok: false; message: string } {
+  const { iso, expectedRaw, repMessage, tz } = input;
+  const now = input.now ?? new Date();
+
+  const esperado = resolveExpectedWeekday(expectedRaw, repMessage);
+  if (esperado) {
+    const r = checkWeekdayMatchesDate(iso, esperado.wd, tz, now, esperado.inferido);
+    if (!r.ok) return { ok: false, message: r.message! };
+  }
+  const dom = checkDayOfMonthMatches(iso, repMessage, tz);
+  if (!dom.ok) return { ok: false, message: dom.message! };
+
+  return { ok: true, label: formatWeekdayDate(iso, tz) };
+}
+
+/**
  * Cruza o dia-da-semana que o REP nomeou com o weekday REAL de `startIso` no
  * fuso do rep. `expectedRaw` = a palavra que o rep falou ("segunda-feira").
  *

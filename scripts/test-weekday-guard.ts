@@ -14,6 +14,8 @@ import {
   inferExpectedWeekday,
   checkDayOfMonthMatches,
   stripOptionEcho,
+  guardDateAgainstRep,
+  resolveExpectedWeekday,
 } from "../src/lib/account-assistant/weekday-guard";
 
 const TZ = "America/New_York";
@@ -229,6 +231,72 @@ console.log("\n12. correção do modo inferido é mais humilde que a do modo exp
     "e a saída funciona de fato: expected_weekday = sexta na data de sexta passa",
     checkWeekdayMatchesDate("2026-07-17T10:00:00-04:00", "sexta", TZ, NOW, false).ok === true,
   );
+}
+
+
+// ── H68 onda 0: a trava agora vale pras tools que NÃO são de calendário ──────
+// Contraste que isolou o buraco: no caminho de calendário (guardado pelo H50),
+// ZERO divergências dia↔data depois do deploy; no caminho de lembrete/mensagem/
+// task, 4 execuções no dia errado em 21 dias — 3 delas mensagem ENTREGUE AO
+// LEAD. Casos reais reproduzidos abaixo (ids das linhas em
+// assistant_scheduled_tasks).
+console.log("\n13. guardDateAgainstRep — lembrete, mensagem agendada e task");
+const TZ_NY = "America/New_York";
+{
+  // ceba8e19: rep digitou "Sexta feira 1pm"; o lembrete tocou SÁBADO 18/07.
+  const r = guardDateAgainstRep({
+    iso: "2026-07-18T13:00:00-04:00",
+    repMessage: "Sexta feira 1pm",
+    tz: TZ_NY,
+    now: new Date("2026-07-15T19:11:00Z"),
+  });
+  ok("caso Roger: 'Sexta feira 1pm' gravado no sábado 18/07 → REJEITA", r.ok === false);
+
+  // efff4ce2: rep pediu terça 9h; a mensagem saiu quarta 22/07 pra Paula Gomes.
+  const p1 = guardDateAgainstRep({
+    iso: "2026-07-22T09:00:00-04:00",
+    repMessage: "manda uma mensagem pra Paula na terça que vem 9h da manhã",
+    tz: TZ_NY,
+    now: new Date("2026-07-16T15:00:00Z"),
+  });
+  ok("caso Paula Gomes: 'terça' gravado na quarta 22/07 → REJEITA", p1.ok === false);
+
+  // e60a9ab2: "quarta-feira que vem ao meio dia" → saiu quinta 23/07.
+  const p2 = guardDateAgainstRep({
+    iso: "2026-07-23T12:00:00-04:00",
+    repMessage: "agenda pra quarta-feira que vem ao meio dia",
+    tz: TZ_NY,
+    now: new Date("2026-07-16T15:00:00Z"),
+  });
+  ok("caso Paula 2: 'quarta' gravado na quinta 23/07 → REJEITA", p2.ok === false);
+
+  // A data CERTA do mesmo pedido passa e volta com rótulo determinístico.
+  const okCase = guardDateAgainstRep({
+    iso: "2026-07-22T12:00:00-04:00",
+    repMessage: "agenda pra quarta-feira que vem ao meio dia",
+    tz: TZ_NY,
+    now: new Date("2026-07-16T15:00:00Z"),
+  });
+  ok("a data certa (quarta 22/07) passa", okCase.ok === true);
+  ok(
+    "e devolve rótulo determinístico pro bot narrar (não recalcular)",
+    okCase.ok === true && okCase.label === "quarta-feira, 22/07/2026 às 12:00",
+  );
+
+  // Sem dia nomeado na fala: não opina (mantém o comportamento de hoje).
+  const neutro = guardDateAgainstRep({
+    iso: "2026-07-23T12:00:00-04:00",
+    repMessage: "manda amanhã de manhã",
+    tz: TZ_NY,
+    now: new Date("2026-07-16T15:00:00Z"),
+  });
+  ok("fala sem dia-da-semana → não bloqueia", neutro.ok === true);
+
+  // expected_weekday explícito do LLM tem precedência sobre a inferência.
+  const exp = resolveExpectedWeekday("segunda-feira", "o rep falou quinta em outro assunto");
+  ok("explícito vence a inferência", exp?.wd === "segunda-feira" && exp?.inferido === false);
+  const inf = resolveExpectedWeekday(undefined, "marca na quinta");
+  ok("sem explícito, infere e marca como inferido", inf?.wd === "quinta" && inf?.inferido === true);
 }
 
 console.log(`\n${pass}/${pass + fail} passaram${fail ? ` — ${fail} FALHARAM` : " ✅"}`);

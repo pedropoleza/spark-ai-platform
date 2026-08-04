@@ -7,7 +7,8 @@
  */
 
 import type { ToolEntry } from "./types";
-import { validateGhlId, validateIso8601, getRepGhlUserId, ghlErrorToResult } from "./types";
+import { validateGhlId, validateIso8601, getRepGhlUserId, getRepTimezone, ghlErrorToResult } from "./types";
+import { guardDateAgainstRep } from "../weekday-guard";
 import {
   ensureContactAssignedTo,
   searchConversationsList,
@@ -294,6 +295,10 @@ const scheduleMessageToContact: ToolEntry = {
           type: "string",
           description: "OPCIONAL. Subject (apenas pra Email).",
         },
+        expected_weekday: {
+          type: "string",
+          description: "OPCIONAL mas IMPORTANTE: o dia-da-semana que o REP falou ('quinta-feira', 'segunda'), com a palavra dele. O servidor confere se a data que você mandou cai mesmo nesse dia e te devolve a correção se não cair. Copie o par dia/data do bloco [CALENDÁRIO REAL] — não calcule. Omita só quando o rep der data explícita ('20/07') ou 'hoje/amanhã'.",
+        },
       },
       required: ["contact_id", "message", "send_at"],
     },
@@ -326,6 +331,17 @@ const scheduleMessageToContact: ToolEntry = {
         retryable: false,
       };
     }
+
+    // H68 (onda 0) — o pior dos casos: aqui quem recebe no dia errado é o
+    // CLIENTE. Provado: "terça 9h" saiu quarta 22/07 (Paula Gomes), "terça 11h"
+    // saiu quarta 22/07 (Niuzete), "quarta ao meio-dia" saiu quinta 23/07.
+    const guardS = guardDateAgainstRep({
+      iso: isoSend,
+      expectedRaw: args.expected_weekday,
+      repMessage: ctx.repMessage,
+      tz: getRepTimezone(ctx),
+    });
+    if (!guardS.ok) return { status: "error", message: guardS.message, retryable: true };
 
     const recurrence = args.recurrence ? String(args.recurrence).trim() : null;
     if (recurrence && !/^\S+\s+\S+\s+\S+\s+\S+\s+\S+$/.test(recurrence)) {

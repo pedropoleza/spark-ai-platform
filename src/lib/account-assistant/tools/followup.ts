@@ -16,7 +16,8 @@
  */
 
 import type { ToolEntry } from "./types";
-import { validateIso8601 } from "./types";
+import { validateIso8601, getRepTimezone } from "./types";
+import { guardDateAgainstRep } from "../weekday-guard";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import {
@@ -304,6 +305,13 @@ const editFollowupTool: ToolEntry = {
       const dateInvalid = validateIso8601(edit.new_scheduled_at, `horário da msg ${edit.position}`);
       if (dateInvalid) return dateInvalid;
       const iso = new Date(edit.new_scheduled_at).toISOString();
+      // H68 (onda 0): reagendar toque de follow-up pro dia errado sai pro LEAD.
+      const guardF = guardDateAgainstRep({
+        iso,
+        repMessage: ctx.repMessage,
+        tz: getRepTimezone(ctx),
+      });
+      if (!guardF.ok) return { status: "error", message: guardF.message, retryable: true };
       if (new Date(iso).getTime() < Date.now() - 60 * 1000) {
         return {
           status: "error",

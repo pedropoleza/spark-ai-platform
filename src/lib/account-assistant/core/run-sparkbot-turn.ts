@@ -78,6 +78,8 @@ export function buildToolCtx(params: {
   attachment?: RepInput | null;
   /** H67: fala do rep neste turno — a trava weekday↔data infere dela. */
   repMessage?: string | null;
+  /** H68: fuso efetivo do rep (o mesmo do prompt). */
+  repTz?: string | null;
 }): ToolContext {
   return {
     rep: params.rep,
@@ -89,6 +91,7 @@ export function buildToolCtx(params: {
     enabledKbs: params.enabledKbs,
     attachment: params.attachment ?? null,
     repMessage: params.repMessage ?? null,
+    repTz: params.repTz ?? null,
   };
 }
 
