@@ -2,6 +2,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveMeetingLocation } from "@/lib/queue/meeting-links";
+import { healMissingMeetingLocation } from "@/lib/queue/meeting-location";
 import { sanitizeOutbound, resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { splitLeadOutbound } from "@/lib/ai/message-splitter";
 import {
@@ -432,8 +433,9 @@ async function executeAction(
         }
       }
       // Link da reunião por calendário (caso Marina 2026-06-28): quando o calendário
-      // tem link configurado, injeta address+override; senão null = mantém o default
-      // histórico ("phone"), sem afetar outros agentes lead-facing.
+      // tem link FIXO mapeado, injeta address+override. Sem mapeamento = null e
+      // NADA de campo de local vai no payload — é assim que o Spark Leads aplica o
+      // default do calendário (H65, ver meeting-location.ts).
       const meetingLoc = resolveMeetingLocation(bookCalendarId);
       if (bookCalendarId && action.start_time) {
         const existingApptForBook = await findExistingAppointment(client, ctx.contactId, ctx.locationId);
@@ -447,6 +449,14 @@ async function executeAction(
               title: action.title || existingApptForBook.title,
               ...(meetingLoc ?? {}),
             });
+            // H65: diferente do create, o UPDATE do Spark Leads NUNCA regenera o
+            // local — reunião que nasceu vazia (antes deste fix) continuaria sem
+            // link depois de remarcada. Cura best-effort: só age se o address
+            // está vazio e só com a config REAL do calendário. Nunca sobrescreve
+            // local preenchido (o rep pode ter editado à mão).
+            if (!meetingLoc) {
+              await healMissingMeetingLocation(client, existingApptForBook.id, bookCalendarId);
+            }
             await tagBookedByAi(client, ctx.contactId); // tag interna (ver nota abaixo)
             // MC-10 (review Marcia 2026-07-28): o log genérico ({...action}) não
             // distinguia CREATE de RESCHEDULE — 2 "bookings" em 27s pareciam
@@ -470,7 +480,13 @@ async function executeAction(
             contactId: ctx.contactId,
             startTime: action.start_time,
             title: action.title || "Reunião agendada",
-            ...(meetingLoc ?? { meetingLocationType: "phone" }),
+            // H65 (caso Liberty Financial 2026-08-04): aqui ia
+            // `meetingLocationType:"phone"` fixo — e isso APAGAVA o local default
+            // do calendário (Google Meet/Zoom configurado no membro do time). A
+            // reunião nascia com address vazio e a automação de confirmação
+            // mandava "Local do nosso encontro:" em branco pro lead. Não mandar
+            // campo nenhum é o que faz o Spark Leads resolver o default.
+            ...(meetingLoc ?? {}),
           });
           // Tag interna "agendado pela ia" (Pedro 2026-06-22): rastreia no CRM que
           // a IA agendou, SEM poluir o título/convite da reunião. Non-blocking.
@@ -550,7 +566,8 @@ async function executeAction(
             contactId: ctx.contactId,
             startTime: action.start_time,
             title: targetTitle || "Reunião reagendada",
-            ...(resolveMeetingLocation(ctx.calendarId || targetCalId) ?? { meetingLocationType: "phone" }),
+            // H65: sem campo de local = Spark Leads aplica o default do calendário.
+            ...(resolveMeetingLocation(ctx.calendarId || targetCalId) ?? {}),
           });
         } else {
           // Ultra-review 2026-08-03: sem appointment existente E sem calendário
@@ -568,7 +585,8 @@ async function executeAction(
             contactId: ctx.contactId,
             startTime: action.start_time,
             title: "Reuniao agendada via AI",
-            ...(resolveMeetingLocation(rescheduleCalId) ?? { meetingLocationType: "phone" }),
+            // H65: sem campo de local = Spark Leads aplica o default do calendário.
+            ...(resolveMeetingLocation(rescheduleCalId) ?? {}),
           });
         }
       }

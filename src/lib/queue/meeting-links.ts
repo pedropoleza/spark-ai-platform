@@ -27,9 +27,11 @@ export type MeetingLocation = {
 
 /**
  * Resolve o local da reunião pro `book_appointment`/`reschedule_appointment`.
- * Retorna null quando o calendário não tem link configurado — nesse caso o caller
- * mantém o default histórico (`meetingLocationType:"phone"`), sem mudar nada pros
- * demais agentes.
+ * Retorna null quando o calendário não tem link fixo mapeado — nesse caso o
+ * caller NÃO manda campo de local nenhum, que é como o Spark Leads aplica o
+ * default do calendário (H65, 2026-08-04; ver `meeting-location.ts`). Até
+ * então o caller mandava `meetingLocationType:"phone"` fixo, que apagava o
+ * default e deixava a reunião sem link.
  */
 export function resolveMeetingLocation(calendarId: string | undefined): MeetingLocation | null {
   if (!calendarId) return null;
