@@ -10,6 +10,7 @@
 import { GHLClient } from "@/lib/ghl/client";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { stripOptionEcho } from "./weekday-guard";
 // F3/F10 (contact-resolution 2026-06): "contato em foco" + buffer de contatos recentes.
 import {
   getActiveContactContext,
@@ -718,9 +719,15 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
         ? input.input
         : null,
     enabledKbs: input.config.enabled_kbs,
-    // H67: a fala do rep deste turno alimenta a inferência do dia-da-semana na
-    // trava de agendamento (quando o LLM esquece de passar expected_weekday).
-    repMessage: userText,
+    // H68: alimenta a trava weekday↔data. NÃO basta a fala deste turno: no
+    // fluxo de confirmação o turno do `create_appointment` é o CLIQUE do botão
+    // ("Confirmar ✅"), e o pedido com o dia-da-semana ficou 3-4 mensagens
+    // atrás (medido: das 167 criações de reunião em 30 dias, ZERO tinham o
+    // pedido original na fala do próprio turno). Por isso vai a janela curta
+    // das últimas falas do rep — o eco do menu é removido lá dentro
+    // (stripOptionEcho) pra não conferir o bot contra ele mesmo, e a regra de
+    // "um único dia-da-semana citado" descarta janela ambígua.
+    repMessage: [...recentUserMessages, userText].map(stripOptionEcho).join("\n"),
   });
 
   // P2 (2026-05-20): usa runSparkbotTurn (helper compartilhado com dispatcher).

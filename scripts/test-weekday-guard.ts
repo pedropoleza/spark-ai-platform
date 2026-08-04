@@ -13,6 +13,7 @@ import {
   checkWeekdayMatchesDate,
   inferExpectedWeekday,
   checkDayOfMonthMatches,
+  stripOptionEcho,
 } from "../src/lib/account-assistant/weekday-guard";
 
 const TZ = "America/New_York";
@@ -155,6 +156,80 @@ ok(
   checkDayOfMonthMatches("2026-08-07T03:30:00Z", "marca dia 6 às 23:30", TZ).ok === true,
 );
 ok("fala vazia → não opina", checkDayOfMonthMatches("2026-08-07T17:00:00-04:00", "", TZ).ok === true);
+
+
+// ── H68: o eco do menu não pode virar "fala do rep" ──────────────────────────
+// No fluxo de confirmação, o turno que chama create_appointment é o CLIQUE do
+// botão — e a mensagem persistida embute a pergunta INTEIRA do bot. Sem
+// limpar, a trava conferia o bot contra ele mesmo. (Medido: das 167 criações
+// de reunião em 30 dias, ZERO tinham o pedido original na fala do turno.)
+console.log("\n11. stripOptionEcho + janela de falas (caso Sidney completo)");
+const ECO =
+  'Forçar mesmo assim ✅ — (resposta à pergunta: "O slot das 10:00 AM de quinta 17/07 não tá disponível no calendário Consulta Inicial. O que prefere fazer?")\n[opção escolhida na lista: "Forçar mesmo assim ✅"]';
+ok("tira a pergunta do bot do eco", stripOptionEcho(ECO) === "Forçar mesmo assim ✅");
+ok(
+  "sem limpar, o eco traria a data do PRÓPRIO bot (17/07) como se fosse do rep",
+  /17\/07/.test(ECO) && !/17\/07/.test(stripOptionEcho(ECO)),
+);
+ok(
+  "tira também o bloco de PISTA do contato",
+  stripOptionEcho(
+    'Hugo Idelli Casarotto — (resposta à pergunta: "Qual Hugo?")\n[opção escolhida na lista: "Hugo" — contact_id JED1od7DVcL6TVgxavcm como PISTA: valide com get_contact]',
+  ) === "Hugo Idelli Casarotto",
+);
+ok("texto normal passa intocado", stripOptionEcho("marca quinta às 10") === "marca quinta às 10");
+
+// A janela real do caso Sidney: o pedido com "quinta-feira" está 4 mensagens
+// atrás do turno que criou a reunião.
+const JANELA_SIDNEY = [
+  "Spark, cria uma agenda para mim, com a Eva Aracy, para quinta-feira, às 10 horas da manhã. Reunião inicial, trava a minha agenda nesse horário.",
+  'Criar contato + reunião — (resposta à pergunta: "Não encontrei a Eva Aracy no sistema. Como quer prosseguir?")',
+  "Eva Aracy Brito school Josie \nTel: 857 351 7588 \nE-mail: evareis2004@gmail.com",
+  ECO,
+].map(stripOptionEcho).join("\n");
+ok("na janela limpa sobra UM dia-da-semana: quinta", inferExpectedWeekday(JANELA_SIDNEY) === "quinta");
+ok(
+  "e a trava rejeita o 17/07 que o bot tentou (é sexta)",
+  checkWeekdayMatchesDate("2026-07-17T10:00:00-04:00", inferExpectedWeekday(JANELA_SIDNEY)!, TZ, NOW).ok === false,
+);
+ok(
+  "com a data certa (16/07) passa",
+  checkWeekdayMatchesDate("2026-07-16T10:00:00-04:00", inferExpectedWeekday(JANELA_SIDNEY)!, TZ, NOW).ok === true,
+);
+ok(
+  "janela com DOIS dias-da-semana diferentes → não infere (evita falso-positivo)",
+  inferExpectedWeekday("marca na segunda\nagora quero mudar pra quarta") === null,
+);
+
+
+// ── H68: quando o dia-da-semana foi INFERIDO, a correção não pode ditar data ──
+// Backtest de 30 dias: a inferência barraria 7 agendamentos e, revisando um a
+// um, só ~3 eram erro real — nos outros a janela pegou um dia-da-semana de
+// outro assunto. Mandar "re-chame nessa data" nesses casos empurraria pro dia
+// errado. Então a mensagem do modo inferido oferece a saída explícita.
+console.log("\n12. correção do modo inferido é mais humilde que a do modo explícito");
+{
+  const explicito = checkWeekdayMatchesDate("2026-07-17T10:00:00-04:00", "quinta", TZ, NOW, false);
+  const inferido = checkWeekdayMatchesDate("2026-07-17T10:00:00-04:00", "quinta", TZ, NOW, true);
+  ok("os dois rejeitam", explicito.ok === false && inferido.ok === false);
+  ok(
+    "explícito manda re-chamar na data do dia pedido",
+    (explicito.message || "").includes("re-chame com start_time NESSA data"),
+  );
+  ok(
+    "inferido NÃO manda re-chamar nessa data",
+    !(inferido.message || "").includes("re-chame com start_time NESSA data"),
+  );
+  ok(
+    "inferido oferece a saída: passar expected_weekday explícito",
+    (inferido.message || "").includes("expected_weekday"),
+  );
+  ok("inferido manda olhar a tabela", (inferido.message || "").includes("CALENDÁRIO REAL"));
+  ok(
+    "e a saída funciona de fato: expected_weekday = sexta na data de sexta passa",
+    checkWeekdayMatchesDate("2026-07-17T10:00:00-04:00", "sexta", TZ, NOW, false).ok === true,
+  );
+}
 
 console.log(`\n${pass}/${pass + fail} passaram${fail ? ` — ${fail} FALHARAM` : " ✅"}`);
 process.exit(fail ? 1 : 0);

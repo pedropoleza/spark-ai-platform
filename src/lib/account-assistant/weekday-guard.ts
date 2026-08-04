@@ -163,8 +163,28 @@ export function formatWeekdayDate(iso: string, tz: string): string | null {
  * custa um turno: a tool devolve `retryable` pedindo confirmação da data — nunca
  * cria reunião errada.
  */
+/**
+ * Limpa o ECO do menu interativo da fala do rep.
+ *
+ * Quando o rep clica num botão, a mensagem persistida vira:
+ *   `Confirmar ✅ — (resposta à pergunta: "<a pergunta INTEIRA do bot>")`
+ *   `[opção escolhida na lista: "..."]`
+ * Ou seja: a fala do rep passa a conter o texto do BOT — inclusive o
+ * dia-da-semana e a data que ele propôs. Usar isso como "o que o rep falou"
+ * seria conferir o bot contra ele mesmo. Medido em prod: em 128 dos 167 turnos
+ * de agendamento dos últimos 30 dias havia um dia-da-semana na fala do rep, e
+ * praticamente todos vinham do eco. Aqui fica só o que o rep de fato escolheu.
+ */
+export function stripOptionEcho(text: string): string {
+  return String(text || "")
+    .split(/\s+—\s+\(resposta à pergunta:/)[0]
+    .replace(/\[opção escolhida na lista:[\s\S]*$/i, "")
+    .replace(/\[.*?como PISTA:[\s\S]*?\]/g, "")
+    .trim();
+}
+
 export function inferExpectedWeekday(repMessage: string | null | undefined): string | null {
-  const raw = (repMessage || "").trim();
+  const raw = stripOptionEcho(repMessage || "");
   if (!raw) return null;
   const s = deburr(raw.toLowerCase());
   // Data explícita na fala → o rep já disse o dia; não infere.
@@ -209,7 +229,7 @@ export function checkDayOfMonthMatches(
   repMessage: string | null | undefined,
   tz: string,
 ): WeekdayGuardResult {
-  const raw = (repMessage || "").trim();
+  const raw = stripOptionEcho(repMessage || "");
   if (!raw) return { ok: true };
   const s = deburr(raw.toLowerCase());
   // Data completa dd/mm na fala → o LLM só copia, não há o que cruzar aqui.
@@ -259,6 +279,18 @@ export function checkWeekdayMatchesDate(
   expectedRaw: string,
   tz: string,
   now: Date = new Date(),
+  /**
+   * true = o dia-da-semana NÃO veio do LLM, foi INFERIDO da fala do rep (H68).
+   * Muda só a mensagem de correção, e por um motivo medido: no backtest de 30
+   * dias a inferência barraria 7 agendamentos, e revisando um a um só ~3 eram
+   * erro de verdade — nos outros a janela pegou um dia-da-semana de OUTRO
+   * assunto da conversa. Mandar o LLM "re-chamar nessa data" nesses casos
+   * empurraria pra data errada. Então, quando é inferência, a correção não
+   * dita data: manda conferir na tabela e, se o palpite do servidor não era
+   * sobre esta reunião, seguir passando `expected_weekday` explícito (que aí
+   * passa pela trava normal do H50).
+   */
+  inferido = false,
 ): WeekdayGuardResult {
   const expected = parseWeekdayPt(expectedRaw);
   if (expected === null) return { ok: true }; // não é dia nomeado → não valida
@@ -276,6 +308,20 @@ export function checkWeekdayMatchesDate(
       ? `${weekdayNamePt(todayWd)}, ${String(todayYmd.day).padStart(2, "0")}/${String(todayYmd.m).padStart(2, "0")}/${todayYmd.y}`
       : "hoje";
   const nextForExpected = nextDateForWeekday(expected, tz, now);
+
+  if (inferido) {
+    return {
+      ok: false,
+      message:
+        `⚠️ Confira a data antes de gravar. Sua start_time cai em ${dateLabel}, mas na conversa o rep falou ` +
+        `em ${weekdayNamePt(expected)} (a próxima é ${nextForExpected || "?"}). Hoje é ${todayLabel}. ` +
+        `Consulte o bloco [CALENDÁRIO REAL] do contexto — NÃO calcule de cabeça. ` +
+        `Se o rep quis ${weekdayNamePt(expected)}, re-chame com a data certa daquele dia. ` +
+        `Se o "${weekdayNamePt(expected)}" da conversa era sobre OUTRO assunto e esta data está correta, ` +
+        `re-chame passando expected_weekday com o dia-da-semana REAL desta data (${dateLabel.split(",")[0]}) ` +
+        `— aí eu deixo passar. Na dúvida, pergunte ao rep mostrando o par certo da tabela.`,
+    };
+  }
 
   return {
     ok: false,

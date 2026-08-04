@@ -69,10 +69,14 @@ function getRepTz(ctx: ToolContext): string {
  * 2026; quinta no calendário de 2025, de onde ele tira de memória) SEM
  * `expected_weekday`, e a reunião nasceu no dia errado. Agora o servidor infere.
  */
-function resolveExpectedWeekday(ctx: ToolContext, passado: unknown): string | null {
+function resolveExpectedWeekday(
+  ctx: ToolContext,
+  passado: unknown,
+): { wd: string; inferido: boolean } | null {
   const s = typeof passado === "string" ? passado.trim() : "";
-  if (s) return s;
-  return inferExpectedWeekday(ctx.repMessage);
+  if (s) return { wd: s, inferido: false };
+  const inferido = inferExpectedWeekday(ctx.repMessage);
+  return inferido ? { wd: inferido, inferido: true } : null;
 }
 
 /**
@@ -1162,7 +1166,9 @@ const createAppointment: ToolEntry = {
     // errado, off-by-one). Aqui o servidor confere e devolve a correção exata.
     const expectedWd = resolveExpectedWeekday(ctx, args.expected_weekday);
     if (expectedWd) {
-      const wdCheck = checkWeekdayMatchesDate(String(args.start_time), expectedWd, getRepTz(ctx));
+      const wdCheck = checkWeekdayMatchesDate(
+        String(args.start_time), expectedWd.wd, getRepTz(ctx), new Date(), expectedWd.inferido,
+      );
       if (!wdCheck.ok) {
         return { status: "error", message: wdCheck.message!, retryable: true };
       }
@@ -1550,7 +1556,9 @@ const blockCalendarSlot: ToolEntry = {
     // H50 (2026-07-15): guarda weekday↔data (mesma do create_appointment).
     const expectedWdBlock = resolveExpectedWeekday(ctx, args.expected_weekday);
     if (expectedWdBlock) {
-      const wdCheck = checkWeekdayMatchesDate(String(args.start_time), expectedWdBlock, getRepTz(ctx));
+      const wdCheck = checkWeekdayMatchesDate(
+        String(args.start_time), expectedWdBlock.wd, getRepTz(ctx), new Date(), expectedWdBlock.inferido,
+      );
       if (!wdCheck.ok) return { status: "error", message: wdCheck.message!, retryable: true };
     }
     const domCheckBlock = checkDayOfMonthMatches(String(args.start_time), ctx.repMessage, getRepTz(ctx));
@@ -1676,7 +1684,9 @@ const updateAppointment: ToolEntry = {
       // H50 (2026-07-15): guarda weekday↔data no reagendamento.
       const expectedWdUpd = resolveExpectedWeekday(ctx, args.expected_weekday);
       if (expectedWdUpd) {
-        const wdCheck = checkWeekdayMatchesDate(String(args.start_time), expectedWdUpd, getRepTz(ctx));
+        const wdCheck = checkWeekdayMatchesDate(
+          String(args.start_time), expectedWdUpd.wd, getRepTz(ctx), new Date(), expectedWdUpd.inferido,
+        );
         if (!wdCheck.ok) return { status: "error", message: wdCheck.message!, retryable: true };
       }
       const domCheckUpd = checkDayOfMonthMatches(String(args.start_time), ctx.repMessage, getRepTz(ctx));
@@ -2057,7 +2067,9 @@ const createAppointmentsBatch: ToolEntry = {
       // massa a partir de template — 1 data errada iria pra vários contatos).
       const expectedWdItem = resolveExpectedWeekday(ctx, it.expected_weekday);
       if (expectedWdItem) {
-        const wdCheck = checkWeekdayMatchesDate(startStr, expectedWdItem, getRepTz(ctx));
+        const wdCheck = checkWeekdayMatchesDate(
+          startStr, expectedWdItem.wd, getRepTz(ctx), new Date(), expectedWdItem.inferido,
+        );
         if (!wdCheck.ok) {
           failed.push({ contact_id: contactId, error: wdCheck.message! });
           continue;
