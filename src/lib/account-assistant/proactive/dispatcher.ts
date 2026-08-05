@@ -22,7 +22,7 @@ import { trackAndCharge } from "@/lib/billing/charge";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
-import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
+import { loadSilenceDecision, recordProactiveSent, appendSilenceNote } from "./silence-gate";
 import type { LLMMessage } from "../llm-client";
 import { type ToolContext } from "../tools";
 import { runSparkbotTurn, buildToolCtx } from "../core/run-sparkbot-turn";
@@ -614,11 +614,13 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
     // após entregar via WhatsApp, INCREMENTA o counter (recordProactiveSent).
     // Antes o dispatcher só registrava no branch de skip → counter ficava 0
     // eterno → nunca avisava nem pausava (bug: Wagner, 11 proativos sem reação).
-    let warnPrefix = "";
+    // O recado de silêncio vai DEPOIS do conteúdo (ver appendSilenceNote): o
+    // Resumo matinal abria com "se não rolar resposta hoje…" antes do "Bom dia".
+    let warnNote: string | null = null;
     if (silenceDecision && silenceDecision.canSend) {
-      warnPrefix = silenceDecision.warningPrefix ?? "";
+      warnNote = silenceDecision.warningNote ?? null;
     }
-    const dr = await deliverProactiveMessage(rep, warnPrefix + llmResult.text, {
+    const dr = await deliverProactiveMessage(rep, appendSilenceNote(llmResult.text, warnNote), {
       activeLocationId,
       source: "proactive_rule",
       kind: rule.name,
