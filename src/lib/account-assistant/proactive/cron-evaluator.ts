@@ -41,15 +41,77 @@ export function shouldFireCron(cron: string, timezone: string, now: Date = new D
   );
 }
 
-function parseLocalParts(date: Date, timezone: string): {
-  minute: number;
-  hour: number;
-  dayOfMonth: number;
-  month: number;
-  weekday: number;
-} | null {
+/**
+ * "Esse cron já venceu HOJE e ainda está dentro da janela de tolerância?"
+ *
+ * Fix bug observado em prod 2026-08-05: `shouldFireCron` só é verdadeiro durante
+ * o MINUTO exato do cron. O loop de regras scheduled percorre os reps em série e
+ * cada rep custa segundos (calls no Spark Leads + LLM), então o "Resumo matinal"
+ * (`0 8 * * 1-5`) só alcançava quem coubesse dentro dos 60 segundos: 15 de 43
+ * reps num dia bom, 1 em 30/07. No histórico de `assistant_alert_state` NENHUM
+ * disparo passa de :01:01 depois da hora cheia — o teto é o fim do minuto.
+ *
+ * A tolerância troca a corrida por um intervalo: o tick seguinte continua de
+ * onde o anterior parou. Quem já recebeu é barrado pelo dedup diário de
+ * `assistant_alert_state` — a janela não duplica envio, só para de perder.
+ *
+ * Só olha minutos do MESMO dia local: um briefing das 8h não pode chegar de
+ * madrugada do dia seguinte.
+ */
+export function isCronDue(
+  cron: string,
+  timezone: string,
+  graceMinutes: number,
+  now: Date = new Date(),
+): boolean {
+  const hoje = localDayKey(now, timezone);
+  if (!hoje) return false;
+  const passos = Math.max(0, Math.floor(graceMinutes));
+  for (let i = 0; i <= passos; i++) {
+    const candidato = new Date(now.getTime() - i * 60_000);
+    // Cruzou a meia-noite local: o que venceu ontem não é mais "de hoje".
+    if (localDayKey(candidato, timezone) !== hoje) break;
+    if (shouldFireCron(cron, timezone, candidato)) return true;
+  }
+  return false;
+}
+
+/** Data local (YYYY-MM-DD) no fuso — usado pra travar a janela no dia corrente. */
+function localDayKey(date: Date, timezone: string): string | null {
+  const fmt = dayFormatter(timezone);
+  if (!fmt) return null;
+  return fmt.format(date);
+}
+
+// Construir Intl.DateTimeFormat é caro e estes dois são chamados em laço:
+// `isCronDue` varre até 181 minutos por rep e `computeNextRunAt` até 144k.
+// O formatter é imutável, então cachear por fuso é seguro. `null` no cache
+// memoriza fuso inválido (não adianta tentar de novo).
+const dayFmtCache = new Map<string, Intl.DateTimeFormat | null>();
+const partsFmtCache = new Map<string, Intl.DateTimeFormat | null>();
+
+function dayFormatter(timezone: string): Intl.DateTimeFormat | null {
+  if (dayFmtCache.has(timezone)) return dayFmtCache.get(timezone) ?? null;
+  let fmt: Intl.DateTimeFormat | null = null;
   try {
-    const fmt = new Intl.DateTimeFormat("en-US", {
+    fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch {
+    fmt = null;
+  }
+  dayFmtCache.set(timezone, fmt);
+  return fmt;
+}
+
+function partsFormatter(timezone: string): Intl.DateTimeFormat | null {
+  if (partsFmtCache.has(timezone)) return partsFmtCache.get(timezone) ?? null;
+  let fmt: Intl.DateTimeFormat | null = null;
+  try {
+    fmt = new Intl.DateTimeFormat("en-US", {
       timeZone: timezone,
       hour12: false,
       year: "numeric",
@@ -59,6 +121,23 @@ function parseLocalParts(date: Date, timezone: string): {
       hour: "2-digit",
       minute: "2-digit",
     });
+  } catch {
+    fmt = null;
+  }
+  partsFmtCache.set(timezone, fmt);
+  return fmt;
+}
+
+function parseLocalParts(date: Date, timezone: string): {
+  minute: number;
+  hour: number;
+  dayOfMonth: number;
+  month: number;
+  weekday: number;
+} | null {
+  try {
+    const fmt = partsFormatter(timezone);
+    if (!fmt) return null;
     const parts = fmt.formatToParts(date);
     const get = (t: string) => parts.find((p) => p.type === t)?.value || "";
     const weekdayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
