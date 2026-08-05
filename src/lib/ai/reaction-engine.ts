@@ -15,7 +15,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
-import { findContactOpportunityId, updateOpportunity, resolvePipelineStage } from "@/lib/ghl/operations";
+import {
+  findContactOpportunityId,
+  updateOpportunity,
+  createOpportunity,
+  resolvePipelineStage,
+} from "@/lib/ghl/operations";
 import type { AutomationRule, AutomationAction } from "@/types/agent";
 
 const BUCKET = "agent-media";
@@ -188,6 +193,51 @@ async function executeOne(
         pipelineId: resolved.pipelineId,
         pipelineStageId: resolved.stageId,
       });
+      break;
+    }
+    case "create_opportunity": {
+      // "Criar no funil": coloca o contato numa etapa mesmo que ele ainda NÃO
+      // tenha oportunidade. É a diferença pro move_pipeline, que só move e faz
+      // skip silencioso quando não há opp — e era por isso que o H62 (gatilho
+      // "agente ativado") não conseguia pôr o lead novo no funil: o gatilho veio,
+      // a ação não existia.
+      if (!action.pipeline_id || !action.stage_id) return;
+      // Mesma resolução id-ou-nome do move_pipeline (ultra-review 2026-08-03):
+      // automação salva com o NOME do funil falhava 100% em silêncio.
+      const alvo = await resolvePipelineStage(
+        client,
+        ctx.locationId,
+        String(action.pipeline_id),
+        String(action.stage_id),
+      );
+      if (!alvo) {
+        throw new Error(
+          `create_opportunity: funil/etapa "${action.pipeline_id}"/"${action.stage_id}" não existe na location`,
+        );
+      }
+      // Dedup: se o contato JÁ tem opp nessa pipeline, move em vez de criar uma
+      // segunda — automação de funil não pode gerar oportunidade duplicada.
+      const existente = await findContactOpportunityId(
+        client,
+        ctx.locationId,
+        ctx.contactId,
+        alvo.pipelineId,
+      );
+      if (existente) {
+        await updateOpportunity(client, existente, {
+          pipelineId: alvo.pipelineId,
+          pipelineStageId: alvo.stageId,
+        });
+      } else {
+        await createOpportunity(client, {
+          pipelineId: alvo.pipelineId,
+          pipelineStageId: alvo.stageId,
+          locationId: ctx.locationId,
+          contactId: ctx.contactId,
+          name: (action.opportunity_name || "").trim() || "Novo lead",
+          status: "open",
+        });
+      }
       break;
     }
     case "update_field": {
