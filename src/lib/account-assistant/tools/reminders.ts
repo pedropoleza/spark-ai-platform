@@ -60,6 +60,16 @@ const scheduleReminder: ToolEntry = {
           type: "string",
           description: "OPCIONAL mas IMPORTANTE: o dia-da-semana que o REP falou ('quinta-feira', 'segunda'), com a palavra dele. O servidor confere se a data que você mandou cai mesmo nesse dia e te devolve a correção se não cair. Copie o par dia/data do bloco [CALENDÁRIO REAL] — não calcule. Omita só quando o rep der data explícita ('20/07') ou 'hoje/amanhã'.",
         },
+        contact_id: {
+          type: "string",
+          description:
+            "OPCIONAL. Se o lembrete é SOBRE um contato específico ('me lembra de ligar pra Fernanda às 15h'), passe o id REAL do contato — vindo de get_contact/search_contacts ou do bloco CONTATO EM CONTEXTO já validado. NUNCA invente um id. Quando o lembrete disparar, o SparkBot já vem com esse contato em contexto, sem te fazer re-procurar.",
+        },
+        contact_name: {
+          type: "string",
+          description:
+            "OPCIONAL. Nome do contato do contact_id (só passe junto com contact_id). Usado pra herança e pra confirmar inline ('lembrete sobre a Fernanda').",
+        },
       },
       required: ["message", "remind_at"],
     },
@@ -99,6 +109,25 @@ const scheduleReminder: ToolEntry = {
     const title = args.title
       ? String(args.title).slice(0, 100)
       : message.slice(0, 40) + (message.length > 40 ? "…" : "");
+
+    // Follow-up H45/F10: captura o contato em contexto pro lembrete HERDAR quem
+    // é quando disparar. O reminder-runner JÁ lê `task_payload.contact_id` e
+    // propaga pra metadata da entrega, que vira o bloco "CONTATO EM CONTEXTO" no
+    // turno seguinte — o cano estava ligado nas duas pontas e desconectado aqui,
+    // então "me lembra de ligar pra Fernanda" disparava sem saber quem é a
+    // Fernanda e o bot re-perguntava.
+    //
+    // O id é PISTA, não requisito: formato inválido é ignorado e o lembrete sai
+    // igual (nunca bloqueia). O nome só viaja acompanhado de um id válido.
+    // Chave `contact_id` (contato DISCUTIDO) ≠ `ghl_contact_id` (card do próprio
+    // rep) — a distinção anti-alucinação do H45.
+    const contactIdRaw = args.contact_id ? String(args.contact_id).trim() : "";
+    const reminderContactId =
+      contactIdRaw && !validateGhlId(contactIdRaw, "contact_id") ? contactIdRaw : null;
+    const reminderContactName =
+      reminderContactId && args.contact_name
+        ? String(args.contact_name).trim().slice(0, 120) || null
+        : null;
 
     // delivery_channel: respeita o que LLM passou; senão DEFAULT inteligente
     // baseado em qual canal o rep efetivamente usa.
@@ -181,6 +210,8 @@ const scheduleReminder: ToolEntry = {
           title,
           source: "rep_request",
           test_session_id: ctx.testSessionId || null,
+          ...(reminderContactId ? { contact_id: reminderContactId } : {}),
+          ...(reminderContactName ? { contact_name: reminderContactName } : {}),
         },
         next_run_at: isoRemind,
         cron_expr: recurrence,
