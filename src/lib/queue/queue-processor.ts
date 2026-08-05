@@ -572,6 +572,48 @@ async function processGroup(
     }
   }
 
+  // H51 (Frente A): MEMBERSHIP DURÁVEL. Antes, a linha de conversation_state só
+  // nascia DEPOIS da 1ª resposta bem-sucedida (action-executor) — então se a 1ª
+  // falhava (LLM, timeout, wallet), ou se a ativação era por CONTEÚDO de
+  // mensagem, o follow-up (cujo corpo não é o gatilho) voltava a ser avaliado
+  // contra o targeting e dropava. É o "responde a 1ª e morre" do caso Marina.
+  //
+  // O `trigger_once` (Frente B, já no main) bypassa o gate quando a conversa
+  // está ativa — mas "ativa" era derivado de last_ai_response_at/message_count,
+  // que só existem DEPOIS de uma resposta. Ou seja: o bypass dependia de um
+  // estado que o caso de falha nunca criava. Aqui a linha-dono é gravada assim
+  // que o contato PASSA o gate, ANTES do trabalho de LLM.
+  //
+  // Idempotente e fail-soft: só quando ESTE agente ainda não tem estado, com
+  // `ignoreDuplicates` sobre a UNIQUE(agent_id, contact_id). NÃO toca
+  // message_count / last_ai_response_at / ai_paused_at — quem incrementa segue
+  // sendo o action-executor. Erro aqui nunca bloqueia a resposta ao lead.
+  //
+  // Efeito colateral conhecido (e desejado): o guard anti-reabertura de proativo
+  // (`reactive-trigger.ts:hasConversation`) passa a enxergar o contato como "já
+  // em conversa" mais cedo — logo, para de abrir conversa proativa com quem o
+  // agente já está atendendo.
+  if (!convState) {
+    try {
+      await supabase.from("conversation_state").upsert(
+        {
+          agent_id: agent.id,
+          location_id: group.locationId,
+          contact_id: group.contactId,
+          conversation_id: group.conversationId || "",
+          status: "active",
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "agent_id,contact_id", ignoreDuplicates: true },
+      );
+    } catch (err) {
+      log(
+        "warn",
+        `membership durável falhou (fail-soft): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   // H61 (fix bug observado em prod 2026-08-01, caso Five Star/Marcia): a mensagem
   // de CONTEXTO de anúncio (CTWA "📢 Veio de anúncio…") vem do clique — nas contas
   // onde um workflow de boas-vindas já faz o 1º toque, a IA respondia a explicação
