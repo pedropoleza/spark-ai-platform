@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveMeetingLocation } from "@/lib/queue/meeting-links";
 import { healMissingMeetingLocation } from "@/lib/queue/meeting-location";
 import { sanitizeOutbound, resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
+import { normalizePhone, resolveLocationDefaultCountry } from "@/lib/account-assistant/identity";
 import { splitLeadOutbound } from "@/lib/ai/message-splitter";
 import {
   addTagsToContact,
@@ -407,7 +408,19 @@ async function executeAction(
         const key = action.field_key.startsWith("contact.")
           ? action.field_key.slice("contact.".length)
           : action.field_key;
-        await updateContactField(client, ctx.contactId, key, action.value);
+        // Telefone BR-aware (fix caso Marina 2026-07-01): o LLM grava o número
+        // CRU que o lead digitou ("31999232306") e o Spark Leads formatava como
+        // +1 pelo fuso US da location → número inválido, e o contato que a IA
+        // acabou de qualificar fica sem entrega de WhatsApp/SMS. Normaliza pra
+        // E.164 antes de gravar; só o campo standard `phone`.
+        const value =
+          key === "phone"
+            ? normalizePhone(
+                String(action.value),
+                await resolveLocationDefaultCountry(ctx.locationId),
+              )
+            : action.value;
+        await updateContactField(client, ctx.contactId, key, value);
       }
       break;
 

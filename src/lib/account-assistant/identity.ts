@@ -27,6 +27,7 @@ import type { RepIdentity, GHLUserLink, RepProfile } from "@/types/account-assis
  * Heurística:
  * - Se já começa com `+` → preserva (assumindo E.164 já válido)
  * - Se tem 12+ dígitos sem `+` → assume que tem country code, prepend `+`
+ * - Celular BR inequívoco (11 díg, 3º dígito `9`) → `+55`, IGNORA defaultCountry
  * - Se tem 10/11 dígitos:
  *   - defaultCountry='BR' → prepend `+55`
  *   - defaultCountry='US' (default) → prepend `+1`
@@ -42,6 +43,26 @@ export function normalizePhone(raw: string, defaultCountry: "US" | "BR" = "US"):
   if (raw.trim().startsWith("+")) return `+${digits}`;
   // 12+ dígitos sem `+` — provavelmente já tem country code
   if (digits.length >= 12) return `+${digits}`;
+  // Celular BR reconhecido pelo PRÓPRIO número (fix caso Marina/Bianca
+  // 2026-07-01): 11 dígitos sem country code cujo 3º dígito é "9" é o
+  // 9º-dígito obrigatório do celular brasileiro (DDD 2díg + 9 + 8díg).
+  //
+  // Por que não colide com número americano: um US nacional tem SEMPRE 10
+  // dígitos; 11 só com o "1" de country code na frente, e aí o 3º dígito cai no
+  // MEIO do area code. Área code com 9 no meio (formato N9X) NÃO EXISTE — os 80
+  // códigos N9X estão RESERVADOS pela NANP para uma futura expansão do plano
+  // (conferido 2026-08-05). Logo "11 díg + 3º dígito 9" só pode ser celular BR,
+  // e vale forçar +55 mesmo com a location em fuso US — lead brasileiro manda
+  // WhatsApp brasileiro. Cobre o DDD 11 (SP) inclusive.
+  //
+  // Antes disso, com defaultCountry US: 31999232306 → +131999232306 (inválido,
+  // sem entrega de WhatsApp/SMS pro contato recém-qualificado).
+  //
+  // ⚠️ Se um dia a NANP liberar os N9X (é o plano de expansão pra 4 dígitos de
+  // area code), esta regra passa a ter falso-positivo e precisa de revisão.
+  if (digits.length === 11 && digits[2] === "9") {
+    return `+55${digits}`;
+  }
   // 10/11 dígitos — depende do default country
   if (digits.length === 10 || digits.length === 11) {
     if (defaultCountry === "BR") return `+55${digits}`;
