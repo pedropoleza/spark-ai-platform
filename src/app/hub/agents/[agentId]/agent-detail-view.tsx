@@ -1830,7 +1830,8 @@ const EVENT_OPTS: { v: string; l: string }[] = [
 ];
 const ACTION_OPTS: { v: AutomationAction["type"]; l: string }[] = [
   { v: "add_tag", l: "Adicionar tag" }, { v: "remove_tag", l: "Remover tag" },
-  { v: "move_pipeline", l: "Mover no funil" }, { v: "update_field", l: "Atualizar campo" },
+  { v: "move_pipeline", l: "Mover no funil" }, { v: "create_opportunity", l: "Criar no funil" },
+  { v: "update_field", l: "Atualizar campo" },
   { v: "send_text_fixed", l: "Enviar mensagem" }, { v: "send_media", l: "Enviar mídia" },
   { v: "pause_ai", l: "Pausar a IA" }, { v: "webhook", l: "Chamar webhook" },
 ];
@@ -1917,6 +1918,17 @@ function ActionList({ actions, onChange }: { actions: AutomationAction[]; onChan
               onChange={(next) => upd(i, { pipeline_id: next.pipeline_id, stage_id: next.pipeline_stage_id })}
             />
           )}
+          {/* "Criar no funil" difere do "Mover": funciona mesmo pro contato que
+              ainda NÃO tem oportunidade (o Mover faz skip nesse caso). Se já
+              houver opp no mesmo funil, move em vez de duplicar. */}
+          {a.type === "create_opportunity" && (<>
+            <PipelineStagePicker
+              pipelineId={a.pipeline_id || ""}
+              stageId={a.stage_id || ""}
+              onChange={(next) => upd(i, { pipeline_id: next.pipeline_id, stage_id: next.pipeline_stage_id })}
+            />
+            <input className="input grow" value={a.opportunity_name || ""} onChange={(ev) => upd(i, { opportunity_name: ev.target.value })} placeholder="nome da oportunidade (padrão: Novo lead)" />
+          </>)}
           {a.type === "update_field" && (
             <CustomFieldPicker
               fieldKey={a.field_key || ""}

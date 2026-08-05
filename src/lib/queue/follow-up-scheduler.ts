@@ -15,7 +15,99 @@ import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
 import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { isWalletBlocked } from "@/lib/billing/wallet-block";
-import type { FollowUpConfig } from "@/types/agent";
+import { executeReactionRules } from "@/lib/ai/reaction-engine";
+import type { FollowUpConfig, AutomationRule } from "@/types/agent";
+
+/**
+ * Nº de follow-ups que a sequência planejou: `ai_auto` usa max_attempts (cap 10,
+ * igual ao scheduler); `manual` usa o nº de passos. Serve pra reconhecer o toque
+ * TERMINAL (attempt_number === total) e então desqualificar o lead.
+ */
+function plannedFollowUpCount(cfg: FollowUpConfig | undefined | null): number {
+  if (!cfg) return 0;
+  if (cfg.mode === "manual") return Array.isArray(cfg.manual_steps) ? cfg.manual_steps.length : 0;
+  return Math.min(cfg.max_attempts || 0, 10);
+}
+
+/**
+ * Depois do ÚLTIMO follow-up sair sem o lead responder, marca a conversa como
+ * `disqualified` e dispara as automações de evento "disqualified" (tag / mover
+ * no funil) que o admin configurou.
+ *
+ * NÃO seta `ai_paused_at` — é reversível de propósito: um inbound tardio do lead
+ * volta a ser processado normalmente (o should-respond não bloqueia por status
+ * disqualified), a IA responde e o status é reavaliado. Dedup por merge no
+ * `triggered_automations` (não sobrescreve o que o fluxo de dados já marcou).
+ */
+async function disqualifyAfterFinalFollowUp(params: {
+  supabase: ReturnType<typeof createAdminClient>;
+  agentId: string;
+  locationId: string;
+  companyId: string;
+  contactId: string;
+  conversationId: string;
+  channel?: string;
+  automations: unknown;
+  triggeredAutomations: unknown;
+}): Promise<void> {
+  const {
+    supabase, agentId, locationId, companyId, contactId,
+    conversationId, channel, automations, triggeredAutomations,
+  } = params;
+
+  try {
+    await supabase
+      .from("conversation_state")
+      .update({ status: "disqualified", updated_at: new Date().toISOString() })
+      .eq("agent_id", agentId)
+      .eq("contact_id", contactId);
+
+    await supabase.from("execution_log").insert({
+      agent_id: agentId,
+      location_id: locationId,
+      contact_id: contactId,
+      conversation_id: conversationId,
+      action_type: "followup_disqualified",
+      action_payload: { reason: "no_reply_after_final_followup" },
+      success: true,
+    });
+
+    const rules = Array.isArray(automations) ? (automations as AutomationRule[]) : [];
+    if (rules.length === 0) return;
+    const already = new Set<string>(
+      Array.isArray(triggeredAutomations) ? (triggeredAutomations as string[]) : [],
+    );
+    const eventRules = rules.filter(
+      (r) =>
+        (!r.trigger || r.trigger.kind === "event") &&
+        (r.trigger?.kind === "event" ? r.trigger.event : r.event) === "disqualified" &&
+        !already.has(r.id),
+    );
+    if (eventRules.length === 0) return;
+
+    const { executedRuleIds } = await executeReactionRules(eventRules, {
+      agentId, locationId, companyId, contactId, conversationId, channel,
+    });
+    if (executedRuleIds.length > 0) {
+      const merged = Array.from(new Set<string>([...already, ...executedRuleIds]));
+      await supabase
+        .from("conversation_state")
+        .update({ triggered_automations: merged })
+        .eq("agent_id", agentId)
+        .eq("contact_id", contactId);
+    }
+  } catch (err) {
+    // Fail-soft: a desqualificação é consequência, não pode derrubar o envio que
+    // já saiu pro lead.
+    reportError({
+      title: "Desqualificação pós-follow-up falhou",
+      feature: "follow-up-scheduler",
+      severity: "low",
+      error: err,
+      metadata: { agentId, contactId },
+    });
+  }
+}
 
 // Piso do 1º toque de follow-up em modo ai_auto (healthcheck 2026-07-23, caso
 // five star ricos): a cliente viu follow-up disparar ~10 min depois do lead
@@ -833,6 +925,35 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         });
         await supabase.from("scheduled_followups").update({ status: "sent" }).eq("id", followUp.id);
         sent++;
+
+        // 3b: se ESTE foi o último toque da sequência e o lead não respondeu,
+        // marca disqualified e dispara as automações de evento "disqualified"
+        // (tag / mover no funil) que o admin configurou. Chegar aqui no toque
+        // terminal já prova "sem resposta" — todos os gates acima teriam
+        // cancelado a sequência se o lead tivesse respondido. Só em ENVIO real.
+        //
+        // É o ÚNICO ponto onde isso pode disparar: sem um inbound, o
+        // queue-processor (que roda as automações de evento) nunca roda — ou
+        // seja, a automação "Lead desqualificado" que o admin configurou nunca
+        // disparava justamente pro lead que simplesmente sumiu, que é o caso
+        // que ela existe pra cobrir.
+        //
+        // Gate opt-in por agente: default OFF, não muda nada pra quem não pediu.
+        const fuCfg = config.follow_up_config as FollowUpConfig | undefined;
+        const plannedMax = plannedFollowUpCount(fuCfg);
+        if (fuCfg?.disqualify_after_final && plannedMax > 0 && followUp.attempt_number >= plannedMax) {
+          await disqualifyAfterFinalFollowUp({
+            supabase,
+            agentId: followUp.agent_id,
+            locationId: followUp.location_id,
+            companyId: location.company_id,
+            contactId: followUp.contact_id,
+            conversationId: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+            channel,
+            automations: config.automations,
+            triggeredAutomations: (convState as { triggered_automations?: unknown } | null)?.triggered_automations,
+          });
+        }
       } else if (aiDecidedSkip) {
         // A IA leu o contexto e decidiu que NÃO vale follow-up agora (lead adiou
         // "volto semana que vem", recusou, ou a última msg foi nossa). Cancela ESTE
