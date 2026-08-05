@@ -14,7 +14,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { shouldFireCron } from "./cron-evaluator";
 import { normalizeForRepeat } from "../core/repeat-guard";
-import { loadSilenceDecision, recordProactiveSent } from "./silence-gate";
+import { loadSilenceDecision, recordProactiveSent, appendSilenceNote } from "./silence-gate";
 import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
 import {
   findRepPhoneById,
@@ -218,10 +218,9 @@ async function fireOne(task: ScheduledTaskRow): Promise<"fired" | "failed" | "sk
     return "skipped";
   }
 
-  // Prepend warning prefix se gate sinalizou (2º ou 3º proativo sem resposta)
-  let finalMessage = decision.warningPrefix
-    ? `${decision.warningPrefix}${message}`
-    : message;
+  // Recado de silêncio (2º ou 3º proativo sem resposta) vai DEPOIS do lembrete —
+  // o rep lê primeiro o que pediu.
+  let finalMessage = appendSilenceNote(message, decision.warningNote);
   // H68: lembrete que ficou esperando o rep destravar sai com aviso de atraso —
   // melhor chegar tarde e honesto do que chegar mudo (ou não chegar).
   const bloqueadoAntes = (task.task_payload || {}) as Record<string, unknown>;
