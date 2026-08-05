@@ -30,6 +30,7 @@ import { isAdContextBody } from "@/lib/queue/ad-context";
 // cold-start quando o fetch de histórico do Spark Leads falha/vem vazio.
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
 import { reportError } from "@/lib/admin-signals/report-error";
+import { normalizePhone, resolveLocationDefaultCountry } from "@/lib/account-assistant/identity";
 // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
 import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
@@ -1764,6 +1765,9 @@ async function syncCollectedDataToGHL(
   // Separar campos padrao de custom fields
   const standardUpdates: Record<string, string> = {};
   const customFieldUpdates: { id: string; value: string }[] = [];
+  // País default da location, resolvido sob demanda (só se houver telefone a
+  // gravar) e cacheado — fix telefone BR (caso Marina 2026-07-01).
+  let phoneCountry: "US" | "BR" | null = null;
 
   for (const field of dataFields) {
     if (!field.sync_to_ghl) continue;
@@ -1776,7 +1780,16 @@ async function syncCollectedDataToGHL(
     if (fieldId.startsWith("contact.")) {
       // Campo padrao (contact.firstName, contact.phone, etc.)
       const fieldName = fieldId.replace("contact.", "");
-      standardUpdates[fieldName] = value;
+      if (fieldName === "phone") {
+        // Normaliza E.164 BR-aware antes do sync: o LLM coleta o número CRU e o
+        // Spark Leads formatava como +1 pelo fuso US da location → inválido.
+        if (phoneCountry === null) {
+          phoneCountry = await resolveLocationDefaultCountry(ctx.locationId);
+        }
+        standardUpdates[fieldName] = normalizePhone(value, phoneCountry);
+      } else {
+        standardUpdates[fieldName] = value;
+      }
     } else {
       // Custom field
       customFieldUpdates.push({ id: fieldId, value });
