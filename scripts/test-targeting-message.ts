@@ -196,5 +196,36 @@ ok(
   frase("Veio de anúncio", "quanto custa o seguro?") === false,
 );
 
+// ── H51: por que o membership durável é indispensável ──────────────────────
+console.log("\n=== H51: set REAL da Marina (opener OU tag, trigger_once) ===");
+// Espelha o que está salvo em prod (agent 3976b4b6…): match "any" entre o grupo
+// de abertura (message "in" ["carreira","entender melhor"]) e o grupo da tag.
+const marinaSet: TargetingRuleSet = {
+  version: 2,
+  match: "any",
+  groups: [
+    { id: "abertura", match: "any", rules: [leaf({ type: "message", message_operator: "in", message_values: ["carreira", "entender melhor"], case_sensitive: false })] },
+    { id: "tag", match: "any", rules: [leaf({ type: "tag", tag: "ia - em atendimento" })] },
+  ],
+};
+const semTag = { tags: ["lead-frio"], customFields: [] };
+const comTag = { tags: ["ia - em atendimento"], customFields: [] };
+// 1º contato (conversa NÃO ativa): o opener ativa mesmo SEM a tag — mata a
+// corrida entre o webhook e a automação que adiciona a tag.
+ok("1º contato: opener 'queria entender melhor sobre essa carreira' sem tag → ativa",
+  evaluateTargetingSet(marinaSet, semTag, [], { messageText: "Olá Marina, queria entender melhor sobre essa carreira" }) === true);
+ok("1º contato: SÓ a tag (sem frase de abertura) → ativa (rede de segurança)",
+  evaluateTargetingSet(marinaSet, comTag, [], { messageText: "oi" }) === true);
+ok("1º contato: nem opener nem tag → NÃO ativa",
+  evaluateTargetingSet(marinaSet, semTag, [], { messageText: "bom dia" }) === false);
+// O assert que TRAVA a premissa: num follow-up sem a tag, o avaliador puro
+// BLOQUEIA. É exatamente por isso que a Marina é `trigger_once` — o gate do
+// processor é bypassado quando a conversa está ativa, e o dono passa a ser o
+// membership. Se fosse `gate_ongoing`, este follow-up morreria.
+ok("follow-up sem tag: evaluator BLOQUEIA (por isso o membership tem que existir)",
+  evaluateTargetingSet(marinaSet, semTag, [], { messageText: "Florida", conversationActive: true }) === false);
+ok("follow-up COM a tag → passa mesmo sem trigger_once",
+  evaluateTargetingSet(marinaSet, comTag, [], { messageText: "Florida", conversationActive: true }) === true);
+
 console.log(`\n=== RESULTADO: ${pass} pass / ${fail} fail ===`);
 process.exit(fail === 0 ? 0 : 1);
