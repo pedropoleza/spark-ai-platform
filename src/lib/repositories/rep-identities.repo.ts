@@ -289,6 +289,12 @@ export async function resetSilenceTracking(
   repId: string,
   inboundAt: string,
   extraPatch?: Record<string, unknown>,
+  /**
+   * H68 (caso Gustavo): true quando o inbound é PROVA DE HUMANO — tap em menu
+   * ou áudio gravado. Bot em loop nunca toca botão nem grava áudio, então isso
+   * derruba a pausa do loop-guard na hora, sem esperar a expiração.
+   */
+  humanProof = false,
 ): Promise<void> {
   const supabase = createAdminClient();
   // Heartbeat + counter: SEMPRE (qualquer inbound reabre a janela 24h).
@@ -305,9 +311,21 @@ export async function resetSilenceTracking(
   // inbound reseta a pausa" — o rep-fantasma sempre responde, então a pausa
   // do guard nunca segurava e o loop re-acendia todo dia. Pausa por silêncio
   // (source NULL) segue sendo limpa em qualquer inbound, como sempre foi.
-  // H52 R2: a preservação EXPIRA em 7 dias — rep real flagrado por engano
-  // volta ao normal sozinho (o fantasma real re-flagra na hora via threshold 2).
-  const loopGuardExpiry = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // H52 R2: a preservação EXPIRA — rep real flagrado por engano volta ao normal
+  // sozinho (o fantasma real re-flagra na hora via threshold 2).
+  //
+  // H68 (caso Gustavo Couto, 2026-08-04): eram 7 DIAS e na prática viravam
+  // PERMANENTE. Ele ficou 12 dias sem nenhum proativo — 23/07 a 03/08 — e 12
+  // lembretes dele foram destruídos em silêncio, enquanto escrevia 30-60 msgs
+  // por dia. Dois motivos, os dois corrigidos aqui e no processor:
+  //   1. cada re-flagra empurrava `proactive_paused_at` pra frente, então a
+  //      janela de expiração NUNCA chegava (o processor agora preserva o
+  //      carimbo do 1º flagra);
+  //   2. 7 dias é desproporcional pra um loop bot-a-bot, que se resolve em
+  //      minutos. 24h basta: se o loop for real, o threshold reduzido (2)
+  //      re-flagra na primeira troca.
+  // E prova de humano (tap/áudio) limpa na hora — bot em loop não toca botão.
+  const loopGuardExpiry = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   await supabase
     .from("rep_identities")
     .update({
@@ -317,6 +335,8 @@ export async function resetSilenceTracking(
     })
     .eq("id", repId)
     .or(
-      `proactive_pause_source.is.null,proactive_pause_source.neq.loop_guard,proactive_paused_at.lt.${loopGuardExpiry}`,
+      humanProof
+        ? "proactive_pause_source.is.null,proactive_pause_source.not.is.null"
+        : `proactive_pause_source.is.null,proactive_pause_source.neq.loop_guard,proactive_paused_at.lt.${loopGuardExpiry}`,
     );
 }

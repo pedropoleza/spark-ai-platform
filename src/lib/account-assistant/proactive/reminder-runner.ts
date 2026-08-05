@@ -209,14 +209,31 @@ async function fireOne(task: ScheduledTaskRow): Promise<"fired" | "failed" | "sk
       `${decision.shouldSetPaused ? "pausando rep" : "rep já pausado"}`,
     );
     await recordProactiveSent(supabase, task.rep_id, decision);
-    await advanceTask(task);
+    // H68 (caso Gustavo Couto): ANTES isto chamava advanceTask, que marca o
+    // one-shot como 'completed' — o lembrete do rep era DESTRUÍDO como se
+    // tivesse sido entregue, sem mensagem, sem sinal, sem rastro. 19 lembretes
+    // sumiram assim em 30 dias, 12 só dele (bloqueado pelo loop-guard de 23/07
+    // a 03/08). Bloqueado ≠ concluído: agora o lembrete ESPERA o rep destravar.
+    await deferBlockedTask(task, decision.reason || "gate");
     return "skipped";
   }
 
   // Prepend warning prefix se gate sinalizou (2º ou 3º proativo sem resposta)
-  const finalMessage = decision.warningPrefix
+  let finalMessage = decision.warningPrefix
     ? `${decision.warningPrefix}${message}`
     : message;
+  // H68: lembrete que ficou esperando o rep destravar sai com aviso de atraso —
+  // melhor chegar tarde e honesto do que chegar mudo (ou não chegar).
+  const bloqueadoAntes = (task.task_payload || {}) as Record<string, unknown>;
+  if (typeof bloqueadoAntes.blocked_count === "number" && bloqueadoAntes.blocked_count > 0) {
+    const eraPara = typeof bloqueadoAntes.first_blocked_at === "string"
+      ? new Date(bloqueadoAntes.first_blocked_at)
+      : null;
+    const quando = eraPara
+      ? eraPara.toLocaleString("pt-BR", { timeZone: "America/New_York", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })
+      : null;
+    finalMessage = `⏰ _(lembrete atrasado${quando ? ` — era pra ter chegado ${quando}` : ""})_\n${finalMessage}`;
+  }
 
   // Web UI: insere em sparkbot_messages com channel='system' (proativa).
   // Painel web vai pegar no próximo poll e mostrar como notificação.
@@ -598,6 +615,89 @@ async function fireOutboundToContact(
  *   - one-shot: marca como completed
  *   - recurring: calcula próximo next_run_at do cron e volta pra pending
  */
+/**
+ * Lembrete bloqueado por gate (silêncio, loop-guard, wallet) NÃO é lembrete
+ * cumprido — H68, caso Gustavo Couto.
+ *
+ * Adia e tenta de novo, porque o bloqueio é temporário por natureza: o rep
+ * destrava (recarrega a wallet, o loop-guard expira, ele responde) e aí o
+ * lembrete ainda faz sentido. Recorrente segue o cron normal — quem perdeu a
+ * ocorrência perdeu; a próxima vem sozinha.
+ *
+ * Teto de 3 dias pra não ressuscitar lembrete velho pro rep: passou disso,
+ * marca `failed` e emite sinal — o que importa é NÃO sumir em silêncio.
+ * (`failed` e não um status novo porque o CHECK da tabela só aceita
+ * pending/running/completed/cancelled/failed; o payload guarda o motivo.)
+ * Contador vive no próprio payload (jsonb), sem migration.
+ */
+const DEFER_BASE_MS = 30 * 60 * 1000;
+const DEFER_CAP_MS = 12 * 60 * 60 * 1000;
+const DEFER_MAX_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Espera com backoff: 30min, 1h, 2h, 4h, 8h, 12h… — ~8 tentativas em 3 dias.
+ *  Sem isso seriam 144 re-claims por lembrete e hoje existem 151 lembretes
+ *  pendentes de reps pausados (só a Michelle Melo tem 137). */
+function deferDelayMs(tentativa: number): number {
+  return Math.min(DEFER_BASE_MS * 2 ** Math.max(0, tentativa - 1), DEFER_CAP_MS);
+}
+
+async function deferBlockedTask(task: ScheduledTaskRow, reason: string): Promise<void> {
+  const supabase = createAdminClient();
+  const nowIso = new Date().toISOString();
+
+  // Recorrente: mantém o comportamento de sempre (pula a ocorrência).
+  if (
+    (task.task_type === "recurring_reminder" ||
+      task.task_type === "outbound_to_contact_recurring") &&
+    task.cron_expr
+  ) {
+    await advanceTask(task);
+    return;
+  }
+
+  const payload = (task.task_payload || {}) as Record<string, unknown>;
+  const primeiro = typeof payload.first_blocked_at === "string" ? payload.first_blocked_at : nowIso;
+  const vezes = (typeof payload.blocked_count === "number" ? payload.blocked_count : 0) + 1;
+  const estourou = Date.now() - new Date(primeiro).getTime() > DEFER_MAX_MS;
+
+  if (estourou) {
+    await supabase
+      .from("assistant_scheduled_tasks")
+      .update({
+        status: "failed",
+        last_run_at: nowIso,
+        task_payload: { ...payload, first_blocked_at: primeiro, blocked_count: vezes, blocked_reason: reason },
+      })
+      .eq("id", task.id);
+    try {
+      const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+      recordSignalAsync({
+        type: "failure",
+        title: `⏰ Lembrete do rep expirou sem entregar (${reason})`,
+        description:
+          `Task ${task.id} (rep ${task.rep_id}) ficou 3 dias bloqueada por "${reason}" e não foi ` +
+          `entregue. O rep PEDIU esse lembrete e não recebeu. Conferir o que está bloqueando ` +
+          `(loop_guard/wallet/silêncio) antes que se repita.`,
+        severity: "medium",
+        source: "bot_auto",
+        metadata: { scheduled_task_id: task.id, rep_id: task.rep_id, reason, blocked_count: vezes },
+      });
+    } catch {
+      /* sinal não crítico */
+    }
+    return;
+  }
+
+  await supabase
+    .from("assistant_scheduled_tasks")
+    .update({
+      status: "pending",
+      next_run_at: new Date(Date.now() + deferDelayMs(vezes)).toISOString(),
+      task_payload: { ...payload, first_blocked_at: primeiro, blocked_count: vezes, blocked_reason: reason },
+    })
+    .eq("id", task.id);
+}
+
 async function advanceTask(task: ScheduledTaskRow): Promise<void> {
   const supabase = createAdminClient();
   const nowIso = new Date().toISOString();

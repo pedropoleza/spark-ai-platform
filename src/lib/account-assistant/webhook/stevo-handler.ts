@@ -418,10 +418,19 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
   }
 
   // Silence reset: qualquer inbound do rep limpa counter + pausa proativa.
-  // H52: pausa do loop-guard NÃO é limpa (ver resetSilenceTracking).
+  // H52: pausa do loop-guard NÃO é limpa por texto (ver resetSilenceTracking).
+  // H68 (caso Gustavo): mas tap de menu / áudio é PROVA DE HUMANO — bot em loop
+  // não toca botão nem grava áudio —, então limpa na hora em vez de esperar a
+  // janela de 24h.
   try {
     const { resetSilenceTracking } = await import("@/lib/repositories/rep-identities.repo");
-    await resetSilenceTracking(rep.id, new Date().toISOString());
+    const { isHumanProofMsg } = await import("@/lib/account-assistant/loop-guard");
+    const provaHumano = isHumanProofMsg(null, {
+      input_kind: repInput.kind,
+      interactive_reply: parsed.kind === "interactive" ? parsed.interactiveType : undefined,
+      selection_id: parsed.kind === "interactive" ? parsed.selectionId : undefined,
+    });
+    await resetSilenceTracking(rep.id, new Date().toISOString(), undefined, provaHumano);
   } catch (err) {
     console.warn(
       "[stevo-handler] silence reset falhou (não-bloqueante):",

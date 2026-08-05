@@ -434,12 +434,19 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
       const loop = detectPingPongLoop(msgsAsc, alreadyFlagged ? 2 : undefined);
       if (loop.looping) {
         const nowIso = new Date().toISOString();
-        // SEMPRE re-seta (sem checar rep.proactive_paused_at: o objeto é um
-        // snapshot de ANTES do silence-reset do webhook — estaria stale).
+        // H68 (caso Gustavo Couto): NÃO renova o carimbo se já é pausa de
+        // loop-guard. Renovando, cada re-flagra empurrava a expiração pra
+        // frente e a pausa virava PERMANENTE — ele ficou 12 dias sem proativo
+        // (23/07→03/08) porque o threshold reduzido (2 trocas) re-flagra um
+        // digitador rápido quase todo dia. Preservar o 1º carimbo faz a janela
+        // de 24h realmente chegar; o loop de verdade segue silenciado turno a
+        // turno pelo próprio guard, que roda em TODO inbound.
+        const jaEraLoopGuard =
+          repFlag.proactive_pause_source === "loop_guard" && !!repFlag.proactive_paused_at;
         await supabase
           .from("rep_identities")
           .update({
-            proactive_paused_at: nowIso,
+            ...(jaEraLoopGuard ? {} : { proactive_paused_at: nowIso }),
             proactive_pause_source: "loop_guard",
             updated_at: nowIso,
           })
