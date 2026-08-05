@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { shouldFireCron } from "@/lib/account-assistant/proactive/cron-evaluator";
+import { isCronDue } from "@/lib/account-assistant/proactive/cron-evaluator";
 import { fireScheduledReminders } from "@/lib/account-assistant/proactive/reminder-runner";
 import { fireBulkRecipients } from "@/lib/account-assistant/proactive/bulk-message-runner";
 import { processOutreachTick } from "@/lib/account-assistant/proactive/outreach-runner";
@@ -34,6 +34,26 @@ const REACTIVE_START_BUDGET_MS = 40_000;
 // Cap de concorrência das calls GHL do post_meeting. Fan-out bounded evita
 // thundering-herd no mutex de token do GHL (mesma razão do H36 em calendar.ts).
 const POST_MEETING_POLL_CONCURRENCY = 12;
+
+// Fix bug observado em prod 2026-08-05 (caso Natalia): o "Resumo matinal" era
+// uma CORRIDA DE 60 SEGUNDOS. `shouldFireCron` só dá match no minuto exato do
+// cron, e este loop atendia os reps em série gastando segundos com cada um
+// (calls no Spark Leads + LLM). Quem não coubesse no minuto perdia o briefing
+// DAQUELE DIA inteiro — e como a ordem dos reps é estável, eram sempre os
+// mesmos. Medido em prod: 43 reps elegíveis, 15 alcançados em 05/08, 1 em 30/07;
+// a Natalia recebia desde 28/07 nada além do lembrete de texto fixo dela.
+//
+// Três parâmetros consertam isso juntos:
+//  - GRACE: a regra continua "vencida" por um tempo depois da hora cheia, então
+//    o tick seguinte pega quem sobrou (dedup diário impede repetir pra quem já
+//    recebeu).
+//  - BUDGET: o loop devolve o tick antes de comer o tempo dos runners de
+//    entrega (lembretes/bulk) que rodam logo abaixo — o resto fica pro próximo.
+//  - CONCURRENCY: alguns reps por vez, com cap baixo pelo mesmo motivo do
+//    post_meeting (não estourar o mutex de token do Spark Leads).
+const SCHEDULED_GRACE_MINUTES = 180;
+const SCHEDULED_LOOP_BUDGET_MS = 20_000;
+const SCHEDULED_REP_CONCURRENCY = 4;
 
 /**
  * GET /api/cron/sparkbot-proactive
@@ -119,107 +139,15 @@ async function runProactiveCron(request: NextRequest): Promise<NextResponse> {
       // específico ser criado pra cada (Pipeline review, Reflexão semanal,
       // Resumo fim do dia).
       const reps = await getEligibleReps(supabase, rule);
-      for (const rep of reps) {
-        const tz = await getRepTimezone(supabase, rep);
-        const should = shouldFireCron(trigger.cron, tz);
-        if (!should) continue;
-
-        // Dedup: já disparou pra esse rep+rule HOJE no tz dele?
-        // assistant_alert_state.last_fired_at compare com today window.
-        const todayStartTz = (() => {
-          const d = new Date();
-          const fmt = new Intl.DateTimeFormat("en-CA", {
-            timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
-          });
-          return new Date(`${fmt.format(d)}T00:00:00`).toISOString();
-        })();
-        const { data: existing } = await supabase
-          .from("assistant_alert_state")
-          .select("last_fired_at, status")
-          .eq("rep_id", rep.id)
-          .eq("rule_id", rule.id)
-          .is("target_id", null)
-          .maybeSingle();
-        if (
-          existing?.last_fired_at &&
-          existing.last_fired_at > todayStartTz &&
-          ["sent", "skipped_empty", "skipped_quiet_hours"].includes(
-            existing.status,
-          )
-        ) {
-          // Já disparou (ou skip explícito) hoje — pula
-          continue;
-        }
-
-        // Detecta tipo de rule pra escolher handler. Por enquanto só
-        // "Resumo matinal" tem implementação real.
-        if (rule.name === "Resumo matinal") {
-          // Opt-out check: rep pode ter desabilitado via tool
-          // set_daily_briefing(false).
-          const repFull = rep as RepIdentity & {
-            daily_briefing_enabled?: boolean;
-          };
-          if (repFull.daily_briefing_enabled === false) {
-            // Skip — rep opt-out
-            continue;
-          }
-          const { loadDailyContext } = await import(
-            "@/lib/account-assistant/proactive/daily-briefing"
-          );
-          const { buildDailyBriefingPrompt } = await import(
-            "@/lib/account-assistant/proactive/daily-briefing-prompt"
-          );
-          const context = await loadDailyContext(rep);
-          if (!context) {
-            // Skip-empty: rep não tem nada relevante
-            await supabase.from("assistant_alert_state").upsert(
-              {
-                rep_id: rep.id, rule_id: rule.id, target_id: null,
-                last_fired_at: new Date().toISOString(),
-                status: "skipped_empty",
-              },
-              { onConflict: "rep_id,rule_id,target_id" },
-            );
-            skippedCount++;
-            continue;
-          }
-
-          // Clone rule com prompt_instruction custom (template otimizado)
-          const ruleWithPrompt: ProactiveRule = {
-            ...(rule as ProactiveRule),
-            prompt_instruction: buildDailyBriefingPrompt(context),
-          };
-
-          try {
-            const result = await dispatchRule({
-              rule: ruleWithPrompt,
-              rep: rep as RepIdentity,
-              contextData: context as unknown as Record<string, unknown>,
-              mode: "real",
-            });
-            if (result.status === "sent") firedCount++;
-            else skippedCount++;
-          } catch (err) {
-            console.error(
-              `[cron:scheduled] Resumo matinal falhou rep=${rep.id}:`,
-              err instanceof Error ? err.message : err,
-            );
-            skippedCount++;
-          }
-        } else {
-          // Outras scheduled rules (Pipeline review etc): por enquanto
-          // skip + log. Habilitar quando tiver prompt template dedicado.
-          await supabase.from("assistant_alert_state").upsert(
-            {
-              rep_id: rep.id, rule_id: rule.id, target_id: null,
-              last_fired_at: new Date().toISOString(),
-              status: "skipped_disabled",
-            },
-            { onConflict: "rep_id,rule_id,target_id" },
-          );
-          skippedCount++;
-        }
-      }
+      const resultado = await runScheduledRuleForReps(
+        supabase,
+        rule as ProactiveRule,
+        trigger,
+        reps,
+        startTs,
+      );
+      firedCount += resultado.fired;
+      skippedCount += resultado.skipped;
     }
     // Reactive rules de polling (post_meeting, etc): só coleta aqui — o
     // processamento roda por último (ver bloco após os runners de entrega).
@@ -412,6 +340,146 @@ export const POST = GET;
  *
  * V3+: somar filtro de whitelist (agent_configs.allowed_ghl_users).
  */
+/**
+ * Roda uma regra scheduled sobre os reps elegíveis, em lotes e com orçamento.
+ *
+ * O que sobrar do orçamento fica pro próximo tick (30s depois) — e continua
+ * elegível porque `isCronDue` mantém a regra vencida durante a janela de
+ * tolerância. Era exatamente isso que faltava: antes, o rep que não fosse
+ * atendido dentro do minuto do cron perdia o dia inteiro.
+ */
+async function runScheduledRuleForReps(
+  supabase: ReturnType<typeof createAdminClient>,
+  rule: ProactiveRule,
+  trigger: ScheduledTrigger,
+  reps: RepIdentity[],
+  tickStartTs: number,
+): Promise<{ fired: number; skipped: number }> {
+  let fired = 0;
+  let skipped = 0;
+
+  for (let i = 0; i < reps.length; i += SCHEDULED_REP_CONCURRENCY) {
+    if (Date.now() - tickStartTs > SCHEDULED_LOOP_BUDGET_MS) {
+      console.warn(
+        `[cron:scheduled] orçamento do tick estourado em "${rule.name}": ` +
+          `${reps.length - i} rep(s) ficam pro próximo tick`,
+      );
+      break;
+    }
+    const lote = reps.slice(i, i + SCHEDULED_REP_CONCURRENCY);
+    const saidas = await mapWithConcurrency(
+      lote,
+      SCHEDULED_REP_CONCURRENCY,
+      (rep) => processScheduledRep(supabase, rule, trigger, rep),
+    );
+    for (const s of saidas) {
+      if (s === "fired") fired++;
+      else if (s === "skipped") skipped++;
+    }
+  }
+
+  return { fired, skipped };
+}
+
+/** Avalia e (se for o caso) dispara uma regra scheduled pra UM rep. */
+async function processScheduledRep(
+  supabase: ReturnType<typeof createAdminClient>,
+  rule: ProactiveRule,
+  trigger: ScheduledTrigger,
+  rep: RepIdentity,
+): Promise<"fired" | "skipped" | "none"> {
+  const tz = await getRepTimezone(supabase, rep);
+  if (!isCronDue(trigger.cron, tz, SCHEDULED_GRACE_MINUTES)) return "none";
+
+  // Dedup: já disparou pra esse rep+rule HOJE no tz dele?
+  // assistant_alert_state.last_fired_at compare com today window.
+  // É ELE que garante que a janela de tolerância não vira envio repetido.
+  const todayStartTz = (() => {
+    const d = new Date();
+    const fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+    });
+    return new Date(`${fmt.format(d)}T00:00:00`).toISOString();
+  })();
+  const { data: existing } = await supabase
+    .from("assistant_alert_state")
+    .select("last_fired_at, status")
+    .eq("rep_id", rep.id)
+    .eq("rule_id", rule.id)
+    .is("target_id", null)
+    .maybeSingle();
+  if (
+    existing?.last_fired_at &&
+    existing.last_fired_at > todayStartTz &&
+    ["sent", "skipped_empty", "skipped_quiet_hours"].includes(existing.status)
+  ) {
+    // Já disparou (ou skip explícito) hoje — pula
+    return "none";
+  }
+
+  // Detecta tipo de rule pra escolher handler. Por enquanto só
+  // "Resumo matinal" tem implementação real.
+  if (rule.name === "Resumo matinal") {
+    // Opt-out check: rep pode ter desabilitado via tool set_daily_briefing(false).
+    const repFull = rep as RepIdentity & { daily_briefing_enabled?: boolean };
+    if (repFull.daily_briefing_enabled === false) return "none";
+
+    const { loadDailyContext } = await import(
+      "@/lib/account-assistant/proactive/daily-briefing"
+    );
+    const { buildDailyBriefingPrompt } = await import(
+      "@/lib/account-assistant/proactive/daily-briefing-prompt"
+    );
+    const context = await loadDailyContext(rep);
+    if (!context) {
+      // Skip-empty: rep não tem nada relevante
+      await supabase.from("assistant_alert_state").upsert(
+        {
+          rep_id: rep.id, rule_id: rule.id, target_id: null,
+          last_fired_at: new Date().toISOString(),
+          status: "skipped_empty",
+        },
+        { onConflict: "rep_id,rule_id,target_id" },
+      );
+      return "skipped";
+    }
+
+    // Clone rule com prompt_instruction custom (template otimizado)
+    const ruleWithPrompt: ProactiveRule = {
+      ...rule,
+      prompt_instruction: buildDailyBriefingPrompt(context),
+    };
+
+    try {
+      const result = await dispatchRule({
+        rule: ruleWithPrompt,
+        rep,
+        contextData: context as unknown as Record<string, unknown>,
+        mode: "real",
+      });
+      return result.status === "sent" ? "fired" : "skipped";
+    } catch (err) {
+      console.error(
+        `[cron:scheduled] Resumo matinal falhou rep=${rep.id}:`,
+        err instanceof Error ? err.message : err,
+      );
+      return "skipped";
+    }
+  }
+
+  // Outras scheduled rules (Pipeline review etc): por enquanto skip + log.
+  // Habilitar quando tiver prompt template dedicado.
+  await supabase.from("assistant_alert_state").upsert(
+    {
+      rep_id: rep.id, rule_id: rule.id, target_id: null,
+      last_fired_at: new Date().toISOString(),
+      status: "skipped_disabled",
+    },
+    { onConflict: "rep_id,rule_id,target_id" },
+  );
+  return "skipped";
+}
+
 async function getEligibleReps(
   supabase: ReturnType<typeof createAdminClient>,
   rule: { agent_id: string },

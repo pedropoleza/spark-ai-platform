@@ -17,6 +17,10 @@ import { GHLClient } from "@/lib/ghl/client";
 import type { RepIdentity } from "@/types/account-assistant";
 // H48 (2026-07-10): compromissos do Google Calendar / bloqueios no briefing.
 import { fetchCalendarBlocks } from "../calendar-context";
+import { mapWithConcurrency } from "@/lib/utils/concurrency";
+
+/** Cap das calls de nome de contato. Baixo pelo mutex de token do Spark Leads. */
+const CONTACT_LOOKUP_CONCURRENCY = 6;
 // sparkbot_messages — as 4 queries de count abaixo usam filtros JSONB específicos
 // (metadata->tools cs [...]) que não estão cobertos pelo repo genérico.
 // Mantemos createAdminClient pra essas queries; o resto (locations) também fica aqui.
@@ -229,36 +233,43 @@ export async function loadDailyContext(
         if (c.id && c.name) calMap.set(c.id, c.name);
       }
     }
-    for (const ev of events) {
-      if (ev.assignedUserId !== repGhlUserId) continue;
+    const meus = events.filter((ev) => {
+      if (ev.assignedUserId !== repGhlUserId) return false;
       const status = (ev.appointmentStatus || "scheduled").toLowerCase();
-      if (["cancelled", "noshow", "no-show", "invalid"].includes(status)) continue;
-      const startMs = new Date(ev.startTime).getTime();
-      if (isNaN(startMs)) continue;
+      if (["cancelled", "noshow", "no-show", "invalid"].includes(status)) return false;
+      return !isNaN(new Date(ev.startTime).getTime());
+    });
 
+    // Fix 2026-08-05: o nome do contato era resolvido em SÉRIE, uma call por
+    // reunião, dentro do loop. Num rep de agenda cheia isso sozinho já custava
+    // vários segundos — e o cron do briefing tinha um minuto pra atender a frota
+    // inteira. Agora: 1 call por contato DISTINTO, em paralelo com cap.
+    const idsUnicos = Array.from(
+      new Set(meus.map((ev) => ev.contactId).filter(Boolean) as string[]),
+    );
+    const nomePorContato = new Map<string, string>();
+    await mapWithConcurrency(idsUnicos, CONTACT_LOOKUP_CONCURRENCY, async (id) => {
+      try {
+        const c = await ghl.get<{ contact?: { name?: string; firstName?: string } }>(
+          `/contacts/${id}`,
+        );
+        const nome = c.contact?.name || c.contact?.firstName;
+        if (nome) nomePorContato.set(id, nome);
+      } catch {
+        /* sem nome — o briefing mostra "(sem nome)" e segue */
+      }
+    });
+
+    for (const ev of meus) {
+      const startMs = new Date(ev.startTime).getTime();
       const timeLabel = new Date(startMs).toLocaleTimeString("en-US", {
         timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true,
       });
-
-      // Resolve nome do contato
-      let contactName = "(sem nome)";
-      if (ev.contactId) {
-        try {
-          const c = await ghl.get<{ contact?: { name?: string; firstName?: string } }>(
-            `/contacts/${ev.contactId}`,
-          );
-          contactName =
-            c.contact?.name ||
-            c.contact?.firstName ||
-            "(sem nome)";
-        } catch {
-          /* skip */
-        }
-      }
       appointments_today.push({
         start_time_iso: ev.startTime,
         start_time_label: timeLabel,
-        contact_name: contactName,
+        contact_name:
+          (ev.contactId && nomePorContato.get(ev.contactId)) || "(sem nome)",
         calendar_name: calMap.get(ev.calendarId || "") || undefined,
         title: ev.title,
       });
@@ -379,8 +390,16 @@ export async function loadDailyContext(
     yesterday_data.deals_closed.length > 0 ||
     yesterday_data.notes_created > 0 ||
     yesterday_data.tasks_completed > 0;
+  // Fix bug observado em prod 2026-08-05 (caso Natalia): `blocks_today` ficava
+  // de fora desta conta — a H48 buscava os compromissos do Google mas mandava
+  // eles "de carona", só quando ALGUMA outra seção tivesse conteúdo. Pra quem
+  // toca a agenda no Google (que foi justamente quem pediu o recurso), o dia
+  // inteiro ficava invisível: nenhuma reunião no CRM ⇒ contexto null ⇒
+  // `skipped_empty` ⇒ nenhuma mensagem. Compromisso do Google é compromisso:
+  // agora dispara o briefing sozinho, igual reunião do Spark Leads.
   const hasContent =
     appointments_today.length > 0 ||
+    blocks_today.length > 0 ||
     /* tasks_pending: V2 */
     hasYesterday;
 

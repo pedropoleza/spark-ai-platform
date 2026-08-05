@@ -13,8 +13,35 @@
 
 import type { BriefingContext } from "./daily-briefing";
 
+/**
+ * Linhas prontas das duas agendas — o modelo COPIA, não redige.
+ *
+ * Fix bug observado em prod 2026-08-05: os compromissos do Google chegavam ao
+ * LLM (7 no dia do Pedro) e ele resumia tudo em "Dia lotado — workout, almoço e
+ * mais alguns", porque o prompt pedia listar E limitava a 10 linhas. Quem lia
+ * não via compromisso nenhum. Mesma escola do `booked_label` (H50) e da tabela
+ * de datas (H68): dado determinístico quem produz é o código.
+ */
+function renderAgendas(ctx: BriefingContext): { reunioes: string; compromissos: string } {
+  const reunioes = ctx.appointments_today
+    .map((a) => {
+      const cal = a.calendar_name ? ` (${a.calendar_name})` : "";
+      return `• *${a.start_time_label}* — *${a.contact_name}*${cal}`;
+    })
+    .join("\n");
+
+  const linhas = ctx.blocks_today.map(
+    (b) => `• ${b.start_time_label}–${b.end_time_label} — ${b.title}`,
+  );
+  if (ctx.blocks_truncated_count > 0) {
+    linhas.push(`• +${ctx.blocks_truncated_count} outro(s)`);
+  }
+  return { reunioes, compromissos: linhas.join("\n") };
+}
+
 export function buildDailyBriefingPrompt(ctx: BriefingContext): string {
   const sections: string[] = [];
+  const { reunioes, compromissos } = renderAgendas(ctx);
 
   sections.push(
     `Você é o SparkBot, copiloto IA da Spark Leads. Está mandando o RESUMO MATINAL pro rep ${ctx.rep_first_name} via WhatsApp.`,
@@ -28,7 +55,9 @@ export function buildDailyBriefingPrompt(ctx: BriefingContext): string {
     "- Cada bullet curto (1 linha). Sem floreio.",
     "- Termine com pergunta aberta curta (1 frase) pra engajar — tipo 'Quer focar em algo específico hoje?' ou 'Precisa de ajuda com alguma reunião?'",
     "- TOM: positivo, motivacional sem ser piegas. Brasileiro natural.",
-    "- LIMITE: max 10 linhas total. Conciso.",
+    "- SEJA CONCISO no que VOCÊ escreve (saudação, transições, pergunta final):",
+    "  no máximo 4 linhas suas. As linhas de agenda abaixo NÃO contam nesse limite",
+    "  e NÃO podem ser resumidas nem cortadas pra 'economizar espaço'.",
     "",
     "## REGRAS DE CONTEÚDO (CRÍTICAS)",
     "- ❌ SE deals_closed ESTÁ VAZIO: NÃO mencione 'fechou 0 deals' nem 'sem deals'. Pula a linha de deals completa.",
@@ -43,14 +72,30 @@ export function buildDailyBriefingPrompt(ctx: BriefingContext): string {
     "Saudação:",
     `  ☀️ Bom dia, *${ctx.rep_first_name}*! [opcional: 1 linha contextual sobre o dia, ex: "Hoje é ${ctx.weekday.toLowerCase()} — bom dia pra fechar deals"]`,
     "",
-    "Seção 1 (SÓ se appointments_today.length > 0):",
-    "  📅 *X reunião(ões) hoje:*",
-    "  • HH:MM — Nome Contato [Calendar se útil]",
+    // As duas agendas vão PRONTAS. O modelo não redige nem resume essas linhas —
+    // copia. Evita o "Dia lotado — e mais alguns compromissos" que escondia a
+    // agenda inteira do rep.
+    reunioes
+      ? [
+          `Seção 1 — COPIE AS ${ctx.appointments_today.length} LINHA(S) ABAIXO EXATAMENTE COMO ESTÃO,`,
+          "uma por linha, sem reescrever, sem resumir, sem cortar nenhuma:",
+          `  📅 *${ctx.appointments_today.length} reunião(ões) hoje:*`,
+          reunioes.split("\n").map((l) => `  ${l}`).join("\n"),
+          "",
+        ].join("\n")
+      : "Seção 1: appointments_today está vazio — pula a seção inteira (não escreva '📅 nenhuma reunião').",
     "",
-    "Seção 1b (H48 — SÓ se blocks_today.length > 0):",
-    "  🔒 *Outros compromissos:* (são do Google Calendar/bloqueios — NÃO são reuniões do Spark Leads)",
-    "  • HH:MM–HH:MM — Título  [se blocks_truncated_count > 0, feche com '• +N outros']",
-    "  ❌ NUNCA misture com a seção 📅; ❌ se blocks_today vazio, pula a seção inteira.",
+    compromissos
+      ? [
+          `Seção 1b — COPIE AS ${ctx.blocks_today.length} LINHA(S) ABAIXO EXATAMENTE COMO ESTÃO,`,
+          "uma por linha. São compromissos do Google Calendar/bloqueios do rep:",
+          "  🔒 *Outros compromissos:*",
+          compromissos.split("\n").map((l) => `  ${l}`).join("\n"),
+          "  ❌ NUNCA misture com a seção 📅 (aquelas são reuniões do Spark Leads).",
+          "  ❌ NUNCA troque essa lista por um resumo do tipo 'dia cheio' ou 'e mais alguns'.",
+          "",
+        ].join("\n")
+      : "Seção 1b: blocks_today está vazio — pula a seção inteira.",
     "",
     "Seção 2 (SÓ se tasks_pending.length > 0):",
     "  ✅ *X tarefa(s) pendente(s):*",
