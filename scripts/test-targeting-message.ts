@@ -133,5 +133,68 @@ ok("ativa NÃO afrouxa perfil: tag ausente E (msg neutra) → block",
 ok("sem conversationActive = legado (message não bate → block)",
   evaluateTargetingSet(msgSet, contact, opps, { messageText: "bom dia" }) === false);
 
+console.log("\n=== acento-insensível (F9 follow-up 2026-06-27) ===");
+// deburr nos 2 lados: needle com acento casa texto sem acento e vice-versa.
+ok("contains: texto 'orcamento' vs needle 'orçamento' → match",
+  matchTextOp("contains", "quero um orcamento", "orçamento") === true);
+ok("contains: texto 'orçamento' vs needle 'orcamento' → match",
+  matchTextOp("contains", "quero um orçamento", "orcamento") === true);
+ok("eq: 'sao paulo' vs 'São Paulo' → match", matchTextOp("eq", "sao paulo", "São Paulo") === true);
+ok("in: needle 'atenção' casa texto 'atencao'", matchTextOp("in", "preciso de atencao", ["atenção"]) === true);
+// tag + custom_field via avaliador: regra sem acento casa atributo com acento no CRM.
+const accentContact = {
+  tags: ["Líder", "São Paulo"],
+  customFields: [{ key: "cidade", value: "Brasília" }],
+};
+const evalAccent = (rules: TargetingRule[]) => {
+  const set = normalizeTargeting(rules);
+  return set ? evaluateTargetingSet(set, accentContact, [], {}) : true;
+};
+ok("tag: regra 'lider' casa tag 'Líder'", evalAccent([leaf({ type: "tag", tag: "lider" })]) === true);
+ok("tag: regra 'Sao Paulo' casa tag 'São Paulo'", evalAccent([leaf({ type: "tag", tag: "Sao Paulo" })]) === true);
+ok("custom_field: 'Brasilia' casa 'Brasília'",
+  evalAccent([leaf({ type: "custom_field", custom_field_key: "cidade", custom_field_value: "Brasilia" })]) === true);
+
+// ── As regras REAIS da frota (medidas em prod 2026-08-05) ───────────────────
+// 8 agent_configs têm regra de ativação acentuada e ativam por FRASE — se o
+// acento do lead não bate o da regra, o agente fica MUDO pra aquele lead.
+// Sintoma de que o problema era real: na config do Matheus alguém já tinha
+// escrito as duas grafias à mão ("Veio de anúncio" E "Veio de anuncio",
+// "proteger minha família" E "proteger minha familia"). Com o deburr, uma basta.
+console.log("\n=== regras reais da frota (acento) ===");
+const frase = (regra: string, lead: string) =>
+  evaluateTargetingSet(
+    { version: 2, match: "all", groups: [{ id: "g", match: "all", rules: [leaf({ type: "message", message_operator: "contains", message_value: regra })] }] } as TargetingRuleSet,
+    { tags: [], customFields: [] },
+    [],
+    { messageText: lead },
+  );
+ok(
+  "Gian: regra 'renda vitalícia' casa lead que escreve 'renda vitalicia'",
+  frase("aposentadoria/renda vitalícia  em dolar", "quero saber de aposentadoria/renda vitalicia  em dolar") === true,
+);
+ok(
+  "Bruna: regra 'mais informações sobre o seguro' casa 'mais informacoes sobre o seguro'",
+  frase("Moro nos EUA e gostaria de mais informações sobre o seguro com beneficio em vida",
+        "Moro nos EUA e gostaria de mais informacoes sobre o seguro com beneficio em vida") === true,
+);
+ok(
+  "Bruno: regra 'informações de como me tornar agente' casa a grafia sem acento",
+  frase("Moro nos EUA e gostaria de mais informações de como me tornar agente financeiro",
+        "moro nos eua e gostaria de mais informacoes de como me tornar agente financeiro") === true,
+);
+ok(
+  "Matheus: uma grafia só passa a cobrir as duas ('anúncio' pega 'anuncio')",
+  frase("Veio de anúncio", "Veio de anuncio") === true,
+);
+ok(
+  "Jussara: 'Tenho interesse e queria mais informações' casa sem acento",
+  frase("Tenho interesse e queria mais informações", "Tenho interesse e queria mais informacoes") === true,
+);
+ok(
+  "não afrouxou de mais: frase diferente segue bloqueada",
+  frase("Veio de anúncio", "quanto custa o seguro?") === false,
+);
+
 console.log(`\n=== RESULTADO: ${pass} pass / ${fail} fail ===`);
 process.exit(fail === 0 ? 0 : 1);
