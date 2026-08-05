@@ -527,10 +527,24 @@ async function getEligibleReps(
   return candidates.filter((r) => optedInIds.has(r.id)) as RepIdentity[];
 }
 
+/**
+ * Fuso do rep pra AGENDAR o proativo.
+ *
+ * Fix bug observado em prod 2026-08-05: aqui só se olhava o fuso da LOCATION,
+ * enquanto o conteúdo do briefing (`loadDailyContext`) é renderizado no fuso do
+ * REP. Quem dispara e quem escreve discordavam. Na frota isso não é exceção:
+ * 25 reps ativos vivem em sub-accounts configuradas como `America/Sao_Paulo` e
+ * 23 deles têm fuso próprio diferente (são reps nos EUA numa conta brasileira)
+ * — recebiam o "Resumo matinal das 8h" às 7h da manhã deles, com o texto já
+ * escrito no fuso certo. Agora vale a mesma ordem do `getRepTimezone` das tools
+ * (H68): o fuso do PRÓPRIO rep primeiro, que é o que o onboarding confirma e o
+ * que ele pode corrigir por conversa (`confirm_rep_timezone`).
+ */
 async function getRepTimezone(
   supabase: ReturnType<typeof createAdminClient>,
   rep: RepIdentity,
 ): Promise<string> {
+  if (rep.timezone) return rep.timezone;
   if (!rep.active_location_id) return "America/New_York";
   const { data } = await supabase
     .from("locations")
