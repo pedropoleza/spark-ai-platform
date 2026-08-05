@@ -160,7 +160,6 @@ export async function loadDailyContext(
   rep: RepIdentity,
 ): Promise<BriefingContext | null> {
   const supabase = createAdminClient();
-  const tz = rep.timezone || "America/New_York";
 
   // Resolve location ativa
   const activeLocId =
@@ -183,10 +182,16 @@ export async function loadDailyContext(
 
   const { data: loc } = await supabase
     .from("locations")
-    .select("company_id, location_name")
+    .select("company_id, location_name, timezone")
     .eq("location_id", activeLocId)
     .maybeSingle();
   if (!loc?.company_id) return null;
+
+  // Mesma resolução que o cron usa pra AGENDAR (route.ts:getRepTimezone) e que
+  // as tools usam pra gravar horário (H68). Antes daqui faltava o degrau da
+  // location: rep sem fuso próprio numa sub-account de São Paulo disparava no
+  // horário de lá e lia o texto rotulado em Nova York.
+  const tz = rep.timezone || loc.timezone || "America/New_York";
 
   const ghl = new GHLClient(loc.company_id, activeLocId);
 
