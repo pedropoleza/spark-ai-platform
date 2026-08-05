@@ -56,10 +56,18 @@ dias, e as contestações explícitas do rep foram todas reafirmadas:
 
 ## Aberto — precisa de decisão ou investigação
 
-1. **14 lembretes `completed` sem gerar mensagem nenhuma** (12 são do Gustavo Couto =
-   67% dos lembretes dele). Sem sinal, sem `execution_log`, sem linha em
-   `sparkbot_messages`. Causa desconhecida — wallet/loop-guard explica no máximo 2.
-   Pior que o 479: ali existia ao menos a linha `not_sent=true`.
+1. ~~**14 lembretes `completed` sem gerar mensagem nenhuma**~~ — **RESOLVIDO em
+   2026-08-04 (commit `70025f3`).** Eram dois defeitos somados: a pausa do loop-guard
+   virava PERMANENTE (cada re-flagra reescrevia o carimbo, e o limiar cai pra 2 trocas
+   depois do 1º — um digitador rápido re-flagra quase todo dia; o Gustavo ficou 12 dias
+   mudo) e o lembrete bloqueado era marcado `completed`, ou seja, destruído. Fix: pausa
+   preserva o 1º carimbo, janela 7d→24h, tap/áudio limpa na hora; e bloqueado ≠ concluído
+   (espera com backoff, teto 3 dias, depois `failed` + sinal). Diagnóstico por rep:
+   `scripts/rep-health.ts <telefone>`.
+
+   **Decisão do Pedro (04/08): NÃO avisar os reps do que não chegou.** Vale tanto pros 13
+   itens do Gustavo quanto pras 5 reuniões de julho no dia errado. O que importava era
+   parar de acontecer.
 2. **Correção de mensagem agendada cria envio novo em vez de substituir.** A cliente
    Iara (rep Angel) recebeu 3 mensagens em 3 segundos, 2 com o texto pré-correção.
    `cancel_scheduled_message` existe; o LLM nunca chama. O dedup atual casa por texto
