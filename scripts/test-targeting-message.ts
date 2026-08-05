@@ -133,5 +133,40 @@ ok("ativa NÃO afrouxa perfil: tag ausente E (msg neutra) → block",
 ok("sem conversationActive = legado (message não bate → block)",
   evaluateTargetingSet(msgSet, contact, opps, { messageText: "bom dia" }) === false);
 
+console.log("\n=== H51: set REAL da Marina (opener OU tag, trigger_once) ===");
+// Espelha o que está salvo em prod (agent 3976b4b6…): match "any" entre o grupo
+// de abertura (message "in" ["carreira","entender melhor"]) e o grupo da tag.
+const marinaSet: TargetingRuleSet = {
+  version: 2, match: "any",
+  groups: [
+    { id: "abertura", match: "any", rules: [leaf({ type: "message", message_operator: "in", message_values: ["carreira", "entender melhor"], case_sensitive: false })] },
+    { id: "tag", match: "any", rules: [leaf({ type: "tag", tag: "ia - em atendimento" })] },
+  ],
+};
+const semTag = { tags: ["lead-frio"], customFields: [] };
+const comTag = { tags: ["ia - em atendimento"], customFields: [] };
+// 1º contato (conversa NÃO ativa): opener ativa mesmo SEM a tag (mata a corrida D1).
+ok("1º contato: opener 'Olá Marina, queria entender melhor sobre essa carreira' sem tag → ativa",
+  evaluateTargetingSet(marinaSet, semTag, [], { messageText: "Olá Marina, queria entender melhor sobre essa carreira" }) === true);
+ok("1º contato: opener variante 'quero entender melhor' sem tag → ativa",
+  evaluateTargetingSet(marinaSet, semTag, [], { messageText: "oi, quero entender melhor" }) === true);
+ok("1º contato: SÓ a tag (sem frase de abertura) → ativa (rede de segurança)",
+  evaluateTargetingSet(marinaSet, comTag, [], { messageText: "oi" }) === true);
+ok("1º contato: nem opener nem tag → NÃO ativa",
+  evaluateTargetingSet(marinaSet, semTag, [], { messageText: "bom dia" }) === false);
+// Follow-up (conversa ativa) SEM a tag: a folha message vira NEUTRA e o grupo tag
+// não bate → o AVALIADOR PURO retorna FALSE. É EXATAMENTE por isso que a Marina é
+// `trigger_once`: o gate do processor é BYPASSADO quando conversationActive (o dono
+// é o membership) — o follow-up "Florida" não passa mais pelo avaliador. Se fosse
+// `gate_ongoing`, este follow-up morreria (D3/sintoma 3). Este assert TRAVA a
+// premissa (o evaluator bloqueia → o bypass do trigger_once é indispensável).
+ok("follow-up sem tag: evaluator BLOQUEIA (por isso trigger_once bypassa o gate no processor)",
+  evaluateTargetingSet(marinaSet, semTag, [], { messageText: "Florida", conversationActive: true }) === false);
+// Com a tag presente, mesmo o gate_ongoing carrega o follow-up (grupo tag bate).
+ok("follow-up COM a tag → tag bate → passa (mesmo sem trigger_once)",
+  evaluateTargetingSet(marinaSet, comTag, [], { messageText: "Florida", conversationActive: true }) === true);
+ok("proativo COM tag: message neutra (isProactive) mas tag bate → passa",
+  evaluateTargetingSet(marinaSet, comTag, [], { messageText: "__synthetic__", isProactive: true }) === true);
+
 console.log(`\n=== RESULTADO: ${pass} pass / ${fail} fail ===`);
 process.exit(fail === 0 ? 0 : 1);

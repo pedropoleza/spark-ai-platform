@@ -25,6 +25,7 @@ import { isReactiveTriggerBody, parseTriggerBody } from "@/lib/account-assistant
 // cold-start quando o fetch de histórico do Spark Leads falha/vem vazio.
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
 import { reportError } from "@/lib/admin-signals/report-error";
+import { normalizePhone, resolveLocationDefaultCountry } from "@/lib/account-assistant/identity";
 // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
 import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
@@ -415,10 +416,22 @@ async function processGroup(
     (convState as { last_ai_response_at?: string | null })?.last_ai_response_at ||
     ((convState as { message_count?: number } | null)?.message_count ?? 0) > 0
   );
+  // H51 (Frente B2, 2026-07-16): modo de ativação. Em `trigger_once`, o targeting
+  // é só GATILHO de ativação (1º contato) — uma vez a conversa ATIVA (membership
+  // estabelecido), o DONO é o membership até pausa/handoff; NÃO re-avalia targeting
+  // (senão remover a tag no meio da conversa emudece silenciosamente — D3, caso
+  // Marina). Default `gate_ongoing` = comportamento legado (re-checa todo turno),
+  // zero regressão pros agentes que usam tag/campo como filtro contínuo.
+  const activationMode =
+    (config as { activation_mode?: string | null }).activation_mode === "trigger_once"
+      ? "trigger_once"
+      : "gate_ongoing";
+  const targetingIsTriggerOnly = activationMode === "trigger_once" && conversationActive;
   // normalizeTargeting cobre array legado E set v2 (Pedro 2026-06-17); null = sem
   // regra efetiva = responde a todos (não chama o gate).
   if (
     !manuallyResumed &&
+    !targetingIsTriggerOnly &&
     normalizeTargeting(targetingRules) &&
     locationForBilling?.company_id
   ) {
@@ -452,6 +465,36 @@ async function processGroup(
         success: true,
       });
       return;
+    }
+  }
+
+  // H51 (Frente A, 2026-07-16): MEMBERSHIP DURÁVEL. Antes, conversation_state só
+  // nascia APÓS a 1ª resposta OK (action-executor.ts) → se a 1ª falhava (LLM/
+  // timeout), ou se a ativação era por conteúdo de mensagem, o follow-up (corpo ≠
+  // gatilho) voltava a ser avaliado contra o targeting e dropava (D2, caso Marina:
+  // "responde a 1ª e morre"). Agora, assim que o contato PASSA o gate de ativação,
+  // gravamos a linha-dono (agent_id + status active) ANTES do trabalho de LLM. O
+  // roteador (inbound-message/route.ts) passa a escolher este agente pelo estado em
+  // QUALQUER follow-up, mesmo que a resposta não tenha saído. Idempotente e
+  // fail-soft: só cria quando ESTE agente ainda não tem estado (convState null);
+  // NÃO toca message_count/last_ai_response_at/ai_paused_at (só o action-executor
+  // incrementa). Erro aqui nunca bloqueia a resposta.
+  if (!convState) {
+    try {
+      const nowIso = new Date().toISOString();
+      await supabase.from("conversation_state").upsert(
+        {
+          agent_id: agent.id,
+          location_id: group.locationId,
+          contact_id: group.contactId,
+          conversation_id: group.conversationId || "",
+          status: "active",
+          updated_at: nowIso,
+        },
+        { onConflict: "agent_id,contact_id", ignoreDuplicates: true },
+      );
+    } catch (err) {
+      log("warn", `membership durável falhou (fail-soft): ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -1376,6 +1419,22 @@ async function processGroup(
       justExecuted.push(...executedRuleIds);
     }
 
+    // 11c. Lifecycle "IA ligada" (item 1, Pedro 2026-07-01): dispara quando a IA
+    // ENGAJA o lead pela 1ª vez (ex: criar novo lead no funil). Independe do
+    // finalStatus — o dedup (triggered_automations) garante 1×/conversa, então a
+    // 1ª passagem por aqui (= 1ª resposta da IA a este contato) é o disparo. Nas
+    // respostas seguintes a regra já está em alreadyTriggered → não re-dispara.
+    const activationRules = rules.filter(
+      (r) =>
+        (!r.trigger || r.trigger.kind === "event") &&
+        (r.trigger?.kind === "event" ? r.trigger.event : r.event) === "ai_activated" &&
+        !alreadyTriggered.has(r.id)
+    );
+    if (activationRules.length > 0) {
+      const { executedRuleIds } = await executeReactionRules(activationRules, reactionCtx);
+      justExecuted.push(...executedRuleIds);
+    }
+
     // Persiste o dedup uma única vez (merge dos dois ramos).
     if (justExecuted.length > 0) {
       const merged = Array.from(new Set<string>([...alreadyTriggered, ...justExecuted]));
@@ -1403,6 +1462,9 @@ async function syncCollectedDataToGHL(
   // Separar campos padrao de custom fields
   const standardUpdates: Record<string, string> = {};
   const customFieldUpdates: { id: string; value: string }[] = [];
+  // País default da location, resolvido sob demanda (só se houver telefone a
+  // gravar) e cacheado 5min — fix telefone BR (caso Marina 2026-07-01).
+  let phoneCountry: "US" | "BR" | null = null;
 
   for (const field of dataFields) {
     if (!field.sync_to_ghl) continue;
@@ -1415,7 +1477,14 @@ async function syncCollectedDataToGHL(
     if (fieldId.startsWith("contact.")) {
       // Campo padrao (contact.firstName, contact.phone, etc.)
       const fieldName = fieldId.replace("contact.", "");
-      standardUpdates[fieldName] = value;
+      if (fieldName === "phone") {
+        // Normaliza E.164 BR-aware antes do sync: o LLM coleta o número CRU e o
+        // GHL formatava como +1 pelo fuso US da location → telefone inválido.
+        if (phoneCountry === null) phoneCountry = await resolveLocationDefaultCountry(ctx.locationId);
+        standardUpdates[fieldName] = normalizePhone(value, phoneCountry);
+      } else {
+        standardUpdates[fieldName] = value;
+      }
     } else {
       // Custom field
       customFieldUpdates.push({ id: fieldId, value });

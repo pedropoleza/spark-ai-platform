@@ -184,7 +184,12 @@ function buildConfig(kind: "sales" | "recruitment"): Record<string, unknown> {
     tone_aggressiveness: isSales ? 55 : 50,
     debounce_seconds: 15,
     max_messages_per_conversation: 60,
-    auto_pause_on_human_message: true,
+    // DESLIGADO 2026-07-15 (caso Alves Cury): a classificação "humano assumiu"
+    // (F51/F52, `auto_pause:human_message:history`) misfirava — classificava a
+    // própria resposta da IA / conteúdo encaminhado no histórico como humano e
+    // AUTO-PAUSAVA a conversa depois de 1-2 turnos. Alves Cury é 100% IA; ninguém
+    // assume no meio. Reativar só se um humano de verdade for atender junto.
+    auto_pause_on_human_message: false,
     enable_audio_transcription: true,
     // 24/7 como o N8n (fora de horário a plataforma ADIA a resposta; não queremos isso).
     working_hours: { enabled: false, timezone: "America/New_York", mode: "only_during", schedule: {} },
@@ -200,15 +205,21 @@ function buildConfig(kind: "sales" | "recruitment"): Record<string, unknown> {
       allow_reschedule: true,
       require_contact_before_booking: true,
     },
+    // DESLIGADO 2026-07-15 (caso Alves Cury): com handoff_policy ligado, o
+    // should-respond (F37) pulava o 2º turno da conversa — o `last_human_outbound_at`
+    // do lead-history classificava a PRÓPRIA 1ª resposta da IA (ou a msg encaminhada
+    // "[Fulano: ...]") como "humano respondeu" → skip_if_human_replied_within_minutes
+    // → should_respond_skip + handoff. A conversa morria depois de perguntar o estado.
+    // Alves Cury é 100% IA (qualifica + agenda), NÃO usa handoff-on-human-reply.
     handoff_policy: {
-      enabled: true,
+      enabled: false,
       skip_if_human_replied_within_minutes: 60,
       skip_if_lead_requested_human: true,
       notify_rep_via_sparkbot: true,
       notify_on_opp_stage_closed: true,
       custom_keywords_handoff: HANDOFF_KEYWORDS,
     },
-    lead_history_config: { enabled: true, messages_count: 30, include_notes: true, include_opportunities: true, include_tags: true },
+    lead_history_config: { enabled: false, messages_count: 30, include_notes: true, include_opportunities: true, include_tags: true },
     follow_up_config: isSales ? FOLLOWUP_BRUNA : FOLLOWUP_BRUNO,
     data_fields: isSales
       ? [

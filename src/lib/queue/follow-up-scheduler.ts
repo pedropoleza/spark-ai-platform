@@ -11,8 +11,9 @@ import { withRetry } from "@/lib/utils/retry";
 // virar uma re-apresentação fria. Reconstrói do nosso DB.
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
 import { classifyLastOutbound, extractAiSentTexts } from "@/lib/queue/human-takeover";
+import { executeReactionRules } from "@/lib/ai/reaction-engine";
 import { reportError } from "@/lib/admin-signals/report-error";
-import type { FollowUpConfig } from "@/types/agent";
+import type { FollowUpConfig, AutomationRule } from "@/types/agent";
 
 /**
  * Agenda follow-ups para uma conversa que ficou inativa.
@@ -158,6 +159,99 @@ function channelHasSessionWindow(channel?: string): boolean {
 }
 
 /**
+ * Nº de follow-ups que a sequência planejou (3b): ai_auto usa max_attempts
+ * (cap 10, igual ao scheduler); manual usa o nº de passos. Serve pra detectar
+ * o toque TERMINAL (attempt_number === total) e então desqualificar o lead.
+ */
+function plannedFollowUpCount(cfg: FollowUpConfig | undefined | null): number {
+  if (!cfg) return 0;
+  if (cfg.mode === "manual") return Array.isArray(cfg.manual_steps) ? cfg.manual_steps.length : 0;
+  return Math.min(cfg.max_attempts || 0, 10);
+}
+
+/**
+ * 3b (Pedro 2026-07-01): após o ÚLTIMO follow-up sair sem o lead responder,
+ * marca a conversa como `disqualified` e dispara as automações de evento
+ * "disqualified" (tag / mover no funil) que o admin configurou na aba de
+ * automações. É o único lugar onde isso pode disparar — sem um inbound, o
+ * queue-processor (que roda as automações de evento) nunca rodaria.
+ *
+ * NÃO seta `ai_paused_at`: é reversível de propósito — um inbound tardio do lead
+ * volta a ser processado normalmente (should-respond não bloqueia por status
+ * disqualified), a IA responde e o status é reavaliado. Dedup via
+ * triggered_automations (merge, não sobrescreve o do fluxo de dados).
+ */
+async function disqualifyAfterFinalFollowUp(params: {
+  supabase: ReturnType<typeof createAdminClient>;
+  agentId: string;
+  locationId: string;
+  companyId: string;
+  contactId: string;
+  conversationId: string;
+  channel?: string;
+  automations: unknown;
+  triggeredAutomations: unknown;
+}): Promise<void> {
+  const {
+    supabase, agentId, locationId, companyId, contactId,
+    conversationId, channel, automations, triggeredAutomations,
+  } = params;
+
+  try {
+    await supabase
+      .from("conversation_state")
+      .update({ status: "disqualified", updated_at: new Date().toISOString() })
+      .eq("agent_id", agentId)
+      .eq("contact_id", contactId);
+
+    await supabase.from("execution_log").insert({
+      agent_id: agentId,
+      location_id: locationId,
+      contact_id: contactId,
+      conversation_id: conversationId,
+      action_type: "followup_disqualified",
+      action_payload: { reason: "no_reply_after_final_followup" },
+      success: true,
+    });
+
+    // Dispara as automações de evento "disqualified" configuradas pelo admin.
+    const rules = Array.isArray(automations) ? (automations as AutomationRule[]) : [];
+    if (rules.length === 0) return;
+    const already = new Set<string>(
+      Array.isArray(triggeredAutomations) ? (triggeredAutomations as string[]) : [],
+    );
+    const eventRules = rules.filter(
+      (r) =>
+        (!r.trigger || r.trigger.kind === "event") &&
+        (r.trigger?.kind === "event" ? r.trigger.event : r.event) === "disqualified" &&
+        !already.has(r.id),
+    );
+    if (eventRules.length === 0) return;
+
+    const { executedRuleIds } = await executeReactionRules(eventRules, {
+      agentId, locationId, companyId, contactId, conversationId, channel,
+    });
+    if (executedRuleIds.length > 0) {
+      const merged = Array.from(new Set<string>([...already, ...executedRuleIds]));
+      await supabase
+        .from("conversation_state")
+        .update({ triggered_automations: merged })
+        .eq("agent_id", agentId)
+        .eq("contact_id", contactId);
+    }
+  } catch (err) {
+    // Não pode derrubar o runner — o follow-up já foi enviado com sucesso.
+    reportError({
+      title: "Follow-up: falha ao desqualificar após toque final",
+      feature: "followup-runner",
+      severity: "low",
+      error: err,
+      metadata: { agentId, contactId, locationId },
+    });
+  }
+}
+
+/**
  * Processa follow-ups agendados que estao prontos
  * Chamado pelo cron job
  */
@@ -189,7 +283,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       //    follow-ups bot NÃO devem disparar.
       const { data: convState } = await supabase
         .from("conversation_state")
-        .select("status, collected_data, conversation_id, ai_paused_at")
+        .select("status, collected_data, conversation_id, ai_paused_at, triggered_automations")
         .eq("agent_id", followUp.agent_id)
         .eq("contact_id", followUp.contact_id)
         .single();
@@ -600,6 +694,31 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         });
         await supabase.from("scheduled_followups").update({ status: "sent" }).eq("id", followUp.id);
         sent++;
+
+        // 3b (Pedro 2026-07-01): se este foi o ÚLTIMO follow-up da sequência e o
+        // lead NÃO respondeu, marca disqualified + dispara as automações de evento
+        // "disqualified" que o admin configurou (tag/mover no funil). Chegar aqui no
+        // toque terminal já garante "sem resposta" — todos os gates acima cancelariam
+        // a sequência se o lead tivesse respondido. Só dispara em ENVIO real (não em
+        // skip da IA). É o único ponto onde isso pode disparar: sem inbound, o
+        // queue-processor (que roda as automações de evento) nunca rodaria.
+        // Gate opt-in por agente (disqualify_after_final): default OFF pra não mudar
+        // o comportamento de quem não pediu. Ligado só p/ Marina/Bianca por ora.
+        const fuCfg = config.follow_up_config as FollowUpConfig | undefined;
+        const plannedMax = plannedFollowUpCount(fuCfg);
+        if (fuCfg?.disqualify_after_final && plannedMax > 0 && followUp.attempt_number >= plannedMax) {
+          await disqualifyAfterFinalFollowUp({
+            supabase,
+            agentId: followUp.agent_id,
+            locationId: followUp.location_id,
+            companyId: location.company_id,
+            contactId: followUp.contact_id,
+            conversationId: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+            channel,
+            automations: config.automations,
+            triggeredAutomations: (convState as { triggered_automations?: unknown } | null)?.triggered_automations,
+          });
+        }
       } else if (aiDecidedSkip) {
         // A IA leu o contexto e decidiu que NÃO vale follow-up agora (lead adiou
         // "volto semana que vem", recusou, ou a última msg foi nossa). Cancela ESTE

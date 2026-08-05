@@ -1,0 +1,4326 @@
+ Perfeito
+ Então aqui a gente tem só a base
+ Como eu disse
+ Na nossa primeira reunião
+ No canto esquerdo fica o nosso menu de navegação
+ Então aqui é onde vocês vão
+ Navegar entre as páginas
+ Então tem a página de calendário, oportunidades
+ Conversas e assim por diante
+ A gente organizou para que da linha
+ Para cima vocês tenham
+ O controle que vocês mais vão utilizar
+ No dia a dia
+ E aqui da linha para baixo são mais coisas sazonais
+ Então coisas que ocasionalmente
+ Vocês vão utilizar
+ Uma coisa sazonal é a do Whatsapp
+ A gente tem aqui a aba de Whatsapp
+ E aqui vocês conseguem visualizar o status
+ Da conexão de vocês
+ Então aqui vocês só vão utilizar
+ Caso vocês queiram desconectar para conectar o outro Whatsapp
+ Por causa de desconectar
+ Vocês passam a conexão novamente
+ Então é algo sazonal
+ Não vai ser algo que você vai utilizar no dia a dia
+ O Vitor
+ Está me ouvindo?
+ A parte de AI
+ De voz, grupos e disparo
+ Aqui a gente não vai mexer em nada
+ A gente vai dar uma olhada no final
+ Mas basicamente eu vou só perguntar para vocês
+ Tudo que vocês vão precisar em relação à configuração
+ E aí com essas solicitações de vocês
+ A gente vai fazer a configuração para o atendimento
+ A gente tem até a aba aqui
+ Mas a gente prefere fazer
+ Aqui em IA Hub
+ Se você clicar
+ A gente tem a nossa IA
+ É que eu tenho que logar pelo seu usuário
+ Que é pelo usuário
+ Mas basicamente se você clicar aqui em IA Hub
+ Vai ter a nossa IA para fazer a configuração
+ E aí nela
+ A gente vai fazer toda a configuração
+ Com base no que vocês solicitarem
+ Então no final
+ Eu vou pedir o máximo de informações possíveis
+ De como vocês já fazem hoje
+ E como vocês vão querer fazer
+ Aí com essas informações
+ Eu vou fazer toda a configuração da IA
+ Para já retornar para vocês
+ Mas eu acredito que ainda hoje
+ A gente já configura e já deixa rodando
+ Então basicamente a ideia é pegar
+ Qual é o modo que vocês fazem a prospecção
+ Quais são as frases que vocês costumam utilizar
+ Então tudo isso a gente vai usar como base
+ Para alimentar essa IA
+ E ela entender como funciona o business de vocês
+ Então a forma que vocês querem fazer o atendimento
+ Se ela vai ser mais insistente
+ Para fazer um agendamento ou não
+ Se ela vai ser mais técnica
+ Se ela vai ser mais gentil
+ Então tudo isso a gente consegue pegar
+ E fazer a configuração, tá bom?
+ Desculpa
+ Enfim
+ Passando para o próximo aqui
+ Que é o de tutoriais
+ Se vocês clicarem aqui
+ Vocês vão vir para essa aba
+ E nessa aba a gente tem alguns tutoriais prontos
+ Que vocês podem utilizar, tá bom?
+ Então por exemplo
+ Se eu quisesse ir aqui nos contatos
+ E saber como adicionar um contato manualmente
+ Poderia clicar aqui
+ E ele vai me mandar tanto o tutorial
+ De como adicionar um contato
+ Tanto aqui em texto também
+ Então tudo que eu vou falar aqui hoje
+ A gente tem nos tutoriais
+ E ainda mais, tá bom?
+ Esse aqui de como adicionar um contato
+ Eu vou explicar agora
+ Então se eu vier aqui na nossa base de contatos
+ É que vão ficar
+ Todos os seus clientes
+ Todos os agentes
+ E também todos os seus leads
+ Então todo mundo que vocês entrarem em contato com o WhatsApp
+ O sistema já salva
+ E já vai ficar aparecendo por aqui
+ Tá bom?
+ Aqui a gente tem alguns filtros prontos
+ Por exemplo, isso aqui de clientes
+ Se eu clicar aqui vão aparecer todos os seus clientes separados
+ Se eu clicar em agentes também os agentes
+ Então dá pra gente organizar dessa forma
+ E isso aqui é bem legal também
+ Pra vocês irem se organizando
+ Em relação a, por exemplo, leads
+ Vamos supor que vocês tenham um evento na Flórida
+ E lá vocês pegam vários leads
+ Se vocês quiserem diferenciar eles
+ Vocês poderiam criar uma nova lista aqui
+ Chamada leads Florida
+ E aí você teria só aquele painel
+ Com os leads da Flórida
+ Pra fazer o atendimento, tá?
+ Isso é muito legal também
+ No finalzinho eu vou mostrar o porquê
+ Que aí, por exemplo
+ A Raquel
+ Ela consegue prospectar só aquela lista
+ E fazer o atendimento daquela lista
+ E é muito interessante
+ Eu vou mostrar no final
+ Porque fica muito otimizado
+ E fica muito mais fácil pra ela prosseguir com os atendimentos, tá?
+ Mas basicamente a gente faz as listas por aqui
+ A gente consegue pesquisar por algum contato
+ Como se fosse na sua base de contato normal
+ Então se eu quisesse, por exemplo
+ Pesquisar pela Renata
+ Poderia colocar aqui Renata
+ E ele vai me mostrar a Renata
+ Nesse caso aqui é até interessante
+ Pra outra coisa que eu vou falar pra vocês
+ Aqui a gente recomenda que vocês pesquisem
+ Sempre pelo número, tá bom?
+ Por quê?
+ Aqui, por enquanto, a gente acabou de conectar
+ E já tem três Renata
+ Então a longo prazo vai ter dez
+ Vai ter vinte Renata
+ E a gente não permite duplicidade de contatos
+ Em relação ao telefone
+ Então pode ter vinte Renata aqui
+ Mas cada Renata vai ser o seu próprio telefone, tá?
+ Então pra ser mais assertivo
+ É interessante que vocês pesquisem pelo telefone
+ Em vez pelo nome, tá?
+ Porque aí, por exemplo
+ Em vez de ter vinte Renata
+ Quando você pesquisar, por exemplo
+ Pelo número exato aqui da Renata
+ Vai aparecer só ela
+ Em vez de aparecer as três, tá bom?
+ Então fica mais legal pra organização dessa forma
+ Fora isso, nessa aba a gente consegue fazer um import de listas
+ Então vamos supor que antes daqui vocês faziam em planilha
+ A gente pode pegar essa planilha
+ E trazer toda aqui pro sistema
+ Pra ficar muito mais prático nesse sentido
+ E por último
+ Dá pra adicionar um contato
+ Que é o que tinha naquele tutorial
+ Pra adicionar é bem tranquilo
+ Você vai clicar aqui em Add Contact
+ Depois, então, você vai preencher com os dados desse contato
+ Então aqui eu vou preencher com meus próprios dados, tá?
+ Nome e sobrenome
+ O e-mail eu não vou colocar por enquanto
+ Phone eu vou colocar mobile
+ Provavelmente aqui, por causa de vocês
+ Vai ser preenchimento com o número dos Estados Unidos, né?
+ Mas como eu tô no Brasil
+ Eu vou mudar aqui pra bandeirinha do Brasil
+ Porque meu DDD é do Brasil, tá?
+ Mas aí vocês não precisariam fazer esse processo
+ Agora é só preencher
+ E clicar aqui em Save
+ Fazendo isso, ele vai mandar a gente pra essa nova tela
+ E aí nessa tela aqui a gente consegue preencher mais informações, tá bom?
+ E o que eu sempre recomendo
+ E fica de alerta pra vocês
+ Preencha sempre com os máximos de dados que vocês têm disponível, tá bom?
+ Porque quanto mais informação você preenche
+ Mais o sistema vai te retornar de alguma forma
+ Seja com alguma função, alguma automação
+ Algum tipo de campo
+ Pra você filtrar e separar em uma daquelas listas
+ Então tudo isso é legal que você faça
+ E um exemplo prático aqui
+ Eu vou dar agora
+ O meu e-mail aqui, ele não tá preenchido, certo?
+ E por não estar preenchido
+ Se eu vier aqui nesse campo
+ Que é pra enviar mensagens
+ Eu só tenho a opção de WhatsApp
+ Se eu clicar aqui, ele não vai ter a função e-mail
+ Mas caso eu preencha com o meu e-mail
+ Que é o processo que eu vou fazer agora
+ Já que esse campo tá preenchido
+ O sistema vai liberar pra mim
+ A função de enviar e-mails pra esse contato
+ Então eu vou clicar aqui em Save
+ Após preencher o meu e-mail
+ E agora a função e-mail tá liberada, tá bom?
+ Então quanto mais informação você preenche
+ Mais ele te retorna de alguma forma
+ Nesse caso, ele liberou a função de enviar e-mail pra esse cliente
+ Através da plataforma, tá bom?
+ Próximo campo aqui
+ É o campo de idioma
+ A gente sabe que por padrão
+ Os leads de vocês são
+ Pessoas que falam português
+ São brasileiros
+ Mas caso vocês tenham algum lead específico
+ Que fala inglês ou espanhol
+ Se a gente mudar o campo aqui
+ Pra inglês ou pra espanhol
+ Todas as nossas automações do sistema
+ Vão na língua respectiva
+ Que você preencheu, tá?
+ Então pra esses casos mais específicos
+ E Vitor, se ele mandar uma mensagem em inglês
+ O sistema vai entender e vai identificar ou não?
+ Isso tem que ser manual
+ Por padrão, não
+ Eu posso até dar uma olhadinha
+ Se a gente consegue fazer um CA
+ Entenda e transfira
+ Mas por padrão ele não faz isso, tá?
+ Ok
+ O próximo aqui é o de data de aniversário
+ O data de aniversário
+ Provavelmente vocês já ouviram falar sobre
+ E é bem interessante
+ Pros clientes que vêm dar FireVins
+ Esse campo já é preenchido automaticamente
+ Mas pros leads
+ Pra as pessoas que vocês forem adicionando
+ Sem ser diretamente pela FireVins
+ Teria que preencher, tá?
+ E quando você preenche
+ Você ganha uma automação muito legal
+ Que no dia do aniversário da pessoa
+ O sistema já dispara uma mensagem automática
+ Nesse caso aqui
+ Ele vai disparar a nossa mensagem padrão
+ Que é um texto
+ Mas a gente recomenda que vocês façam alteração
+ E aí essas alterações podem ser
+ Um áudio
+ Imagem
+ Vídeo
+ Vai de acordo com o que vocês sentirem
+ Mais confortáveis, tá?
+ Eu recomendo o áudio
+ Porque fica muito mais interessante
+ E muito mais pessoal
+ Porque o áudio ele dá
+ Como se você tivesse gravado
+ Naquele momento
+ Então não vai com o MP4
+ Encaminhado
+ Nem nada desse tipo
+ E aí a pessoa vai se sentir
+ Muito mais lembrada
+ E muito mais querida
+ Então no dia do aniversário dela
+ Vocês lembraram
+ Pra mandar um áudio
+ E conversar com ela
+ É bem legal
+ Pra esse aspecto
+ Tá bom?
+ Lembrando
+ Que tem que ser um áudio genérico
+ É, exatamente
+ A gente consegue até fazer
+ Algumas diferenciações
+ Então, por exemplo
+ A gente consegue identificar
+ Se é cliente ou não
+ Se é agente ou não
+ E se é homem
+ Ou se é mulher
+ Então, por exemplo
+ Poderia ter uma versão
+ Pra cliente homem
+ Uma versão pra cliente mulher
+ Uma versão pra homem
+ Uma pra mulher
+ E assim por diante, tá?
+ Mas fora isso
+ Realmente não dá pra falar
+ Oi, Vitor
+ Feliz aniversário
+ Porque não vai ter
+ Só um Vitor, né?
+ Vai ter o Júlio
+ A Stephanie
+ A Melissa
+ E assim por diante
+ Então, a ideia
+ É que seja um pouco genérico
+ Nesse sentido, sim, tá?
+ O próximo
+ É o Contact Source
+ E aqui é basicamente
+ De onde esse lead veio
+ Então, se ele veio de tráfego
+ Se ele veio de algum tipo de
+ Evento que vocês foram
+ Uma planilha
+ Basicamente, você vai colocar
+ Então, lead do tráfego
+ É só preencher
+ E aí você vai saber
+ De onde esse lead veio, tá?
+ É também pra organização
+ Isso é uma etiqueta?
+ Ou não?
+ Não
+ A etiqueta ficaria aqui em cima, tá?
+ Aqui é mais um campo
+ Beleza
+ Isso
+ Aí, contact type aqui
+ Seria o tipo de contato
+ Então, ele pode ser
+ Um prospect
+ Um cliente
+ Ou um agente
+ Então, se você está
+ Então, se você está
+ Naquele processo inicial
+ De prospectar esse cliente
+ Seria prospect
+ Se ele já virou um cliente
+ Você pode colocar aqui
+ Um cliente
+ E se ele é um agente
+ Agente
+ Isso aqui pode ser utilizado
+ Para fazer algumas automações
+ Mas também é legal
+ Para a sua organização
+ Para saber exatamente
+ Quem ele é, tá?
+ E aí, já pegando
+ A sua pergunta
+ Aqui em tags
+ A gente faria
+ As marcações
+ Que aí realmente
+ Dá pra utilizar
+ De diversas formas
+ A gente pode
+ Por exemplo
+ Se você adicionar uma tag
+ Disparar uma automação
+ Se você adicionar uma tag
+ Ir pra uma lista específica
+ Dá pra fazer muita coisa
+ Envolvendo as tags
+ Mas o mais padrão
+ Que o pessoal utiliza
+ É basicamente
+ Para diferenciar
+ Então, vamos supor
+ Que eu sou um lead do Brasil
+ E você quer diferenciar
+ Todo mundo
+ Que é lead do Brasil
+ Poderia criar a tag aqui
+ Seria uma marcação
+ Lead Brasil
+ Então, adicionaria a tag aqui
+ E essa pessoa
+ Ia ter essa marcação, tá?
+ Aí, a partir disso
+ Como eu disse
+ Dá pra fazer diversas coisas, ok?
+ Ficou alguma dúvida
+ Nessa parte inicial
+ De contatos?
+ Raquel, tá tudo ok?
+ Tá, tudo ok, aham
+ Perfeito
+ Passando aqui
+ Pro calendário
+ Aqui no calendário
+ A gente vai ter
+ O calendário de vocês
+ A gente pode filtrar
+ Por cada um dos calendários
+ Então, André, Melissa, Raquel
+ E ver como está
+ A agenda de cada um, tá?
+ Por aqui a gente consegue ver
+ Por dia
+ Por semana
+ Ou por mês
+ Eu recomendo sempre
+ Deixar por semana
+ Pra vocês terem
+ Todo o controle da semana
+ Ativa 6, ok?
+ E aí, fora isso
+ A gente também consegue
+ Fazer um agendamento
+ Por aqui
+ Pra fazer um agendamento
+ É bem tranquilo
+ É só clicar aqui
+ Em mais new
+ Ele vai abrir
+ Essa nova tela
+ E aqui você consegue
+ Você consegue preencher
+ Informações
+ Pra esse agendamento
+ A primeira informação
+ É com quem vai ser
+ Aqui eu vou pesquisar
+ Pelo meu nome
+ Mas aí seria com quem
+ Você quer fazer o agendamento
+ Tá?
+ Aí pode ser por nome
+ Telefone
+ O e-mail
+ O e-mail
+ Nesse campo aqui
+ Ok?
+ O próximo
+ É o tipo de agendamento
+ Então, por padrão
+ A gente tem esses daqui
+ Mas a gente pode ajustar
+ Se for o caso
+ Tá?
+ Ô, Vitor
+ Quando a gente coloca aí
+ Um
+ Um agendamento
+ Ele automaticamente
+ Recebe no WhatsApp
+ No e-mail?
+ Isso
+ Automaticamente
+ Ele recebe pelo WhatsApp
+ E aí por isso que é importante
+ Ter os campos preenchidos
+ Se tiver o e-mail preenchido
+ Também
+ Também vai pro e-mail
+ Tá?
+ Então vai pros dois notos
+ E lembrete
+ Tá tudo programado
+ Isso
+ Tudo funcionando
+ Aí eu te lembrei
+ De como que eles funcionam
+ Na hora do agendamento
+ Ele manda uma
+ 24 horas antes
+ Uma hora antes
+ E cinco minutos antes
+ A gente fez essa sequência
+ Que a gente entende
+ E os dados mostram
+ Que evita o no show
+ Então a pessoa vai ser relembrada
+ Pra não ter desculpas
+ De ah, esqueci
+ Não lembrava dessa reunião
+ E assim por diante
+ Com essas mensagens
+ A pessoa fica mais propensa
+ A participar dessa reunião
+ Tá bom?
+ E vamos supor
+ Que a gente troque o dia
+ Vamos supor
+ Que ele recebeu a mensagem
+ 24 horas
+ E a gente troca o dia
+ O robô não vai mais
+ Interagir com ele, né?
+ Ele atualiza
+ Sempre que você atualizar
+ O agendamento
+ Então assim que você atualiza
+ Ele vai mandar uma mensagem
+ Com um novo horário
+ Um novo dia
+ E aí se faltar 24 horas
+ Várias antes novamente
+ Ele também vai mandar novamente
+ Então ele faz essa atualização
+ Pra vocês, tá bom?
+ Então continuando
+ Aqui a gente tem
+ Os calendários de padrões
+ Mas aqui dá pra ajustar, tá?
+ Basicamente
+ Cada um desses aqui
+ É de acordo com a situação
+ Desse lead
+ Desse cliente
+ Ou desse agente, tá?
+ Então vamos supor
+ Que o meu caso
+ Seria aquela reunião inicial
+ Pra eu entender o produto
+ Pra rolar aquela apresentação
+ E eu realmente saber
+ Eu realmente saber como funciona
+ Uma policy
+ Então seria consulta inicial
+ Se depois da consulta inicial
+ A gente já vai ter uma apresentação
+ Uma ilustração
+ Ou já vai ser o fechamento
+ Pra entrega da policy
+ Apresentação e fechamento
+ Aqui seria o de
+ Field Training
+ O próximo aqui
+ Seria mentoria
+ Barra reunião com a equipe
+ Então se vocês quiserem
+ Ter uma reunião interna
+ Poderia selecionar aqui
+ Pra ter uma reunião interna, tá?
+ Próximo é o policy review
+ O policy review é
+ Passado um ano
+ Um ano e meio
+ Quando for ter aquele
+ Anual review
+ Você poderia selecionar
+ Essa opção
+ E a última seria
+ Recrutamento
+ Barra entrevista
+ Então seria pra vocês
+ Recrutarem agentes, tá?
+ Então a gente fez
+ Um pra cada tipo de situação
+ Mas a gente entende também
+ Que cada empresa
+ Cada pessoa
+ Tem o seu modo
+ De fazer isso
+ Então se vocês quiserem
+ Adicionar
+ Remover
+ Ajustar
+ É só falar com a gente
+ Que a gente faz esse processo
+ Pra vocês, tá bom?
+ Então vou passar aqui
+ E selecionar o consulta inicial
+ Nesse caso, tá?
+ Pra exemplificar
+ E aí por último
+ Você vai selecionar
+ Com quem vai ser o agendamento
+ Então pode ser o André
+ Ou a Melissa
+ Então vou selecionar
+ E por último aqui
+ Ele vai mostrar
+ Os dias e os horários
+ Que estão configurados
+ Em relação ao atendimento, tá?
+ Vamos supor que seria
+ Aqui pra amanhã
+ E aí ele vai mostrar
+ Os horários disponíveis
+ Pra amanhã
+ Vou colocar aqui
+ Como se fosse de 5 às 6
+ Então só relembrando
+ Pra ficar bem claro, tá?
+ Primeiro a gente vai selecionar
+ O contato
+ Com quem vai ser a reunião
+ Depois qual é o tipo
+ O tipo de reunião
+ Com quem vai ser essa reunião
+ E o dia e o horário dessa reunião
+ Tá bom?
+ E é só clicar aqui
+ Em Book Appointments
+ Esse agendamento vai ser feito
+ E ele já vai aparecer aqui
+ No calendário de vocês, ok?
+ E se você clicar nele
+ Ele vai te mostrar
+ Mais informações também
+ Então, tipo, o nome
+ O nome, o telefone
+ E-mail
+ O link que ele já gerou
+ Automaticamente
+ Então tudo isso
+ Você consegue visualizar aqui
+ E também trocar o status, tá?
+ Então se a pessoa
+ Acabou cancelando
+ Se depois da reunião
+ Ela apareceu
+ Se ela não apareceu
+ Se consegue atualizar por aqui
+ E de acordo com o que você atualizar
+ Fica metrificado
+ Aqui no sistema também
+ E a gente também consegue
+ Fazer umas mensagens automáticas, tá?
+ Então, por exemplo
+ Se a pessoa não confirmou
+ E foi no show
+ Ela não apareceu
+ Na hora da reunião
+ Você pode colocar em no show
+ E eles disparam
+ A mensagem automática
+ Falando
+ Poxa, que pena
+ Que a gente não conseguiu
+ Se reunir hoje
+ Me fala como vai ser
+ Sua próxima disponibilidade
+ E assim por diante, tá?
+ Então é bem completo
+ Nesse sentido, ok?
+ Ficou alguma dúvida
+ Em relação ao processo
+ De agendamento?
+ Não, tudo ok
+ Perfeito
+ Aqui outra função
+ Que a gente tem também
+ Provavelmente vocês não vão utilizar
+ Muito, mas é legal falar
+ É a de bloquear a agenda
+ Então aqui em
+ Blockage of Time
+ Não é necessariamente
+ Uma reunião, tá?
+ Mas se vocês quiserem
+ Bloquear o horário
+ Para não ter nenhum agendamento
+ Vocês poderiam selecionar
+ Com quem?
+ Então pode ser
+ Com qualquer uma dessas pessoas
+ E aí você coloca o título
+ Então, por exemplo
+ Ir à academia
+ Buscar o filho na escola
+ Compromissos que não são
+ Necessariamente concluentes
+ Mas que você quer bloquear
+ Na agenda, tá?
+ Aí você vai selecionar
+ O fuso horário
+ O dia
+ E o horário, tá?
+ Vamos supor que seria
+ Hoje mesmo
+ Nesse horário aqui
+ Então eu posso clicar aqui
+ Em Blockage of Time
+ E aí ele vai aparecer
+ Na sua agenda
+ Na hora
+ Deixa eu só carregar
+ E ele vai aparecer aqui, ó
+ Ir à academia
+ E esse horário
+ Está bloqueado, tá bom?
+ Então para esses casos
+ Que vocês querem bloquear a agenda
+ A gente também consegue
+ Passando aqui para o próximo
+ Em Oportunidades
+ Aqui em Oportunidades
+ A gente tem
+ Várias Pipelines
+ Cada uma desses aqui
+ A gente chama de Pipeline, tá?
+ Então tem Pipeline de Apólises
+ De Agência
+ Recrutamento e Vendas
+ Vou começar pelo de Vendas
+ E a gente vai indo
+ De acordo com cada um, tá bom?
+ Aqui no de Vendas
+ Fica todo o processo
+ Do funil de Vendas
+ Então seria todo o processo
+ Desde quando o lead
+ Chega para vocês
+ Até o processo final
+ Em que eles seriam clientes, ok?
+ E qual seria o processo?
+ Vamos supor que
+ Novamente com o meu contato, tá?
+ Vou clicar aqui
+ Em Add Opportunities
+ E aí eu posso criar
+ Uma oportunidade
+ Então cada quadradinho
+ Que vai ficar ali
+ Vai ser uma oportunidade, tá?
+ Eu vou pesquisar aqui
+ Pelo meu contato
+ Para criar essa oportunidade
+ E aí eu vou criar aqui
+ Como novo lead mesmo
+ Posso clicar aqui em Create
+ E agora eu vou aparecer aqui
+ Em Create
+ Deixa eu só filtrar aqui
+ Perfeito
+ Então aqui em novo lead
+ Tem eu
+ E aí qual seria o processo
+ Como se fosse um lead novo, tá?
+ A Raquel, por exemplo
+ Chegou esses novos leads
+ Seja por campanha
+ Por qualquer que seja o motivo
+ Ela vai mandar mensagem
+ Para esse lead, certo?
+ Assim que ela entrar em contato
+ Ela move para em contato
+ Após ela entrar em contato
+ Com esse cliente
+ Se ele marcar uma reunião
+ Por exemplo
+ De apresentação
+ Ela já move aqui
+ Para apresentação
+ Aí a partir disso
+ Ela vai movendo
+ De acordo com o estágio
+ Então depois da reunião
+ De apresentação
+ Ele já quis fazer a proposta
+ Então moveria para cá
+ Depois ele está só
+ No estágio de aplicação
+ Para realmente virar um cliente
+ Move para cá
+ E quando ele virar um cliente
+ Move para cá
+ Então a ideia
+ É que a partir de agora
+ Vocês tenham todo o controle
+ Do lead
+ Para que vocês não percam
+ Mais nenhum lead
+ No caminho, tá?
+ Então toda pessoa
+ Que ela entrar em contato
+ Ela já vai estar
+ Metrificada aqui
+ Para saber o que aconteceu
+ Essa é a nossa pipeline padrão
+ De vendas, tá?
+ Mas como eu disse
+ E como outras coisas
+ No sistema também
+ Ela é personalizada, tá?
+ Então o exemplo
+ Que eu geralmente dou
+ É
+ Vamos supor que a Raquel
+ Entrou em contato comigo
+ Mas depois eu não respondi
+ E não teve atualização
+ A gente poderia criar
+ Um estágio aqui
+ De entrei em contato
+ E não respondeu
+ Ou não teve retorno
+ Algo do tipo
+ Ela poderia mover para cá
+ Para saber que futuramente
+ Ela tem que mandar
+ Outra mensagem
+ Para essa pessoa, tá?
+ E aí dá para brincar
+ De diversas formas com isso
+ Entre aspas, tá?
+ Mas que a gente adiciona
+ Entre um e outro
+ Beleza
+ A gente pode fazer
+ Ou vocês podem fazer também
+ Para fazer
+ É só clicar aqui
+ Em pipelines
+ Que ele vai mostrar
+ Todas as pipelines
+ Que vocês têm, tá?
+ Aí pode clicar
+ Nos três pontinhos
+ E clicar em edit
+ Aí ele vai mostrar
+ Todos que já tem
+ E se você quiser
+ Adicionar um novo
+ Só clicar aqui em add
+ Que ele vai habilitar
+ Para você fazer, tá?
+ Aí tem as coresinhas também
+ Que vocês podem colocar
+ E assim por diante, tá?
+ E aí
+ Qual que é o legal daqui?
+ A gente pode criar
+ Automações
+ De acordo com os estágios também
+ Por enquanto
+ A gente só tem essa aqui
+ Do follow-up automático, tá?
+ Como que ele funciona
+ A gente recomenda
+ Que vocês coloquem pessoas
+ Que já entraram em contato
+ Com vocês
+ Mas que acabaram
+ Parando de retornar depois
+ Então eu tive
+ Essa reunião de apresentação
+ Mas depois
+ Eu não estou mais retornando
+ E não estou prosseguindo
+ Com o atendimento
+ Pode colocar em follow-up automático
+ Para o sistema começar
+ A mandar mensagem automática
+ Para essa pessoa
+ Na intenção de recuperar
+ Esse lead
+ E fazer com que ele responda
+ Então ao invés de vocês
+ Se preocuparem com isso
+ Ou a própria regra se preocupar
+ Pode mover para follow-up
+ E aí durante 45 dias
+ O sistema manda mensagem
+ Para tentar retornar
+ A esse cliente
+ E aí qual seria o processo?
+ Se o cliente responder
+ A automação já entra em seguida
+ A automação já para na hora
+ Porque ela entende
+ Que já cumpriu o papel dela
+ Então aí a partir disso
+ Vocês podem prosseguir
+ Com o atendimento
+ Tá bom?
+ Agora Vitor
+ Isso é um fluxo
+ Ou isso é um agente?
+ E aí?
+ Guiar?
+ Isso é um fluxo
+ Tá?
+ Isso que eu ia falar agora
+ Esse fluxo
+ Tá aqui nos templates
+ A gente consegue visualizar ele
+ E editar
+ Tá bom?
+ Então dá para colocar por aqui
+ O que que acontece Raquel?
+ Se o cliente respondeu
+ E depois sumir de novo
+ E você voltar ele para o follow-up
+ Ele vai receber as mesmas mensagens
+ As mensagens vão ser repetidas
+ É muito parecido
+ É
+ E aí o que que é o legal aqui
+ Que eu falei
+ Que a gente pode brincar, tá?
+ A gente pode criar novos estágios aqui
+ De acordo com o que faz sentido para vocês
+ E também criar automações
+ Vinculadas aos estágios
+ Então por exemplo
+ Aqui eu dei o exemplo de ir em contato
+ E não retornou, né?
+ Por exemplo
+ Eu poderia colocar aqui
+ E não retornou
+ E sempre que coloque em não retornou
+ Ativa uma automação
+ Para daqui a
+ Dois dias
+ Três dias
+ Ela recebe uma notificação
+ Falando
+ Ó
+ Tem três dias que você mandou mensagem
+ Para esse cliente
+ E ele não retornou
+ Entre em contato novamente
+ Então dá para fazer uma série
+ De personalizações
+ E configurações, tá?
+ Vai de acordo com o que vocês
+ Acharem interessante
+ A gente faz as atualizações
+ Ok?
+ Alguma dúvida nesse primeiro aqui
+ De vendas?
+ Não
+ Show
+ Passando para o próximo
+ Que é o de recrutamento
+ O de recrutamento
+ É como se fosse o seu funil de vendas
+ Só que para agentes
+ Então todo o processo
+ Que a gente tinha no funil de vendas
+ A gente tem aqui também
+ Então o novo lead
+ Que é o novo lead para a agência
+ Contatado
+ A apresentação
+ A decisão
+ Se ele é prelicenciado
+ E assim por diante
+ Então a ideia aqui
+ É que vocês também têm
+ A sua organização
+ Para a sua visão de agência, tá?
+ Então seria o mesmo processo
+ Dá para personalizar
+ Fazer outras automações
+ Mas seria isso, ok?
+ Aqui no agência
+ São todos os agentes
+ Que vocês já têm atualmente, tá?
+ Então aqui eles vão pegar
+ O que está no processo inicial
+ Os pre-jacket
+ Os que já são vice-president
+ E blackjacket
+ Então ele também vai ter
+ Toda essa organização
+ Para vocês
+ Aí sempre que vocês fizerem
+ A atualização da 520
+ Ele já vai atualizar
+ Aqui para vocês também
+ Os agentes que estão cadastrados
+ Lá na 5wings
+ E não tem
+ E não tirou licença
+ Porque aí pelo que eu estou vendo
+ É só quem tirou licença
+ Porque a gente tem
+ Muito mais que 20 oportunidades
+ A gente tem quase 300 pessoas
+ Não, amor
+ Está nesse Proposed Agent
+ Não, aí só está 20 oportunidades, amor
+ Está escrito 20 oportunidades
+ Você quer pegar
+ Acho que estão estudando ainda
+ No processo inicial também
+ É, porque eu faço
+ Nem estudando
+ Às vezes o cara sumiu
+ Ela desistiu
+ Tipo a Cintia
+ Está vendo a Cintia aqui?
+ Vipi
+ Eu demorei
+ Eu cadastrei ela no sistema
+ Demorei 2 anos
+ Para ela começar a estudar
+ Então lá eu tenho que fazer
+ Um follow-up
+ Tipo
+ Lembrar aniversário
+ É legal
+ Mandar umas mensagens
+ De vez em quando
+ Entendeu?
+ Oi, tudo bem?
+ Como é que você está?
+ Para você sumiu
+ Porque se eu não me engano
+ A gente deve ter uns 200
+ 200, 300
+ Beleza
+ Eu vou fazer uma atualização
+ Para pegar esse pessoal
+ Aqui também
+ A gente pode criar um novo estágio
+ Para estudar
+ Estudando
+ Eu não sei qual o critério
+ Que tem esses 20 aí amor
+ Você sabe mais ou menos
+ Pelo nome das pessoas?
+ Não, não estou conseguindo saber não
+ Eu posso dar uma olhada
+ Na automação
+ Que fez gerar isso aqui
+ Eu não sabia nem
+ Que esse Leonardo
+ Daí era
+ Possível carreira
+ Porque eu acho que a mulher dele
+ Já foi cadastrada
+ Pela Cintia
+ Vê a etiqueta
+ O que está escrito
+ Ele é um cliente
+ For sure
+ Ele está
+ Inactive client
+ Na verdade
+ É, então
+ Ele era um cliente
+ É, não sei se ele é cliente
+ E também queria ir
+ Para a carreira de agente
+ Mas eu consigo ver
+ Na automação
+ Mas aí como é um pouco mais interno
+ Eu vou pedir para o time
+ O que seria legal aí
+ O Vitor
+ É botar
+ Cadastrados na Five Rings
+ Ou cadastrados só
+ Porque está todo mundo cadastrado
+ E aí eu acho que seria ideal
+ Ter outra coluna aí estudando
+ Porque a pessoa já está cadastrada
+ Na Five Rings
+ E já começou a estudar
+ Entendeu?
+ É, deixa eu notar aqui
+ E a gente tem outros níveis também
+ Que é legal botar
+ Que seria
+ District Leader
+ Division Leader
+ É, esses Projects ali
+ A gente queria
+ Eu prefiro destrinchar
+ Nos níveis
+ Antes do Vice President
+ Eu vou mostrar o modelo
+ Que a gente tem aqui
+ Porque fica mais fácil
+ Até eu chamar para as mentorias
+ É, porque a gente tem a M1
+ M2, M3, M4
+ Entendeu?
+ Que é de acordo com esses níveis
+ Que é por níveis
+ Deixa eu pegar o modelo
+ Que a gente tem aqui
+ A gente deu uma resumida
+ Porque o pessoal estava achando
+ Que tinha muita informação
+ Nessa conta aqui
+ Não vai ter
+ É, eu vou mostrar para vocês
+ Com o cliente
+ Porque
+ Senão eu vou pegar as informações
+ De outro cliente, né?
+ Mas basicamente
+ A gente tem muito mais completo
+ Que fica mais
+ Mas
+ Deixa eu pegar aqui
+ É, eu prefiro mais completo
+ Então você pode adicionar o completo
+ Qualquer coisa
+ Eu vou tirando os pipelines
+ Isso aí é tranquilo
+ Eu já vi como é que tira ali
+ Só que tem aqui
+ 35 oportunidades da agência
+ A gente tem muito mais lá
+ Na verdade
+ Aqui a gente não consegue saber
+ Quantos PCs tem a Ruby
+ É um exemplo
+ Esse ano
+ Aqui ela não fala, né?
+ Quantos?
+ O que?
+ Desculpa
+ PCs é a pontuação
+ Para a gente promover ela
+ Ah, tá
+ É
+ Só se pegar mais informações
+ Da Fire Links
+ A gente até consegue pegar
+ Mais informações
+ Em relação a isso
+ Posso mostrar no finalzinho
+ Já que a gente vai mostrar
+ A configuração
+ Para ser recorrente
+ Eu mostro essa configuração também
+ De como deixar
+ Mais informações
+ Aqui no sistema
+ A gente consegue pegar
+ Quanto que o agente está produzindo
+ Qual que é a média mensal dele
+ Então fica muito mais completo
+ Nesse sentido de informações também
+ Acho que vai ficar mais legal
+ Para vocês, né?
+ Sim
+ Pegando aqui
+ Só um segundinho
+ Acho que nessa aqui
+ Vai ter
+ Que é a nossa de testes
+ Beleza
+ Deixa eu pegar aqui
+ Para vocês
+ Essa aqui vai ter
+ Mais completo
+ É o nosso modelo antigo
+ Aí isso aqui
+ Não tem dados de cliente
+ É só
+ Várias pessoas
+ Que são de teste, tá?
+ Então
+ É mais tranquilo
+ Então
+ O nosso antigo
+ De agência
+ É isso aqui, ó
+ Nesse aqui
+ A gente pega
+ O purpose agent
+ Que está no processo inicial
+ Quando a pessoa
+ Está estudando
+ E a gente vai
+ Ah, isso aí
+ De acordo com a porcentagem
+ Aí tirou a licença
+ Vira agent
+ É isso aí
+ Até no finalzinho
+ Seria ou sênior
+ Ou executivo
+ Vice-president
+ Então como
+ Muitos
+ Tinha gente que não
+ Estava gostando
+ A gente padronizou
+ Para o mais simplificado
+ Mas a gente pode
+ Fazer atualização
+ Para isso aqui
+ Faz sentido
+ Para vocês?
+ Para mim
+ É melhor sim
+ É porque
+ O cara reduzindo ali
+ Ele não vai saber
+ Quem que ele vai mandar
+ A mensagem
+ De M1, M2, M3
+ Que a gente pode
+ Criar até um boot ali
+ Falando, ó
+ Todo dia
+ A gente manda
+ Um alerta, né amor?
+ Tipo
+ 10 minutos
+ Eu quero mandar
+ Por nível
+ Passando para lembrar
+ Que amanhã
+ Vai ter a nossa M5
+ É importante você comparecer
+ Aí uma hora antes
+ Manda o link
+ Entendeu?
+ A gente já pode
+ Programar tudo isso
+ A gente faz tudo no dedo
+ Quando a gente lembra, né Vito?
+ Quando a gente lembra
+ Inclusive
+ Bem legal vocês citarem isso
+ Porque alguns clientes
+ Usam isso
+ A gente consegue fazer
+ Que é
+ Tem M1, M2, M3
+ De acordo com cada cliente
+ E vamos supor
+ O M1 é toda terça
+ Às 8
+ A gente faz uma automação
+ A gente tem
+ Para alguns clientes
+ Que é
+ Lembra no dia
+ De manhã
+ E lembra uma hora antes
+ Já colocou
+ No link da reunião
+ Então a gente tem
+ Essas configurações
+ É isso que eu quero
+ Já com o link
+ Eu quero
+ Tá
+ Aí só me manda
+ Ali no WhatsApp
+ Então
+ Quais são
+ Cada uma das ele
+ Se vocês vão querer
+ Seja de manhã
+ E à tarde
+ E também o link
+ Para cada uma delas
+ Que eu imagino
+ Que seja um link permanente
+ Então a gente consegue fazer
+ Para já ficar 100% automático
+ E eu só gravo um tutorial
+ De como utilizar depois
+ Maravilha
+ Deixa eu anotar
+ Gente
+ Isso é tão bom
+ Meu Deus
+ Que aí fica muito mais automática
+ O melhor de tudo
+ É ter alguém
+ Para fazer para mim
+ Vitor
+ Se não for a gente
+ Vai ser a IA
+ Então fica tranquilo
+ Sensacional
+ Olha aí amor
+ Você está livre agora
+ Ela não viu
+ Ela não viu o WhatsApp ainda
+ O WhatsApp ela vai gostar
+ Beleza
+ Então vamos lá
+ Passando para o próximo aqui
+ É o Diapolises
+ Aí aqui vão ficar
+ Os seus clientes
+ Tá
+ Onde tem a organização
+ Dois clientes novos
+ Os que estão em ciclo
+ De 12 meses
+ Quando tem um aniversário
+ Próximo
+ Quando está
+ Review pendente
+ Agendado
+ Concluído
+ E se é um cliente nativo
+ Qualquer ideia aqui
+ É cuidar de tudo
+ Pós-venda de vocês também
+ Então se o cliente está
+ Aquele primeiro
+ Pode falar
+ Já deu um inativo
+ Aquele queen queen
+ Que estava lá
+ Estava inativo
+ E não está indo inativo
+ Lembra?
+ Não é verdade
+ É talvez a policy dele
+ É porque a gente pega
+ O cliente e a policy
+ Talvez só esteja em um
+ E não esteja em outro
+ Entendi
+ Mas de qualquer forma
+ Eu vou dar uma olhadinha
+ Porque realmente
+ Estava estranho
+ Aí aqui a gente tem
+ O pós-venda
+ E nesse ciclo
+ De 12 meses
+ O que seria?
+ Durante os 12 primeiros meses
+ Ele vai mandar
+ Uma mensagem automática
+ Só relembrando a pessoa
+ E mostrando
+ Que vocês estão ali
+ Presentes para ela
+ Para auxiliar
+ Nesse processo
+ Então é mais
+ Para que a pessoa
+ Não cancele
+ Por quê?
+ A gente entende
+ Que esse primeiro ano
+ De apólise
+ É muito importante
+ Caso ela cancele
+ Vocês tenham um prejuízo
+ Então a intenção
+ É que a gente passa
+ Esse acompanhamento
+ E aí quando chega
+ Perto do aniversário próximo
+ No 12º mês
+ A gente manda
+ Uma mensagem automática
+ Também
+ Mostrando para a pessoa
+ Que está na hora
+ De fazer o anual review
+ Essa mensagem automática
+ Ele relembra
+ E também já manda
+ O link da agenda
+ De vocês
+ Para a pessoa
+ Selecionar o melhor dia
+ E o melhor horário
+ Para esse anual review
+ Tá?
+ Aí caso passe o tempo
+ E vocês não tenham
+ Feito o anual review
+ Ele vem para
+ Review pendente
+ Quando agendar
+ Vem para review agendado
+ E depois
+ Review concluído
+ Então a ideia
+ É que vocês tenham
+ Controle de tudo
+ Que envolve o cliente
+ Nesse pós-venda também
+ Tá bom?
+ Maravilha
+ Porque isso tudo
+ Também eu faço manual
+ Vou mandando
+ Para a lista dos clientes
+ Para fazer revisão
+ É
+ Porque aí a gente consegue
+ Ter o controle por aqui
+ E aí também
+ Novamente
+ É o padrão
+ Mas se vocês quiserem
+ Criar novos styles
+ A gente consegue
+ Fazer essa configuração
+ Tá bom?
+ Passando aqui
+ Para conversas agora
+ Aqui em conversas
+ A gente vai ter
+ Toda a base
+ De conversas
+ De vocês
+ Tá bom?
+ Então aqui
+ A gente tem
+ O histórico
+ Por não lido
+ Todo recente
+ Favorito
+ Eu recomendo
+ Deixar sempre em todos
+ Para vocês não
+ Perderem nenhuma conversa
+ E aqui a gente vai ter
+ O histórico
+ De conversas
+ De cada um
+ Dos contatos
+ Nessa aba aqui
+ A gente consegue
+ Enviar o e-mail
+ Ou mensagem
+ De acordo
+ Com o que você
+ Queira
+ No WhatsApp
+ Em si
+ A gente tem
+ Os emojis
+ Documentos
+ UAUs
+ Que você consegue
+ Gravar também
+ Então tudo
+ Que você faria
+ No WhatsApp
+ Você consegue
+ Fazer por aqui
+ Também
+ E uma vantagem
+ Legal daqui
+ Seria a vantagem
+ De programar mensagens
+ Um exemplo
+ Que eu geralmente dou
+ É
+ Alguém que a Raquel
+ Por exemplo
+ Entrou em contato
+ E a pessoa
+ Falou
+ Ah estou no meu trabalho
+ Estou ocupado
+ Me manda mensagem
+ Depois
+ Me manda mensagem
+ Depois das 5
+ Em vez dela
+ Tem que lembrar
+ De mandar essa mensagem
+ Depois
+ Ela pode vir aqui
+ E só mandar a mensagem
+ E programar
+ É só clicar
+ Nessa setinha
+ Sem ler
+ E ela consegue
+ Programar para o dia
+ Para o horário
+ Que ela quiser
+ E até mesmo
+ Para o fuso horário
+ Que ela quiser
+ Tá bom?
+ Então é esse processo
+ Que ela consegue fazer
+ E é melhor
+ Para a organização
+ Outro exemplo
+ Que eu geralmente dou também
+ Eu vamos supor
+ Que vocês estão trabalhando
+ Até a tarde
+ E vocês lembram que
+ Tem que mandar mensagem
+ Para o Victor
+ Porque ficou pendente
+ Um detalhe
+ Da policy dele
+ Não é horário comercial
+ Em horário legal
+ De mandar mensagem
+ Ao invés de você ter
+ Que se preocupar
+ De lembrar nisso
+ No dia seguinte
+ Você só programa
+ A mensagem
+ E ele já vai receber
+ No dia seguinte
+ É bem legal
+ Para esses aspectos
+ Tá bom?
+ Então outra coisa aqui
+ No canto direito
+ A gente tem
+ Nossos atalhos
+ Tudo que eu mostrei
+ Até agora
+ Você consegue visualizar
+ Aqui nos atalhos
+ Então primeiro
+ O atalho de contatos
+ Que é aquele inicial
+ Que a gente preencheu
+ As informações
+ Se por exemplo
+ A Raquel
+ Está conversando
+ Comigo
+ E eu passei
+ Informação
+ Do meu e-mail
+ Em vez de ter
+ Que ir lá
+ Nos contatos
+ Ela pode vir
+ Nessa atalho aqui
+ E já preencheu
+ O meu e-mail
+ Ou meu idioma
+ Ou sua ideia
+ Dato de aniversário
+ E assim por diante
+ O próximo
+ É o de oportunidades
+ Aqui
+ Você consegue visualizar
+ A oportunidade
+ Vincular desse contato
+ Que foi o que eu acabei
+ De explicar
+ Ou adicionar
+ Uma nova oportunidade
+ Só clicar aqui
+ Em mais
+ E create new opportunities
+ E aí aquele processo
+ Que eu fiz
+ Você faria por aqui
+ Sem precisar trocar
+ De aba
+ O próximo
+ É o de testes
+ Esse aqui é bem legal
+ Eu recomendo
+ Que vocês utilizem bastante
+ Tanto para a Raquel
+ Quanto para vocês
+ Por quê?
+ Se a Raquel
+ Tiver que
+ Que vocês façam
+ Uma teste
+ Vinculada a algum cliente
+ Ela pode criar aqui
+ Clicando em Yes
+ Ela vai colocar o título
+ De por exemplo
+ Cobrar documentação
+ E aí descrever
+ O que que está faltando
+ Qual é essa documentação
+ E assim por diante
+ Ela pode colocar
+ Uma data
+ Para essa teste
+ E selecionar
+ Com quem vai ser
+ Então para quem vai ser
+ Essa tarefa
+ E o mesmo vale para vocês
+ Se vocês quiserem
+ Adicionar para ela
+ Vocês podem adicionar testes
+ Para ela ser
+ Lembrada
+ E realizar
+ Essas tarefas
+ Então para a organização
+ Fica bem legal
+ O próximo é o notes
+ Pode ser usado
+ Até junto com o desk
+ Mas eu recomendo
+ Que o notes
+ Seja utilizado
+ A curto prazo
+ E a longo prazo
+ A curto prazo
+ Como um exemplo
+ Prático
+ Estou conversando
+ Com o Victor
+ Com o Victor
+ E ele me passou
+ Informações importantes
+ Para a policy
+ Então se eu sou
+ Não fumante
+ Se eu tenho
+ Problemas de saúde
+ Se meus pais
+ Estão vivos
+ E assim por diante
+ Em vez de você ter
+ Voltar na conversa
+ Para lembrar
+ Você pode colocar
+ Aqui no notes
+ Para quando você
+ For realizar
+ A policy dele
+ Ou também
+ Informações
+ Para no pós-reunião
+ Tive uma reunião
+ Com o Victor
+ O bom no caso
+ De vocês aqui
+ De solicitar
+ Algumas melhorias
+ Eu vou anotar
+ No notes
+ Para a gente realizar
+ Como você consegue
+ Colocar por aqui
+ E a longo prazo
+ Eu acho que ele é
+ Bem legal também
+ Por exemplo
+ Vocês já tem
+ Bastante cliente
+ E a ideia
+ É que esse número
+ Vá dobrando
+ Triplicando
+ Daqui para frente
+ E daqui para frente
+ Talvez você não lembre
+ Exatamente daqui a um ano
+ Um ano e meio
+ Quem era o Victor
+ Como foi o processo
+ Do Victor
+ Então você pode
+ Vim aqui no notes
+ Ler aqui
+ E saber tudo
+ O que envolve o Victor
+ Como foi o processo
+ De policy
+ Como ele é
+ E assim por diante
+ Aí na hora
+ Do one-on-one review
+ Você vai estar mais preparado
+ Porque depois
+ Você já vai ter
+ Essas informações
+ Do Victor
+ Então por exemplo
+ Pode colocar aqui
+ Até informações
+ Mais básicas
+ O Victor é do Brasil
+ O Victor é de João Pessoa
+ Ele gosta de gatos
+ Então na hora
+ Da reunião
+ Você pode falar
+ Como é que está
+ João Pessoa
+ Vitor
+ Como é que estão os gatos
+ Então até como gatilho
+ Para falar com a pessoa
+ É legal a longo prazo
+ Tá bom?
+ O próximo
+ É o de agendamentos
+ O de agendamento
+ Por ser só
+ Ele vai mostrar
+ O histórico
+ Se tem algum agendamento
+ Vinculado a esse contato
+ Você também pode fazer
+ Clicando em Edge
+ E em Meetings
+ Criar um novo agendamento
+ Com o contato
+ Por aqui
+ Em vez de ter que ir
+ Para aquela aba
+ Por último
+ É o de documentos
+ O documento
+ O documento
+ É legal também
+ Em tanta curta
+ A longo prazo
+ Para você adicionar
+ Documentos
+ A esse contato
+ Então sempre que você
+ Quiser visitar
+ O contato do Victor
+ Você consegue visualizar
+ Os documentos dele
+ E informações importantes
+ Tá?
+ E aí qual que é o legal
+ Agora que a gente aprendeu
+ Sobre tudo isso
+ Principalmente para a Raquel
+ No quesito prospecção
+ Tá?
+ Vou pegar tudo
+ Que eu expliquei agora
+ E dar um exemplo
+ Prático
+ De como isso é legal
+ No dia a dia
+ Juntando com a função
+ De telefone
+ Tá?
+ Que eu já vou explicar agora
+ Lembra que aqui
+ Em contato
+ A gente consegue
+ Criar listas
+ Vamos supor
+ Você criar uma lista
+ Para a Raquel
+ Ela entrar em contato
+ Com alguns clientes
+ Possíveis clientes
+ Na verdade, né?
+ Eu vou entrar aqui
+ Nessa de Clines
+ Mas vamos supor
+ Que seria
+ Leads da Flórida
+ Aqui a gente consegue
+ Visualizar todo mundo
+ Que está nessa lista
+ E se ela clicar
+ Por exemplo
+ No Daniel
+ Que é o primeiro nome
+ Ele vai abrir
+ No contato do Daniel
+ E vai ficar
+ 1 de 72
+ Tá vendo?
+ Qual que é o processo
+ Que a gente recomenda
+ Para maximizar muito o tempo
+ E produzir muito mais
+ Ela pode vir
+ Falar com o Daniel
+ Por exemplo
+ Mandar um oi
+ Começar a prospecção dele
+ É assim que ela começa
+ Esse processo com o Daniel
+ Ela pode clicar aqui
+ Em Edge
+ Criar uma nova oportunidade
+ E colocar aqui
+ Como
+ Opa
+ Deixa eu pegar aqui
+ Vendas
+ E em contato
+ Então ela já vai ter
+ Essa organização
+ Que ela entrou em contato
+ Com o Daniel
+ E está ali
+ Nesse estágio
+ Fora isso
+ Ela pode criar
+ Uma task
+ Em relação ao Daniel
+ Por exemplo
+ Ele pediu para entrar
+ Em contato depois
+ Então pode criar
+ Uma task
+ Para relembrar
+ E também já usar
+ A função de programar
+ Essa mensagem
+ Se ele quiser
+ Daqui da prospecção
+ Já fazer um agendamento
+ Ela já pode vir aqui
+ Em agendamento
+ Clicar em mais
+ E já fazer o agendamento
+ E a vantagem daqui
+ É que ele já até seleciona
+ O contato
+ Então já fica muito mais
+ Prático para ela
+ E também
+ Se o Daniel
+ Não respondeu ela
+ Ela pode clicar aqui
+ No verdinho
+ Que é a função
+ Que eu vou explicar agora
+ E fazer a ligação
+ Tanto por aqui
+ Pesquisando pelo contato dele
+ Então pode pesquisar
+ Pelo Daniel Lopes
+ E fazer a ligação
+ Clicando aqui
+ Para fazer a ligação
+ Ou clicando diretamente aqui
+ Ela também já consegue
+ Ligar para ele
+ Com todo o processo
+ De prospecção
+ Com o Daniel
+ Ela consegue fazer por aqui
+ E aí a vantagem é
+ Terminou de fazer
+ Todo o processo
+ Com o Daniel
+ Posso clicar
+ No próximo
+ Aqui
+ Clicando na setinha
+ E já vai para o próximo
+ Contato
+ Então repete
+ Todo o processo
+ Com o Rodrigo
+ Cria test
+ Cria notes
+ Faz o agendamento
+ Finalizou
+ Clica na setinha
+ Vai para o próximo lead
+ E assim por diante
+ Então o quesito
+ Produção
+ Fica tudo na mesma tela
+ Para ela fazer
+ O que quer que seja
+ Relacionado a cada lead
+ E também
+ Para ela fazer ligações
+ Para ela fazer os agendamentos
+ E já passar para o próximo
+ Então isso é bem legal
+ Para a produção
+ E aí também
+ Entra a questão das tags
+ Se vocês quiserem
+ Adicionar tags
+ De acordo com cada contato
+ Também daria
+ Para ela adicionar
+ Uma tag aqui
+ De prospectando
+ Ou lead novo
+ E assim por diante
+ Então fica muito centralizado
+ E muito legal
+ Para a produção
+ Como que eu vou baixar
+ Essa lista aí
+ Vitor
+ A gente consegue
+ Oi?
+ Eu estou com a lista
+ Em
+ CSV
+ Pode me mandar aqui
+ Que eu faço agora
+ Para vocês
+ Não, não
+ É porque
+ O que acontece
+ A gente tem
+ Alguns grupos
+ De WhatsApp
+ Que eu sou
+ Administratador
+ Junto com a Melissa
+ Ela está fazendo
+ Esses contatos
+ Aí eu quero adicionar
+ Aí, entendeu?
+ Para ela já colocando
+ O que cada um falou
+ Entendeu?
+ Bacana
+ Inclusive
+ Para ficar mais frágico
+ A gente tem isso aqui
+ Na plataforma
+ Então se você clicar aqui
+ Em WhatsApp
+ E clicar aqui
+ Em grupos
+ Ele vai mostrar
+ Todos os grupos
+ Que vocês estão
+ Nesse momento
+ Em relação a esse
+ Contato aqui
+ E aí com os grupos
+ Que vocês têm
+ Dá para a gente pegar
+ E já trazer
+ Esses leads para cá
+ Então vamos supor
+ Que seria esse
+ House Cleans
+ Não
+ Eu vou te mostrar
+ Qual que é o meu grupo
+ Sobe aí
+ Posso pesquisar
+ É, pode
+ É Network
+ Network
+ Esse aqui
+ É Sarasota
+ Network em Sarasota
+ É, posso clicar aqui
+ Em ver detalhes
+ E vai mostrar
+ Todos os integrantes
+ Do grupo
+ Posso fazer o download?
+ Pode
+ Tem que ser rápido
+ Porque vai
+ Vai acabar os números
+ Vai ser agora
+ Vai ser nome agora
+ Tem que ser rápido
+ Isso aí
+ Show
+ Aí pode clicar aqui
+ Embaixar.csg
+ Já chegou no Brasil
+ Isso ou não, Vitor?
+ O quê?
+ Não vai ter mais
+ Número de telefone
+ No WhatsApp
+ Vai ser o seu arroba
+ Ah, sério?
+ Eu não sabia
+ É, viu?
+ Já chegou aqui
+ Para mim
+ Para me reservar
+ Meu nome já
+ Não vai ter mais telefone
+ Que doideira
+ Isso é igual o Telegram
+ Hum, que droga
+ Então aqui
+ A gente vai clicar
+ Em baixar, tá?
+ E aí assim
+ A gente já baixou
+ Todo mundo
+ Que estava nesse grupo
+ Tá bom?
+ Então aqui
+ Agora voltando
+ Em contatos
+ Eu posso clicar aqui
+ Em import, tá?
+ E aí clicando em import
+ Eu posso clicar em next
+ E aqui eu vou selecionar
+ Isso que eu acabei de fazer
+ É isso que eu acabei de fazer
+ O download
+ Seria esse grupo
+ E a gente consegue
+ Ele vai ter uma tag
+ De diferenciação
+ Ele vai ter o quê lá?
+ A gente pode criar
+ Para diferenciar esse pessoal, tá?
+ Então agora eu vou clicar
+ Aqui em next
+ O próximo campo aqui
+ É para você mapear
+ É para você mapear
+ Como o WhatsApp tem privacidade
+ A gente não consegue pegar
+ O nome desses contatos, tá?
+ Então a gente só vai conseguir
+ Pegar o número
+ Então aqui eu vou mapear
+ Com o fone
+ Os demais que são membro
+ Ou participante
+ Não é interessante para a gente
+ Então a gente pode clicar aqui
+ Em don't import
+ E agora eu posso clicar
+ Em next novamente
+ E aqui seria a aba
+ Que você falou, tá?
+ Se eu clicar aqui
+ Em add tags
+ Nessa opção
+ Eu consigo colocar uma tag
+ Para todo mundo
+ Que está vindo
+ Então qual tag
+ Que você gostaria
+ Para esse pessoal
+ Que está vindo do grupo?
+ Pode ser network
+ Sarasota, né amor?
+ Sarasota?
+ Sarasota
+ Sarasota
+ S-O-T-A
+ Isso
+ Beleza
+ Então aqui
+ Essa tag já vai ir
+ Para todos esses contatos
+ E se eu quiser criar
+ Uma lista também
+ Eu posso clicar aqui
+ Inflate list
+ Eu acho que list
+ Seria ideal também
+ É
+ Legal
+ Leads
+ Network
+ Sarasota
+ Perfeito
+ Então aqui
+ Já vai ser criada
+ Tanto em lista
+ Quanto com a marcaçãozinha
+ Que seria a tag, tá?
+ É só clicar aqui
+ Em confirmar
+ E clicar em start import
+ Import
+ Aí agora
+ É só clicar no x
+ Aqui
+ A lista já foi criada
+ De leads network
+ Aí agora
+ É só esperar
+ Finalizar o book action
+ Que deve estar aqui
+ Carregando
+ Tá em 1%
+ Mas quando finalizar
+ 100%
+ Todos esses contatos
+ Já vão estar aqui
+ Em leads network
+ Tá bom?
+ E aí o processo
+ Seria o mesmo
+ Por exemplo
+ Se a Raquel
+ Fosse fazer a prospecção
+ Desse pessoal todo
+ Ela vai clicar
+ No primeiro contato
+ E aí
+ Ir fazendo a prospecção
+ De 1 em 1
+ Como eu citei
+ Aí clicar na setinha
+ Vai pro próximo
+ E assim por diante
+ Então fica muito mais prático
+ Nesse sentido
+ Ok?
+ Alguma dúvida?
+ Ótimo
+ Aí Raquel
+ Já pode ir fazendo por aí
+ Isso
+ Agora ela já pode fazer
+ Toda a prospecção
+ Pela plataforma
+ Tá bom?
+ Fica muito mais prático
+ Nossa
+ Muito mais prático
+ Né?
+ Uma coisa que eu queria
+ Perguntar
+ Vitor
+ Em relação
+ Ao meu WhatsApp
+ Pessoal
+ Eu tenho aqui
+ Alguns
+ Alguns contatos
+ Que estão
+ Que estão
+ Em etiquetas
+ No meu WhatsApp
+ Business
+ Eu consigo
+ Botar eles aí?
+ Consegue
+ A gente consegue
+ Fazer o download
+ Desses contatos
+ Pelo seu próprio celular
+ Se for o caso
+ E trazer pra cá
+ Pro sistema
+ Vai ser
+ Como se fosse
+ Essa lista
+ Que a gente acabou
+ De fazer o download
+ E aí
+ Eu só não tenho certeza
+ Se a gente consegue
+ Trazer as etiquetas
+ Mas se você me mandar
+ O documento
+ Eu consigo dar uma olhada
+ E confirmar pra você
+ Na verdade
+ O que a gente faz
+ Vitor?
+ A gente tenta
+ Baixar por etiqueta
+ A gente abaixa
+ A etiqueta de carreira
+ E aí
+ Já bota
+ Identificando que é carreira
+ Entendeu?
+ Nesses
+ Possível
+ O único problema
+ É que não vai vir
+ O nome da pessoa
+ Não vai ter as conversas
+ E as conversas também
+ Ela vai ter começando
+ Se fosse
+ O download
+ Diretamente
+ Pelo celular dela
+ E ela baixando
+ No celular
+ E mandando pra gente
+ Aí vem o nome certinho
+ O nosso método
+ Aqui do WhatsApp
+ Ele só não vem
+ Porque o próprio WhatsApp
+ Tem esse bloqueio
+ De não permitir
+ Que você saiba
+ A gente consegue fazer
+ O download
+ De conversa
+ Mas aí vai ter que ser
+ Um por um
+ Abrir um contato
+ Baixar
+ Abrir um contato
+ E baixar
+ É
+ Aí seria um por um
+ Isso daria
+ Não muito prático
+ Mas se fosse só
+ Os contatos
+ Aí dá pra baixar tudo
+ E trazer direto pra cá
+ Bom
+ Aqui nessa aba
+ De dashboard
+ Aí fica todo
+ Controle visual
+ Da plataforma
+ Então a gente consegue
+ Visualizar qualquer informação
+ Basicamente
+ Então aqui em Apolicies
+ A gente consegue ver
+ Todas as suas Apolicies
+ Se eu clicar aqui em Vendas
+ A gente consegue ver
+ Todo mundo que está em Vendas
+ Nesse caso
+ Só vai ter eu
+ Que foi o exemplo
+ Que eu dei
+ E ele mostra
+ O que eu estou em contato
+ Então você consegue ter
+ Realmente todo o controle
+ De todos os funis
+ De tudo que está sendo feito
+ Na plataforma
+ Tá bom
+ Aqui embaixo
+ Por exemplo
+ A gente tem o controle
+ Das testes também
+ Deixa eu só achar
+ Aqui em testes
+ Por enquanto está zerado
+ Mas assim
+ Por exemplo
+ Você fizer testes
+ Pra Raquel
+ Pra Melissa
+ E assim por diante
+ Dá pra você filtrar
+ Aqui pelo usuário
+ Então quais são
+ As testes de cada usuário
+ Que cada um tem pendente
+ E também dá pra ver
+ Se já foi concluída
+ As pendentes
+ Ou ver tudo
+ Então dá pra você
+ Organizar por aqui também
+ Tá ok
+ Então isso aqui é mais
+ Pra organização
+ Mas é legal vocês darem
+ Uma olhada
+ E configurar
+ Tá bom
+ Passando aqui
+ Pra um pequeno
+ Merchanzinho
+ Mas é um merchan bom
+ Pra vocês
+ Aqui a gente tem
+ Na parte de baixo
+ O nosso menu
+ Que é o de indicações
+ Aqui em indicações
+ A gente tem
+ A nossa indicação
+ Na Spark
+ Que é um sistema
+ Bem bruto
+ Digamos assim
+ De indicações
+ Então quanto mais
+ Você indica
+ Mais desconto
+ Você ganha
+ Basicamente
+ Se você indicar
+ Alguma pessoa
+ Você vai ganhar
+ 30 dólares
+ De desconto
+ Na próxima fatura
+ Se você indicar
+ 3
+ Você vai ganhar
+ 70 dólares
+ E a partir de 5
+ Já fica interessante
+ Porque no primeiro mês
+ Você vai ganhar
+ 100 dólares
+ E aí recorrentemente
+ Você vai ganhar
+ 30 dólares
+ Então se você indicar
+ 5 pessoas
+ E as pessoas
+ Fecharem com a gente
+ Todo mês
+ Você vai ganhar
+ 30 dólares
+ De desconto
+ E aí chegando em 10
+ Aqui tá 100
+ Mas seria 100%
+ Você vai ganhar
+ Você vai ganhar
+ Basicamente
+ O desconto total
+ Da plataforma
+ Então você vai ganhar
+ Recorrentemente
+ O acesso liberado
+ A plataforma
+ Sem precisar pagar
+ Tá bom?
+ Então é bem interessante
+ Também nesse sentido
+ Ok?
+ E aí qual
+ E falando
+ Falando em indicação
+ Existe alguma automação
+ Também
+ Para
+ Para os clientes
+ Fazerem indicações
+ Ou não?
+ Para mim
+ Para os meus clientes
+ Ah
+ Você já tem
+ Alguma coisa assim?
+ Já tem alguma
+ Automação assim?
+ A gente pode criar
+ Se eu não me engano
+ Tem um cliente
+ Ou outro que utiliza
+ Mas não é algo
+ Tão recorrente
+ Mas a gente pode fazer
+ Para vocês
+ E aí
+ É só você falar
+ Com o Vitor
+ Faz isso
+ Que ele faz
+ É só você dar a ideia
+ É
+ Daí é que a gente
+ Executa
+ Basicamente
+ É
+ Porque é legal
+ Dar a indicação
+ Vitor
+ Porque assim
+ Tem cliente
+ Que manda 10 indicações
+ E aí tem que fazer
+ No dedo
+ E a gente colocando
+ Aí
+ Foi indicação de fulano
+ A hora que botar
+ A hora que botar
+ Lá
+ Que ele virou cliente
+ Já mandar
+ Uma
+ Uma mensagem
+ Automática
+ Entendeu?
+ Na verdade
+ Você está falando
+ De uma coisa
+ Eu estou falando
+ De outra
+ Não
+ O que você está falando?
+ Na verdade
+ Você quer um robô
+ Para pedir indicação
+ É
+ Para pedir
+ E eu já estava pensando
+ No robô
+ Que quando ele já
+ Fazia indicação automática
+ Ele já mandava a mensagem
+ Oi, tudo bem?
+ A Melissa me indicou você
+ Ela tem um plano assim
+ Assim assado
+ Eu queria marcar a reunião
+ Entendeu?
+ Eu já estava pensando
+ Nessa daí
+ Eu já estava pensando
+ Mais na frente
+ Não
+ O que eu quero
+ É gerar leads
+ Com meus clientes
+ É
+ São duas etapas
+ Vitor
+ Primeiro
+ É solicitar
+ Indicação
+ Quando o cliente
+ For
+ Quando a pessoa
+ For cliente
+ Mesmo
+ Ela tem um número
+ De apólise
+ Ela já
+ Adquiriu o serviço
+ E depois
+ Quando ela mandasse
+ O contato
+ Automaticamente
+ Ele iria
+ Para um fluxo
+ De indicação
+ Para tentar
+ Para tentar
+ Marcar
+ Fazer um
+ Agenamento
+ Entendi
+ Ambas
+ A gente consegue
+ Fazer
+ E aí seria
+ Só ver a cadência
+ E como vai ser
+ Disparada
+ Essa mensagem
+ Então
+ Se vai ser realmente
+ No momento
+ Que ele vira cliente
+ Ou passado
+ Três meses
+ Dele como cliente
+ Aí manda
+ Essa mensagem
+ Porque ele já
+ Vai estar mais
+ Confortável
+ Então vai de acordo
+ Não
+ Eu prefiro o imediato
+ Porque ele está fresquinho
+ É
+ Pode ser
+ Então
+ Tem funcionado mais
+ É
+ Então sempre que
+ Um cliente
+ Ficar novo
+ Aqui na plataforma
+ Já dispara
+ Uma mensagem automática
+ Ou
+ Alguma coisa
+ Que aí seria mais
+ E depois virar
+ Recorrente também
+ Sei lá
+ Daqui a alguns meses
+ Mandar de novo
+ A gente manda
+ Outra mensagem
+ Entendeu
+ Porque vira e mexe
+ Eu mando
+ Para os meus clientes
+ Bacana
+ Clientes antigos
+ Clientes novos
+ Mas eu mando
+ Manual
+ Outra coisa legal
+ Vitor
+ O que a gente faz
+ Também dá muito retorno
+ É mandar mensagem
+ Pelo menos uma vez
+ Por mês
+ Ou uma vez
+ A cada 45
+ Oi, tudo bem?
+ Nossa agência
+ Está em expansão
+ Você conhece alguém
+ Que tem o work permit
+ E queira trabalhar?
+ Cara, dá muito retorno
+ Mas é muito
+ Indicação para trabalhar
+ Para os dois
+ Ela falou primeiro
+ Para a cliente
+ Para o produto
+ Mas esse de trabalho
+ Mas eu quero para os dois
+ Isso tudo
+ Eu faço manual
+ E quero ver
+ Se pode ir mandando
+ Assim também
+ Eu vou te dar uma ideia
+ Que a gente pode ter
+ Todo mundo que é cliente
+ Vem da Firewinds
+ A gente adiciona
+ Essa tag
+ Esquinha de cliente
+ O que a gente pode fazer
+ Sempre que a tag
+ Cliente é adicionada
+ Ele manda a mensagem
+ A gente tipo
+ Oi
+ Se queria alguém
+ Para indicar
+ A gente pode colocar
+ Daqui a três meses
+ Te manda uma outra mensagem
+ E aí falando
+ Oi
+ Passando novamente
+ Perguntando
+ Se tem alguém
+ Eu não sou o melhor
+ Em palavras
+ A gente pode intercalar
+ A cada mês
+ Ou a cada 45 dias
+ Ele fala de carreira
+ Oi, tudo bem?
+ Como é que você vai?
+ Que bom
+ Faz tempo que eu não falo com você
+ Eu queria saber
+ Nossa agência está em expansão
+ Eu queria saber
+ Se você tem alguém para indicar
+ E aí no outro mês
+ A gente pede
+ Ó, você sabe
+ Tem muita gente fazendo
+ GoFundMe
+ Eu queria saber
+ Se você não tem
+ Nenhuma amiga
+ Nenhuma pessoa
+ Para me indicar
+ Para a gente poder fazer
+ O mesmo plano que você tem
+ Para proteger a sua família
+ É mais ou menos assim
+ E aí a gente vai mudando
+ O script aí
+ No decorrer do processo aí
+ Isso, exatamente
+ Aí sobre tudo isso
+ Que vocês querem configurar
+ Só reiterando
+ Só mandar para a gente
+ Qual vai ser o texto
+ Do disparo
+ Porque ninguém melhor
+ Do que vocês
+ Para saber exatamente
+ Que seja disparado
+ Proclimit, né
+ E também
+ Qual seria a cadência
+ Então
+ Foi o que eu falei
+ Daqui a um mês
+ Depois daqui a três meses
+ E assim por diante
+ Então é só falar
+ Me desconfigure
+ E deixa rodando
+ Para vocês, tá bom?
+ Essa lista aí
+ 72 clientes
+ Também tem pouco cliente, Vitor
+ É, está faltando, né?
+ É, está faltando
+ A gente tem seu
+ Não me engano
+ E Melissa
+ Deve ter no mínimo
+ Uns 400 clientes
+ Quer ver?
+ Mas só nosso?
+ Só nosso
+ A gente está com mil e poucos clientes
+ Se eu pegar aqui, amor
+ Se eu pegar
+ As apólices aqui
+ Já atualizou
+ Não está todo mundo ainda, né?
+ Mas estava 70
+ E agora foi para 250
+ É
+ Na verdade deve ser
+ Ó, ativos
+ 261
+ Porque está em force
+ Apólice em force
+ Ativo, é
+ É
+ Mas a gente deve ter uns 400
+ É, nesse caso aqui
+ Eu estou feitando
+ Só pelos ativos, tá?
+ Mas aí o que acontece?
+ Esse gapzinho de 40
+ 45
+ Talvez possa ser
+ Daquele finalzinho
+ Que eu mostrei
+ Que aí está faltando
+ Alguma informação
+ Isso, exatamente
+ Que aqui está só os ativos
+ Então está 215
+ Aí tem 40 aí
+ Que está faltando
+ Aproximadamente, né?
+ O Vitor
+ É uma coisa
+ Que eu como
+ Tem uma falha
+ Que eu tinha
+ É duplicado
+ Vamos supor
+ Que eu bucho
+ Eu pego uma lista
+ De prospecção de cliente
+ E ele já é meu cliente
+ Ou já está no pipeline
+ Ele acusa
+ A duplicidade automática
+ Ou não?
+ Ele vai
+ Sim
+ A gente não permite
+ Duplicidade
+ Em relação a nenhum contato
+ Mas o que a gente permite
+ É em relação
+ A pipeline
+ Então, por exemplo
+ Se você quiser
+ A gente pode tirar, tá?
+ Mas às vezes
+ A pessoa pode ter
+ Uma oportunidade
+ Como cliente
+ E uma oportunidade
+ Como agente
+ É
+ Então dá para ter duas
+ Aí nesse caso
+ A gente permite
+ Mas para contato em si
+ Não dá para fazer
+ O meu maior problema
+ É para cliente
+ Porque pensa comigo
+ Hoje eu devo ter aí
+ Uns 5, 6 mil
+ Pessoas de cliente
+ Um exemplo, tá?
+ Eu creio que é isso
+ Né, Raquel?
+ A gente está com 6 mil
+ Em tudo
+ Cliente e carreira
+ E
+ E aí
+ Quando eu baixo
+ Esses números
+ De algum grupo
+ Pode ser que
+ Eu já estou falando com ele
+ Em outro pipeline
+ Para não começar
+ Uma conversa do zero
+ Entendeu?
+ Não, tá?
+ Para duplicidade
+ Mas pelo que ele falou
+ Não vai aceitar
+ O mesmo número
+ Não, contato não
+ Amor
+ Mas se eu abrir
+ Um novo pipeline
+ Vamos supor que a gente
+ Abre um pipeline
+ Escrito
+ Network
+ Sarasota
+ Ele pode estar
+ No pipeline
+ De uma ligação
+ Que a Raquel
+ Fez há um tempo
+ Para trás
+ Entendeu?
+ Isso
+ Mas aí também
+ Nesses casos
+ Em todo contato
+ A gente também
+ Tem ali
+ Naquele cantinho
+ Histórico
+ De oportunidade
+ Então para controle
+ Ficar muito interessante
+ Então aqui no meu
+ Por exemplo
+ Se eu vier aqui
+ Em oportunidades
+ Eu consigo ver
+ Tudo que tem
+ Vinculado a mim
+ Então na hora
+ Vai estar em dois
+ Pipelines aí
+ Vai estar em duas oportunidades
+ É, então dá para visualizar
+ Visualizar bem tranquilo, tá?
+ E aí para duplicar contato
+ Ele não deixa
+ Então não tem como
+ Ter duas pessoas
+ Com o mesmo número
+ Isso é impossível, tá bom?
+ Tá
+ Show
+ Finalizei a questão
+ Do nosso merchanzinho, né?
+ Eu mandei o número
+ Do SparkBot
+ Para o contato
+ Que eu tenho
+ Que é o da Melissa
+ Se você quiser passar
+ Para os outros também, tá?
+ E aí falando
+ Sobre o nosso SparkBot
+ Ele é basicamente
+ Um auxiliante
+ Para vocês
+ Em tudo que envolve
+ A plataforma
+ Então tudo que eu expliquei
+ Hoje
+ Com o agendamento
+ Testes
+ Criar uma nova oportunidade
+ Tudo isso
+ O SparkBot faz
+ Então ele ajuda bastante
+ Para, por exemplo
+ Vocês nem conseguem
+ Ter o acesso
+ No computador
+ Naquele momento
+ Pode pedir para o SparkBot
+ Fazer para vocês
+ Que ele vai fazer
+ Todo o processo, tá?
+ Então eu auxilia bastante nisso
+ Aí só um detalhe, tá?
+ Ele só é configurado
+ Para todo mundo
+ Que contrata a Spark
+ Então ele só vai responder
+ Para esses números aqui, tá?
+ Então se vocês tentarem
+ Mandar mensagem
+ Por outro número
+ Ele não vai mostrar
+ Porque ele não permite
+ Para quem não tem
+ Número vinculado
+ Na plataforma
+ No caso vocês queiram
+ Eu queria adicionar um
+ Eu queria adicionar
+ O telefone nosso mesmo
+ Que a Raquel usa
+ Sem ser o número pessoal dela
+ Que seria
+ Porque
+ Porque às vezes ela
+ O Raquel
+ Se você preferir
+ Raquel
+ Em vez de mandar mensagem
+ Você pode mandar pelos dois
+ Óbvio
+ Mas
+ Às vezes você esquece
+ Abre o seu pessoal
+ E depois abre o outro
+ E aí não vai funcionar
+ Então era bom
+ Vou botar o dele também
+ Pode falar
+ E agora
+ E agora
+ A Raquel que sabe
+ É oito o que Raquel?
+ Tem aqui
+ Também
+ Aqui ó
+ Oito
+ Três
+ Dois
+ Oito
+ Meia
+ Cinco
+ Dezesseis
+ Vinte e um
+ Me corrija se eu estiver errado
+ Tá
+ Ô Vitor
+ O Raquel e Melissa
+ Esse
+ Esse robô aí
+ Ele faz tudo
+ Você pode pedir
+ Para ele agendar
+ Para você
+ Você pode pedir
+ Ver quantos agendamentos
+ Quantas reuniões
+ Você tem no dia
+ Pedir para ele
+ Te lembrar das reuniões
+ Pedir para ele
+ Remarcar a reunião
+ Tudo que você pedir
+ Ele vai fazer
+ Isso
+ Exatamente
+ E ele auxilia muito
+ Na organização
+ Uma coisa que ele faz
+ Para mim
+ Por exemplo
+ Todo dia de manhã
+ Ele fala
+ Bom dia
+ Essas são as suas reuniões
+ De hoje
+ Quer se preparar melhor
+ Para alguma delas
+ E assim por diante
+ E também
+ Em toda finalização
+ De reunião
+ Por exemplo
+ A nossa
+ Quando finalizar
+ Ele vai mandar
+ Uma reunião
+ Para mim
+ E aí
+ Como foi a reunião
+ Com eles
+ Ficou alguma coisa pendente
+ Quer adicionar uma anotação
+ Quer fazer uma nova reunião
+ Então tudo isso
+ Ele já faz
+ Para auxiliar
+ Na organização
+ Follow up
+ O cliente pediu
+ Para falar com ele
+ Daqui dois dias
+ Ele já vai botar
+ Eu não sei se a gente
+ Tem que mandar mensagem
+ Ou se está programado
+ Essa mensagem
+ Do follow up
+ Dá para fazer os dois
+ Dá para você criar
+ Uma teste
+ Para daqui a dois dias
+ Você ser relembrado
+ Ou programar
+ Daqui a dois dias
+ Manda essa mensagem
+ E aí você fala a mensagem
+ E ele já vai fazer
+ Tá bom?
+ Tipo aquela cliente
+ Que você atendeu ontem
+ Ela vai voltar
+ Do Brasil dia 28
+ Aí aqui
+ Você já podia ter mandado
+ Ele vai perguntar
+ Como foi a reunião
+ E aí você manda
+ Daqui 28 dias
+ Você manda uma mensagem
+ Para ela
+ Perguntando
+ Para cadastrar ela
+ Para fazer alguma coisa
+ Entendeu?
+ Exatamente
+ Então ele já ajuda
+ A Melissa não é muito
+ De ficar no computador
+ Então ela vai usar
+ Bastante aí
+ Esse agente aí
+ Com certeza
+ Quem vai usar isso aí
+ Mais nas telas
+ É a Raquel
+ E eu vou usar
+ Só esse chat aqui
+ Você vai ficar
+ E aí
+ Você vai ficar mais
+ No robô
+ Perfeito
+ Só um adentro
+ Não sei se o Pedro
+ Chegou a comentar com vocês
+ Mas como a gente usa
+ Uma IA ultra avançada
+ Ela cobra tokens
+ Mas a gente deixa
+ 5 dólares por mês
+ De tokens gratuitos
+ Gratuitos não
+ Já está incluso
+ Então 5 dólares por mês
+ Ele vai utilizar
+ Geralmente já é o suficiente
+ Mas para alguns casos
+ Que as pessoas utilizam muito
+ Ele acaba passando
+ 5 dólares
+ Aí a partir disso
+ Seria cobrado
+ Mas é uma cobrança
+ De acordo com a solicitação
+ Que você faz
+ Então se você pediu
+ Para fazer um agendamento
+ Que é uma função simples
+ Ele vai gastar
+ 2, 3 centavos de dólar
+ Mas aí se você pedir
+ Para ele fazer
+ Um fluxo complexo
+ Já
+ Manda uma mensagem
+ Hoje
+ Depois uma daqui a 3 dias
+ Depois daqui a 5 dias
+ Como é algo mais complexo
+ Ele vai precisar mais
+ Isso a gente faz direto
+ Então para esse caso
+ Mais complexo
+ A ideia é que vocês usem
+ Mais para a questão
+ Mais prática
+ Do dia a dia
+ E para isso
+ A gente também já tem
+ Esses 5 dólares
+ Que vai cobrir
+ Provavelmente a utilização normal
+ Mas se vocês realmente
+ Utilizarem muito
+ Aí seria cobrado
+ A parte
+ Entre aspas
+ Que seria só o que
+ A gente vai repassar
+ Da IA
+ Tá bom?
+ Aqui eu posso fazer
+ Nesse robô
+ Eu posso fazer tasks
+ Pedindo para
+ Um task
+ Colocando a pessoa responsável
+ Como a Raquel
+ Por exemplo
+ Isso
+ Você pode criar
+ Por exemplo
+ Cria uma task
+ Para o usuário da Raquel
+ Para ela fazer tal coisa
+ E aí coloca o dia
+ E o horário
+ Então a gente já vai fazer
+ Para você também
+ Tá bom?
+ Maravilha
+ Então isso ele já faz
+ Vou adiantar
+ Porque a gente está indo
+ Para outra reunião
+ Daqui a pouquinho
+ Mas agora
+ Sobre a questão
+ Que
+ Acho que é o que
+ Vocês querem mais
+ Que é sobre a questão
+ Da IA de atendimento
+ Que foi o que
+ André comentou
+ Então aqui
+ A gente vai precisar
+ De vocês
+ Seria legal agora
+ Para vocês comentarem
+ Como que
+ A ideia de vocês
+ De atendimento
+ Para essa IA
+ O que vocês querem
+ Que ela faça
+ O que ela vai fazer
+ Em relação a
+ Por exemplo
+ Por padrão
+ Ela pede os dados
+ De nome
+ Telefone
+ E-mail
+ Mas aí pede também
+ Se é fumante ou não
+ É, está duplicando
+ A minha voz
+ Eu acho
+ É, não
+ Ela veio aqui
+ Pegar o carregador
+ Bateria está acabando
+ Tranquilo
+ Mas basicamente
+ Tudo que envolve
+ Atendimento
+ Eu queria que vocês falassem
+ E também ali no chat
+ Depois
+ Vocês mandarem para a gente
+ Para a gente configurar
+ Mais a fundo, tá?
+ Essa reunião
+ Eu vou transcrever
+ Então depois eu vou ter
+ Tudo que vocês falaram
+ Para a gente fazer
+ A configuração
+ E entregar
+ Ou hoje
+ Ou no máximo amanhã
+ A IA já configurada
+ E a gente também tem
+ As modas de ativação
+ Da IA
+ Deixa eu só logar aqui
+ Para mostrar um pouco
+ Mais detalhadamente
+ Mas a gente consegue
+ Preencher tudo
+ Então se vocês quiserem
+ Que a IA seja
+ A mais humana
+ Que a pessoa nem saiba
+ Que é uma IA
+ Dá para colocar
+ Dá para colocar
+ Um nome para essa IA
+ Então se por exemplo
+ Vocês quiserem colocar
+ O nome da Raquel
+ A IA vai se apresentar
+ Como Raquel
+ E depois se a Raquel
+ For seguir com o atendimento
+ Vai ser como se fosse
+ Entre as pessoas
+ A mesma pessoa, né?
+ Então dá para a gente
+ Fazer tudo isso
+ Dá para configurar
+ O que vai ativar
+ Essa IA
+ Então aí pode ser
+ Tag
+ Pode ser
+ Está em um estágio
+ Específico da Pipeline
+ Então a gente poderia
+ Criar por exemplo
+ Um estágio de
+ Ativação IA
+ Aí sempre que a pessoa
+ For para esse estágio
+ A IA já começa
+ Fazer o atendimento
+ Então realmente vai de acordo
+ Com o que vocês quiserem
+ É só falar
+ O que vocês querem
+ Que a gente faz
+ Eu só preciso de tudo mesmo
+ Em relação a
+ Como se fosse o prompt
+ Que essa IA vai ter
+ Tá bom?
+ Aí provavelmente
+ Vai ser com o André
+ Se quiser falar para a gente
+ Cara
+ Eu acho que
+ IA a gente vai ter
+ Que ir testando
+ A gente tem que botar
+ Vai testando
+ Mas
+ É
+ Mas eu quero
+ Primeira coisa
+ Eu quero bem humanizado mesmo
+ Eu também
+ Eu prefiro
+ Vou só te mostrar aqui
+ André
+ Que vai ser o processo
+ Que a gente vai fazer
+ Mas eu loguei
+ Pelo seu usuário
+ Para mostrar
+ Aqui em IA Hub
+ Vai ter a aba
+ De agentes
+ E aí vai ser
+ O agente
+ Que a gente pode criar
+ O novo
+ Ou o agente já pronto
+ Que aí vai ser
+ O que a gente vai criar
+ E aí quando a gente
+ Criar um agente
+ A gente vai ter
+ Todas as informações
+ Vai ser aqui
+ O agente de
+ De venda
+ Provavelmente
+ Mas também tem
+ O de recrutamento
+ Para agentes
+ Então
+ Aqui está 50
+ Mas já está incluso
+ No plano de vocês
+ O agente de venda
+ Eu falei
+ O plano vai para
+ Eu vou fazer um seguinte
+ A gente
+ Vamos desistir
+ Ele viu
+ Ele viu
+ Me ouvindo assim
+ Não
+ Já está incluso
+ Pode ficar tranquilo
+ Então aqui
+ O que a gente vai fazer
+ A gente vai alimentar
+ Com as informações
+ Então qual que é o propósito
+ Como que esses leads
+ Chegam para ele saber
+ Qual vai ser a identidade
+ O objetivo
+ A persistência
+ E o horário
+ Então por exemplo
+ Se ele vai insistir
+ Só uma vez
+ Para agendamento
+ Se vai insistir três
+ Qual vai ser o horário
+ Que ele vai atender
+ Então por exemplo
+ Se vocês preferem
+ Que a Raquel
+ Faça o atendimento
+ Humanizado
+ E aí
+ Depois que ela
+ Para de trabalhar
+ Depois das 5pm
+ Começa a ser agente
+ Então dá para fazer
+ Essa mesclagem também
+ Então dá para fazer
+ Tudo isso
+ E dá para configurar
+ Da melhor forma possível
+ Tá bom
+ Deixa eu pegar aqui
+ O da nossa conta
+ Que ele está um pouco
+ Mais completo
+ O ideal aí
+ Amor
+ E Raquel
+ É a gente criar um
+ E a gente mesmo
+ E testando
+ Entendeu?
+ É a gente recomenda
+ Que a gente faça
+ Essa configuração inicial
+ Mas aí ajustes
+ É legal
+ Que vocês vão fazendo
+ Por aqui
+ Ou podem falar
+ Com a gente também
+ Que a gente vai fazendo
+ Já tem os agentes
+ Prontos
+ Não tem aí?
+ Sim e não
+ Tipo
+ Dá a configuração
+ Normal dele
+ Que seria o padrão
+ Mas aí não vai ter
+ O contexto
+ Que é o seu negócio
+ Que acha que é
+ O mais importante
+ Então qual é a forma
+ De prospecção
+ Como vocês atendem
+ Senão ele vai só
+ Fazer o processo normal
+ Que seria
+ Pegar as informações
+ É
+ Quando eu conversei
+ Com o Pedro
+ Ele falou que já tinha um
+ Que eles até
+ Ele lê a conversa
+ Anterior
+ Que a gente não vai ter
+ O resumo
+ Né?
+ Óbvio
+ Mas se a gente tivesse
+ Ele ia ler a conversa
+ E ia pegar
+ No tom daquela conversa
+ E ia mandar
+ Alguma coisa
+ É
+ Ele já está incluso
+ Nessa configuração
+ Ele sempre vai ler
+ Pegar o contexto
+ E se adaptar
+ De acordo com o contexto
+ Então se por exemplo
+ Foi algo que a pessoa
+ Já solicitou antes
+ Ele já vai saber
+ Que solicitou
+ E que é a segunda solicitação
+ Por exemplo
+ Mas aí seria realmente
+ Uma configuração
+ No início
+ Vai ser um pouco
+ Mais trabalhosa
+ Em relação a
+ Moldar
+ Para o que vocês querem
+ Né?
+ Mas aí a longo prazo
+ Ele já vai estar
+ Configurado e treinado
+ Para fazer o melhor possível
+ Para a conta de vocês
+ Tá?
+ Então vai de acordo
+ Com o que vocês quiserem
+ Deixa eu pegar aqui
+ O nosso da Spark
+ Só para mostrar
+ Só para mostrar mais visualmente
+ Qual seria o passo a passo
+ De
+ Ou vocês podem me falar
+ Agora
+ Para eu já passar
+ Para o responsável
+ Para fazer a configuração
+ Ou vocês podem
+ Me mandar ali
+ Por texto
+ Que aí eu faço
+ Toda a configuração melhor
+ E mais aprimorada
+ Ou os dois
+ Pode pegar os melhores
+ Na verdade
+ Eu tenho que ter uma ideia
+ De como que
+ O que eu vou botar
+ Entendeu?
+ Deixa eu pegar o nosso aqui
+ Que ele já está mais bonitinho
+ Então aqui
+ O nome do agente
+ Poderia colocar aqui
+ Raquel
+ Que aí eu posso colocar
+ Se ele é mais virtual
+ Ou se é realmente uma pessoa
+ Então se vai se apresentar
+ Como pessoa
+ E aí pode colocar o objetivo
+ Se é só qualificar
+ Então só pegar os dados
+ Se ele vai qualificar
+ E agendar
+ Ou se ele só vai agendar
+ Então dá para você
+ Configurar tudo isso
+ Como ele vai começar
+ O atendimento
+ Como ele vai se despedir
+ A personalidade dele
+ Então a intenção
+ É que vocês falem tudo isso
+ Para a gente configurar
+ Então aqui
+ Então e estilo
+ Dá para ser
+ Mais criativo ou não
+ Se ele é mais formal ou não
+ Mais natural ou não
+ E assim por diante
+ Exemplos de conversa
+ Vocês podem ir colocando
+ Para alimentar ele
+ E ele saber
+ Como suportar
+ O tipo de
+ O IA
+ A gente recomenda
+ Ser esse aqui
+ Pela Spark
+ E também
+ Aqui em ativação
+ Foi o caso
+ Que eu falei
+ Pode ser por mensagem
+ Por tag
+ Por campo personalizado
+ Por funil
+ É só exemplificando
+ Se fosse por mensagem
+ Uma mensagem
+ Em padrão de
+ Ah
+ O pessoal vai do tráfico
+ Com a mensagem de
+ Ah
+ Queria saber mais informações
+ Então sempre que a pessoa
+ Escrever isso
+ Aí a ativa
+ Ou se for por tag
+ A gente pode colocar
+ Uma tag aqui
+ De
+ IA ativa
+ Sempre que eu colocasse
+ A tag
+ Ela vai começar
+ A disparar
+ E fazer o processo
+ De prospecção
+ Por campo personalizado
+ A gente poderia escolher
+ Um campo
+ Vou supor aqui
+ Que é
+ Postname
+ Mas
+ Seria aqui
+ Ativação
+ Aí sempre que esse campo
+ Ativação
+ É preenchido
+ Vai disparar também
+ Por oportunidade de funil
+ Seria o que eu falei
+ Então poderia ser
+ Sempre que for ali
+ Como new lead
+ Já começa a fazer
+ A prospecção
+ Então tudo isso
+ Tem que ser configurado
+ Para ela começar
+ A rodar
+ E aqui seria
+ O que você comentou
+ Agora
+ Do memória por lead
+ Então a gente consegue
+ Configurar
+ Para ler conversas
+ E dados antigos
+ Para o contato
+ Então dá para ativar
+ Isso também
+ Para ele ter esse contexto
+ E por último
+ Os canais
+ Dá para ser uma prospecção
+ Só por whatsapp
+ Só por instagram
+ Então por exemplo
+ Se vocês quisessem
+ Que a Raquel
+ Ficasse responsável
+ Pelo whatsapp
+ E a IA
+ Ficasse responsável
+ Pelo instagram
+ Dá para fazer
+ Esse tipo de configuração
+ Também
+ Ok
+ Mas tudo isso
+ Tem que ser configurado
+ E alimentado
+ Eu só preciso
+ Que vocês me falem
+ O que vocês querem
+ E o que implementa
+ Para vocês
+ Vocês não vão precisar
+ Ter o trabalho
+ De configurar
+ Só realmente dizer
+ O que vocês querem
+ Tá?
+ Ficou claro?
+ Ficou
+ Sim
+ Então se você quiser
+ Dar um contexto inicial
+ Agora
+ A gente tem que
+ Quando a gente for fazer
+ Colocar uma tag
+ Aí de teste
+ E aí colocar
+ Os nossos números
+ Para a gente fazer
+ Esse teste
+ Entendeu?
+ Para não começar
+ A falar com todo mundo
+ E depois
+ Tem algum ajuste
+ Que a gente vai fazer
+ E ele já está funcionando
+ É
+ Se você quiser
+ A gente pode
+ Começar no textão
+ Da princípio
+ Ou fazer aquilo
+ Que eu comentei
+ Já a Raquel
+ Tem o dia dela ali
+ E é a partir
+ Das 6pm
+ Vamos supor
+ Que ela para
+ Me manda um
+ Não
+ Eu acho que
+ Tem que ser fixo
+ Porque
+ Às vezes
+ Ela está fazendo
+ Outra coisa
+ E o robô
+ Ali está
+ Trabalhando
+ Entendeu?
+ Depois me manda
+ O robô
+ De vocês
+ Com o número
+ Que eu posso
+ Mandar uma mensagem
+ Testando
+ Também
+ Entendeu?
+ Sim
+ Também no caso
+ Esse negócio
+ De horário
+ Fica meio assim
+ Porque tem
+ Uma hora
+ Que eu estou
+ Trabalhando
+ De manhã
+ Aí eu divido
+ O período
+ De manhã
+ E à noite
+ Aí tem horas
+ Que eu fico
+ Até 8 horas
+ Da noite
+ Também
+ Aí
+ Às vezes
+ 8 horas
+ Da noite
+ Eu vou ter
+ Que estar fazendo
+ Outra coisa
+ Que é mais
+ No sistema
+ Aí
+ É bom
+ Deixar livre
+ Show
+ Show
+ Ah então
+ Você prefere
+ Me mandar ali
+ Por texto
+ Todas essas
+ Coisas
+ Que a gente
+ Vai usar
+ Na IA
+ Ou prefere
+ Já ir falando
+ Aqui
+ E depois
+ Manda o
+ Reisante
+ No texto
+ É
+ Vamos fazendo
+ Aqui logo
+ A configuração
+ E a gente
+ Manda o texto
+ Depois
+ Só preciso
+ Que seja
+ Nos próximos
+ 10 minutos
+ Mas a gente
+ Consegue fazer
+ O que a gente
+ Tem mais
+ Para fazer
+ E importante
+ Acabou
+ Não
+ Aqui
+ Em quesito
+ Configuração
+ Explicação
+ Já finalizou
+ É só
+ E a mesma
+ Tá bom
+ Inclusive
+ Estou mostrando aqui
+ Os contatos
+ Acabaram
+ Então aqui
+ Já está
+ Todo mundo
+ Na lista
+ Ela poderia
+ Fazer o processo
+ Que eu falei
+ Já
+ De aí
+ Selecionar
+ O primeiro
+ Contato
+ Dessa lista
+ Do grupo
+ Que a gente
+ Importou
+ E já
+ Começar
+ A fazer
+ A prospecção
+ Então se ela
+ Quiser
+ Ela já
+ Consegue
+ Fazer
+ Isso hoje
+ Tá bom
+ Vou pegar
+ Ali meu
+ Oculos
+ Aí pode
+ Falar
+ Essa configuração
+ A gente consegue
+ Fazer
+ Para
+ Humanizar
+ E
+ Meu
+ Pode ir lá
+ Então
+ Vamos fazer
+ Um
+ Para a gente
+ Testar lá
+ E depois
+ Eu coloco
+ Uma tarde
+ Show
+ Vitor
+ Vou te fazer
+ Uma pergunta
+ No caso
+ Da ligação
+ Tem limite
+ De quantidade
+ Assim
+ Por dia
+ Ou não
+ Quantas
+ Não
+ É
+ É
+ É
+ As ligações
+ Que eu tinha
+ Falado
+ É 0.0003
+ Por minuto
+ Daí
+ O limite
+ É o que você
+ Decide
+ Você pode ligar
+ Para quantas pessoas
+ Você quiser
+ Sem problema
+ Nenhum
+ As ligações
+ São ilimitadas
+ O tempo
+ De duração
+ Também
+ Não tem
+ Nenhuma barreira
+ Nesse sentido
+ Tá bom
+ Até eu perguntei
+ Porque geralmente
+ O aplicativo
+ Que a gente usa
+ Hoje
+ A gente está usando
+ Dois
+ Porque ele tem
+ Um limite
+ Eu ligo
+ Para um tanto
+ Aí ele bloqueia
+ E eu não tenho
+ Como ligar
+ Eu vou para o outro
+ E uso o outro
+ Número
+ Para continuar
+ Não
+ Aqui é ilimitado
+ Pode ficar tranquilo
+ Eu vou contar isso
+ Tá bom
+ Tá
+ Ok
+ Beleza
+ Aí pode me falar
+ André
+ Que aí
+ Tudo que você
+ Falar aqui
+ Eu vou transcrever
+ E passar
+ Para o pessoal
+ Então
+ Como eu já
+ Entrei na
+ Calcão
+ A IA
+ Ela já está
+ Pegando tudo
+ O que a gente
+ Está falando
+ Ah
+ Eu só preciso
+ Dos campos
+ Lá para me ver
+ O que a gente
+ Vai preencher
+ Não é isso
+ Ou não
+ É
+ Pode ser
+ Deixa eu pegar
+ Aqui o nosso
+ Despart
+ Que eu acho
+ Fica mais claro
+ Para você
+ Mas aí
+ Pode falar
+ De uma vez
+ O contexto
+ Geral
+ Que aí seria
+ O pronto
+ Que a gente vai dar
+ Para ela
+ Então qual é
+ O tipo de
+ Atendimento
+ Que vocês
+ Geralmente fazem
+ Por exemplo
+ A gente vai
+ E pega
+ Os campos
+ Se é fumante
+ Ou não
+ Se tem
+ Licença
+ Ou não
+ E assim por diante
+ Que ela já vai
+ Estar pegando
+ Tudo que a gente
+ Está falando
+ E ela já vai
+ Transcrever
+ Ótimo
+ Então pode dar
+ Um contexto
+ Geral
+ Primeiro
+ E depois
+ A gente vai
+ Para esses
+ Contextos
+ Específicos
+ Maravilha
+ No atendimento
+ Do cliente
+ Na parte
+ De cliente
+ A gente
+ Pega
+ Nome
+ Data
+ De nascimento
+ Se é fumante
+ Ou não
+ Ah é
+ O estado
+ Que mora
+ Se mora
+ Nos Estados Unidos
+ E qual estado
+ Então vai ser
+ Nome
+ Praticamente isso
+ É
+ Geralmente é o padrão
+ Então está aqui
+ Já também
+ De identidade
+ O nome da assistente
+ Vai ser
+ Como eu disse
+ Aqui é o mesmo
+ Ou vocês vão
+ Colocar um nome
+ Diferente
+ Pode colocar
+ Raquel
+ Deixar bem
+ Humanizado
+ Então vai ser
+ Pessoa
+ E aí o objetivo
+ Dela vai ser
+ Qualificar
+ E agendar
+ Pelo que entendi
+ Certo
+ Então ela vai
+ Pegar o escão
+ Se depois vai
+ Fazer o agendamento
+ Então está aí
+ Perfeito
+ Você falou alguma coisa
+ Adair?
+ Não
+ Acho que eu me ouvi
+ Então
+ Aí como ela
+ Cumprimenta
+ O padrão
+ É sempre
+ Oi
+ E o nome da pessoa
+ Se vocês quiserem
+ Algo personalizado
+ Pode falar
+ Que ela está
+ Ouvindo a gente
+ Pode ser
+ Oi
+ E o nome da pessoa
+ Ok
+ E como se despeje
+ Depois do agendamento
+ Por exemplo
+ Qualquer dúvida
+ Estou por aqui
+ Após ela realizar
+ O agendamento
+ Aí aqui agora
+ O topo legal
+ Seria a descrição
+ Da personalidade
+ Então não precisa
+ Ser algo muito complexo
+ Mas só falar
+ Como que ela vai atender
+ Se ela é mais gentil
+ Se ela
+ Tem até aqui
+ O exemplo
+ Calorosa
+ Objetiva
+ Atenciosa
+ Fala como experiente
+ Sem enrolação
+ E assim por diante
+ Só falar um contexto
+ Que a gente vai configurar
+ É mais atenciosa
+ Gentil
+ E também como uma
+ Pessoa experiente
+ Exato
+ Perfeito
+ Aí eu vim para tom e estilo
+ Vocês preferem que ela seja
+ Mais criativa
+ Menos criativa
+ Mais conservadora
+ Qual seria o nível aqui?
+ Pode botar no meio o termo aí
+ Cinquentinha
+ Formalidade
+ Mais formal
+ Ou mais casual?
+ Menos formal
+ Mais casual
+ Mais menos formal
+ Boniza
+ Se chegar no zero
+ Se chegar no zero aqui
+ Só um exemplo
+ Ela começa a ficar formal
+ Em relação a
+ Por exemplo
+ Em vez de falar você
+ Ela fala BC
+ Ela começa a fazer
+ Reviações
+ Não, não
+ Bota um meio termo aí
+ Meio termo também
+ Naturalidade
+ Essa é a mais robótica
+ Ou humano
+ Aí que provavelmente
+ Vai ser o mais humano possível
+ Assertividade
+ É se é mais tímido
+ Ou mais direto
+ Então provavelmente
+ Mais direto
+ Mais direto
+ Aqui
+ E aqui
+ Depois vocês podem alimentar
+ Com exemplos de conversa
+ Então vocês podem
+ Pegar exemplos de conversas
+ Que vocês tiveram
+ Com os leads de vocês
+ E ir copiando
+ E colando aqui
+ Para ela ficar alimentada
+ Nesse sentido
+ Tá bom?
+ Eu vou disponibilizar
+ Para vocês depois
+ Aí a ativação
+ Por enquanto
+ Vai ser tag, né?
+ Aí me fala
+ Qual vai ser a tag
+ Para fazer a ativação
+ Você está mutado, André?
+ Pode ser teste
+ IA
+ Porque aí eu vou botar
+ Meu número
+ E vou testar
+ E depois a gente muda
+ Por mensagem
+ Ou por tag
+ Porque vai ter
+ Quando a gente exportar
+ Os nossos contatos
+ Do como para ir
+ Vai ter um monte de tag
+ Entendeu?
+ Perfeito
+ E aí a gente vai ter
+ Que ir trabalhando
+ Esses leads aí
+ No follow-up
+ Eu não sei como
+ Que a gente vai fazer
+ Isso aí
+ A gente tem que estudar
+ Depois de uma maneira
+ Show
+ Memória do lead
+ Vai ficar ativada, né?
+ Vocês se interessaram
+ Por essa função
+ E os canais
+ Podem colocar todos
+ Por enquanto, né?
+ Então pode ser
+ WhatsApp, Instagram
+ Que seja
+ E assim por diante
+ Certo?
+ Uhum
+ Qualificação
+ Você já falou
+ No início
+ Então a gente pode
+ Pular isso
+ E aqui
+ O agendamento
+ Dá para ligar
+ E aí dá para selecionar
+ Inclusive para qual calendário, tá?
+ Então se vocês quiserem
+ Que ela só agende
+ Para um calendário específico
+ É só falar
+ Que a gente faz a configuração
+ Então qual seria o calendário
+ Ou a gente qual
+ Quem seria também
+ Então se vai ser para a Melissa
+ Se vai ser para o André
+ Dá para vocês selecionarem
+ Para quem vai ser o agendamento
+ Vocês vão querer padronizar
+ Para uma pessoa só
+ Ou para quem tiver disponibilidade
+ Pode botar para mim
+ Tá, então vai ser sempre
+ Para Melissa Oliveira
+ O agendamento
+ E tem gente
+ Pode deixar
+ Por enquanto você
+ Mas depois
+ Pode deixar a carreira
+ Comigo depois
+ É, depois
+ Horário de atendimento
+ Vai ser qualquer horário, né?
+ E aí depois de agendar
+ A gente tem a configuração aqui
+ De passar para o Mã
+ Que vocês não vão utilizar, né?
+ Que aí seria
+ Obrigado
+ O membro da nossa equipe
+ Terá em contato em breve
+ Não vai ser esse caso, né?
+ Não
+ A gente já quer
+ Que ele identifique
+ Que seja o humano
+ Que está já falando lá
+ Isso
+ Perfeito
+ Follow-up aqui
+ Seria só um follow-up
+ Em relação ao número de tentativas
+ Se a pessoa não quiser
+ Fazer o agendamento
+ Então dá para você colocar aqui
+ De 1 a 10
+ E o máximo de tentativas
+ E o número de follow-ups
+ Então se a pessoa
+ Não está respondendo
+ Depois de 10 minutos
+ Ele manda o primeiro follow-up
+ Aí depois de tantos minutos
+ Ele manda o segundo
+ E assim por diante
+ Então se vocês quiserem
+ Que ela faça esse follow-up
+ Esse follow-up
+ E se a pessoa não responder
+ Vocês podem falar agora
+ Qual seria a cadência
+ Então
+ De quanto em quanto tempo
+ E quantas tentativas
+ Seriam
+ Só falar, por favor
+ Faça a mínima ideia
+ Essa cadência
+ Que eu não sei
+ Mas eu quero que tenha
+ Esse follow-up
+ Eu não sei o que seria ideal
+ Eu acho que ele vai tentar
+ Ele vai tentar 5 vezes
+ A cada 10 minutos
+ Eu acho o tempo curto
+ Não, não
+ Ele tenta 5 vezes
+ É, dá para colocar aqui
+ Mais tempo
+ Primeiro depois de 10 minutos
+ Dá para colocar 1 depois de 10 minutos
+ Depois 1 de 1 hora
+ Dá para fazer mais avançado também
+ Mas vamos supor aqui
+ Que vai ser 3 então
+ 1 depois de 10 minutos
+ Isso 1 depois de 1 hora
+ E 1 depois de
+ No dia seguinte
+ Pode ser?
+ Pode ser
+ Pode ser
+ Perfeito
+ A gente vai fazendo
+ E isso tudo
+ A gente vai testando
+ E lá na frente
+ Se quiser mudar
+ A gente pode mudar, né?
+ Isso
+ Essa aba aqui de conhecimentos
+ É tudo que a gente vai implementar
+ Porque olha aí
+ Vocês mandaram um texto
+ Que eu consigo colocar aqui
+ Então é tudo que a gente sabe
+ Da agência
+ Então vocês podem colocar aqui
+ Nós somos a Melissa e o André
+ A gente trabalha com a gente
+ Durante tantos anos
+ A gente faz isso e isso
+ Então é isso tudo
+ Que você vai alimentar
+ Para ela saber mais
+ Sobre o modelo de negócio de vocês
+ E mais sobre vocês, tá?
+ Então isso é legal
+ Que vocês me mandem ali em texto
+ Inclusive se mandar em arquivo
+ Eu consigo anexar o arquivo aqui
+ Para ir com todas as coisas
+ Que vocês fazem, tá?
+ Então aqui também
+ A gente já tem pronta
+ Toda a biblioteca de conhecimento
+ Tanto da National Live
+ Quanto da Brasilionese
+ Então tudo que envolve a policy
+ Ela já sabe
+ A gente já implementou
+ Esse conhecimento padrão
+ Tá bom?
+ Então aí
+ Essa fica a missãozinha
+ De mandar uma documentação
+ Maior
+ E aqui seria o horário
+ De atendimento
+ Mas nesse caso
+ A gente não vai utilizar
+ Já que vai ser full time, né?
+ Talvez só colocar
+ Talvez até 10pm
+ Para ela não mandar mensagem
+ Para o pessoal
+ Meia-noite
+ Quando alguém mandar
+ Uma mensagem
+ Por exemplo
+ Porque aí a pessoa vai saber
+ Que não é uma pessoa
+ Que está atendendo, né?
+ Mas a gente pode configurar
+ Só para o horário limite
+ Se for o caso, sabe?
+ E pausando o bot
+ A gente pode colocar aqui
+ Sempre que o humano responder
+ Então se por exemplo
+ A IA está fazendo atendimento
+ Mas a Raquel quer assumir
+ Se ela mandar uma mensagem
+ A IA para automaticamente, tá?
+ Sim
+ Pode botar aí
+ Tá
+ Então sempre que o humano responder
+ Desativa a IA
+ Perfeito?
+ Isso
+ E aí
+ O problema é que isso aí
+ A Raquel mandar uma mensagem
+ E ele não responder
+ Aí
+ E a Raquel esquecer
+ O bot vai parar
+ Ela não vai tentar marcar
+ O que o Pedro me ensinou
+ Que seria bom
+ Aqui, ó
+ Na hora que você
+ Mesmo se responder
+ Só pausa
+ Quando enviar
+ Uma das mensagens
+ Cadastradas abaixo
+ Ah, tá
+ Entendi
+ Isso
+ E aí
+ O que eu ia explicar agora
+ Por exemplo
+ Se a Raquel
+ Responder o cliente
+ Com alguma coisa específica
+ Que ela sabe
+ Que para o bot
+ Aí ela pode colocar
+ Na mensagem
+ Que ele vai parar
+ Então dá para fazer
+ Dessa forma também, tá?
+ Então só com mensagens específicas
+ É, pode ser então
+ Tá, então sempre que for
+ Uma mensagem específica
+ Que a gente vai configurar
+ Vai parar
+ A utilização da IA
+ Beleza?
+ Então no mais é isso aqui
+ Aí o que fica pendente é
+ Vocês me enviarem ali
+ A documentação
+ Com tudo sobre a empresa
+ De vocês
+ Para a gente alimentar
+ Essa IA, tá?
+ Então como eu falei
+ A história de vocês
+ Como vocês fazem
+ A prospecção
+ Qual é a forma de atendimento
+ Tudo isso que é importante
+ Vocês querem que ela saiba
+ Então quanto mais
+ Ela souber de vocês
+ Quanto mais ela vai ficar
+ Personalizada
+ Como se fosse, por exemplo
+ A Raquel fazendo atendimento
+ Porque ela conhece
+ Quanto mais de vocês, tá?
+ Então é só
+ Basta para a gente
+ Que a gente finaliza
+ A configuração, tá bom?
+ Ok
+ Sobre
+ Baixar
+ Todos os contatos
+ Do Como
+ Como que a gente vai fazer
+ Você tem que marcar
+ Um horário lá
+ Com o Pedro
+ Ou com você
+ Quem é que vai fazer isso?
+ A gente está finalizando
+ Uma automação
+ Para vocês mesmos
+ Conseguirem fazer isso, tá?
+ Ah, você falou sexta-feira
+ Verdade, é
+ Isso
+ O Pedro está finalizando
+ Hoje
+ Mais tarde da manhã
+ A gente vai mostrar
+ Um tutorial de como fazer
+ Mas aí fica praticamente
+ Automático, tá bom?
+ Ok
+ Tá bom
+ Beleza
+ Mas é isso, pessoal
+ Fique na quarta
+ Da mensagem de vocês
+ Depois
+ Precisando
+ É só contar com a gente
+ Tá bom?
+ Tá bom
+ Obrigado
+ Ok, Vitor
+ Muito obrigada, tá?
+ E tchau, tchau
+ Tchau, tchau

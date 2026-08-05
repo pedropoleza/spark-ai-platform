@@ -1825,12 +1825,14 @@ function CatKnowledge({ e, patch, agentId }: { e: Editable; patch: (p: Partial<E
 
 /* ─── Automações ────────────────────────────────────────────────── */
 const EVENT_OPTS: { v: string; l: string }[] = [
+  { v: "ai_activated", l: "IA ativada no lead" }, { v: "ai_deactivated", l: "IA desativada no lead" },
   { v: "qualified", l: "Lead qualificado" }, { v: "booked", l: "Reunião agendada" },
   { v: "handed_off", l: "Passou pra humano" }, { v: "disqualified", l: "Lead desqualificado" },
 ];
 const ACTION_OPTS: { v: AutomationAction["type"]; l: string }[] = [
   { v: "add_tag", l: "Adicionar tag" }, { v: "remove_tag", l: "Remover tag" },
-  { v: "move_pipeline", l: "Mover no funil" }, { v: "update_field", l: "Atualizar campo" },
+  { v: "create_opportunity", l: "Criar no funil" }, { v: "move_pipeline", l: "Mover no funil" },
+  { v: "update_field", l: "Atualizar campo" },
   { v: "send_text_fixed", l: "Enviar mensagem" }, { v: "send_media", l: "Enviar mídia" },
   { v: "pause_ai", l: "Pausar a IA" }, { v: "webhook", l: "Chamar webhook" },
 ];
@@ -1902,6 +1904,11 @@ function ActionList({ actions, onChange }: { actions: AutomationAction[]; onChan
           {a.type === "move_pipeline" && (<>
             <input className="input" value={a.pipeline_id || ""} onChange={(ev) => upd(i, { pipeline_id: ev.target.value })} placeholder="ID do funil" style={{ width: 150 }} />
             <input className="input grow" value={a.stage_id || ""} onChange={(ev) => upd(i, { stage_id: ev.target.value })} placeholder="ID da etapa" />
+          </>)}
+          {a.type === "create_opportunity" && (<>
+            <input className="input" value={a.pipeline_id || ""} onChange={(ev) => upd(i, { pipeline_id: ev.target.value })} placeholder="ID do funil" style={{ width: 150 }} />
+            <input className="input" value={a.stage_id || ""} onChange={(ev) => upd(i, { stage_id: ev.target.value })} placeholder="ID da etapa" style={{ width: 150 }} />
+            <input className="input grow" value={a.opportunity_name || ""} onChange={(ev) => upd(i, { opportunity_name: ev.target.value })} placeholder="nome (opcional, ex: Novo lead)" />
           </>)}
           {a.type === "update_field" && (<>
             <input className="input" value={a.field_key || ""} onChange={(ev) => upd(i, { field_key: ev.target.value })} placeholder="campo" style={{ width: 150 }} />

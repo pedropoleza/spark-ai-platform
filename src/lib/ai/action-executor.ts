@@ -12,6 +12,7 @@ import {
   updateOpportunity,
 } from "@/lib/ghl/operations";
 import { reportError } from "@/lib/admin-signals/report-error";
+import { normalizePhone, resolveLocationDefaultCountry } from "@/lib/account-assistant/identity";
 import type { AIAction, AIResponse } from "@/types/ai";
 
 // Delay curto entre mensagens (max 1.5s para não causar timeout no serverless)
@@ -235,7 +236,16 @@ async function executeAction(
         const key = action.field_key.startsWith("contact.")
           ? action.field_key.slice("contact.".length)
           : action.field_key;
-        await updateContactField(client, ctx.contactId, key, action.value);
+        // Telefone BR-aware (fix caso Marina 2026-07-01): o LLM salva o número
+        // CRU (ex: "31999232306") e o GHL formatava como +1 pelo fuso da location
+        // (US) → telefone inválido, sem entrega de WhatsApp/SMS. Normaliza E.164
+        // antes de gravar (celular BR de 11 díg vira +55…; E.164 já pronto é
+        // preservado). Só o campo standard `phone`.
+        const value =
+          key === "phone"
+            ? normalizePhone(String(action.value), await resolveLocationDefaultCountry(ctx.locationId))
+            : action.value;
+        await updateContactField(client, ctx.contactId, key, value);
       }
       break;
 

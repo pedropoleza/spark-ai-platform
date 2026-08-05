@@ -1,0 +1,30 @@
+# ÍNDICE DE REPS (7d) — volume + internos
+
+- Jussara Ferreira (+16892033343): 444 total (205 user / 239 agent) — id=8dc0cb84-f423-4efb-b3d9-3b87dd7ad699
+- Daniely Jones (+19544715559): 263 total (122 user / 141 agent) — id=2e3b6597-e640-4b8a-b386-882a7e6cc6ca
+- Bruno Schneider Cruz (+14078136812): 210 total (98 user / 112 agent) — id=22515abb-9bd6-4054-b1ba-9a56379ad34b
+- Sieder Madrona (+15082028743): 194 total (89 user / 105 agent) — id=3cc60d99-36dd-4e09-a507-bb5d1b09eeef
+- Gustavo Couto (+17542650461): 152 total (74 user / 78 agent) — id=1986766f-147b-4a9e-9842-b1248a64bd33
+- Cintia Berti (+554899612912): 122 total (62 user / 60 agent) — id=121f73a0-68fc-4aeb-8440-dd9d9aeef10d
+- John Doe (+17867717077) [INTERNO]: 88 total (34 user / 54 agent) — id=1eeb02cc-1a48-4b56-b177-52dcbca07ac2
+- Sabrina Caldas (+17326186381): 78 total (33 user / 45 agent) — id=214d1281-3c13-43f6-a2fd-6100a83ecc5b
+- Manuela Garcia (+19544771397): 66 total (33 user / 33 agent) — id=672ce07e-cbff-4371-a80b-1f7f7f2cdcf9
+- Marcos Alves (+17864615477): 58 total (25 user / 33 agent) — id=08308d42-fee1-4c1e-9f0b-f56ab23bdf0c
+- Soraia Close (+15612552996): 55 total (16 user / 39 agent) — id=1fae9c35-6c69-4757-89a7-2c459ace8772
+- Ana Paula Rangel (+12404608400): 43 total (18 user / 25 agent) — id=047d4dc3-388c-4320-9c5d-025f38a348c7
+- Victor Alves (+5524988370280): 43 total (16 user / 27 agent) — id=0e6931aa-dd27-4a10-9da4-1c47a4f2a796
+- Matheus Curty (+17325278816): 43 total (16 user / 27 agent) — id=3d300218-40d3-44ae-ae92-f2b30038c600
+- Sidney Simões (+15085899433): 28 total (13 user / 15 agent) — id=03a59ef1-a7ff-44e9-a65f-c0a03ad427ee
+- Gilberto Abel (+15618596194): 28 total (14 user / 14 agent) — id=63b7cc15-e1ca-49b0-a952-f058901bc79e
+- Bianca Zimmer (+17742850908): 21 total (10 user / 11 agent) — id=5042c1f4-b91c-4fba-af33-bc3829e22b64
+- Luciano Correia da Silva (+19543051116): 17 total (9 user / 8 agent) — id=34930c4d-1df9-4d4b-a617-04723c37ca02
+- Roger Pontes (+16898008602): 16 total (8 user / 8 agent) — id=299f7b15-09c3-4129-a9ad-63575b254251
+- Daniely Jones (+19544715463): 12 total (4 user / 8 agent) — id=c78a4784-219e-4934-b854-c14dd83dbedf
+- Victor Costa (+13214298047): 9 total (2 user / 7 agent) — id=642bc8f6-4e9f-4635-aab7-5a521749717f
+- Rosangela Ulmer (+18149338069): 8 total (4 user / 4 agent) — id=efc71424-2bf5-4e0f-a594-c632673c070d
+- Melina Wiebusch (+17864034823): 6 total (3 user / 3 agent) — id=5a577693-7083-43de-bf9f-7e450b9af8ca
+- Ana Paula Passos Paredes (+5511979608657): 4 total (2 user / 2 agent) — id=187a8e98-3110-495c-8c7b-f52a83f2efdd
+- eric souza (+16897103359): 4 total (2 user / 2 agent) — id=a26f8580-0154-43f2-9f82-8a836dec3b72
+- Phil Siqueira (+15083456828): 1 total (0 user / 1 agent) — id=492d4759-61b2-4e2b-8458-f1912123e0eb
+- Taciana Cury (+19543265903): 1 total (0 user / 1 agent) — id=84658ac2-e418-408d-abdb-d066ac90b792
+- Andrea Saraiva (+15083694620): 1 total (0 user / 1 agent) — id=dbb97c43-d0f6-478e-9552-cecd8f6b5c64

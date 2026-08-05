@@ -27,6 +27,7 @@ import type { RepIdentity, GHLUserLink, RepProfile } from "@/types/account-assis
  * Heurística:
  * - Se já começa com `+` → preserva (assumindo E.164 já válido)
  * - Se tem 12+ dígitos sem `+` → assume que tem country code, prepend `+`
+ * - Celular BR inequívoco (11 díg, 3º dígito `9`) → `+55`, IGNORA defaultCountry
  * - Se tem 10/11 dígitos:
  *   - defaultCountry='BR' → prepend `+55`
  *   - defaultCountry='US' (default) → prepend `+1`
@@ -42,6 +43,17 @@ export function normalizePhone(raw: string, defaultCountry: "US" | "BR" = "US"):
   if (raw.trim().startsWith("+")) return `+${digits}`;
   // 12+ dígitos sem `+` — provavelmente já tem country code
   if (digits.length >= 12) return `+${digits}`;
+  // Celular BR pelo PRÓPRIO número (fix caso Marina/Bianca 2026-07-01): um número
+  // de 11 dígitos sem country code cujo 3º dígito é "9" é o 9º-dígito obrigatório
+  // do celular brasileiro (DDD 2díg + 9 + 8díg). Um número US nacional tem SEMPRE
+  // 10 dígitos — 11 só com o "1" de country code na frente, e aí o 3º dígito é o
+  // MEIO do area code (nenhum area code US em uso tem "9" no meio). Logo
+  // "11 díg + 3º=9" só pode ser celular BR → força +55 mesmo com a location em
+  // fuso US (leads BR mandam WhatsApp brasileiro). Cobre DDD 11 (SP) inclusive.
+  // Antes, com defaultCountry US: 31999232306 → +131999232306 (número inválido).
+  if (digits.length === 11 && digits[2] === "9") {
+    return `+55${digits}`;
+  }
   // 10/11 dígitos — depende do default country
   if (digits.length === 10 || digits.length === 11) {
     if (defaultCountry === "BR") return `+55${digits}`;

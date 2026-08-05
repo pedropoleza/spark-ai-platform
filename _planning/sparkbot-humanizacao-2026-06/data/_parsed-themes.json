@@ -1,0 +1,377 @@
+[
+  {
+    "section_title": "Tema 1 — Estudo de Uso & Comportamento: Quem usa o SparkBot, como fala, e o que faz",
+    "narrative_md": "## TL;DR\n\nO SparkBot virou o **\"último quilômetro\" do CRM** para uma operação de seguros/recrutamento BR-nos-EUA: 28 reps em 7 dias, **2015 msgs, ~100% WhatsApp** (web UI morta: 2 msgs). O uso é dominado por **~6 power-users** que concentram a maioria do volume (Jussara 444, Daniely 263, Bruno 210, Sieder 194, Gustavo 152, Cintia 122) e uma cauda longa de ~13 reps casuais com <30 msgs. A entrega técnica funciona quase sempre (`llm_failed=3`, `send_error=1` em 1103 msgs de agent) — **o problema não é técnico-duro, é fluência, capacidade e confiança.** O bot é tratado como **secretária/colega humano** (\"Jacob\", \"Zinha\", \"Chati\", \"Esparta\", \"Sparkol\", \"abençoado de Jesus\"), recebe áudio para tudo que é denso, e os reps esperam que ele acompanhe o ritmo apressado e multitarefa deles.\n\n---\n\n## 1. Quem são os reps\n\n**Segmentação por intensidade (a que importa pro produto):**\n- **Power-users (6, ~maioria do volume):** Jussara (fluxos de no-show gigantes), Daniely (relato do mês inteiro por áudio), Bruno (orquestra agenda cross-timezone), Sieder (cola resumos Gemini/ChatGPT → nota+task), Gustavo (rajadas de notas de qualificação), Cintia (cobrança em lote nome-a-nome). São eles que estressam os limites — orquestração, lote, recorrência, templates — e onde os piores atritos aparecem (Jussara perdeu o fluxo inteiro entre turnos; Manuela travou 14 reuniões).\n- **Casuais (cauda longa):** mandam \"Oi\"/\"Tudo bem\" e levam o paredão de onboarding na cara (Sidney, Melina, eric souza). A 1ª impressão é frágil: Melina recebeu `Location is not active` logo após aceitar termos — bot \"quebrado\" no 1º pedido real.\n- **Interno (Pedro/John Doe, 88 msgs):** testa em prod com a própria conta, usa até pra to-do pessoal (link Claude, lembrete Amazon). Mostra que o bot é usado **além do CRM**, como assistente pessoal.\n\n**Demografia/idioma:** quase todos **PT-BR nativo**, operando mercado US. Misturam jargão EN de seguro/funil **cru no meio do PT**: `M0/M2/M3`, `Waiting for Approval`, `no-show`, `follow up`, `E&O`, `fingerprint`, `EFT`, `rollover`, `face amount`, `lapsed`, `riders`, `won`, `LOM`, `underwriting`, `Florida Time`. Isso é estrutural — não é ruído a corrigir, é o vocabulário deles. Alguns são religiosos/afetivos (Gilberto: \"O abençoado de Jesus...\").\n\n---\n\n## 2. O que mais fazem (ranqueado por evidência: tools + achados)\n\nA tabela de tools + os 7 segmentos convergem num ranking claro:\n\n1. **Buscar contato** (`search_contacts` 630 usos / 19 reps — dominante absoluto). É o gargalo de quase todo fluxo. Toda outra ação começa aqui, e é onde nasce metade do atrito (homônimos, typos, áudio mal-transcrito).\n2. **Agendar / reagendar reunião** (`create_appointment` 72, `list_calendars` 104, `get_free_slots` 54). Cluster #1 por intenção. Comando curto: `\"+1 (786) 403-4823 marca com a melina hj 1PM\"`. Frequentemente cross-timezone (FL × CA × Brasília × SP), com o rep ditando a conversão.\n3. **Registro pós-call: nota + mover stage + task** (`create_note` 57, `create_task` 50, `move_opportunity` 10). Jornada canônica disparada pelo proativo \"como foi a call?\". Sieder cola resumos Gemini gigantes; Gustavo empilha 4-5 notas no mesmo contato.\n4. **Mensagem agendada / imediata ao contato** (`schedule_message_to_contact` 82 — concentrado em **5 reps**; `send_message_to_contact` 29). Padrão Gustavo (mensagem de sorte na prova dia 27) e Cintia (cobrança de pagamento nome-a-nome, ~7 iguais seguidas).\n5. **Funil/lista** (`list_opportunities` 26, `list_pipelines` 22, `add_tag` 11). Gustavo pede \"lista da M2\" repetidamente; Luciano se impressionou com \"171 opps abertas\".\n6. **Lembretes** (`schedule_reminder` 31 / 8 reps) — inclusive **não-CRM/pessoais** (Bruno \"me lembra do evento do Pedro\", Daniely \"ver computador na Amazon\", lembrete pra 2027).\n7. **Dúvida de produto / carrier KB** (`query_carrier_knowledge` 16 / 4 reps). Baixo volume mas **altíssimo valor percebido** — Manuela e Gustavo usam o bot como consultor técnico de seguro (Contingent Owner, E&O, illustration NLG, term conversion) e pedem \"reescreve como se fosse eu\".\n8. **Follow-up/orquestração** (`create_followup_request` 19 / 3 reps; `start_task_draft`/`commit_draft` 6/3 — H41 recém-live). Nascente mas é onde está a maior dor não-resolvida (Jussara, Rosangela 246 leads).\n\n---\n\n## 3. COMO falam (linguagem é load-bearing pro design)\n\n- **Áudio é estrutural, não acessório.** Marcador 🎤 aparece na maioria dos turnos longos de Daniely, Manuela, Ana Paula, Soraia, Sieder, Bruno, Roger, Jussara. **Áudio = canal de despejo de contexto denso** (Daniely narra o mês inteiro com 15+ pessoas num voice; Sieder dita 5 perguntas médicas de underwriting). Texto fica reservado pra comandos curtos e colar links/telefones. **Consequência crítica:** erros de transcrição cascateiam (Welds/Eudes/Weudes; \"Manuela\"→\"Manoela\"; número 786-932-0230 atribuído a 3 pessoas) e quebram o `search_contacts`. O bot **tem que tolerar transcrição ruim como condição de operação**, não como exceção.\n- **Texto é telegráfico, sem pontuação, cheio de typo não-corrigido:** \"Maracar apontamneto\", \"craia no calendario dela pls\", \"Mao consigo\", \"incluia neste follow up\", \"Remarca Victor pra Quinta feira esse memso horario\". O bot que responde com bloco formatado e cerimonioso **espelha mal** quem escreve assim.\n- **Tratam o bot como pessoa/colega** e o batizam: \"Esparta\", \"Spark\", \"Chat/Chate/Chati/Nath\" (Jussara), \"Jacob/Zinha\" (Daniely), \"Sparkol/Potti/abençoado de Jesus\" (Gilberto). Dão bom-dia/boa-noite, agradecem, pedem **opinião** (\"criar cadência? o que você acha?\", \"seja sincero, o que acha desse follow-up?\").\n- **Pressa e multitarefa:** pedem e já emendam o próximo; impacientam quando o bot demora (\"eae?\" 2x; \"Aguardando sua resposta?\"; \"Me responde se vc está pensando ou se vc já executou\"). **O silêncio durante processamento multi-passo é o que mais irrita** (Luciano cutucou 2x sem saber se travou).\n- **Secos quando o bot erra:** \"calma\", \"voce fez uma confusão gigante\", \"Vc Marcou Errado\", \"mas eu ja mandei tudo\". Correção direta, sem rodeio.\n- **Colam mensagem de terceiro sem contexto** (fala do agente recrutado, transcript Fathom de 37min, resumo Gemini com tabelas) e esperam o bot adivinhar de quem é / o que fazer.\n\n---\n\n## 4. Padrões de jornada (as cadeias reais)\n\n1. **Proativo \"como foi a call?\" → áudio do rep → nota + move stage + task** (a jornada mais comum). Bom quando o bot encadeia (\"move Anne → quer o mesmo com Vanessa?\"). Ruim quando o rep responde só com o stage (\"waiting application\", \"pamela waiting application\") e o bot **não herda o contato do contexto da pergunta** e pede nome/telefone de novo.\n2. **Agendar → (slot \"bloqueado\") → forçar → reagendar → corrigir timezone.** Ciclo de altíssimo atrito: o warning \"slot bloqueado, confirmar mesmo assim?\" aparece em **~100% dos agendamentos** de alguns reps (Pedro, Daniely) porque o calendário deles só tem demos empilhadas — virou ritual sem sentido. Timezone gera retrabalho real (Daniely \"Vc Marcou Errado\" 3x).\n3. **Rajada de notas / cobranças idênticas em série** (Gustavo 4-5 notas no mesmo contato; Cintia ~7 cobranças iguais). O bot pergunta \"quer follow-up?\" / pede confirmação de 3 botões **a cada item** — não detecta o modo-lote.\n4. **Montar fluxo grande por chat → aplicar a N contatos** (Jussara: ditou ~30 dias de links/vídeos; aplicou a 7+ números). É a jornada de maior valor e **maior fracasso** pré-H41: o bot perdeu o estado entre turnos, negou que o texto colado pela rep era dela (\"é texto de sistema interno\"), duplicou/triplicou mensagens reais aos clientes, e deu 7+ falsas confirmações de \"agendado\".\n5. **Colar resumo gigante (Gemini/Fathom) → pacote nota+tags+task** (Sieder). Ele **sempre** quer o pacote completo, mas o bot pergunta passo-a-passo \"quer task? quer agendar?\" após cada ação.\n6. **Dúvida de produto → resposta KB → \"reescreve pra eu mandar pra ela\"** (Gustavo, Manuela). O bot vira consultor + ghostwriter — e aqui ele **brilha**.\n\n---\n\n## 5. O que JÁ funciona (não quebrar)\n\n- **Carrier KB / consultoria de produto** é o ponto mais forte e mais humano (illustration NLG com ressalva NAIC; Contingent Owner; objeção de venda reescrita em 1ª pessoa). Baixo volume, valor desproporcional.\n- **Honestidade anti-alucinação** (\"ainda não consegui concluir — não quero te dizer que fiz algo que não foi feito\") já aparece em prod e é elogiada — é o oposto da falsa confirmação.\n- **Bom-dia proativo com agenda real do dia** tem fit forte e foi **explicitamente pedido** (Daniely: \"Amanhã me dá bom dia me lembrando os compromissos 7am\").\n- **Honestidade anti-spam** (recusar disparo em lead frio de 54 dias e oferecer lembretes internos) protege o rep.\n- **Interpretação de imagem** (decisão de UW da NLG via print → carrier, rate class, prazo de 10 dias) é \"último quilômetro\" puro.\n\n---\n\n## 6. Onde investir (posicionamento de produto)\n\nA evidência aponta 4 frentes de investimento, em ordem de retorno:\n\n**A. Modo-lote / orquestração** é a demanda represada mais clara e recorrente: cobrança em lote (Cintia), resgate de 246 leads (Rosangela), fluxo no-show aplicado a N (Jussara), agendamento recorrente (Manuela). H41 e Bulk V2 existem mas estão atrás de flags — **o gap é ativá-los e expô-los na jornada certa**, não construir do zero.\n\n**B. Persistência confiável de estado** (núcleo do H41): o fracasso da Jussara (perder o fluxo inteiro, falsas confirmações) é **o problema #1** dos power-users. É existencial pra retenção dos 6 que carregam o volume.\n\n**C. Inbox triage** — capacidade pedida e negada (\"quais conversas estão sem resposta hoje\" — Sieder; \"pessoas que entraram em contato e não retornamos\" — Luciano). É uma feature matadora que o bot hoje diz não conseguir.\n\n**D. Templates de mensagem reutilizáveis** — `missed_capability ×2` + repetição manual em vários reps (mensagem de sorte na prova, email de contracting, \"pagamento não autorizado\"). ROI alto, esforço médio.\n\n**Onde NÃO investir agora:** web UI (morta, 2 msgs). Todo investimento de UX é no **WhatsApp + áudio**.",
+    "fixes": [
+      {
+        "id": "U-1",
+        "title": "Tolerância a transcrição de áudio ruim no search_contacts (match fonético)",
+        "problem": "Áudio é load-bearing (maioria dos turnos densos de Daniely/Manuela/Sieder/Jussara têm 🎤) e a transcrição cascateia erros de nome que quebram o search_contacts (630 usos, tool dominante): 'Welds→Eudes→Weudes', 'Manuela→Manoela', 'Galleti~Galetti', 'Edmond~edmom', 'Thales~Thalysson'. Hoje o bot devolve 'não achei, me passa o telefone' em vez de propor o nome provável. Daniely: 'você falou Welds antes - é Eudes mesmo?' (o bot já acertou UMA vez, falta padronizar).",
+        "fix": "Adicionar fuzzy/phonetic match (Soundex/Levenshtein PT-aware) no search_contacts: ao falhar match exato, sugerir 'você quer dizer X?' com top-2 candidatos em vez de declarar 'não achei'. Tratar transcrição imperfeita como condição normal de operação.",
+        "effort": "medium",
+        "impact": "high",
+        "where": "src/lib/account-assistant/tools/ (handler de search_contacts) + capabilities de matching"
+      },
+      {
+        "id": "U-2",
+        "title": "Detectar modo-lote (rajada de notas/cobranças idênticas) e oferecer 1 confirm",
+        "problem": "Gustavo empilha 4-5 notas no mesmo contato e leva 'quer follow-up?' após CADA uma; Cintia manda ~7 cobranças idênticas e leva o ritual de 3 botões por contato. schedule_message_to_contact (82 usos) está concentrado em 5 reps justamente nesse padrão repetitivo. O bot não aprende o padrão nem oferece lote.",
+        "fix": "Heurística: 3+ ações do mesmo tipo no mesmo contato/sessão OU mesma mensagem repetida → suprimir o upsell de fechamento e oferecer modo-lote ('vi que você tá avisando vários clientes — me passa a lista que mando todos com 1 confirma'). Reusar Bulk V2.",
+        "effort": "medium",
+        "impact": "high",
+        "where": "prompt-builder.ts (seção de fechamento) + tools/bulk-messages-v2.ts (expor na jornada)"
+      },
+      {
+        "id": "U-3",
+        "title": "Herdar contato do contexto quando rep responde só o stage ao proativo pós-call",
+        "problem": "Jornada pós-call dominante: bot pergunta 'como foi a call com X?' e o rep responde só com o stage ('waiting application', 'pamela waiting application'). O bot não herda o contato da própria pergunta e pede nome/telefone de novo, gerando atrito repetido (Segmentos 3 e 5).",
+        "fix": "Quando o último turno do bot foi um proativo pós-call referenciando contato Y, e o rep responde com um stage/outcome sem nome, vincular ao contato Y do contexto em vez de re-buscar.",
+        "effort": "small",
+        "impact": "high",
+        "where": "prompt-builder.ts (regra de contexto pós-proativo) + reaction-engine.ts"
+      },
+      {
+        "id": "U-4",
+        "title": "Parar de carimbar 'slot bloqueado, confirmar mesmo assim?' quando é o padrão do rep",
+        "problem": "O warning aparece em ~100% dos agendamentos de Pedro/Daniely porque o calendário deles só tem demos empilhadas de propósito — virou ritual sem sentido e gera 'Vc Marcou Errado' / forçar repetido. É a fricção [high] mais citada no cluster de agendamento (segmentos 3, 6).",
+        "fix": "Aprender por rep: se confirma-mesmo-assim N vezes seguidas, parar de avisar (ou inverter pra 'marquei, tava em cima de outro compromisso, ok?'). Quando alertar, dizer COM O QUÊ colide ('colide com a Mariana 8PM').",
+        "effort": "medium",
+        "impact": "med",
+        "where": "tools/calendar.ts (override self-aware H34) + prompt-builder seção AGENDAR"
+      },
+      {
+        "id": "U-5",
+        "title": "Sempre mostrar AMBOS os fusos no confirm de agendamento cross-timezone",
+        "problem": "Operação BR-nos-EUA: timezone (FL×CA×SP×Brasília) gera retrabalho real e quebra de confiança. Daniely corrigiu 'Vc Marcou Errado' 3x; Bruno dita a conversão explicitamente. O confirm cego do caso Manuela computou weekday errado (H42).",
+        "fix": "No confirm de agendamento, sempre exibir dia-da-semana + data + hora nos DOIS fusos relevantes em linguagem de colega ('8 da manhã pra você, 5 pra ela na Califórnia — fecha?') e validar weekday↔data. Generalizar o que já começou a fazer.",
+        "effort": "small",
+        "impact": "high",
+        "where": "tools/scheduling.ts + prompt confirm (H42 já tem base)"
+      },
+      {
+        "id": "U-5b",
+        "title": "Onboarding/termos não pode atropelar pedido real do rep",
+        "problem": "Casuais e até power-users mandam pedido concreto e levam o paredão de termos repetido, ignorando a intenção: Matheus tentou marcar Zoom 4x e levou termos 4x (desistiu, voltou 1h40 depois); Daniely mandou 2 áudios de trabalho e recebeu o onboarding duplicado; Cintia perguntou da agenda e levou o muro. 1ª impressão frágil.",
+        "fix": "Gate de termos deve RECONHECER o pedido pendente ('vi que você quer marcar o Zoom — só preciso que aceite rapidinho') e executá-lo logo após aceite, em vez de re-despejar o bloco. Compactar o muro: 1 linha + termos enxutos.",
+        "effort": "small",
+        "impact": "high",
+        "where": "processor.ts (gate de termos) + terms.ts copy"
+      },
+      {
+        "id": "U-6",
+        "title": "Acusar processamento em operações multi-passo lentas",
+        "problem": "Reps multitarefa impacientam com silêncio durante processamento: Luciano cutucou 2x ('Aguardando sua resposta?', 'Me responde se vc está pensando ou já executou'). O silêncio é o que mais irrita, não a latência em si.",
+        "fix": "Em operações multi-tool longas (filtros de funil, batch), emitir ack imediato ('deixa eu puxar isso, 1 minutinho') antes de processar.",
+        "effort": "small",
+        "impact": "med",
+        "where": "webhook-handler / processor (ack antes de tool chain longa)"
+      },
+      {
+        "id": "U-7",
+        "title": "Inbox triage: varrer conversas sem resposta (capacidade pedida e negada)",
+        "problem": "Pedido de altíssimo valor negado 2x: Sieder 'quais conversas estão sem resposta hoje - não consigo varrer'; Luciano 'pessoas que entraram em contato e nós não retornamos'. Reps desistem e vão manual. Não há tool pra isso hoje.",
+        "fix": "Nova tool read-only 'find_unanswered_conversations' (filtra conversas com última msg = inbound do contato, sem resposta do rep há N horas) + surfaçar no bom-dia proativo. Posicionar como feature de orquestração.",
+        "effort": "large",
+        "impact": "high",
+        "where": "src/lib/account-assistant/tools/ (nova tool) + filter-engine"
+      },
+      {
+        "id": "U-8",
+        "title": "Templates de mensagem reutilizáveis por categoria",
+        "problem": "missed_capability ×2 + repetição manual evidente: mensagem de sorte na prova (Gustavo: Bruno, Giovanna), email de contracting palavra-por-palavra, 'pagamento não autorizado' (Sieder pediu explicitamente template 2x), remarcação (Soraia). Reps reescrevem o mesmo texto toda semana.",
+        "fix": "Tool save_message_template / apply_template nomeada por categoria. Oferecer 'salvar esse texto como template?' quando detectar repetição. Aprende assignee/contexto default (Sieder: operação de apólice → Ailton Junior).",
+        "effort": "medium",
+        "impact": "high",
+        "where": "src/lib/account-assistant/tools/ (nova categoria templates) + schema"
+      },
+      {
+        "id": "U-9",
+        "title": "Persistência confiável do draft de fluxo (núcleo H41) — ativar e validar",
+        "problem": "Problema #1 dos power-users que carregam o volume. Jussara (444 msgs, top rep) perdeu o fluxo inteiro entre turnos, o bot negou que o texto colado por ela era dela ('texto de sistema interno'), duplicou/triplicou mensagens REAIS a clientes e deu 7+ falsas confirmações de 'agendado'. H41 existe mas está atrás de TASK_ORCHESTRATOR_ENABLED (OFF).",
+        "fix": "Validar 1 conversa real com o LLM dirigindo as tools do orquestrador e ligar TASK_ORCHESTRATOR_ENABLED em prod (já documentado como pendente de Pedro). É o maior risco de retenção dos 6 power-users.",
+        "effort": "small",
+        "impact": "high",
+        "where": "flag TASK_ORCHESTRATOR_ENABLED (Vercel) + lib/account-assistant/task-orchestrator/"
+      },
+      {
+        "id": "U-10",
+        "title": "Resumo de funil / números da conta proativo (não só agenda)",
+        "problem": "Reps reagem muito bem a dados concretos (Luciano impressionado com '171 opps abertas'; Daniely DECLAROU objetivo 'medir meu % de fechamento, de 10 reuniões quanto fecho'). O bom-dia só traz agenda; ninguém recebeu 'X leads parados há N dias' ou taxa de no-show. Power-users se beneficiariam de um pulse semanal.",
+        "fix": "Estender o proativo matinal/semanal com números reais do funil por rep (opps abertas, paradas >30d, no-shows da semana, % conversão) — dados que o bot já consegue puxar via list_opportunities/get_contacts_filtered.",
+        "effort": "medium",
+        "impact": "med",
+        "where": "reaction-engine.ts / proactive (bom-dia) + filter-engine"
+      }
+    ]
+  },
+  {
+    "section_title": "Tema 2 — Naturalidade Conversacional",
+    "narrative_md": "Tics roboticos sao estruturais; detalhe nos fixes.",
+    "fixes": [
+      {
+        "id": "N-1",
+        "title": "Desgrudar aviso de silencio das saudacoes",
+        "problem": "dispatcher.ts:551 cola WARN_HARD_PREFIX antes do Bom dia. Pior tic, 7/7 seg.",
+        "fix": "Reescrever silence-gate.ts:25-31 tom de colega; gatear proativos calorosos sem prefixo.",
+        "effort": "small",
+        "impact": "high",
+        "where": "silence-gate.ts:25-31 + dispatcher.ts:547-551"
+      },
+      {
+        "id": "N-2",
+        "title": "Matar o SEMPRE next-step",
+        "problem": "templates.ts:32,44 SEMPRE vence behavior.ts:31 VARIE; next-steps.ts injeta apos cada write.",
+        "fix": "SEMPRE vira as vezes; next-step e excecao.",
+        "effort": "small",
+        "impact": "high",
+        "where": "templates.ts:32,44 + next-steps.ts:135-139 + behavior.ts:31"
+      },
+      {
+        "id": "N-3",
+        "title": "Detectar modo rajada",
+        "problem": "Rep cola 3+ notas e leva quer follow-up apos cada. Sem sinal de rajada no turn-context.",
+        "fix": "consecutive_same_action em registerWrite; count>=2 => confirme curto sem next-step.",
+        "effort": "medium",
+        "impact": "high",
+        "where": "turn-context.ts:172-185 + :357-433"
+      },
+      {
+        "id": "N-4",
+        "title": "Variar copy proativo pos-call",
+        "problem": "system-rules.ts:56-58 hardcoda Como foi/manda audio; verbatim dezenas de vezes.",
+        "fix": "prompt_instruction UMA linha curta e diferente a cada vez.",
+        "effort": "trivial",
+        "impact": "high",
+        "where": "system-rules.ts:56-58"
+      },
+      {
+        "id": "N-5",
+        "title": "Confirmar o DELTA nao o estado",
+        "problem": "Sem regra anti-recap. Jussara Dia 0..40; John 5 tasks; Sieder itens ja feitos.",
+        "fix": "behavior.ts: confirme so o delta; re-imprima tudo so a pedido.",
+        "effort": "small",
+        "impact": "high",
+        "where": "behavior.ts:32 + templates.ts:65-82"
+      }
+    ]
+  },
+  {
+    "section_title": "Tema 3 — Orquestração & Proatividade: o motor existe, mas só 2 dos ~14 gatilhos estão ligados e não há um único \"número da conta\"",
+    "narrative_md": "## TL;DR\n\nA infra de proatividade do SparkBot é **substancial e bem-arquitetada** — cron multi-runner, silence-gate anti-ban, dispatcher com quiet-hours, daily-briefing pré-computado, task-orchestrator (H41) persistente. Mas a **cobertura de gatilhos é rasa**: das 14 system rules seedadas (`system-rules.ts`), **só 2 rodam de verdade em prod** (\"Resumo matinal\" + \"Pós-reunião\"). As outras 12 — incluindo TODAS que os reps pediram nos achados (funil parado, no-show, lead esfriando, task vencendo, deal fechado) — ou são stub no cron ou são `skipped_disabled`. E não existe **nenhuma** tool nem seção de briefing que entregue \"números da conta\" (taxa de fechamento, no-shows da semana, opps paradas há N dias), que foi o pedido de orquestração MAIS repetido nos 7 segmentos.\n\nO resultado vivido pelos reps: o único proativo que eles recebem em volume é o **\"Como foi a call com X?\"** (post_meeting) repetido verbatim dezenas de vezes + o **paredão de silence-warning** (\"⚠️ Último aviso… vou pausar\"). Os dois aparecem como os maiores ofensores \"robóticos\" em 6 de 7 segmentos. Ou seja: o sistema só dispara seus dois piores proativos e cala todos os de alto valor.\n\n---\n\n## 1. O QUE JÁ EXISTE (e funciona)\n\n**Cron orquestrador** — `src/app/api/cron/sparkbot-proactive/route.ts`. Roda a cada 30s/5min, processa scheduled rules + reminders + bulk + sequence + recurring + outreach + delivery-poller + reactive polling, com budget de tempo (`REACTIVE_START_BUDGET_MS=40000`, route.ts:33) e claim atômico por linha. Robusto.\n\n**Daily briefing pré-computado** — `proactive/daily-briefing.ts`. `loadDailyContext()` (linha 142) faz queries pesadas 1x e passa contexto estruturado pro LLM só formatar (`daily-briefing-prompt.ts`). Skip-empty anti-spam (linha 347). Os achados confirmam fit forte: \"☀️ Bom dia… 3 reuniões hoje\" é elogiado em TODOS os 7 segmentos. **MAS o briefing carrega só `appointments_today`** — `tasks_pending` é `[]` hardcoded (\"V2\", linha 351-352) e `deals_closed` é `(detalhar V2)` (linha 311). Yesterday-recap conta via `sparkbot_messages.metadata->tools` (linha 265-305) — captura só o que o bot executou, não o CRM real.\n\n**Reminders inteligentes (parcial)** — `tools/reminders.ts` (`schedule_reminder`, risk safe, linha 24) + `proactive/reminder-runner.ts`. Suporta one-shot e recurring (cron 5 campos), entrega WhatsApp/web/both, dedup F58 anti-spam (reminder-runner.ts:99-122), opt-out gate TCPA. `outbound_to_contact` agenda msg PRO CONTATO (reminder-runner.ts:335). Isto cobre bem \"me lembra amanhã do follow-up\" e \"agenda msg de sorte na prova dia 27\" (Gustavo) e lembrete de longuíssimo prazo (Gilberto 2027 / Daniely jan/2027 — confirmado funcionando nos achados).\n\n**Task reminders do GHL** — `proactive/task-reminders.ts`: agenda lembrete em `due − lead_min` (default 15). Funciona, mas só se a task tem due date (linha 60).\n\n**Task orchestrator H41** — `task-orchestrator/core.ts` + `tools/task-orchestrator.ts`. Draft persistente no DB, `show_draft`/`commit_draft` devolvem COUNT REAL, materializa em `followup_sequences`. **Resolve EXATAMENTE a causa-raiz da Jussara** (Segmento 7: bot perdia o fluxo entre turnos e afirmava \"8 mensagens agendadas\" 5x sem agendar). **Porém está atrás de `TASK_ORCHESTRATOR_ENABLED` (default OFF)** — então nos 7 dias analisados a Jussara sofreu o bug inteiro porque o fix estava desligado.\n\n**Post_meeting reactive** — único reactive implementado (`route.ts:552 processPostMeetingPolling`). Prompt em `system-rules.ts:56`. É a fonte do \"Como foi a call?\".\n\n**Silence-gate** — `proactive/silence-gate.ts`. Counter + warn soft/hard + pausa. Copy em silence-gate.ts:26-31.\n\n---\n\n## 2. O QUE FALTA (o buraco central)\n\n### 2a. NÃO EXISTE nenhuma tool de \"números da conta\" / funil agregado\nBusquei `account_summary|funnel_summary|pipeline_summary|get_metrics|close_rate|conversion_rate|weekly_pulse` em todo `src/lib/account-assistant/` → **zero resultados**. O que existe é `count_filtered` (filter-tools.ts:291) e `list_opportunities` (opportunities.ts:19) — primitivas cruas. O LLM teria que orquestrar N chamadas pra montar um panorama, e quando tenta, trava (Luciano, Seg 5: latência multi-passo deixou ele 2x perguntando \"vc está pensando ou já executou?\"; o cron/route não tem ack de processamento).\n\nIsto é o gap MAIS pedido. Evidência direta:\n- Daniely (Seg 6): *\"eu quero medir o meu nível de fechamento… de 10 reuniões, quanto por cento que eu fecho?\"* — capacidade inexistente.\n- Luciano (Seg 5): impressionado com *\"171 oportunidades abertas\"* (quando o bot conseguiu por acaso) — quer isso espontâneo.\n- Sieder + Luciano (Seg 5): *\"quais conversas estão sem resposta hoje\"* / *\"pessoas que entraram em contato e nós não retornamos\"* → bot responde *\"não consigo varrer o histórico\"* (inbound_unanswered é stub).\n- Todos os 7 segmentos listam \"resumo de funil proativo\" e \"números da conta\" em ORQUESTRAÇÃO.\n\n### 2b. 12 das 14 system rules estão desligadas/stub\n`route.ts:156` hard-coda `if (rule.name === \"Resumo matinal\")`. Todo o resto cai no `else` → `status: \"skipped_disabled\"` (route.ts:212-220). E as reactivas: `route.ts:528` só trata `post_meeting`; `opportunity_stale`, `task_due_soon`, `task_overdue`, `contact_inactive`, `inbound_unanswered`, `deal_won`, `no_show`, `contact_assigned_to_rep` caem em `route.ts:533` (\"ainda não implementado\"). Mas os seeds têm `enabled=true` e prompts prontos (system-rules.ts:89-181) — então o admin VÊ as rules no painel achando que funcionam (mesmo anti-pattern do CLAUDE.md \"3 stub est) estavam enabled=true em prod\"). Cada uma é pedido direto dos achados:\n- **no_show** (system-rules.ts:70, stub): Daniely/John processam no-show manualmente o tempo todo (Seg 3, Seg 6).\n- **opportunity_stale** (linha 90, stub): Sabrina move opps \"Waiting Application\" 1 a 1 (Seg 3); ninguém recebeu \"X opps paradas há N dias\".\n- **contact_inactive / lead esfriando** (linha 145, stub): Rosangela tem 246 leads >1 ano (Seg 1), Luciano quer triagem (Seg 5).\n- **deal_won** (linha 162, stub): Bruno fechou won $80 e o bot nunca devolveu nada (Seg 4).\n\n### 2c. Briefing matinal não vira NEXT-BEST-ACTION\nO briefing lista a agenda mas não puxa contexto por reunião nem oferece ação. Achados pedem unânime: \"André: última call ele pediu pra pensar no Term\" (Seg 4), preparar reunião puxando nota/stage (Seg 2 Victor, Seg 3). A infra do `pre_meeting_briefing` (system-rules.ts:26) já tem o prompt + tools pra isso — mas é reactive stub (`appointment_upcoming` não está em `route.ts:528`).\n\n### 2d. Templates reutilizáveis — pedido x4 nos stats, inexistente\nSieder (Seg 5): *\"quero que crie um template quando o assunto for pagamento não autorizado\"* (2x). Gustavo repete o email de contracting palavra-por-palavra. Bruno quer ver/editar seus textos padrão. Não há tabela nem tool de templates nomeados.\n\n### 2e. Auto-oferta orquestrada de \"data de prova → lembrete\"\nGustavo faz na mão TODA vez (Bruno Pappa, Giovanna). O `create_note`/save poderia detectar data + oferecer `schedule_message_to_contact`. Hoje nada cruza.\n\n---\n\n## 3. Os 2 proativos que DISPARAM são os 2 mais robóticos\n\nIronia central: o sistema só liga \"Pós-reunião\" e \"Resumo matinal\" + silence-warnings. E:\n- **post_meeting**: prompt fixo `system-rules.ts:56-60` gera string idêntica (\"Como foi com X? Se quiser, manda áudio que eu atualizo o CRM — mover stage, criar nota, agendar follow-up, o que precisar\") dezenas de vezes. Citado como ruído robótico nos Seg 1, 3, 5, 6, 7. Zero variação, zero memória de já ter perguntado, dispara 1x POR contato do dia (Victor tinha 8 reuniões → 8 disparos idênticos).\n- **silence-gate**: `silence-gate.ts:26-31` cola \"⚠️ Tô percebendo que você não tá respondendo… evitar bloqueio do WhatsApp\" e \"⚠️ Último aviso… vou pausar os automáticos\". O `warningPrefix` é PREPENDED na mensagem proativa (reminder-runner.ts:208, dispatcher) → cola a ameaça ANTES do \"Bom dia\" e do \"Como foi a call?\". Citado como o pior tom em TODOS os 7 segmentos (\"tom esquizofrênico\", \"ameaça concatenada a saudação\").\n\nCausa: o volume alto de post_meeting sem resposta (rep ignora porque é ruído) → infla o counter do silence-gate → dispara o warning → que é colado no próximo proativo. **É um loop auto-alimentado**: o proativo ruim gera o warning ruim.\n\n---\n\n## 4. Recomendação de sequência\n\n1. **Construir `get_account_pulse` (tool sob demanda)** — 1 chamada que devolve funil por stage + opps paradas + no-shows da semana + close rate. Desbloqueia o pedido #1 e dá matéria-prima pros briefings.\n2. **Ligar Pipeline review + Resumo fim do dia** (seeds prontos, só falta o `if` no route) reusando a nova tool.\n3. **Implementar no_show + opportunity_stale reactive** (polling, reusa o padrão do post_meeting).\n4. **Variar/throttle o post_meeting** (corta o gerador #1 de ruído E de silence-warnings).\n5. **Separar o silence-warning do conteúdo proativo** (nunca prefixar saudação/pergunta com ameaça).\n6. **Ligar `TASK_ORCHESTRATOR_ENABLED`** (já validado, resolve Jussara).",
+    "fixes": [
+      {
+        "id": "O-1",
+        "title": "Criar tool get_account_pulse — números da conta sob demanda (1 chamada)",
+        "problem": "Não existe NENHUMA tool de panorama agregado (grep account_summary|funnel_summary|close_rate|conversion_rate em src/lib/account-assistant = 0 resultados). Só primitivas cruas (count_filtered em filter-tools.ts:291, list_opportunities em opportunities.ts:19). É o pedido #1 dos achados: Daniely 'de 10 reuniões quanto % eu fecho?' (Seg 6), Luciano impressionado com '171 opps abertas' (Seg 5), todos os 7 segmentos pedem 'resumo de funil/números'. Quando o LLM tenta orquestrar na mão, trava em latência (Luciano: 'vc está pensando ou já executou?').",
+        "fix": "Nova tool risk:safe que numa chamada server-side computa: opps por stage (list_pipelines+list_opportunities já existem), opps paradas >N dias, appointments da semana com showed/noshow ratio, deals won na semana, contatos novos. Devolve objeto estruturado pré-formatado (mesma filosofia do daily-briefing.ts: query pesada 1x). Registrar em tools/index.ts; ensinar no prompt-builder.ts quando o rep pedir 'meus números/funil/taxa de fechamento'.",
+        "effort": "medium",
+        "impact": "high",
+        "where": "novo src/lib/account-assistant/tools/account-pulse.ts + registro em tools/index.ts; reusa opportunities.ts:469 (list_pipelines) e calendar.ts events"
+      },
+      {
+        "id": "O-2",
+        "title": "Ligar as scheduled rules já seedadas (Pipeline review, Resumo fim do dia, Reflexão semanal)",
+        "problem": "system-rules.ts:184-244 seeda 4 scheduled rules com prompt_instruction completo e enabled=true, MAS route.ts:156 hard-coda `if (rule.name === \"Resumo matinal\")` e joga as outras 3 no else → status:'skipped_disabled' (route.ts:212). Admin vê as rules ativas no painel mas elas nunca disparam (mesmo anti-pattern do CLAUDE.md 'stubs enabled=true em prod'). Pipeline review (system-rules.ts:230) entrega exatamente o 'funil por stage + top 3 quentes + top 3 frias' que Sabrina/Luciano/todos pedem.",
+        "fix": "Após O-1, generalizar o route.ts: trocar o `if (rule.name === 'Resumo matinal')` por um dispatch por rule.name → handler de contexto (cada um chama get_account_pulse e monta seu prompt). Começar ligando Pipeline review (segunda 9h) + Resumo fim do dia, com skip-empty igual ao matinal.",
+        "effort": "medium",
+        "impact": "high",
+        "where": "src/app/api/cron/sparkbot-proactive/route.ts:156-221 + novos prompt builders ao lado de daily-briefing-prompt.ts"
+      },
+      {
+        "id": "O-3",
+        "title": "Implementar reactive no_show e opportunity_stale (polling, reusar padrão post_meeting)",
+        "problem": "system-rules.ts:70 (No-show) e :90 (Opportunity parada) têm prompt pronto e enabled=true, mas route.ts:528 só roteia 'post_meeting'; tudo mais cai em route.ts:533 ('ainda não implementado') e retorna 0/0. No-show e opps paradas são processados 100% na mão pelos reps: Daniely/John ciclo no-show inteiro manual (Seg 3,6); Sabrina move 'Waiting Application' 1 a 1 (Seg 3); Rosangela 246 leads frios (Seg 1).",
+        "fix": "Em processReactivePolling (route.ts:518) adicionar branch event==='appointment_no_show' (poll GHL events com appointmentStatus=noshow na janela, dispara dispatchRule mode='real') e event==='opportunity_stale' (list_opportunities + comparar lastStageChangeAt > days_threshold). Reusar o claim atômico assistant_alert_state (UNIQUE rep+rule+target) que post_meeting já usa pra anti-duplicar.",
+        "effort": "large",
+        "impact": "high",
+        "where": "src/app/api/cron/sparkbot-proactive/route.ts:518-535 (novo branch + 2 funções espelhando processPostMeetingPolling:552)"
+      },
+      {
+        "id": "O-4",
+        "title": "Variar e throttlar o proativo post_meeting (corta o gerador #1 de ruído)",
+        "problem": "system-rules.ts:56-60 tem prompt fixo → string idêntica 'Como foi com X? Se quiser, manda áudio que eu atualizo o CRM — mover stage, criar nota, agendar follow-up' dezenas de vezes (citado robótico em Seg 1,3,5,6,7). Victor com 8 reuniões = 8 disparos iguais. Reps aprendem a ignorar → infla o silence counter → dispara o warning (loop auto-alimentado).",
+        "fix": "(1) Rotacionar o fraseado: dar 4-5 variações curtas no prompt_instruction ('E aí, fechou algo com X?', 'Como foi com X?') e instruir variação. (2) Encurtar: tirar o menu de opções colado. (3) Agrupar: se o rep tem >=3 reuniões terminando próximas, mandar UM proativo consolidado em vez de N. Throttle por rep já existe via cooldown_minutes (system-rules.ts:68=60) mas é por-target; adicionar cap diário agregado de post_meetings por rep.",
+        "effort": "small",
+        "impact": "high",
+        "where": "src/lib/account-assistant/proactive/system-rules.ts:56 (prompt) + dispatcher.ts dailyLimit (lógica existe em dispatcher.ts:325)"
+      },
+      {
+        "id": "O-5",
+        "title": "Separar o silence-warning do conteúdo proativo (nunca prefixar saudação/pergunta com ameaça)",
+        "problem": "silence-gate.ts:26-31 define WARN_SOFT/HARD ('⚠️ Tô percebendo… evitar bloqueio do WhatsApp' / '⚠️ Último aviso… vou pausar os automáticos'). O warningPrefix é PREPENDED no proativo (reminder-runner.ts:208 finalMessage = prefix+message; idem dispatcher) → cola a ameaça ANTES do 'Bom dia' e do 'Como foi a call?'. Citado como o pior tom em TODOS os 7 segmentos ('esquizofrênico', 'ameaça concatenada a saudação').",
+        "fix": "(1) Reescrever a copy pra registro humano: trocar '⚠️ Último aviso: vou pausar' por 'Sumiu hoje! Quando puder me dá um oi 😊'. (2) Estrutural: NÃO prefixar quando a mensagem-base é saudação/pergunta calorosa (briefing matinal, post_meeting) — nesses casos suprime o warning ou manda como mensagem SEPARADA. Passar o 'kind' do proativo pro silence-gate decidir.",
+        "effort": "small",
+        "impact": "high",
+        "where": "src/lib/account-assistant/proactive/silence-gate.ts:24-31 (copy) + reminder-runner.ts:208 e dispatcher (prefixação condicional ao kind)"
+      },
+      {
+        "id": "O-6",
+        "title": "Completar o daily-briefing: tasks pendentes + deals reais (tirar os V2 stub)",
+        "problem": "daily-briefing.ts:351 deixa tasks_pending=[] hardcoded ('V2 — GHL não tem endpoint /tasks global') e :309-312 deals_closed conta mas usa contact_name '(detalhar V2)'. Yesterday-recap conta via sparkbot_messages.metadata->tools (:265) = só o que o BOT executou, não o CRM real. Achados pedem briefing acionável com tasks e contexto por reunião (Seg 4 'André pediu pra pensar no Term'; Seg 2/3 preparar reunião).",
+        "fix": "(1) tasks_pending: usar o agregador de O-1 (ou get_contact_tasks por appointment do dia) pra popular. (2) deals_closed: extrair contact_name+premium do tool_calls.input do update_opportunity_status (já tem o turno em sparkbot_messages). (3) por reunião do dia, puxar última nota/stage e injetar 1 linha de contexto no briefing.",
+        "effort": "medium",
+        "impact": "med",
+        "where": "src/lib/account-assistant/proactive/daily-briefing.ts:309-352 + daily-briefing-prompt.ts:50 (seção tasks)"
+      },
+      {
+        "id": "O-7",
+        "title": "Ligar o Task Orchestrator (TASK_ORCHESTRATOR_ENABLED) — fix já pronto da Jussara",
+        "problem": "O motor H41 (task-orchestrator/core.ts, draft persistente + commit_draft com count real) resolve EXATAMENTE a causa-raiz do Seg 7: a Jussara sofreu o bug inteiro nos 7 dias (bot perdia o fluxo entre turnos, afirmou '8 mensagens agendadas' 5x sem agendar, mensagens triplicadas a clientes reais) PORQUE o fix está atrás de flag default OFF (CLAUDE.md H41). Tudo testado (50/50 + 18/18 smoke).",
+        "fix": "Setar TASK_ORCHESTRATOR_ENABLED=1 na Vercel após validar 1 conversa real com o LLM dirigindo as tools (passo 👤 já documentado no CLAUDE.md). Avisar a Jussara. Sem mudança de código.",
+        "effort": "trivial",
+        "impact": "high",
+        "where": "Vercel env TASK_ORCHESTRATOR_ENABLED; gating em tools/index.ts + prompt-builder.ts (já implementado)"
+      },
+      {
+        "id": "O-8",
+        "title": "Templates de mensagem nomeados reutilizáveis",
+        "problem": "Pedido explícito x4 nos stats e em 4 segmentos: Sieder 'crie um template quando o assunto for pagamento não autorizado' (Seg 5, 2x); Gustavo repete email de contracting palavra-por-palavra (Seg 1); Bruno quer ver/editar seus textos padrão (Seg 4); 'desejar sucesso na prova' repetido (Gustavo). Não há tabela nem tool de templates.",
+        "fix": "Tabela rep_message_templates (rep_id, name, body, category) + tools save_message_template / list_message_templates / apply_template. Bot oferece 'salvar esse texto como template?' quando detecta repetição. Interpola {first_name} (interpolador do bulk V2 já existe, prompt-builder.ts:354).",
+        "effort": "medium",
+        "impact": "med",
+        "where": "nova migration + novo src/lib/account-assistant/tools/templates.ts + registro em tools/index.ts; reusar interpolação de bulk-messages-v2.ts"
+      },
+      {
+        "id": "O-9",
+        "title": "Auto-oferecer lembrete+mensagem quando detecta data (prova/deadline) numa nota",
+        "problem": "Gustavo faz na mão TODA vez (Bruno Pappa, Giovanna 'faço a prova dia 27' → agenda msg de sorte dia 27 8am). Daniely manda print de UW com '10 dias pra responder' e o bot só DESCREVE o prazo em vez de criar o lembrete (Seg 6). O save de nota não cruza com agendamento.",
+        "fix": "No prompt-builder.ts, na seção de notas, instruir: ao salvar nota com data futura mencionada (prova/deadline/aniversário), oferecer 'quer já agendar uma mensagem/lembrete pra essa data?' → schedule_message_to_contact ou schedule_reminder (ambas já existem). Sem nova tool, só orquestração no prompt.",
+        "effort": "small",
+        "impact": "med",
+        "where": "src/lib/account-assistant/prompt-builder.ts (seção notas) — reusa reminders.ts:24 e schedule_message_to_contact"
+      },
+      {
+        "id": "O-10",
+        "title": "Implementar inbound_unanswered (varredor de mensagens sem resposta)",
+        "problem": "system-rules.ts:126 seeda 'Mensagem inbound não respondida' enabled=true mas é stub no route.ts:533. Sieder e Luciano pedem TEXTUALMENTE: 'quais conversas estão sem resposta hoje' e o bot responde 'não consigo varrer o histórico de todas as mensagens' (Seg 5, marcado [high] friccao). É descrito como 'feature de orquestração proativa matadora'.",
+        "fix": "Branch reactive inbound_unanswered: poll GHL conversations da location, filtra última msg inbound do lead sem resposta do rep há >hours_threshold (system-rules.ts:130=4h), dispara dispatchRule com sugestão de resposta. Também expor como tool sob demanda get_unanswered_inbounds pra o rep pedir 'o que tá sem resposta hoje?'.",
+        "effort": "large",
+        "impact": "high",
+        "where": "src/app/api/cron/sparkbot-proactive/route.ts:518 (branch) + nova tool em tools/messages.ts"
+      }
+    ]
+  },
+  {
+    "section_title": "TEMA 4 — Erros recorrentes, fricção e capacidades faltantes",
+    "narrative_md": "## Síntese executiva\n\nCruzando os 7 segmentos (2015 msgs, 28 reps) com o código real, a fricção do SparkBot concentra-se em **três frentes** que se realimentam:\n\n1. **Capacidades ausentes que os reps pedem repetidamente** — e que hoje viram `report_missed_capability` + um \"não consigo\" seco. As 5 mais citadas (templates nomeados, PDF de apólice→custom fields, recorrência real, email-opcional no form, postar em grupo) aparecem em **6 dos 7 segmentos**.\n2. **Erros operacionais que o bot expõe como carga cognitiva do rep** — `location not active`, slot \"bloqueado\" carimbado em 100% dos agendamentos, dedup de email/telefone no cadastro, DND bloqueando envio, token sem permissão na location.\n3. **Falsas confirmações e loops robóticos** — apesar do `coherence-gate.ts` e do `repeat-guard.ts` já existirem e funcionarem em vários casos, há **buracos estruturais** que deixaram passar os piores casos (Jussara \"8 mensagens agendadas\" 4×, Leidi \"Confirma\" 4× ao longo de horas, slot-confirm-ritual do Pedro).\n\nO ponto positivo forte e transversal: **o guard anti-alucinação JÁ está em prod e os reps notam** — \"Na real, ainda não consegui concluir isso aqui\" aparece como FUNCIONOU BEM em 4 segmentos (Manuela, Bianca, Sieder, Bruno, Roger). O trabalho aqui é **fechar os buracos**, não reconstruir.\n\n---\n\n## (a) Capacidades pedidas e ausentes — quais valem construir\n\n### A1. Templates de mensagem reutilizáveis nomeados — **CONSTRUIR (maior ROI)**\nEvidência massiva e cross-segment: missed_capability ×2 nos stats; Gustavo repete o email de contracting palavra-por-palavra e \"desejar sucesso na prova\" (Bruno, Giovanna); Sieder pede EXPLICITAMENTE 2× \"quero que crie um template quando o assunto for pagamento não autorizado\"; Cintia manda ~7 cobranças idênticas; Bruno \"literalmente pediu pra ver e editar os textos que o bot manda\"; Soraia repete tipos de follow-up. O bot **falsamente confirma** que aprendeu: Sieder recebeu *\"Salvo! Agora quando você falar 'pagamento não autorizado', já sei que é esse modelo\"* — mas não existe persistência (é a memória de sessão fantasma; mesma mentira do \"memória de sessão\" do Bruno no Google Meet).\n\nEstado no código: NÃO existe store de templates nomeados por rep. `bulk-messages.ts` tem `message_template` por JOB (efêmero) e `findSimilarActiveJobs` (Jaccard) — não é reuso nomeado. A infra de interpolação rica já existe (`{first_name}`, `{custom.slug}` — H28). Construir: tabela `rep_message_templates(rep_id, name, body, category)` + 3 tools (`save_message_template`, `list_message_templates`, `use_message_template`) reaproveitando o interpolador. Esforço médio, impacto alto — corta as \"5+ rodadas de ajuste\" do Sieder e elimina uma classe inteira de falsa-confirmação (\"salvo, já sei\").\n\n### A2. PDF de apólice → custom fields — **CONSTRUIR (alto valor percebido, infra parcial existe)**\nRoger pediu explicitamente (\"se eu mandar um PDF da minha própria apólice... você consegue já jogar as informações?\"); missed_capability ×2 nos stats; Daniely manda print de decisão de UW e o bot JÁ extrai bem (carrier, rate class, prazo) — provando que a extração visão funciona, falta o write nos custom fields. O `file-processor.ts` já processa imagens/áudio. O gap é: (1) ingestão de PDF nativo (hoje PDF só existe como SAÍDA no task-orchestrator via pdf-lib) e (2) mapear campos extraídos → `update_contact` custom fields (Monthly Premium, Policy Start Date). Esforço médio-alto, impacto alto. Começar pela imagem (já chega) antes do PDF.\n\n### A3. Recorrência real de mensagens/fluxo — **PARCIAL, fechar o gap honestamente**\n`schedule_message_to_contact` JÁ aceita `recurrence` (cron 5 campos, messages.ts:280). MAS: (1) o caso Manuela (\"14 reuniões toda semana 🔁\") é de APPOINTMENT recorrente, não mensagem — e `create_appointments_batch` cria N de uma vez mas NÃO repete semanalmente; missed_capability confirmado 2×. (2) Jussara pediu fluxo CÍCLICO (\"quando finalizar 40 dias volta pro dia 1\") — explicitamente fora do MVP do H41. Decisão: recorrência de APPOINTMENT é o gap real e vale (esforço médio); ciclo de fluxo é nicho (1 rep) — manter fora. Enquanto não existe, o prompt já manda ser honesto (prompt-builder.ts:686, \"promessa-morta\") — garantir que cobre \"toda semana\" de appointment.\n\n### A4. Email opcional no form do calendário — **NÃO CONSTRUIR no bot; é config de UI**\nAna Paula travou 8+ turnos com o bot chutando caminhos de tela (\"clica no lápis\", \"Sites>Forms>Builder\") e desistiu pedindo pro Pedro. Isso é navegação de UI do GHL que o bot NÃO controla via API de forma confiável. O fix correto não é dar a capability — é **parar de fingir que dá suporte de UI**: detectar pedido de \"como mudar config X na tela\" e escalar direto (\"isso é na tela do Spark Leads, eu te passo o caminho exato OU registro pro Pedro fazer — qual prefere?\") em 1 turno, em vez de 8 de tentativa-e-erro. Esforço baixo (regra de prompt), impacto médio.\n\n### A5. Postar em grupo de WhatsApp — **JÁ EXISTE, flag OFF**\nDaniely e Jussara pediram (grupo \"Licenciados Tracinho\", \"grupo operacional\"). H40 (`group-campaigns.ts`) resolve isso INTEIRO mas está atrás de `GROUP_CAMPAIGNS_ENABLED` (default OFF) + exige instância Stevo dedicada provisionada. Não é capability faltante — é **rollout pendente**. Ação: provisionar 1 instância dedicada e validar 1 caso real (Matheus/Daniely). Esforço operacional (não código).\n\n### A6. Inbox triage / \"quais conversas estão sem resposta hoje\" — **CONSTRUIR (pedido alto-valor não-atendido)**\nSieder (\"não consigo verificar quais conversas estão sem resposta\") e Luciano (\"pessoas que entraram em contato e nós não retornamos\") — os dois DESISTIRAM e foram fazer manual. Hoje o bot diz que não consegue varrer o histórico de mensagens. Há infra parcial: `lead-history.ts` (F37) já lê histórico de UM contato. O gap é uma varredura location-wide de conversas com último-inbound sem resposta. Esforço médio-alto (precisa endpoint GHL de conversations + filtro por direção/timestamp), impacto alto — é descrito como \"feature matadora\" pelos reps.\n\n---\n\n## (b) Erros operacionais — onde o bot empurra a carga pro rep\n\n### B1. Slot \"bloqueado — confirmar mesmo assim?\" carimbado em 100% dos agendamentos — **fix de maior impacto/menor esforço de todos**\nAparece em 4 segmentos como #1 de fricção robótica: Pedro/John (\"ritual sem sentido\"), Daniely (\"você tá equivocado, tá disponível sim\"), todos os power-users. A causa: o calendário do rep tem demos/blocks empilhados de propósito, então TODO slot bate conflito e o bot oferece \"Confirmar mesmo assim ✅\" sempre. O código (calendar.ts:96-148, prompt-builder.ts:711) trata override como evento raro/admin — não há **memória por-rep** de \"esse rep confirma-mesmo-assim sempre\". Fix: contar overrides confirmados por rep; após N (ex: 5) seguidos, inverter o default — agendar direto com `ignore_free_slot_validation:true` e só avisar passivo (\"marquei; tava em cima de outro compromisso teu, ok?\"). Persistir em `rep_profile.preferences.scheduling.auto_force_slot`. Esforço pequeno (preferência + regra), impacto altíssimo — mata o atrito #1 dos power-users.\n\n### B2. `location not active` derruba o rep no 1º pedido real — **fix médio**\nMelina: \"tô com um problema de conexão com a tua conta — a location não tá ativa.\" identity.ts:197 documenta que **~metade das ~120 locations vivem inativas** e sempre erram o mint de token. O rep vê \"bot quebrado\" logo após o onboarding. Fix: (1) detectar o erro de location inativa e dar mensagem honesta + acionável (\"tua conta ainda não tá ativada no sistema — já avisei o Pedro / vou tentar reativar\"), não \"problema de conexão\" genérico; (2) auto-registrar signal por-location pra Pedro ver e ativar. Esforço médio, impacto alto (é primeira-impressão).\n\n### B3. Dedup de email/telefone trava cadastro e o bot expõe a mecânica — **fix médio**\nBruno: \"Os dados do EDUARDO estão errados. Quero que cadastre o Enzo com o contato que informei\" → o bot empurrou a complexidade técnica de duplicata pro rep (\"O que é duplicatas?!\"). O rep só quer o cliente certo cadastrado. Fix: quando o create_contact bate dedup, o bot deve ASSUMIR a resolução em 1 opção clara (\"achei um contato com esse telefone no nome de Eduardo — atualizo pra Enzo ou crio separado?\"), nunca expor \"duplicata\"/\"dedup\" e nunca dar 2 opções técnicas. Regra de prompt + mapear o erro de dedup do GHL. Esforço médio, impacto médio-alto.\n\n### B4. DND bloqueando envio morre sem resolução — **fix pequeno**\nCintia: \"O DND ainda tá bloqueando o envio... prefere abrir o contato no app e desativar manualmente?\" O bot tentou desativar, falhou, e empurrou pro app. Fix: ou o bot desativa DND de forma confiável via update_contact (verificar se a operação existe e funciona), ou — se não dá — explicar 1× com a alternativa numa frase e parar (não ping-pong). Esforço pequeno.\n\n### B5. Latência sem acknowledgment em operações multi-passo — **fix pequeno, impacto alto**\nLuciano e Sieder cutucaram o bot (\"Aguardando sua resposta?\", \"Me responde se vc está pensando ou se já executou\"). Filtros de funil multi-passo deixam o rep no escuro por minutos. Não há ack de processamento. Fix: em tools que demoram (filter-engine, batch), emitir um ack curto antes (\"deixa eu puxar isso, 1 minutinho\"). O silêncio durante processamento é o que mais irrita. Esforço pequeno (UX/streaming), impacto alto.\n\n---\n\n## (c) Falsas confirmações / coherence-gate — buracos estruturais\n\nO `core/coherence-gate.ts` é bom e está vivo (analyzeCoherence em run-sparkbot-turn:621). Cruza claim-em-pretérito × tool-com-sucesso, separa rerun-seguro de rewrite-honesto, tem fingerprint anti-loop. **Mas tem 3 buracos que deixaram passar os piores casos reais:**\n\n### C1. A família `message` NÃO cobre o commit do task-orchestrator — **buraco que causou o caso Jussara inteiro**\nCLAIM_PATTERNS família `message` (coherence-gate.ts:95-98) satisfaz com `send_message_to_contact`, `schedule_message_to_contact`, `schedule_bulk_message`... mas **NÃO inclui `commit_draft`** (a tool que materializa o fluxo do orquestrador). Jussara recebeu \"Todas as 8 mensagens agendadas! ✅\" repetido — a frase casa a regex `message` mas o gate não sabe que `commit_draft` é a tool satisfatória, então **ou marca violação errada ou (pior) o claim \"8 mensagens agendadas\" passa sem lastro** porque o orquestrador estava OFF/não chamado. Fix: adicionar `commit_draft`, `apply_flow_to_contacts`, `send_media_to_contact` aos `satisfying_tools` da família `message` (e/ou criar família `flow`). Esforço trivial, impacto alto. O H41 já corrige o problema de raiz (count real do INSERT) — MAS depende de `TASK_ORCHESTRATOR_ENABLED=1`, que está OFF; até ligar, o gate é a única rede e ela tem o furo.\n\n### C2. Repeat-guard com lookback=2 não pega loops espalhados por horas — **caso Leidi/Daniely**\nrepeat-guard.ts:64 usa `lookback=2` (padrão A-B-A). Daniely clicou \"Confirmar\" na msg da Leidi **4× ao longo de horas** e o bot re-perguntava. Como cada \"Confirma?\" do bot é separado por turnos do rep e por gaps de tempo grandes, o eco cai fora da janela de 2 e o guard não dispara. Fix: aumentar lookback (ex: 4-5) E/OU detectar especificamente \"re-emiti um present_options de confirmação idêntico que o rep JÁ respondeu com Confirmar\" — se a última msg do rep foi uma confirmação afirmativa e o bot vai re-perguntar a mesma coisa, isso é o bug, não o near-dup textual. Esforço pequeno-médio, impacto alto (mina a confiança de que \"Confirmar\" faz algo).\n\n### C3. Confirmação cega de horário/fuso (weekday↔data, FL vs SP) — **parcialmente coberto, generalizar**\nDaniely teve 3 correções \"Vc Marcou Errado\" (timezone FL vs SP); Manuela aprovou \"terça 01/07\" que era quarta (H42 já documenta e corrigiu no prompt de scheduling). O fix do H42 é regra de prompt (\"confirm SEMPRE com dia-da-semana+data+hora COM fuso, valida weekday↔data\") — mas é instrução ao LLM, não validação determinística. Para timezone cross-FL/SP/CA (Bruno, Daniely) vale uma **validação code-side** que sempre mostra AMBOS os fusos no confirm quando o contato/rep estão em fusos diferentes (\"10:15 AM Florida / 11:15 AM SP\"). Esforço médio, impacto médio-alto. A notação de planilha (\"8h FL (5h CA)(FL/EDT)(CA/PDT)\") deve virar linguagem de colega (fix de copy, trivial).\n\n### C4. Falsa confirmação de \"preferência salva\" / \"template salvo\" — **resolvido por A1**\nBruno (Google Meet \"fica guardado na memória de sessão... não consigo salvar permanente\") e Sieder (\"Salvo! já sei que é esse modelo\") são a MESMA classe: o bot afirma persistência que não existe. A regex `set_` está em WRITE_TOOL_NAME_PATTERNS, mas \"salvo/já sei\" sobre preferência não casa nenhuma CLAIM_PATTERN específica e o genérico não dispara se QUALQUER write rodou. Construir A1 (templates) e persistir prefs de verdade elimina a fonte; enquanto isso, o prompt deve proibir afirmar \"salvo/aprendi/já sei\" sem uma tool de persistência real.\n\n### C5. Duplicatas REAIS chegando ao cliente — **idempotência no commit**\nJussara: \"vc mandou 3 vezes a mesma mensagem\" — cada commit re-disparava a 1ª msg. O H41 já adicionou idempotência (não duplica seq pro mesmo draft+contato) no ultra-review. Garantir que está ativo e que o `apply_flow_to_contacts` checa fluxo-ativo-existente antes de re-materializar (\"já existe esse fluxo pra esse contato, quer mesmo duplicar?\"). Esforço pequeno (validação), impacto alto (estrago real em cliente).\n\n---\n\n## Prioridade geral (o que mexer primeiro)\n1. **B1 (slot-force por-rep)** e **C1 (commit_draft no gate)** e **C2 (lookback)** — esforço baixo, impacto alto, atacam os 3 atritos mais citados.\n2. **A1 (templates nomeados)** — médio esforço, mata uma capability faltante E uma classe de falsa-confirmação.\n3. **B2/B3/B5** — erros operacionais que destroem primeira-impressão e confiança.\n4. **A2/A6** — capabilities de alto valor que exigem mais build; planejar.",
+    "fixes": [
+      {
+        "id": "B-1",
+        "title": "Aprender 'force slot' por-rep (matar o ritual 'confirmar mesmo assim')",
+        "problem": "Slot aparece bloqueado e o bot oferece 'Confirmar mesmo assim ✅' em 100% dos agendamentos de power-users (Pedro: 'ritual sem sentido'; Daniely: 'você tá equivocado, tá disponível sim'). O calendário deles tem blocks de propósito, então TODO slot bate conflito. Não há memória por-rep de que esse rep sempre força.",
+        "fix": "Contar overrides confirmados por rep; após N (ex:5) seguidos, persistir rep_profile.preferences.scheduling.auto_force_slot=true e passar a agendar direto com ignore_free_slot_validation:true, avisando passivo ('marquei; tava em cima de outro compromisso, ok?') em vez de pedir confirmação.",
+        "effort": "small",
+        "impact": "high",
+        "where": "src/lib/account-assistant/tools/calendar.ts:86-148 (buildOverridePayload) + prompt-builder.ts:711; nova pref em getSchedulingPref (calendar.ts:31)"
+      },
+      {
+        "id": "C-1",
+        "title": "Incluir commit_draft/apply_flow no satisfying_tools da família 'message' do coherence-gate",
+        "problem": "A família 'message' (coherence-gate.ts:95-98) não lista commit_draft/apply_flow_to_contacts/send_media_to_contact. Jussara recebeu 'Todas as 8 mensagens agendadas! ✅' 4× sem lastro — a regex casa mas o gate não conhece a tool do orquestrador, então o claim do fluxo escapa da rede anti-alucinação.",
+        "fix": "Adicionar commit_draft, apply_flow_to_contacts, send_media_to_contact aos satisfying_tools da família 'message' (ou criar família 'flow' dedicada com regex de 'fluxo/sequência agendado').",
+        "effort": "trivial",
+        "impact": "high",
+        "where": "src/lib/account-assistant/core/coherence-gate.ts:95-98 (CLAIM_PATTERNS família message)"
+      },
+      {
+        "id": "C-2",
+        "title": "Repeat-guard: lookback maior + detectar confirmação já respondida",
+        "problem": "lookback=2 (repeat-guard.ts:64) não pega o loop espalhado por horas — Daniely clicou 'Confirmar' 4× na msg da Leidi e o bot re-perguntava, porque os ecos caem fora da janela A-B-A.",
+        "fix": "Subir lookback pra 4-5 E adicionar regra: se a última msg do rep foi confirmação afirmativa ('confirmar/sim/ok/pode') e o bot vai re-emitir o MESMO present_options, suprimir a re-pergunta e executar/diagnosticar em vez de repetir.",
+        "effort": "small",
+        "impact": "high",
+        "where": "src/lib/account-assistant/core/repeat-guard.ts:40-74 (MIN_REPEAT_LEN/findBotEcho) + wiring em processor.ts"
+      },
+      {
+        "id": "A-1",
+        "title": "Templates de mensagem reutilizáveis nomeados (save/list/use)",
+        "problem": "Pedido cross-segment e missed_capability ×2: Sieder pede 2× 'template quando o assunto for pagamento não autorizado'; Gustavo repete o email de contracting e 'sucesso na prova'; Cintia ~7 cobranças idênticas; Bruno quer ver/editar os textos. Bot FALSAMENTE confirma 'Salvo! já sei que é esse modelo' sem persistir nada.",
+        "fix": "Criar tabela rep_message_templates(rep_id,name,body,category) + 3 tools (save/list/use_message_template) reaproveitando o interpolador rico do Bulk V2 ({first_name},{custom.slug}). Proibir no prompt afirmar 'salvo/aprendi' sem a tool real.",
+        "effort": "medium",
+        "impact": "high",
+        "where": "nova migration + src/lib/account-assistant/tools/ (novo arquivo templates.ts) + registry tools/index.ts; interpolador em bulk-messages-v2.ts"
+      },
+      {
+        "id": "B-2",
+        "title": "Mensagem honesta + signal para 'location not active'",
+        "problem": "Melina levou 'problema de conexão com a tua conta — a location não tá ativa' no 1º pedido pós-onboarding (bot parece quebrado). identity.ts:197 documenta que ~metade das ~120 locations vivem inativas e sempre erram o mint de token.",
+        "fix": "Detectar o erro de location inativa e responder acionável ('tua conta ainda não tá ativada no sistema — já avisei o Pedro') em vez de 'problema de conexão' genérico; auto-registrar signal por-location pra Pedro ativar.",
+        "effort": "medium",
+        "impact": "high",
+        "where": "src/lib/account-assistant/identity.ts:188-261 (mint/active_location) + recorder de admin-signals"
+      },
+      {
+        "id": "B-3",
+        "title": "Assumir resolução de dedup de contato em 1 opção (não expor 'duplicata')",
+        "problem": "Bruno: 'O que é duplicatas?!' — dedup de email/telefone travou o cadastro e o bot empurrou a mecânica técnica e 2 opções pro rep, que só queria o cliente certo cadastrado.",
+        "fix": "Ao bater dedup no create_contact, o bot assume a resolução numa pergunta de colega ('achei um contato com esse telefone no nome de X — atualizo pra Y ou crio separado?'), nunca expõe 'duplicata/dedup' nem 2 opções técnicas. Regra de prompt + mapear erro de dedup do GHL.",
+        "effort": "medium",
+        "impact": "med",
+        "where": "src/lib/account-assistant/tools/contacts.ts (create_contact handler) + prompt-builder.ts (error-map ~662)"
+      },
+      {
+        "id": "B-5",
+        "title": "Ack de processamento em operações multi-passo lentas",
+        "problem": "Luciano e Sieder cutucaram o bot ('Aguardando sua resposta?', 'tá pensando ou já executou?') durante filtros de funil — silêncio de minutos sem acknowledgment.",
+        "fix": "Emitir ack curto antes de tools demoradas (filter-engine, batch, apply_flow): 'deixa eu puxar isso, 1 minutinho'. O silêncio durante o processamento é o que mais irrita.",
+        "effort": "small",
+        "impact": "high",
+        "where": "src/lib/account-assistant/core/run-sparkbot-turn.ts (loop de tool) + filter-tools.ts / tabular.ts"
+      },
+      {
+        "id": "A-4",
+        "title": "Escalar pedidos de config de UI em 1 turno (não dar suporte de tela tentativa-e-erro)",
+        "problem": "Ana Paula travou 8+ turnos com o bot chutando caminhos de tela ('clica no lápis', 'Sites>Forms>Builder') pra tornar email opcional, e desistiu pedindo pro Pedro.",
+        "fix": "Detectar pedido de 'como mudar config X na tela' e escalar direto: 'isso é na tela do Spark Leads — te passo o caminho exato OU registro pro Pedro fazer, qual prefere?', em 1 turno. Não fingir suporte de UI navegável via API.",
+        "effort": "small",
+        "impact": "med",
+        "where": "src/lib/account-assistant/prompt-builder.ts (nova regra de escopo UI) + report_missed_capability em tools/identity.ts:294"
+      },
+      {
+        "id": "C-3",
+        "title": "Confirm de agendamento sempre mostra ambos os fusos quando rep≠contato",
+        "problem": "Daniely teve 3 correções 'Vc Marcou Errado' por timezone FL vs SP; Bruno faz cross-FL/CA constante. H42 corrigiu via prompt (weekday↔data) mas é instrução, não validação determinística pra timezone.",
+        "fix": "Validação code-side que SEMPRE renderiza ambos os fusos no confirm quando rep e contato/calendário estão em fusos distintos ('10:15 AM Florida / 11:15 AM SP'); trocar notação de planilha ('8h FL (5h CA)(FL/EDT)') por linguagem de colega.",
+        "effort": "medium",
+        "impact": "med",
+        "where": "src/lib/account-assistant/modules/scheduling.ts + tools/calendar.ts (create_appointment confirm payload)"
+      },
+      {
+        "id": "A-2",
+        "title": "Extração de apólice (imagem→custom fields, depois PDF)",
+        "problem": "Roger pediu explicitamente PDF→custom fields; missed_capability ×2. Daniely já manda print de UW e o bot extrai bem (carrier, rate class, prazo) — a extração visão FUNCIONA, falta o write nos custom fields (Monthly Premium, Policy Start Date).",
+        "fix": "Começar pela imagem (já chega via file-processor): mapear campos extraídos → update_contact custom fields com confirmação. Depois adicionar ingestão de PDF nativo (hoje PDF só é saída no orquestrador via pdf-lib).",
+        "effort": "large",
+        "impact": "high",
+        "where": "src/lib/account-assistant/file-processor.ts (ingest) + tools/contacts.ts (update custom fields) + nova tool extract_policy_fields"
+      },
+      {
+        "id": "A-6",
+        "title": "Inbox triage — varrer conversas sem resposta na location",
+        "problem": "Sieder ('não consigo verificar quais conversas estão sem resposta') e Luciano ('pessoas que entraram em contato e nós não retornamos') desistiram e foram fazer manual. Descrito como feature matadora.",
+        "fix": "Tool que varre conversations da location filtrando último-inbound sem resposta do rep (direção + timestamp), reaproveitando a infra de lead-history (F37) generalizada de 1 contato pra N.",
+        "effort": "large",
+        "impact": "high",
+        "where": "src/lib/account-assistant/tools/ (nova tool inbox_triage) + src/lib/queue/lead-history.ts (generalizar) + endpoint GHL conversations"
+      },
+      {
+        "id": "C-5",
+        "title": "Guard de duplicata no apply_flow (pré-flag fluxo ativo no contato)",
+        "problem": "Jussara: 'vc mandou 3 vezes a mesma mensagem' — cada commit re-disparava a 1ª msg pro cliente real (estrago em produção).",
+        "fix": "Antes de materializar, checar fluxo-ativo existente pro mesmo contato e perguntar 'já existe esse fluxo pra esse contato, quer mesmo duplicar?'. Garantir que a idempotência adicionada no ultra-review do H41 está ativa no caminho commit_draft + apply_flow_to_contacts.",
+        "effort": "small",
+        "impact": "high",
+        "where": "src/lib/account-assistant/task-orchestrator/materializer.ts (materializeDraft/applyFlowToContacts) + tools/task-orchestrator.ts:240"
+      },
+      {
+        "id": "A-5",
+        "title": "Rollout de campanhas em grupo (provisionar instância dedicada + ligar flag)",
+        "problem": "Daniely e Jussara pediram postar em grupo de WhatsApp; bot recusa. H40 (group-campaigns.ts) resolve isso INTEIRO mas está atrás de GROUP_CAMPAIGNS_ENABLED (OFF) + exige instância Stevo dedicada não-provisionada.",
+        "fix": "Provisionar 1 instância Stevo dedicada (kind='dedicated' chaveada pela location do rep) e validar 1 caso real (Matheus/Daniely) antes de abrir; é rollout operacional, não código.",
+        "effort": "small",
+        "impact": "med",
+        "where": "operacional: stevo_instances + env GROUP_CAMPAIGNS_ENABLED=1; código pronto em src/lib/account-assistant/tools/group-campaigns.ts"
+      }
+    ]
+  }
+]

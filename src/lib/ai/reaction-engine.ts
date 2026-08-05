@@ -15,7 +15,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
-import { findContactOpportunityId, updateOpportunity } from "@/lib/ghl/operations";
+import {
+  findContactOpportunityId,
+  updateOpportunity,
+  createOpportunity,
+  searchOpportunities,
+} from "@/lib/ghl/operations";
 import type { AutomationRule, AutomationAction } from "@/types/agent";
 
 const BUCKET = "agent-media";
@@ -98,6 +103,83 @@ export function pickTriggeredDataFieldRules(
 }
 
 /**
+ * Dispara as automações de evento com um dado NOME de evento pra um agente+contato,
+ * FORA do fluxo POST-LLM do queue-processor. Usado por eventos de LIFECYCLE do
+ * agente que não passam por uma resposta da IA — ex: `ai_deactivated` quando o rep
+ * pausa a IA daquele contato (item 1, Pedro 2026-07-01).
+ *
+ * Carrega a config de automações + a conversation_state (dedup + conversationId),
+ * filtra as regras do evento, executa e mergeia o dedup (1× por regra/conversa).
+ * Fail-soft: nunca estoura pro caller (o toggle de pausa não pode quebrar por isso).
+ */
+export async function fireEventAutomationsByName(params: {
+  agentId: string;
+  locationId: string;
+  contactId: string;
+  event: string;
+  channel?: string;
+}): Promise<void> {
+  const { agentId, locationId, contactId, event, channel } = params;
+  try {
+    const supabase = createAdminClient();
+
+    const { data: cfg } = await supabase
+      .from("agent_configs")
+      .select("automations")
+      .eq("agent_id", agentId)
+      .maybeSingle();
+    const rules = Array.isArray(cfg?.automations) ? (cfg!.automations as AutomationRule[]) : [];
+    if (rules.length === 0) return;
+
+    const { data: cs } = await supabase
+      .from("conversation_state")
+      .select("conversation_id, triggered_automations")
+      .eq("agent_id", agentId)
+      .eq("contact_id", contactId)
+      .maybeSingle();
+    const already = new Set<string>(
+      Array.isArray(cs?.triggered_automations) ? (cs!.triggered_automations as string[]) : [],
+    );
+    const eventRules = rules.filter(
+      (r) =>
+        (!r.trigger || r.trigger.kind === "event") &&
+        (r.trigger?.kind === "event" ? r.trigger.event : r.event) === event &&
+        !already.has(r.id),
+    );
+    if (eventRules.length === 0) return;
+
+    const { data: loc } = await supabase
+      .from("locations")
+      .select("company_id")
+      .eq("location_id", locationId)
+      .maybeSingle();
+    if (!loc?.company_id) return;
+
+    const { executedRuleIds } = await executeReactionRules(eventRules, {
+      agentId,
+      locationId,
+      companyId: loc.company_id as string,
+      contactId,
+      conversationId: (cs?.conversation_id as string) || "",
+      channel,
+    });
+    if (executedRuleIds.length > 0) {
+      const merged = Array.from(new Set<string>([...already, ...executedRuleIds]));
+      await supabase
+        .from("conversation_state")
+        .update({ triggered_automations: merged })
+        .eq("agent_id", agentId)
+        .eq("contact_id", contactId);
+    }
+  } catch (err) {
+    console.warn(
+      "[ReactionEngine] fireEventAutomationsByName falhou:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+/**
  * Executa as acoes de uma lista de regras. Cada acao eh resiliente a
  * falha isolada (uma acao falha nao aborta as outras).
  */
@@ -174,6 +256,35 @@ async function executeOne(
         pipelineId: action.pipeline_id,
         pipelineStageId: action.stage_id,
       });
+      break;
+    }
+    case "create_opportunity": {
+      // "Criar novo lead no funil" (item 1, Pedro 2026-07-01): coloca o contato
+      // numa etapa do funil. Se ele JÁ tem opp nessa pipeline, MOVE pra etapa (não
+      // duplica); senão CRIA uma opp nova. Diferente do move_pipeline, que só move
+      // e pula se o contato não tiver opp — aqui o objetivo é justamente criar.
+      if (!action.pipeline_id || !action.stage_id) return;
+      const res = await searchOpportunities(client, {
+        location_id: ctx.locationId,
+        contact_id: ctx.contactId,
+      });
+      const opps = res.opportunities ?? [];
+      const inPipeline = opps.find((o) => String(o.pipelineId ?? "") === action.pipeline_id);
+      if (inPipeline?.id && typeof inPipeline.id === "string") {
+        await updateOpportunity(client, inPipeline.id, {
+          pipelineId: action.pipeline_id,
+          pipelineStageId: action.stage_id,
+        });
+      } else {
+        await createOpportunity(client, {
+          pipelineId: action.pipeline_id,
+          pipelineStageId: action.stage_id,
+          locationId: ctx.locationId,
+          contactId: ctx.contactId,
+          name: (action.opportunity_name || "").trim() || "Novo lead",
+          status: "open",
+        });
+      }
       break;
     }
     case "update_field": {

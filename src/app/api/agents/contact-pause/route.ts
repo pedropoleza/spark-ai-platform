@@ -21,6 +21,7 @@ import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { resolveAgentForContact, agentBelongsToLocation } from "@/lib/agents/contact-controls";
 import { reenqueueInboundsSincePause } from "@/lib/queue/resume-reenqueue";
+import { fireEventAutomationsByName } from "@/lib/ai/reaction-engine";
 
 export const maxDuration = 20;
 
@@ -106,6 +107,17 @@ export async function POST(request: NextRequest) {
         ...patch,
       });
     }
+
+    // Lifecycle "IA ligada/desligada" (item 1, Pedro 2026-07-01): o toggle manual
+    // dispara os gatilhos configurados na aba de automações (ex: criar no funil ao
+    // ligar; mover de etapa/tag ao desligar). Fail-soft + dedup por regra (o mesmo
+    // ai_activated também dispara na 1ª resposta da IA — deduplicado, não repete).
+    await fireEventAutomationsByName({
+      agentId,
+      locationId,
+      contactId,
+      event: paused ? "ai_deactivated" : "ai_activated",
+    });
 
     // Retomou → recupera inbounds engolidos durante a pausa (fail-soft).
     if (!paused) {

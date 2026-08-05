@@ -77,6 +77,11 @@ export interface FollowUpConfig {
   max_delay_minutes: number;     // tempo maximo para o ultimo follow-up (default 10080 = 7 dias)
   custom_prompt?: string;        // prompt especifico para follow-ups
   manual_steps: FollowUpStep[];  // usado no modo manual
+  // 3b (Pedro 2026-07-01): quando true, após o ÚLTIMO follow-up sair sem o lead
+  // responder, marca a conversa como `disqualified` e dispara as automações de
+  // evento "disqualified" (tag/mover no funil). Default OFF (opt-in por agente):
+  // NÃO muda o comportamento de agentes que não pediram. Ver disqualifyAfterFinalFollowUp.
+  disqualify_after_final?: boolean;
 }
 
 export interface Agent {
@@ -144,6 +149,12 @@ export interface AgentConfig {
   deactivation_rules: DeactivationRule[];
   handoff_messages: HandoffMessage[];
   auto_pause_on_human_message: boolean;
+  // H51 (Pedro 2026-07-16): como o targeting age. "gate_ongoing" (default/legado):
+  // re-checa o targeting a CADA mensagem (tag/campo = filtro contínuo). "trigger_once":
+  // targeting é só GATILHO de ativação (1º contato) — uma vez a conversa ativa
+  // (membership), o dono é o membership até pausa/handoff, sem re-avaliar targeting
+  // (evita que remover a tag no meio emudeça a conversa). Ver activation-model-v2.
+  activation_mode?: "gate_ongoing" | "trigger_once";
   // Palavras/termos PROIBIDOS na saída lead-facing — bloqueio determinístico
   // (caso Marina 2026-07-01: nunca citar "National Life"/"Five Rings"). O
   // sanitizador (outbound-sanitizer.ts) redige antes de enviar. Vazio = no-op.
@@ -272,6 +283,7 @@ export interface AutomationAction {
     | "add_tag"
     | "remove_tag"
     | "move_pipeline"
+    | "create_opportunity"
     | "update_field"
     | "send_media"
     | "send_text_fixed"
@@ -279,9 +291,11 @@ export interface AutomationAction {
     | "webhook";
   // add_tag / remove_tag
   tag?: string;
-  // move_pipeline
+  // move_pipeline / create_opportunity
   pipeline_id?: string;
   stage_id?: string;
+  // create_opportunity (nome da oportunidade criada; default = "Novo lead")
+  opportunity_name?: string;
   // update_field
   field_key?: string;
   field_value?: string;
