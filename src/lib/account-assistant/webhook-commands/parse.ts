@@ -251,6 +251,22 @@ const CAMPOS_LOCATION = ["location_id", "locationId", "locationID", "location"];
 // Parse
 // ---------------------------------------------------------------------------
 
+/**
+ * Extrai SÓ o segredo, sem depender do parse completo.
+ *
+ * Existe porque a rota confere o segredo ANTES de parsear (revisão 2026-08-06):
+ * o endpoint é público, e conferir depois significava que qualquer POST anônimo
+ * — inclusive `{}` — já gravava uma linha de auditoria. Com o segredo na frente,
+ * quem não tem credencial não escreve no banco.
+ *
+ * Aceita o segredo em qualquer escopo (raiz inclusive): diferente de `message`
+ * ou `to`, `secret`/`token` não são nomes que a plataforma usa pras coisas dela,
+ * então não há o risco de confundir campo do payload com campo do comando.
+ */
+export function extrairSegredo(body: Record<string, unknown>): string | null {
+  return pickIn(escoposDeBusca(body), ["secret", "spark_secret", "sparkSecret", "token"]);
+}
+
 /** Extrai o location id — o Spark Leads manda como string ou objeto aninhado. */
 export function extrairLocationId(body: Record<string, unknown>): string | null {
   for (const escopo of escoposDeBusca(body)) {

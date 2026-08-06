@@ -10,6 +10,11 @@
  *   2. a location tem que estar cadastrada nesta plataforma;
  *   3. o telefone de destino tem que ser de corretor DAQUELA location.
  *
+ * A trava 1 roda AQUI, antes do parse e de qualquer escrita (ver bloco 0). As
+ * outras duas ficam no authorize, depois de a auditoria já ter registro do que
+ * chegou. `authorize` reconfere o segredo de propósito — é defesa em
+ * profundidade pra quem chamar aquela função de outro lugar.
+ *
  * A regra que mais importa e é a mais fácil de quebrar por engano: o campo
  * `phone` do payload de automação é o telefone do LEAD. Ele NUNCA vira destino
  * — o destino é `send_to`, e é sempre o corretor.
@@ -26,9 +31,13 @@ import { isWebhookCommandsEnabled } from "@/lib/account-assistant/webhook-comman
 import {
   parseWebhookCommand,
   extrairLocationId,
+  extrairSegredo,
   type ParsedCommand,
 } from "@/lib/account-assistant/webhook-commands/parse";
-import { authorizeCommand } from "@/lib/account-assistant/webhook-commands/authorize";
+import {
+  authorizeCommand,
+  verificarSegredo,
+} from "@/lib/account-assistant/webhook-commands/authorize";
 import {
   acharDuplicata,
   claimComando,
@@ -257,6 +266,44 @@ export async function POST(request: NextRequest) {
         detail: `Mais de ${RATE_LIMIT_MAX} comandos em 1 minuto desta conta. Confere se a automação não entrou em loop.`,
       },
       { status: 429 },
+    );
+  }
+
+  // ── 0. Segredo, ANTES de tocar no banco ───────────────────────────────
+  // A auditoria grava toda tentativa que passa daqui — inclusive as recusadas —
+  // e isso é o que faz "meu webhook não chegou" virar consulta em vez de
+  // investigação. Só que o endpoint é PÚBLICO: com a conferência de segredo
+  // depois do parse (como era até 2026-08-06), um `POST {}` anônimo já deixava
+  // linha, e qualquer um na internet escrevia na tabela a 120/min por IP.
+  //
+  // A recusa por segredo é o ÚNICO caminho da rota que não grava linha, de
+  // propósito: é o único que um estranho consegue alcançar. Quem tem o segredo
+  // (a automação de verdade) continua com auditoria completa de tudo que vier
+  // torto depois daqui — que é justamente o caso de uso do debug.
+  //
+  // Visibilidade não se perde: vai sinal pro painel, e `reportError` deduplica
+  // por título estável, então nem uma enxurrada vira enxurrada de linha. Se uma
+  // automação legítima começar a falhar por segredo velho, aparece lá — e o 401
+  // aparece no log de workflow do Spark Leads, que é onde o Pedro olha primeiro.
+  const segredo = verificarSegredo(
+    request.headers.get("x-spark-secret"),
+    extrairSegredo(corpo),
+  );
+  if (!segredo.ok) {
+    console.warn(`[sparkbot-command] ${segredo.reason} (ip ${ip}, location ${locationBruta ?? "?"})`);
+    reportError({
+      title: "Comando via webhook: segredo recusado",
+      feature: "webhook-commands",
+      severity: "low",
+      description:
+        "Alguém chamou o endpoint de comandos sem o segredo correto. Se for automação nossa, " +
+        "o segredo mudou ou ficou pra trás na ação de webhook; se não for, é ruído da internet " +
+        "(a recusa não grava auditoria de propósito, pra não deixarem lixo na tabela).",
+      metadata: { motivo: segredo.reason, location_id: locationBruta, ip },
+    });
+    return NextResponse.json(
+      { ok: false, error: segredo.reason, detail: segredo.detail },
+      { status: 401 },
     );
   }
 

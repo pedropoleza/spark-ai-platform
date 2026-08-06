@@ -18,6 +18,7 @@
 import {
   parseWebhookCommand,
   extrairLocationId,
+  extrairSegredo,
   isMergeFieldNaoResolvido,
 } from "../src/lib/account-assistant/webhook-commands/parse";
 import {
@@ -326,6 +327,25 @@ ok("header errado + body certo → barra (header tem precedência)", !verificarS
   ok("o erro de segredo ausente ensina onde por", !r.ok && /x-spark-secret/.test(r.detail));
 }
 delete process.env.SPARKBOT_COMMAND_SECRET;
+
+// `extrairSegredo` existe pra a rota conferir o segredo ANTES do parse — o
+// endpoint é público, e conferir depois deixava um `POST {}` anônimo gravar
+// linha de auditoria. Ele tem que achar o segredo mesmo num payload que o
+// parse REJEITARIA (sem tipo, sem destino, sem mensagem): é exatamente esse o
+// caso em que a ordem importa.
+ok("extrairSegredo: raiz", extrairSegredo({ secret: "abc" }) === "abc");
+ok("extrairSegredo: customData", extrairSegredo({ customData: { secret: "abc" } }) === "abc");
+ok("extrairSegredo: apelido `token`", extrairSegredo({ token: "abc" }) === "abc");
+ok("extrairSegredo: camelCase", extrairSegredo({ sparkSecret: "abc" }) === "abc");
+ok(
+  "extrairSegredo acha em payload que o parse rejeitaria (sem tipo/destino/msg)",
+  extrairSegredo({ location_id: LOC, secret: "abc" }) === "abc",
+);
+ok("extrairSegredo: payload vazio → null", extrairSegredo({}) === null);
+ok(
+  "extrairSegredo: merge field não resolvido não vira segredo",
+  extrairSegredo({ secret: "{{custom.secret}}" }) === null,
+);
 
 // ── 7. Impressão digital (idempotência sem request_id) ──────────────────────
 console.log("\n7. fingerprintComando");
