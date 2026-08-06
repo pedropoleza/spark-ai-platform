@@ -25,6 +25,8 @@ import {
   verificarSegredo,
 } from "../src/lib/account-assistant/webhook-commands/authorize";
 import { fingerprintComando } from "../src/lib/account-assistant/webhook-commands/audit";
+import { safeToolNames } from "../src/lib/account-assistant/webhook-commands/run";
+import { TOOL_REGISTRY } from "../src/lib/account-assistant/tools";
 
 let pass = 0,
   fail = 0;
@@ -343,6 +345,49 @@ ok("destino diferente → digital diferente", fingerprintComando(base) !== finge
 ok("conta diferente → digital diferente", fingerprintComando(base) !== fingerprintComando({ ...base, locationId: OUTRA }));
 ok("modo diferente → digital diferente", fingerprintComando(base) !== fingerprintComando({ ...base, kind: "prompt" }));
 ok("é hex de sha256", /^[0-9a-f]{64}$/.test(fingerprintComando(base)));
+
+// ── 8. Tools do modo prompt: só CONSULTA ────────────────────────────────────
+// `risk === "safe"` no registry quer dizer "não pede confirmação", NÃO quer
+// dizer "só lê". Oito tools safe escrevem — inclusive `schedule_reminder`, que
+// agenda um WhatsApp futuro. Como o comando roda sem humano no circuito, uma
+// automação mal configurada (ou um texto malicioso no campo `message`, que
+// vira instrução pro LLM) não pode alcançá-las.
+console.log("\n8. safeToolNames — o modo prompt não pode escrever");
+
+const liberadas = safeToolNames();
+const ESCREVEM = [
+  "schedule_reminder",
+  "cancel_reminder",
+  "set_rep_alias",
+  "forget_rep_alias",
+  "set_rep_preferred_name",
+  "set_scheduling_pref",
+  "set_verbosity_preference",
+  "confirm_rep_timezone",
+  "report_missed_capability",
+];
+for (const t of ESCREVEM) {
+  ok(`\`${t}\` NÃO está liberada`, !liberadas.includes(t));
+}
+for (const t of ["get_contact", "search_contacts", "list_appointments", "get_conversation_history"]) {
+  ok(`\`${t}\` está liberada (é consulta)`, liberadas.includes(t));
+}
+ok(
+  "nenhuma tool de risco medium/high entra",
+  Object.values(TOOL_REGISTRY)
+    .filter((e) => e.def.risk !== "safe")
+    .every((e) => !liberadas.includes(e.def.name)),
+);
+ok(
+  "toda liberada começa por verbo de leitura",
+  liberadas.every((n) =>
+    ["get_", "list_", "search_", "count_", "describe_", "query_", "analyze_", "recap_", "preview_", "present_"].some(
+      (v) => n.startsWith(v),
+    ),
+  ),
+  liberadas.filter((n) => !/^(get|list|search|count|describe|query|analyze|recap|preview|present)_/.test(n)).join(", "),
+);
+ok("a lista não ficou vazia por acidente", liberadas.length >= 30, `${liberadas.length} tools`);
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} ${pass}/${pass + fail} passaram`);
 process.exit(fail === 0 ? 0 : 1);

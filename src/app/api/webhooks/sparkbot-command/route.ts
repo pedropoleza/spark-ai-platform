@@ -105,6 +105,33 @@ function entradaDoComando(c: ParsedCommand, fingerprint: string): AuditEntry {
   });
 }
 
+/**
+ * Traduz o resultado da entrega pra uma frase que se entende sozinha.
+ *
+ * `deliverProactiveMessage` devolve códigos internos e o mais confuso é o
+ * `blocked_no_optin`: ele vem com `ok: true` porque a mensagem FOI entregue —
+ * no painel web, não no WhatsApp. É o gate de opt-in anti-ban da Meta, não
+ * falha. Sem esta tradução, quem testasse de fora leria "blocked" e abriria
+ * chamado de bug pra comportamento correto.
+ */
+function explicarEntrega(
+  via: "whatsapp" | "system" | undefined,
+  erro: string | undefined,
+): string | null {
+  if (erro === "blocked_no_optin") {
+    return (
+      "Entregue no painel web, não no WhatsApp: esse corretor ainda não escreveu " +
+      "pro SparkBot nenhuma vez. Basta ele mandar uma mensagem qualquer pro número " +
+      "do bot que os próximos comandos vão pelo WhatsApp. (Gate de opt-in anti-ban " +
+      "da Meta — não é erro.)"
+    );
+  }
+  if (via === "system" && !erro) {
+    return "Entregue no painel web (o WhatsApp não estava disponível pra esse corretor).";
+  }
+  return erro ?? null;
+}
+
 /** Erro com corpo legível + linha na auditoria. */
 async function recusar(
   status: number,
@@ -246,11 +273,12 @@ export async function POST(request: NextRequest) {
   // linha na auditoria.
   if (command.kind === "notification") {
     const resultado = await executeWebhookCommand(command, target);
+    const explicacao = explicarEntrega(resultado.via, resultado.detail);
     await finalizarComando(auditId, comRep, {
       status: resultado.status,
       deliveredVia: resultado.via ?? null,
       responseText: resultado.deliveredText ?? null,
-      detail: resultado.detail ?? null,
+      detail: explicacao,
       durationMs: resultado.durationMs,
     });
     return NextResponse.json(
@@ -258,7 +286,7 @@ export async function POST(request: NextRequest) {
         ok: resultado.status === "sent",
         status: resultado.status,
         via: resultado.via ?? null,
-        detail: resultado.detail ?? null,
+        detail: explicacao,
         audit_id: auditId,
       },
       { status: resultado.status === "sent" ? 200 : 502 },
@@ -273,7 +301,7 @@ export async function POST(request: NextRequest) {
           status: resultado.status,
           deliveredVia: resultado.via ?? null,
           responseText: resultado.deliveredText ?? null,
-          detail: resultado.detail ?? null,
+          detail: explicarEntrega(resultado.via, resultado.detail),
           durationMs: resultado.durationMs,
           metadata: {
             ...(resultado.model ? { model: resultado.model } : {}),

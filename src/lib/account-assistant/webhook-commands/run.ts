@@ -56,21 +56,50 @@ export function dailyCap(): number {
 }
 
 /**
- * Tools liberadas pro modo prompt: só as de risco `safe` (leitura/consulta).
+ * Verbos de LEITURA. Um comando roda SEM humano no circuito — não existe
+ * "Confirma?" pra responder no meio de um turno disparado por automação —
+ * então o modo prompt só recebe tool que CONSULTA.
+ */
+const VERBOS_DE_LEITURA = [
+  "get_",
+  "list_",
+  "search_",
+  "count_",
+  "describe_",
+  "query_",
+  "analyze_",
+  "recap_",
+  "preview_",
+  "present_",
+] as const;
+
+/**
+ * Tools liberadas pro modo prompt.
  *
- * Um comando roda SEM humano no circuito — não existe "Confirma?" pra
- * responder no meio de um turno disparado por automação. Liberar tool de
- * escrita aqui significaria uma automação mal configurada disparando
- * campanha ou remarcando agenda sem ninguém ver. Ler o CRM e escrever uma
- * boa mensagem cobre o caso que o Pedro descreveu.
+ * ⚠️ `risk === "safe"` NÃO quer dizer "só lê" — quer dizer "não precisa de
+ * confirmação". Conferido no registry: das 48 tools `safe`, oito ESCREVEM —
+ * `schedule_reminder` (que agenda um WhatsApp futuro!), `cancel_reminder`,
+ * `set_rep_alias`, `forget_rep_alias`, `set_rep_preferred_name`,
+ * `set_scheduling_pref`, `set_verbosity_preference`, `confirm_rep_timezone`
+ * — mais `report_missed_capability`, que grava sinal de admin. Filtrar só por
+ * `risk` deixaria uma automação mal configurada (ou um texto malicioso no
+ * campo `message`, que vira instrução pro LLM) renomear o corretor ou
+ * agendar mensagem em nome dele.
  *
- * Derivado do registry (não é lista fixa): tool nova nasce liberada se for
- * safe, e nunca liberada se for de escrita.
+ * Por isso o filtro é **fail-closed pelo verbo do nome**, e não uma lista de
+ * exceções: tool nova só entra se o nome disser que ela lê. Uma tool de
+ * leitura com nome fora do padrão fica de fora até alguém decidir incluí-la
+ * — errar pro lado de faltar consulta é barato; errar pro lado de escrever
+ * sem ninguém ver, não.
+ *
+ * Se o Pedro pedir ação de escrita depois, o caminho é um campo explícito no
+ * payload (`allow_actions`), NÃO afrouxar este default.
  */
 export function safeToolNames(): string[] {
   return Object.values(TOOL_REGISTRY)
     .filter((e) => e.def.risk === "safe")
-    .map((e) => e.def.name);
+    .map((e) => e.def.name)
+    .filter((nome) => VERBOS_DE_LEITURA.some((v) => nome.startsWith(v)));
 }
 
 /**
