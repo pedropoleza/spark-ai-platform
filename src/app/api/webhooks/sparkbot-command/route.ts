@@ -10,10 +10,16 @@
  *   2. a location tem que estar cadastrada nesta plataforma;
  *   3. o telefone de destino tem que ser de corretor DAQUELA location.
  *
- * A trava 1 roda AQUI, antes do parse e de qualquer escrita (ver bloco 0). As
- * outras duas ficam no authorize, depois de a auditoria já ter registro do que
- * chegou. `authorize` reconfere o segredo de propósito — é defesa em
- * profundidade pra quem chamar aquela função de outro lugar.
+ * As travas 1 e 2 rodam AQUI, antes do parse e de qualquer escrita (ver bloco
+ * 0) — são a licença pra deixar rastro no banco, num endpoint público. A trava
+ * 3 fica no authorize, depois de a auditoria já ter registro do que chegou.
+ * `authorize` reconfere as duas de propósito (reusando a location já resolvida)
+ * — defesa em profundidade pra quem chamar aquela função de outro lugar.
+ *
+ * ⚠️ O segredo (trava 1) está DESLIGADO em produção desde 2026-08-06: o
+ * controle de quem dispara passou a ser o acesso ao workflow dentro do Spark
+ * Leads, restrito à equipe. Repor `SPARKBOT_COMMAND_SECRET` volta a exigir, sem
+ * deploy. Com ele desligado, é a trava 2 que sustenta o bloco 0.
  *
  * A regra que mais importa e é a mais fácil de quebrar por engano: o campo
  * `phone` do payload de automação é o telefone do LEAD. Ele NUNCA vira destino
@@ -36,6 +42,7 @@ import {
 } from "@/lib/account-assistant/webhook-commands/parse";
 import {
   authorizeCommand,
+  buscarLocation,
   verificarSegredo,
 } from "@/lib/account-assistant/webhook-commands/authorize";
 import {
@@ -269,22 +276,33 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // ── 0. Segredo, ANTES de tocar no banco ───────────────────────────────
+  // ── 0. Quem pode DEIXAR RASTRO, antes de tocar no banco ───────────────
   // A auditoria grava toda tentativa que passa daqui — inclusive as recusadas —
-  // e isso é o que faz "meu webhook não chegou" virar consulta em vez de
-  // investigação. Só que o endpoint é PÚBLICO: com a conferência de segredo
-  // depois do parse (como era até 2026-08-06), um `POST {}` anônimo já deixava
-  // linha, e qualquer um na internet escrevia na tabela a 120/min por IP.
+  // e é isso que faz "meu webhook não chegou" virar consulta em vez de
+  // investigação. Só que o endpoint é PÚBLICO: com as travas todas depois do
+  // parse (como era até 2026-08-06), um `POST {}` anônimo já deixava linha, e
+  // qualquer um na internet escrevia na tabela a 120/min por IP.
   //
-  // A recusa por segredo é o ÚNICO caminho da rota que não grava linha, de
-  // propósito: é o único que um estranho consegue alcançar. Quem tem o segredo
-  // (a automação de verdade) continua com auditoria completa de tudo que vier
-  // torto depois daqui — que é justamente o caso de uso do debug.
+  // Duas peneiras rodam aqui, nesta ordem, e as duas recusam SEM gravar — de
+  // propósito: são os únicos caminhos que um estranho alcança.
+  //
+  //   (a) o segredo, SE `SPARKBOT_COMMAND_SECRET` estiver configurado. Ele foi
+  //       DESLIGADO em produção em 2026-08-06 (decisão do Pedro: o controle
+  //       passou a ser o acesso ao workflow dentro do Spark Leads, restrito à
+  //       equipe). O código segue pronto — repor a env volta a exigir, sem
+  //       deploy.
+  //   (b) a sub-conta existir aqui. Com o segredo desligado, ESTA é a
+  //       credencial mínima: o webhook de verdade sempre sai de dentro de uma
+  //       conta que a agência administra, então a automação legítima nunca
+  //       sente. Quem não sabe um location_id válido não escreve no banco.
+  //
+  // Quem passa daqui tem auditoria completa de tudo que vier torto depois —
+  // que é justamente o caso de uso do debug.
   //
   // Visibilidade não se perde: vai sinal pro painel, e `reportError` deduplica
-  // por título estável, então nem uma enxurrada vira enxurrada de linha. Se uma
-  // automação legítima começar a falhar por segredo velho, aparece lá — e o 401
-  // aparece no log de workflow do Spark Leads, que é onde o Pedro olha primeiro.
+  // por título estável, então nem uma enxurrada vira enxurrada de linha; e o
+  // status HTTP aparece no log de workflow do Spark Leads, que é onde o Pedro
+  // olha primeiro.
   const segredo = verificarSegredo(
     request.headers.get("x-spark-secret"),
     extrairSegredo(corpo),
@@ -304,6 +322,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { ok: false, error: segredo.reason, detail: segredo.detail },
       { status: 401 },
+    );
+  }
+
+  // Sem location no payload não dá nem pra dizer de qual conta veio: recusa
+  // seca, sem linha. O erro ensina o conserto — é o mesmo texto que a automação
+  // real veria, e ela sempre manda o campo.
+  if (!locationBruta) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "location_ausente",
+        detail:
+          "Não achei o id da sub-conta no payload. A ação de webhook do Spark Leads normalmente já " +
+          "manda `location.id`; se a sua não manda, adiciona um campo `location_id` no custom data.",
+      },
+      { status: 400 },
+    );
+  }
+  const locationResolvida = await buscarLocation(locationBruta);
+  if (!locationResolvida.ok) {
+    console.warn(
+      `[sparkbot-command] ${locationResolvida.reason} (ip ${ip}, location ${locationBruta})`,
+    );
+    return NextResponse.json(
+      { ok: false, error: locationResolvida.reason, detail: locationResolvida.detail },
+      { status: locationResolvida.httpStatus },
     );
   }
 
@@ -334,6 +378,13 @@ export async function POST(request: NextRequest) {
     sendTo: command.sendTo,
     segredoHeader: request.headers.get("x-spark-secret"),
     segredoBody: command.secret,
+    // Resolvida no bloco 0 — reusa em vez de consultar de novo. Só vale se o
+    // parse leu a MESMA location do pré-check (o payload pode ter o id em dois
+    // lugares); se divergir, o authorize consulta a que o comando realmente usa.
+    location:
+      command.locationId === locationResolvida.location.location_id
+        ? locationResolvida.location
+        : undefined,
   });
   if (!auth.ok) {
     return recusar(auth.httpStatus, auth.reason, auth.detail, base, {

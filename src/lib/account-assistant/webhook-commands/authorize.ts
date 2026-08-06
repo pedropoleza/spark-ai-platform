@@ -122,11 +122,68 @@ export function candidatosDeTelefone(bruto: string): string[] {
   return [...new Set([...base, ...extra])];
 }
 
+/** A sub-conta, como ela mora em `locations`. */
+export interface LocationRow {
+  location_id: string;
+  company_id: string;
+  location_name: string | null;
+  timezone: string | null;
+}
+
+export type LocationResult =
+  | { ok: true; location: LocationRow }
+  | { ok: false; httpStatus: number; reason: string; detail: string };
+
+/**
+ * Trava 2 isolada — "essa sub-conta existe aqui?".
+ *
+ * Vive sozinha porque a rota a chama ANTES do parse (2026-08-06, quando o
+ * `SPARKBOT_COMMAND_SECRET` foi desligado): sem segredo, ser uma conta que a
+ * agência administra passou a ser a credencial mínima pra o comando poder
+ * DEIXAR RASTRO no banco. Sem isso, o endpoint é público e qualquer POST — até
+ * `{}` — gravaria linha de auditoria, a 120/min por IP.
+ *
+ * O `authorizeCommand` reusa o resultado (parâmetro `location`) em vez de
+ * consultar de novo: uma query por comando, não duas.
+ */
+export async function buscarLocation(locationId: string): Promise<LocationResult> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("locations")
+    .select("location_id, company_id, location_name, timezone")
+    .eq("location_id", locationId)
+    .maybeSingle();
+
+  if (error) {
+    // Falha de infra ≠ negação. Devolvemos 503 pra automação poder repetir
+    // em vez de o Pedro achar que a conta dele "não está cadastrada".
+    return {
+      ok: false,
+      httpStatus: 503,
+      reason: "erro_consulta_location",
+      detail: `Não consegui consultar a sub-conta agora: ${error.message}`,
+    };
+  }
+  if (!data) {
+    return {
+      ok: false,
+      httpStatus: 403,
+      reason: "location_desconhecida",
+      detail:
+        `A sub-conta ${locationId} não está cadastrada nesta plataforma. ` +
+        "Confere se o webhook saiu da conta certa.",
+    };
+  }
+  return { ok: true, location: data as LocationRow };
+}
+
 export async function authorizeCommand(args: {
   locationId: string;
   sendTo: string;
   segredoHeader: string | null;
   segredoBody: string | null;
+  /** Já resolvida pela rota (bloco 0). Sem isto, consulta aqui. */
+  location?: LocationRow;
 }): Promise<AuthorizeResult> {
   // ── Trava 1: segredo ──────────────────────────────────────────────────
   const segredo = verificarSegredo(args.segredoHeader, args.segredoBody);
@@ -137,31 +194,14 @@ export async function authorizeCommand(args: {
   const supabase = createAdminClient();
 
   // ── Trava 2: location conhecida ───────────────────────────────────────
-  const { data: location, error: erroLocation } = await supabase
-    .from("locations")
-    .select("location_id, company_id, location_name, timezone")
-    .eq("location_id", args.locationId)
-    .maybeSingle();
-
-  if (erroLocation) {
-    // Falha de infra ≠ negação. Devolvemos 503 pra automação poder repetir
-    // em vez de o Pedro achar que a conta dele "não está cadastrada".
-    return {
-      ok: false,
-      httpStatus: 503,
-      reason: "erro_consulta_location",
-      detail: `Não consegui consultar a sub-conta agora: ${erroLocation.message}`,
-    };
-  }
+  // A rota já resolveu isto antes do parse; aqui só reusamos. Quem chamar esta
+  // função de outro lugar (sem pré-resolver) continua protegido — a consulta
+  // acontece na hora.
+  let location = args.location;
   if (!location) {
-    return {
-      ok: false,
-      httpStatus: 403,
-      reason: "location_desconhecida",
-      detail:
-        `A sub-conta ${args.locationId} não está cadastrada nesta plataforma. ` +
-        "Confere se o webhook saiu da conta certa.",
-    };
+    const r = await buscarLocation(args.locationId);
+    if (!r.ok) return { ok: false, httpStatus: r.httpStatus, reason: r.reason, detail: r.detail };
+    location = r.location;
   }
 
   // ── Trava 3: telefone pertence a um corretor DESTA location ───────────
