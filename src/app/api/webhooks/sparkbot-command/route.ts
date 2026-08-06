@@ -45,18 +45,29 @@ import {
 
 export const maxDuration = 60;
 
-// ── Rate limit por location ─────────────────────────────────────────────────
+// ── Rate limit ──────────────────────────────────────────────────────────────
 // Vem ANTES da auditoria de propósito: é isto que impede um workflow em loop
 // de inflar a tabela com milhares de linhas rejeitadas. Mesmo padrão (Map em
 // memória + eviction preguiçosa amortizada) do inbound-message; setInterval
 // não cabe em serverless, o timer morre com a lambda.
+//
+// DUAS chaves, e a de IP é a que segura de verdade. O `location_id` vem do
+// CORPO — quem manda escolhe. Limitando só por ele, bastava variar o campo a
+// cada requisição pra nunca bater no teto e, de quebra, encher o Map de
+// chaves inventadas. O IP é o único identificador que o chamador não escolhe.
+// A chave por location continua valendo: é ela que pega o caso REAL (uma
+// automação da conta em loop), com mensagem que aponta pro problema certo.
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_WINDOW = 60_000;
 const RATE_LIMIT_MAX = 30;
+/** Teto por origem de rede — mais folgado: uma agência pode ter várias contas. */
+const RATE_LIMIT_MAX_IP = 120;
 const RATE_LIMIT_SWEEP_EVERY = 500;
+/** Teto duro do Map: mesmo com chave escolhida pelo chamador, a memória não voa. */
+const RATE_LIMIT_MAX_KEYS = 5_000;
 let rateLimitCalls = 0;
 
-function checkRateLimit(chave: string): boolean {
+function checkRateLimit(chave: string, teto: number): boolean {
   const now = Date.now();
   if (++rateLimitCalls >= RATE_LIMIT_SWEEP_EVERY) {
     rateLimitCalls = 0;
@@ -64,11 +75,21 @@ function checkRateLimit(chave: string): boolean {
   }
   const entry = rateLimitMap.get(chave);
   if (!entry || now > entry.resetAt) {
+    if (rateLimitMap.size >= RATE_LIMIT_MAX_KEYS) {
+      // Estourou o teto: varre agora (fora do amortizado) e, se ainda assim
+      // não couber, descarta a entrada mais velha. Perder contagem antiga é
+      // melhor que crescer sem limite — a janela é de 1 minuto.
+      for (const [k, e] of rateLimitMap) if (now > e.resetAt) rateLimitMap.delete(k);
+      if (rateLimitMap.size >= RATE_LIMIT_MAX_KEYS) {
+        const maisVelha = rateLimitMap.keys().next().value;
+        if (maisVelha !== undefined) rateLimitMap.delete(maisVelha);
+      }
+    }
     rateLimitMap.set(chave, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
     return true;
   }
   entry.count++;
-  return entry.count <= RATE_LIMIT_MAX;
+  return entry.count <= teto;
 }
 
 // ── Auditoria ───────────────────────────────────────────────────────────────
@@ -132,14 +153,47 @@ function explicarEntrega(
   return erro ?? null;
 }
 
-/** Erro com corpo legível + linha na auditoria. */
+/**
+ * Retrato do payload pra linha de recusa: só os NOMES dos campos que vieram
+ * (com os aninhados de 1 nível), nunca os valores. O payload de automação
+ * carrega dado do lead — guardar isso numa recusa seria acumular informação
+ * pessoal sem necessidade. Os nomes bastam pra ver o que faltou.
+ */
+function resumoDoPayload(corpo: Record<string, unknown>): string[] {
+  const nomes: string[] = [];
+  for (const [k, v] of Object.entries(corpo).slice(0, 60)) {
+    nomes.push(k);
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const sub of Object.keys(v as Record<string, unknown>).slice(0, 30)) {
+        nomes.push(`${k}.${sub}`);
+      }
+    }
+  }
+  return nomes;
+}
+
+/**
+ * Erro com corpo legível + linha na auditoria.
+ *
+ * `auditReason`/`auditDetail` existem pra quando a resposta pública é de
+ * propósito mais vaga que a verdade (ver `telefone_fora_da_location` no
+ * authorize): quem chamou recebe o suficiente pra consertar a automação, e o
+ * motivo exato fica na auditoria, que só nós lemos.
+ */
 async function recusar(
   status: number,
   reason: string,
   detail: string,
   entry: AuditEntry,
+  audit?: { reason?: string; detail?: string },
 ): Promise<NextResponse> {
-  const id = await registrarComando({ ...entry, status: "rejected", reason, detail });
+  const id = await registrarComando({
+    ...entry,
+    status: "rejected",
+    reason: audit?.reason ?? reason,
+    detail: audit?.detail ?? detail,
+    ...(audit?.reason ? { metadata: { ...(entry.metadata ?? {}), resposta_publica: reason } } : {}),
+  });
   return NextResponse.json({ ok: false, error: reason, detail, audit_id: id }, { status });
 }
 
@@ -173,13 +227,29 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Chave do rate limit: a location quando dá pra ler, senão o IP — payload
-  // quebrado em loop também não pode martelar o endpoint.
-  const locationBruta =
-    extrairLocationId((body ?? {}) as Record<string, unknown>) ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "desconhecida";
-  if (!checkRateLimit(locationBruta)) {
+  const corpo = (body ?? {}) as Record<string, unknown>;
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "sem-ip";
+  const locationBruta = extrairLocationId(corpo);
+
+  // IP primeiro: é o teto que o chamador não consegue driblar variando campo.
+  if (!checkRateLimit(`ip:${ip}`, RATE_LIMIT_MAX_IP)) {
+    console.warn(`[sparkbot-command] rate limit por IP (${ip}) — ${RATE_LIMIT_MAX_IP}/min estourado`);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "rate_limited",
+        detail: `Mais de ${RATE_LIMIT_MAX_IP} comandos em 1 minuto desta origem.`,
+      },
+      { status: 429 },
+    );
+  }
+  if (locationBruta && !checkRateLimit(`loc:${locationBruta}`, RATE_LIMIT_MAX)) {
+    // Log porque a auditoria NÃO grava este caminho (é justamente o que
+    // impede o loop de inflar a tabela) — sem esta linha, uma automação em
+    // loop seria invisível nos dois lugares.
+    console.warn(
+      `[sparkbot-command] rate limit por location (${locationBruta}) — ${RATE_LIMIT_MAX}/min estourado`,
+    );
     return NextResponse.json(
       {
         ok: false,
@@ -197,7 +267,14 @@ export async function POST(request: NextRequest) {
       400,
       parsed.reason,
       parsed.detail,
-      entradaBase({ locationId: extrairLocationId((body ?? {}) as Record<string, unknown>) }),
+      entradaBase({
+        locationId: locationBruta,
+        // Sem isto, a linha de recusa não guarda NADA do que chegou e o
+        // "por que meu webhook não passou?" volta a ser adivinhação. Só os
+        // nomes dos campos e o tamanho — o conteúdo do payload de automação
+        // carrega dado do lead e não precisa ficar guardado numa recusa.
+        metadata: { payload_campos: resumoDoPayload(corpo) },
+      }),
     );
   }
   const command = parsed.command;
@@ -212,7 +289,10 @@ export async function POST(request: NextRequest) {
     segredoBody: command.secret,
   });
   if (!auth.ok) {
-    return recusar(auth.httpStatus, auth.reason, auth.detail, base);
+    return recusar(auth.httpStatus, auth.reason, auth.detail, base, {
+      reason: auth.auditReason,
+      detail: auth.auditDetail,
+    });
   }
   const target = auth.target;
   const comRep: AuditEntry = { ...base, repId: target.rep.id };
@@ -233,37 +313,61 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // ── 4. Cap diário por corretor ────────────────────────────────────────
-  const cap = dailyCap();
-  if (cap > 0) {
-    const jaEnviados = await contarEnviosRecentes(target.rep.id);
-    if (jaEnviados >= cap) {
-      return recusar(
-        429,
-        "cap_diario",
-        `O corretor ${target.rep.display_name || command.sendTo} já recebeu ${jaEnviados} comandos nas últimas 24h ` +
-          `(limite ${cap}). Isso costuma ser automação em loop — o limite se ajusta em SPARKBOT_COMMAND_DAILY_CAP.`,
-        comRep,
-      );
-    }
-  }
-
-  // ── 5. Claim: reserva a execução ANTES de rodar ───────────────────────
+  // ── 4. Claim: reserva a execução ANTES de rodar ───────────────────────
   // Sem isto, dois webhooks gêmeos no modo prompt (que leva ~20s) não se
   // enxergam — os dois procuram por uma linha que nenhum gravou ainda — e o
   // corretor recebe a mesma mensagem duas vezes.
   const claim = await claimComando(comRep);
   if (!claim.ok) {
+    // Grava a linha ANTES de responder. O 23505 é o caminho mais raro e o mais
+    // difícil de acreditar depois ("o webhook devolveu 200 e nada chegou") —
+    // se ele não deixar registro, é o único desfecho da rota que some sem
+    // rastro. A linha nasce 'duplicate', que NÃO ocupa vaga de idempotência.
+    const id = await registrarComando({
+      ...comRep,
+      status: "duplicate",
+      reason: "duplicata_na_corrida",
+      detail:
+        "Outro webhook idêntico reservou a execução no mesmo instante " +
+        "(conflito no índice de request_id). Não reenviei.",
+    });
     return NextResponse.json(
       {
         ok: true,
         duplicate: true,
+        audit_id: id,
         detail: "Um comando idêntico entrou em execução no mesmo instante. Não reenviei.",
       },
       { status: 200 },
     );
   }
   const auditId = claim.id;
+
+  // ── 5. Cap diário por corretor — DEPOIS do claim ──────────────────────
+  // A ordem é o que faz o cap valer. Contando ANTES de gravar, uma rajada
+  // simultânea lê a mesma contagem antiga e passa inteira pelo limite (e o
+  // rate limit acima não cobre: o Map vive na memória de UMA instância, e o
+  // Vercel abre várias). Contando DEPOIS, a própria linha 'running' já está
+  // no banco, então cada requisição da rajada enxerga as irmãs e só as que
+  // couberem no limite seguem. Por isso a comparação é `>` e não `>=`.
+  const cap = dailyCap();
+  if (cap > 0) {
+    const total = await contarEnviosRecentes(target.rep.id);
+    if (total > cap) {
+      const detalhe =
+        `O corretor ${target.rep.display_name || command.sendTo} já recebeu ${total - 1} comandos nas últimas 24h ` +
+        `(limite ${cap}). Isso costuma ser automação em loop — o limite se ajusta em SPARKBOT_COMMAND_DAILY_CAP.`;
+      await finalizarComando(auditId, comRep, {
+        status: "rejected",
+        reason: "cap_diario",
+        detail: detalhe,
+      });
+      return NextResponse.json(
+        { ok: false, error: "cap_diario", detail: detalhe, audit_id: auditId },
+        { status: 429 },
+      );
+    }
+  }
 
   // ── 6. Execução ───────────────────────────────────────────────────────
   // `notification` é síncrono: é um envio só (~2s) e o resultado tem que

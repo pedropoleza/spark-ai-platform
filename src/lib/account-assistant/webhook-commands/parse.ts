@@ -61,32 +61,47 @@ export function isMergeFieldNaoResolvido(valor: string): boolean {
 }
 
 /**
- * Onde procurar os campos. O `customData` é onde a ação "Webhook" do Spark
- * Leads coloca os campos customizados em algumas versões; em outras, tudo
- * vem na raiz. Varremos os dois (raiz primeiro).
+ * Onde procurar os campos, NESTA ordem. O `customData` é onde a ação
+ * "Webhook" do Spark Leads coloca os campos customizados em algumas versões;
+ * em outras, tudo vem na raiz. Varremos os dois.
+ *
+ * ⚠️ O customData vem PRIMEIRO, e isso é a diferença entre funcionar e mandar
+ * a mensagem errada. A raiz do payload de automação é montada pela
+ * plataforma, e ela usa nomes genéricos pras coisas dela: `message`, `body` e
+ * `text` na raiz costumam ser o texto que o LEAD escreveu. Com a raiz
+ * primeiro, um agente que configurasse `customData.message = "Fulano pediu
+ * retorno"` veria o SparkBot mandar pro corretor o texto do LEAD no lugar —
+ * e no modo prompt esse texto vira INSTRUÇÃO pro LLM. O customData é o que o
+ * humano escreveu de propósito; ele ganha sempre.
  */
 function escoposDeBusca(body: Record<string, unknown>): Record<string, unknown>[] {
   return [
-    body,
     asRecord(body.customData),
     asRecord(body.custom_data),
     asRecord(body.data),
     asRecord(body.payload),
+    body,
   ];
 }
 
-/**
- * Primeiro valor string não-vazio entre as chaves pedidas, varrendo todos os
- * escopos. Merge field não resolvido conta como ausente.
- */
-function pick(body: Record<string, unknown>, ...chaves: string[]): string | null {
-  for (const escopo of escoposDeBusca(body)) {
+/** Só os escopos EXPLÍCITOS (o que o humano escreveu), sem a raiz. */
+function escoposExplicitos(body: Record<string, unknown>): Record<string, unknown>[] {
+  return escoposDeBusca(body).slice(0, -1);
+}
+
+/** Primeiro valor string não-vazio entre as chaves, nos escopos dados. */
+function pickIn(
+  escopos: Record<string, unknown>[],
+  chaves: readonly string[],
+): string | null {
+  for (const escopo of escopos) {
     for (const chave of chaves) {
       const v = escopo[chave];
       if (typeof v === "string") {
         const t = v.trim();
         if (t && !isMergeFieldNaoResolvido(t)) return t;
       } else if (typeof v === "number" && Number.isFinite(v)) {
+        // Telefone escrito sem aspas no JSON chega como number.
         return String(v);
       }
     }
@@ -95,16 +110,43 @@ function pick(body: Record<string, unknown>, ...chaves: string[]): string | null
 }
 
 /**
- * O valor CRU de uma das chaves quando ele é um merge field não resolvido.
- * Serve só pra melhorar o erro: "faltou o destino" e "o destino veio
- * `{{contact.phone}}`" são problemas diferentes na cabeça de quem montou a
- * automação, e o segundo tem conserto óbvio.
+ * Resolve um campo do comando.
+ *
+ * `claras` são chaves que só um humano configurando a automação escreveria —
+ * valem em qualquer escopo. `genericas` são nomes que a PLATAFORMA também
+ * usa (`text`, `body`, `type`, `to`): elas só valem dentro do customData,
+ * onde a presença é intencional. Na raiz, um `body` é o texto do lead, não o
+ * comando.
  */
-function mergeFieldBruto(body: Record<string, unknown>, ...chaves: string[]): string | null {
+function pick(
+  body: Record<string, unknown>,
+  claras: readonly string[],
+  genericas: readonly string[] = [],
+): string | null {
+  const explicitos = escoposExplicitos(body);
+  return (
+    pickIn(explicitos, claras) ??
+    pickIn(explicitos, genericas) ??
+    pickIn([body], claras)
+  );
+}
+
+/**
+ * O valor CRU de uma das chaves quando ele é um merge field não resolvido.
+ * Serve pra ABORTAR em vez de cair pro próximo apelido: se o `send_to` veio
+ * `{{contact.phone}}`, mandar pro que sobrou num campo `to` qualquer seria
+ * adivinhar destino — exatamente o que este parser não faz.
+ */
+function mergeFieldBruto(
+  body: Record<string, unknown>,
+  ...chaves: readonly string[][]
+): string | null {
   for (const escopo of escoposDeBusca(body)) {
-    for (const chave of chaves) {
-      const v = escopo[chave];
-      if (typeof v === "string" && isMergeFieldNaoResolvido(v.trim())) return v.trim();
+    for (const lista of chaves) {
+      for (const chave of lista) {
+        const v = escopo[chave];
+        if (typeof v === "string" && isMergeFieldNaoResolvido(v.trim())) return v.trim();
+      }
     }
   }
   return null;
@@ -134,8 +176,11 @@ const SINONIMOS_TIPO: Record<string, CommandKind> = {
   aviso: "notification",
   alerta: "notification",
   alert: "notification",
-  mensagem: "notification",
-  message: "notification",
+  // `mensagem`/`message` NÃO entram como sinônimo, apesar de soarem certos:
+  // o payload da plataforma usa `type: "message"` (e "SMS", "WhatsApp") pra
+  // dizer o tipo do EVENTO. Um `type` alheio com esse valor viraria comando
+  // de aviso silenciosamente. Quem quer aviso escreve `notification` ou
+  // `aviso` — os dois são inequívocos.
   prompt: "prompt",
   comando: "prompt",
   command: "prompt",
@@ -154,24 +199,29 @@ const CAMPOS_TIPO = [
   "commandType",
   "sparkbot_type",
   "tipo",
-  // `type` fica por último: payload de automação às vezes já usa `type` pra
-  // outra coisa. Como validamos o VALOR contra o vocabulário, um `type`
-  // alheio não vira comando — cai no erro de tipo desconhecido.
-  "type",
 ];
+/** `type` é nome que a plataforma usa: só vale dentro do customData. */
+const CAMPOS_TIPO_GENERICOS = ["type"];
 
-const CAMPOS_MENSAGEM = [
-  "message",
-  "mensagem",
-  "text",
-  "texto",
-  "body",
-  "content",
-  "conteudo",
-];
+const CAMPOS_MENSAGEM = ["sparkbot_message", "command_message", "message", "mensagem"];
+/**
+ * Nomes que a PLATAFORMA também usa. Na raiz de um payload de automação,
+ * `text`/`body`/`content` são o texto que o LEAD escreveu — mandar isso pro
+ * corretor (ou, no modo prompt, entregar como instrução pro LLM) seria o
+ * mesmo erro do `phone`. Só valem dentro do customData.
+ */
+const CAMPOS_MENSAGEM_GENERICOS = ["text", "texto", "body", "content", "conteudo"];
 
 /** Só no modo prompt — evita que um `prompt` solto vire aviso cru. */
-const CAMPOS_PROMPT = ["prompt", "comando", "instrucao", "instruction", "pergunta"];
+const CAMPOS_PROMPT = [
+  "sparkbot_prompt",
+  "command_prompt",
+  "prompt",
+  "comando",
+  "instrucao",
+  "instruction",
+  "pergunta",
+];
 
 /**
  * Destino. NÃO inclui `phone`/`contact_phone`/`contact.phone` de propósito:
@@ -191,8 +241,9 @@ const CAMPOS_DESTINO = [
   "destino",
   "telefone_destino",
   "numero_destino",
-  "to",
 ];
+/** `to` é nome que a plataforma usa pro destinatário DELA: só no customData. */
+const CAMPOS_DESTINO_GENERICOS = ["to"];
 
 const CAMPOS_LOCATION = ["location_id", "locationId", "locationID", "location"];
 
@@ -222,10 +273,10 @@ export function extrairLocationId(body: Record<string, unknown>): string | null 
 }
 
 function extrairNomeContato(body: Record<string, unknown>): string | null {
-  const cheio = pick(body, "full_name", "fullName", "contact_name", "contactName", "name");
+  const cheio = pick(body, ["full_name", "fullName", "contact_name", "contactName", "name"]);
   if (cheio) return cheio;
-  const primeiro = pick(body, "first_name", "firstName");
-  const ultimo = pick(body, "last_name", "lastName");
+  const primeiro = pick(body, ["first_name", "firstName"]);
+  const ultimo = pick(body, ["last_name", "lastName"]);
   const junto = [primeiro, ultimo].filter(Boolean).join(" ").trim();
   return junto || null;
 }
@@ -247,7 +298,7 @@ export function parseWebhookCommand(bodyRaw: unknown): ParseResult {
     };
   }
 
-  const tipoBruto = pick(body, ...CAMPOS_TIPO);
+  const tipoBruto = pick(body, CAMPOS_TIPO, CAMPOS_TIPO_GENERICOS);
   if (!tipoBruto) {
     return {
       ok: false,
@@ -266,12 +317,27 @@ export function parseWebhookCommand(bodyRaw: unknown): ParseResult {
     };
   }
 
+  // Merge field não resolvido no DESTINO aborta antes de qualquer fallback.
+  // Cair pro próximo apelido aqui seria adivinhar pra quem mandar — e o
+  // "próximo apelido" pode ser um campo da plataforma com outro número.
+  const destinoQuebrado = mergeFieldBruto(body, CAMPOS_DESTINO, CAMPOS_DESTINO_GENERICOS);
+  if (destinoQuebrado) {
+    return {
+      ok: false,
+      reason: "destino_ausente",
+      detail:
+        `O destino chegou como "${destinoQuebrado}": o merge field do Spark Leads não foi resolvido, ` +
+        "então não existe telefone nenhum aí. Confere se o campo existe no contato ou põe o número " +
+        "do corretor direto no `send_to`.",
+    };
+  }
+
   // No modo prompt, `prompt`/`comando` têm precedência sobre `message` — quem
   // preencheu os dois quis dizer que o prompt é a instrução.
   const message =
     kind === "prompt"
-      ? pick(body, ...CAMPOS_PROMPT, ...CAMPOS_MENSAGEM)
-      : pick(body, ...CAMPOS_MENSAGEM);
+      ? pick(body, [...CAMPOS_PROMPT, ...CAMPOS_MENSAGEM], CAMPOS_MENSAGEM_GENERICOS)
+      : pick(body, CAMPOS_MENSAGEM, CAMPOS_MENSAGEM_GENERICOS);
   if (!message) {
     const campoEsperado = kind === "prompt" ? "`prompt` (ou `message`)" : "`message`";
     return {
@@ -283,19 +349,15 @@ export function parseWebhookCommand(bodyRaw: unknown): ParseResult {
     };
   }
 
-  const sendTo = pick(body, ...CAMPOS_DESTINO);
+  const sendTo = pick(body, CAMPOS_DESTINO, CAMPOS_DESTINO_GENERICOS);
   if (!sendTo) {
-    const naoResolvido = mergeFieldBruto(body, ...CAMPOS_DESTINO);
     return {
       ok: false,
       reason: "destino_ausente",
-      detail: naoResolvido
-        ? `O destino chegou como "${naoResolvido}": o merge field do Spark Leads não foi resolvido, ` +
-          "então não existe telefone nenhum aí. Confere se o campo existe no contato ou põe o número " +
-          "do corretor direto no `send_to`."
-        : "Faltou o telefone de destino. Adiciona um campo `send_to` no custom data com o número do corretor " +
-          "que deve receber. Repara que o campo `phone` do payload é o do LEAD — por segurança ele nunca é " +
-          "usado como destino.",
+      detail:
+        "Faltou o telefone de destino. Adiciona um campo `send_to` no custom data com o número do corretor " +
+        "que deve receber. Repara que o campo `phone` do payload é o do LEAD — por segurança ele nunca é " +
+        "usado como destino.",
     };
   }
 
@@ -306,10 +368,17 @@ export function parseWebhookCommand(bodyRaw: unknown): ParseResult {
       kind,
       message,
       sendTo,
-      contactId: pick(body, "contact_id", "contactId", "contactID"),
+      contactId: pick(body, ["contact_id", "contactId", "contactID"]),
       contactName: extrairNomeContato(body),
-      requestId: pick(body, "request_id", "requestId", "event_id", "eventId", "idempotency_key", "webhook_id"),
-      secret: pick(body, "secret", "spark_secret", "sparkSecret", "token"),
+      requestId: pick(body, [
+        "request_id",
+        "requestId",
+        "event_id",
+        "eventId",
+        "idempotency_key",
+        "webhook_id",
+      ]),
+      secret: pick(body, ["secret", "spark_secret", "sparkSecret", "token"]),
     },
   };
 }

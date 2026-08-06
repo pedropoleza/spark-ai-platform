@@ -23,6 +23,7 @@ import {
 import {
   repAtendeLocation,
   verificarSegredo,
+  candidatosDeTelefone,
 } from "../src/lib/account-assistant/webhook-commands/authorize";
 import { fingerprintComando } from "../src/lib/account-assistant/webhook-commands/audit";
 import { safeToolNames } from "../src/lib/account-assistant/webhook-commands/run";
@@ -346,6 +347,25 @@ ok("conta diferente → digital diferente", fingerprintComando(base) !== fingerp
 ok("modo diferente → digital diferente", fingerprintComando(base) !== fingerprintComando({ ...base, kind: "prompt" }));
 ok("é hex de sha256", /^[0-9a-f]{64}$/.test(fingerprintComando(base)));
 
+// O caso que a feature existe pra atender: workflow "novo lead" com texto FIXO
+// e contato variável. Sem contactId na digital, o 2º lead em menos de 60s
+// viraria "duplicata" e o corretor nunca ficaria sabendo dele.
+const prompt = { ...base, kind: "prompt" as const, message: "Resume esse lead e diz o próximo passo." };
+ok(
+  "MESMO prompt, contatos diferentes → digitais diferentes",
+  fingerprintComando({ ...prompt, contactId: "lead_maria" }) !==
+    fingerprintComando({ ...prompt, contactId: "lead_joao" }),
+);
+ok(
+  "mesmo contato, mesmo prompt → mesma digital (reentrega É duplicata)",
+  fingerprintComando({ ...prompt, contactId: "lead_maria" }) ===
+    fingerprintComando({ ...prompt, contactId: "lead_maria" }),
+);
+ok(
+  "sem contato de um lado e com do outro → digitais diferentes",
+  fingerprintComando(prompt) !== fingerprintComando({ ...prompt, contactId: "lead_maria" }),
+);
+
 // ── 8. Tools do modo prompt: só CONSULTA ────────────────────────────────────
 // `risk === "safe"` no registry quer dizer "não pede confirmação", NÃO quer
 // dizer "só lê". Oito tools safe escrevem — inclusive `schedule_reminder`, que
@@ -388,6 +408,137 @@ ok(
   liberadas.filter((n) => !/^(get|list|search|count|describe|query|analyze|recap|preview|present)_/.test(n)).join(", "),
 );
 ok("a lista não ficou vazia por acidente", liberadas.length >= 30, `${liberadas.length} tools`);
+
+// ── 9. Precedência de escopo: o customData ganha da raiz ────────────────────
+// A raiz do payload é montada pela PLATAFORMA e usa nomes genéricos pras
+// coisas dela — `message`, `body` e `text` na raiz costumam ser o texto que o
+// LEAD escreveu. Se a raiz ganhasse, o SparkBot mandaria o texto do lead pro
+// corretor; no modo prompt, esse texto viraria INSTRUÇÃO pro LLM. Mesma
+// classe do bug do `phone`, e mais perigosa.
+console.log("\n9. escopo — o que o humano configurou ganha do que a plataforma mandou");
+
+{
+  const c = esperaOk("customData.message vence message da raiz (texto do lead)", {
+    location: { id: LOC },
+    // como a plataforma manda:
+    message: "oi, quero saber sobre o seguro de vida",
+    body: "oi, quero saber sobre o seguro de vida",
+    type: "SMS",
+    phone: LEAD,
+    // como o agente configurou:
+    customData: {
+      message_type: "notification",
+      send_to: CORRETOR,
+      message: "Fulano pediu retorno pelo formulário.",
+    },
+  });
+  if (c) {
+    ok("  o texto é o do AGENTE", c.message === "Fulano pediu retorno pelo formulário.", `veio "${c?.message}"`);
+    ok("  o destino é o corretor", c.sendTo === CORRETOR);
+    ok("  o tipo é o do customData, não o `type: SMS` da raiz", c.kind === "notification");
+  }
+}
+{
+  const c = esperaOk("customData.message_type vence type/messageType da raiz", {
+    location_id: LOC,
+    messageType: "prompt",
+    customData: { message_type: "notification", send_to: CORRETOR, message: "Aviso." },
+  });
+  if (c) ok("  vale o customData", c.kind === "notification", `veio ${c?.kind}`);
+}
+{
+  // `text`/`body`/`content` na RAIZ não podem virar o comando de jeito nenhum.
+  const r = parseWebhookCommand({
+    location_id: LOC,
+    customData: { message_type: "notification", send_to: CORRETOR },
+    text: "texto do lead",
+    body: "texto do lead",
+    content: "texto do lead",
+  });
+  ok(
+    "`text`/`body`/`content` na raiz NÃO viram a mensagem",
+    !r.ok && r.reason === "mensagem_ausente",
+    r.ok ? `virou "${r.command.message}"` : r.reason,
+  );
+}
+ok(
+  "…mas dentro do customData eles valem",
+  (() => {
+    const r = parseWebhookCommand({
+      location_id: LOC,
+      customData: { message_type: "notification", send_to: CORRETOR, text: "Aviso pelo campo text." },
+    });
+    return r.ok && r.command.message === "Aviso pelo campo text.";
+  })(),
+);
+{
+  const c = esperaOk("`to` na raiz não é destino, mas no customData é", {
+    location_id: LOC,
+    to: "+15550009999",
+    customData: { message_type: "notification", message: "Aviso.", to: CORRETOR },
+  });
+  if (c) ok("  destino veio do customData", c.sendTo === CORRETOR, `veio "${c?.sendTo}"`);
+}
+ok(
+  "`type: \"message\"` da plataforma NÃO vira comando de aviso",
+  (() => {
+    const r = parseWebhookCommand({
+      location_id: LOC,
+      customData: { type: "message", send_to: CORRETOR, message: "x" },
+    });
+    return !r.ok && r.reason === "tipo_desconhecido";
+  })(),
+);
+{
+  const c = esperaOk("apelidos sem colisão (sparkbot_message) funcionam na raiz", {
+    location_id: LOC,
+    message_type: "notification",
+    send_to: CORRETOR,
+    message: "texto do lead",
+    sparkbot_message: "Aviso de verdade.",
+  });
+  if (c) ok("  o apelido explícito ganha", c.message === "Aviso de verdade.", `veio "${c?.message}"`);
+}
+
+// ── 10. Merge field quebrado no destino ABORTA (não cai pro próximo apelido) ─
+console.log("\n10. merge field no destino não cai pra outro campo");
+esperaErro(
+  "send_to quebrado não vira o `to` que sobrou",
+  {
+    location_id: LOC,
+    customData: {
+      message_type: "notification",
+      message: "Aviso",
+      send_to: "{{contact.custom.rep_phone}}",
+      to: "+15550009999",
+    },
+  },
+  "destino_ausente",
+  /merge field/i,
+);
+
+// ── 11. Formato do telefone que um humano digita no custom data ─────────────
+// O `generatePhoneCandidates` sozinho transforma "17867717077" (EUA, com DDI,
+// sem o "+") em +5517867717077 e +117867717077 — nenhum dos dois existe. O
+// corretor certo nunca era achado e a resposta ainda culpava a location.
+console.log("\n11. candidatosDeTelefone");
+
+const temE164 = (bruto: string, esperado: string) =>
+  ok(`"${bruto}" gera ${esperado}`, candidatosDeTelefone(bruto).includes(esperado));
+
+temE164("+17867717077", "+17867717077");
+temE164("17867717077", "+17867717077"); // o caso que quebrava
+temE164("7867717077", "+17867717077");
+temE164("(786) 771-7077", "+17867717077");
+temE164("786-771-7077", "+17867717077");
+temE164("+1 786 771 7077", "+17867717077");
+temE164("5531999232306", "+5531999232306");
+ok("lixo não vira candidato", candidatosDeTelefone("liga pra mim").length === 0 ||
+  candidatosDeTelefone("liga pra mim").every((c) => c.replace(/\D/g, "").length >= 8));
+ok("sem duplicata na lista", (() => {
+  const c = candidatosDeTelefone("7867717077");
+  return new Set(c).size === c.length;
+})());
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} ${pass}/${pass + fail} passaram`);
 process.exit(fail === 0 ? 0 : 1);

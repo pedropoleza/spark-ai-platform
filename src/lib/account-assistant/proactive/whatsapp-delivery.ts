@@ -87,6 +87,17 @@ export interface DeliveryOptions {
    * appointment_id, etc.
    */
   extraMetadata?: Record<string, unknown>;
+  /**
+   * Chave de dedupe do transporte, quando o chamador tem uma melhor que o
+   * default `fonte:rep:minuto`.
+   *
+   * O default assume que dois disparos da MESMA fonte pro MESMO rep dentro do
+   * mesmo minuto são o mesmo disparo — verdade pra lembrete e regra proativa,
+   * que rodam em tick. Não vale pros comandos via webhook (H71): duas
+   * automações distintas da conta podem avisar o mesmo corretor no mesmo
+   * minuto, e aí o segundo aviso sumiria sem deixar rastro.
+   */
+  dedupeKey?: string | null;
 }
 
 export interface DeliveryResult {
@@ -218,7 +229,9 @@ export async function deliverProactiveMessage(
           // Proativo não tem messageId de origem — a chave vem do contexto do
           // disparo (fonte + rep + minuto), que é estável num retry da mesma
           // execução e distinto entre disparos legítimos.
-          dedupeKey: `proactive:${opts.source}:${rep.id}:${Math.floor(Date.now() / 60_000)}`,
+          dedupeKey:
+            opts.dedupeKey ||
+            `proactive:${opts.source}:${rep.id}:${Math.floor(Date.now() / 60_000)}`,
         });
         if (r.ok) {
           sentViaWhatsapp = true;

@@ -22,13 +22,19 @@
 
 import { GHLClient } from "@/lib/ghl/client";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { RUNNING_TTL_MS, fingerprintComando } from "./audit";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { findActiveSparkbotAgent, findAgentConfig } from "@/lib/repositories/agents.repo";
 import { findLastInboundHubLocation } from "@/lib/repositories/sparkbot-messages.repo";
 import { resolvePrimaryHub } from "@/lib/account-assistant/hub-resolver";
 import { deliverProactiveMessage } from "@/lib/account-assistant/proactive/whatsapp-delivery";
-import { buildSparkbotSystemPrompt, buildSparkbotRuntimeContext, loadCarrierTier1 } from "@/lib/account-assistant/prompt-builder";
+import {
+  buildSparkbotSystemPrompt,
+  buildSparkbotRuntimeContext,
+  buildRepContextBlock,
+  loadCarrierTier1,
+} from "@/lib/account-assistant/prompt-builder";
 import { runSparkbotTurn, buildToolCtx } from "@/lib/account-assistant/core/run-sparkbot-turn";
 import { TOOL_REGISTRY } from "@/lib/account-assistant/tools";
 import type { LLMMessage } from "@/lib/account-assistant/llm-client";
@@ -70,7 +76,9 @@ const VERBOS_DE_LEITURA = [
   "analyze_",
   "recap_",
   "preview_",
-  "present_",
+  // `present_options` fica FORA: ela existe pra abrir menu numerado e esperar
+  // o rep escolher. Num comando disparado por automação não há ninguém pra
+  // escolher — o modelo abriria um menu que morre sozinho.
 ] as const;
 
 /**
@@ -122,26 +130,58 @@ async function resolveSparkbotAgent(
 
 /**
  * Quantos comandos já foram entregues (ou estão sendo entregues agora) pra
- * esse corretor nas últimas 24h. `running` conta: um workflow em loop dispara
- * mais rápido do que o prompt termina, e contar só `sent` deixaria a rajada
- * inteira passar pelo cap.
+ * esse corretor nas últimas 24h.
+ *
+ * `running` conta — um workflow em loop dispara mais rápido do que o prompt
+ * termina, e contar só `sent` deixaria a rajada inteira passar pelo cap — mas
+ * só o `running` RECENTE. Linha órfã (lambda reciclada no meio) fica em
+ * running pra sempre; contá-la por 24h iria comendo o cap do corretor até
+ * emudecer os avisos legítimos dele por um erro de infraestrutura.
  */
 export async function contarEnviosRecentes(repId: string): Promise<number> {
   const supabase = createAdminClient();
-  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { count, error } = await supabase
-    .from("sparkbot_webhook_commands")
-    .select("id", { count: "exact", head: true })
-    .eq("rep_id", repId)
-    .in("status", ["sent", "running"])
-    .gte("received_at", desde);
+  const dia = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const ttl = new Date(Date.now() - RUNNING_TTL_MS).toISOString();
+
+  const [entregues, emCurso] = await Promise.all([
+    supabase
+      .from("sparkbot_webhook_commands")
+      .select("id", { count: "exact", head: true })
+      .eq("rep_id", repId)
+      .eq("status", "sent")
+      .gte("received_at", dia),
+    supabase
+      .from("sparkbot_webhook_commands")
+      .select("id", { count: "exact", head: true })
+      .eq("rep_id", repId)
+      .eq("status", "running")
+      .gte("received_at", ttl),
+  ]);
+
   // Erro de consulta não pode virar bloqueio: fail-open com log (o cap é
   // proteção contra loop, não gate de segurança — quem barra é o authorize).
-  if (error) {
-    console.warn("[webhook-command] contagem do cap diário falhou (fail-open):", error.message);
+  if (entregues.error || emCurso.error) {
+    console.warn(
+      "[webhook-command] contagem do cap diário falhou (fail-open):",
+      entregues.error?.message ?? emCurso.error?.message,
+    );
     return 0;
   }
-  return count ?? 0;
+  return (entregues.count ?? 0) + (emCurso.count ?? 0);
+}
+
+/**
+ * Chave de dedupe do transporte, ÚNICA por comando.
+ *
+ * O default do `deliverProactiveMessage` é `fonte:rep:minuto` — o que é certo
+ * pra lembrete e regra proativa (rodam em tick, e o retry da mesma execução
+ * cai no mesmo minuto), mas errado aqui: duas automações diferentes da conta
+ * podem avisar o mesmo corretor no mesmo minuto e a segunda sumiria calada.
+ * A digital do comando distingue os dois — e mantém a MESMA chave numa
+ * reentrega do mesmo comando, que é justo o que o dedupe deve pegar.
+ */
+function dedupeDoComando(command: ParsedCommand): string {
+  return `wcmd:${fingerprintComando(command).slice(0, 24)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +197,7 @@ async function runNotification(
     activeLocationId: target.locationId,
     source: "webhook_notification",
     kind: "webhook_command",
+    dedupeKey: dedupeDoComando(command),
     extraMetadata: {
       webhook_command: true,
       command_kind: "notification",
@@ -168,12 +209,32 @@ async function runNotification(
   });
 
   return {
-    status: dr.ok ? "sent" : "failed",
+    status: statusDaEntrega(dr),
     via: dr.via,
     deliveredText: command.message,
     detail: dr.error ?? undefined,
     durationMs: Date.now() - inicio,
   };
+}
+
+/**
+ * Traduz o resultado do delivery em "entregou ou não".
+ *
+ * ⚠️ `dr.ok` NÃO responde isso. No caminho normal ele volta `true` sempre —
+ * a função persiste em `sparkbot_messages` e considera isso sucesso mesmo
+ * quando o envio pro WhatsApp falhou; a verdade está em `via` e `error`.
+ * Confiar no `ok` fazia toda falha de envio virar HTTP 200 e linha `sent` na
+ * auditoria, que é o pior desfecho possível: o corretor não recebe e ninguém
+ * fica sabendo.
+ *
+ * `blocked_no_optin` é a exceção: aí o WhatsApp foi pulado DE PROPÓSITO (gate
+ * anti-ban da Meta) e a mensagem está no painel esperando o corretor. Isso é
+ * entrega, não falha.
+ */
+function statusDaEntrega(dr: { ok: boolean; via: "whatsapp" | "system"; error?: string | null }) {
+  if (!dr.ok) return "failed" as const;
+  if (dr.via === "whatsapp") return "sent" as const;
+  return dr.error === "blocked_no_optin" ? ("sent" as const) : ("failed" as const);
 }
 
 // ---------------------------------------------------------------------------
@@ -240,7 +301,20 @@ async function runPrompt(
     : "";
 
   const runtimeContext = [
-    buildSparkbotRuntimeContext({ locationTimezone: tz, locale }),
+    // O bloco por-rep (nome preferido, fuso, locations, memória) mora na user
+    // message desde o B3 do H44 — sem ele o bot trata o corretor como
+    // desconhecido e chama a pessoa pelo nome errado num aviso que ela recebe
+    // sem ter pedido. O proativo já passa; o comando tem que passar também.
+    buildSparkbotRuntimeContext({
+      locationTimezone: tz,
+      locale,
+      repContextBlock: buildRepContextBlock({
+        rep,
+        locationName: target.locationName || target.locationId,
+        locationTimezone: tz,
+        locale,
+      }),
+    }),
     "",
     "# COMANDO EXTERNO (automação do Spark Leads)",
     "Uma automação da conta disparou este comando — NÃO foi o corretor que te escreveu agora.",
@@ -310,6 +384,7 @@ async function runPrompt(
     activeLocationId: target.locationId,
     source: "webhook_prompt",
     kind: "webhook_command",
+    dedupeKey: dedupeDoComando(command),
     extraMetadata: {
       webhook_command: true,
       command_kind: "prompt",
@@ -352,7 +427,7 @@ async function runPrompt(
   }
 
   return {
-    status: dr.ok ? "sent" : "failed",
+    status: statusDaEntrega(dr),
     via: dr.via,
     deliveredText: llm.text,
     detail: dr.error ?? undefined,

@@ -15,9 +15,11 @@
  *      corretor que trabalha NAQUELA sub-conta (regra pedida pelo Pedro).
  *      Sem isso, qualquer conta poderia mandar aviso pro corretor de outra.
  *
- * Fora as travas, um bloqueio de consentimento: rep que RECUSOU os termos
- * (`terms_rejected_at`) não recebe nada — vale igual pra proativo e pra
- * comando externo (LGPD).
+ * Fora as travas, o consentimento: só recebe comando externo o corretor que
+ * ACEITOU os termos. Recusa explícita barra, e pendência também — enquanto o
+ * aceite não existe, o processor lê o próximo inbound como resposta ao gate
+ * de termos, e um "ok" arrancado por um aviso não solicitado viraria
+ * consentimento que a pessoa nunca deu (LGPD). Detalhe na trava 4.
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -35,7 +37,18 @@ export interface AuthorizedTarget {
 
 export type AuthorizeResult =
   | { ok: true; target: AuthorizedTarget }
-  | { ok: false; httpStatus: number; reason: string; detail: string };
+  | {
+      ok: false;
+      httpStatus: number;
+      reason: string;
+      detail: string;
+      /**
+       * Motivo PRECISO pra auditoria, quando a resposta pública é de
+       * propósito mais vaga que a verdade. Ver `telefone_fora_da_location`.
+       */
+      auditReason?: string;
+      auditDetail?: string;
+    };
 
 /**
  * Segredo compartilhado. Enquanto `SPARKBOT_COMMAND_SECRET` não existir no
@@ -91,6 +104,24 @@ export function repAtendeLocation(
   return vinculos.some((u) => u?.location_id === locationId);
 }
 
+/**
+ * Candidatos de telefone pra achar o corretor.
+ *
+ * `generatePhoneCandidates` cobre o que a IA coleta de lead, mas erra o
+ * formato que um humano digita num custom data: `17867717077` (11 dígitos,
+ * EUA com DDI e sem o `+`) vira `+5517867717077` e `+117867717077` — nenhum
+ * dos dois existe. O corretor certo nunca era achado, e a resposta ainda
+ * culpava a location errada. Aqui a gente ACRESCENTA o E.164 literal dos
+ * dígitos; ampliar a BUSCA é seguro porque quem autoriza é a regra da
+ * location logo abaixo, não o formato do número.
+ */
+export function candidatosDeTelefone(bruto: string): string[] {
+  const base = generatePhoneCandidates(bruto);
+  const digitos = (bruto || "").replace(/\D/g, "");
+  const extra = digitos.length >= 10 && digitos.length <= 15 ? [`+${digitos}`] : [];
+  return [...new Set([...base, ...extra])];
+}
+
 export async function authorizeCommand(args: {
   locationId: string;
   sendTo: string;
@@ -136,7 +167,7 @@ export async function authorizeCommand(args: {
   // ── Trava 3: telefone pertence a um corretor DESTA location ───────────
   // Mesma escada de candidatos do identify (BR/US sem `+`), pra o Pedro
   // poder digitar o número como quiser no custom data.
-  const candidatos = generatePhoneCandidates(args.sendTo);
+  const candidatos = candidatosDeTelefone(args.sendTo);
   if (candidatos.length === 0) {
     return {
       ok: false,
@@ -161,28 +192,30 @@ export async function authorizeCommand(args: {
   }
 
   const encontrados = (reps || []) as RepIdentity[];
-  if (encontrados.length === 0) {
-    return {
-      ok: false,
-      httpStatus: 404,
-      reason: "corretor_nao_encontrado",
-      detail:
-        `Nenhum corretor cadastrado com o telefone ${args.sendTo}. ` +
-        "O corretor precisa ter conversado com o SparkBot pelo menos uma vez.",
-    };
-  }
 
   // Com mais de um candidato de telefone (mesmo número lido como BR e como
   // US), prioriza quem atende a location — é a leitura correta do número.
   const rep = encontrados.find((r) => repAtendeLocation(r, args.locationId));
   if (!rep) {
+    // "não existe corretor nenhum com esse número" e "existe, mas é de outra
+    // conta" são a MESMA resposta de propósito. Separadas, o endpoint vira um
+    // oráculo: com um location id (que não é segredo) dava pra varrer números
+    // e descobrir quem é corretor em QUALQUER conta da plataforma. O motivo
+    // preciso vai pra auditoria, que só nós lemos.
+    const existeNoutraConta = encontrados.length > 0;
     return {
       ok: false,
       httpStatus: 403,
       reason: "telefone_fora_da_location",
       detail:
-        `O telefone ${args.sendTo} existe, mas esse corretor não atende a sub-conta ` +
-        `${location.location_name || args.locationId}. Um comando só pode avisar corretor da própria conta.`,
+        `O telefone ${args.sendTo} não é de um corretor desta sub-conta. Pode ser número ` +
+        "errado, ou pode ser corretor de outra conta — de qualquer forma, um comando só " +
+        "avisa corretor da própria conta. Se o número está certo, confere se essa pessoa " +
+        "já conversou com o SparkBot pelo menos uma vez.",
+      auditReason: existeNoutraConta ? "telefone_de_outra_location" : "corretor_nao_encontrado",
+      auditDetail: existeNoutraConta
+        ? `Telefone existe (${encontrados.length} cadastro(s)) mas nenhum atende ${args.locationId}.`
+        : `Nenhum rep_identities com o telefone ${args.sendTo}.`,
     };
   }
 
@@ -195,6 +228,34 @@ export async function authorizeCommand(args: {
       detail:
         `O corretor ${rep.display_name || args.sendTo} recusou os termos do SparkBot — ` +
         "não recebe mensagem automática enquanto isso não for revertido.",
+    };
+  }
+
+  /**
+   * Termos PENDENTES também barram — e o motivo não é formalidade.
+   *
+   * Enquanto `terms_accepted_at` é nulo, o processor trata o próximo inbound
+   * do corretor como resposta AO GATE DE TERMOS, e `parseTermsResponse`
+   * aceita "ok", "beleza", "blz" e até "👍" como consentimento. Ou seja: um
+   * comando externo não solicitado ("Lead novo do João, liga agora") que
+   * arranque um "ok" do corretor registraria o aceite dos termos que ele
+   * nunca leu. Consentimento fabricado por uma mensagem que a pessoa não
+   * pediu é exatamente o que a LGPD não admite.
+   *
+   * Todo o resto do proativo já exige o aceite (`task-reminders.ts` checa
+   * `terms_accepted_at` junto com o inbound). Medido antes de ligar: dos 247
+   * reps, só 2 têm opt-in de WhatsApp sem aceite registrado — o custo do
+   * bloqueio é ínfimo perto de gravar aceite falso.
+   */
+  if (!rep.terms_accepted_at) {
+    return {
+      ok: false,
+      httpStatus: 403,
+      reason: "termos_pendentes",
+      detail:
+        `O corretor ${rep.display_name || args.sendTo} ainda não aceitou os termos do SparkBot. ` +
+        "Ele precisa responder o aceite numa conversa que ELE começou — até lá, comando externo " +
+        "não vale como consentimento.",
     };
   }
 
