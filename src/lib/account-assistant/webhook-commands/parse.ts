@@ -94,6 +94,22 @@ function pick(body: Record<string, unknown>, ...chaves: string[]): string | null
   return null;
 }
 
+/**
+ * O valor CRU de uma das chaves quando ele é um merge field não resolvido.
+ * Serve só pra melhorar o erro: "faltou o destino" e "o destino veio
+ * `{{contact.phone}}`" são problemas diferentes na cabeça de quem montou a
+ * automação, e o segundo tem conserto óbvio.
+ */
+function mergeFieldBruto(body: Record<string, unknown>, ...chaves: string[]): string | null {
+  for (const escopo of escoposDeBusca(body)) {
+    for (const chave of chaves) {
+      const v = escopo[chave];
+      if (typeof v === "string" && isMergeFieldNaoResolvido(v.trim())) return v.trim();
+    }
+  }
+  return null;
+}
+
 /** Normaliza pra comparação: minúsculo, sem acento, sem separador. */
 function chaveNormalizada(valor: string): string {
   return valor
@@ -269,13 +285,17 @@ export function parseWebhookCommand(bodyRaw: unknown): ParseResult {
 
   const sendTo = pick(body, ...CAMPOS_DESTINO);
   if (!sendTo) {
+    const naoResolvido = mergeFieldBruto(body, ...CAMPOS_DESTINO);
     return {
       ok: false,
       reason: "destino_ausente",
-      detail:
-        "Faltou o telefone de destino. Adiciona um campo `send_to` no custom data com o número do corretor " +
-        "que deve receber. Repara que o campo `phone` do payload é o do LEAD — por segurança ele nunca é " +
-        "usado como destino.",
+      detail: naoResolvido
+        ? `O destino chegou como "${naoResolvido}": o merge field do Spark Leads não foi resolvido, ` +
+          "então não existe telefone nenhum aí. Confere se o campo existe no contato ou põe o número " +
+          "do corretor direto no `send_to`."
+        : "Faltou o telefone de destino. Adiciona um campo `send_to` no custom data com o número do corretor " +
+          "que deve receber. Repara que o campo `phone` do payload é o do LEAD — por segurança ele nunca é " +
+          "usado como destino.",
     };
   }
 

@@ -91,7 +91,12 @@ async function resolveSparkbotAgent(
   return null;
 }
 
-/** Quantos comandos já foram ENTREGUES pra esse corretor nas últimas 24h. */
+/**
+ * Quantos comandos já foram entregues (ou estão sendo entregues agora) pra
+ * esse corretor nas últimas 24h. `running` conta: um workflow em loop dispara
+ * mais rápido do que o prompt termina, e contar só `sent` deixaria a rajada
+ * inteira passar pelo cap.
+ */
 export async function contarEnviosRecentes(repId: string): Promise<number> {
   const supabase = createAdminClient();
   const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -99,7 +104,7 @@ export async function contarEnviosRecentes(repId: string): Promise<number> {
     .from("sparkbot_webhook_commands")
     .select("id", { count: "exact", head: true })
     .eq("rep_id", repId)
-    .eq("status", "sent")
+    .in("status", ["sent", "running"])
     .gte("received_at", desde);
   // Erro de consulta não pode virar bloqueio: fail-open com log (o cap é
   // proteção contra loop, não gate de segurança — quem barra é o authorize).

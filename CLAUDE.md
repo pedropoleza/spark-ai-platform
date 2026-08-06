@@ -261,6 +261,33 @@ O briefing das 8h (`assistant_proactive_rules` name **"Resumo matinal"**, cron `
 - **Diagnóstico:** `npx tsx scripts/diag-briefing.ts +1XXXXXXXXXX` mostra o que o briefing daquele rep enxerga hoje e se seria enviado ou descartado. Testes: `test-cron-due.ts` (23/23) e `test-briefing-prompt.ts` (22/22).
 - ⚠️ O handler do briefing é escolhido por **comparação literal `rule.name === "Resumo matinal"`**. Renomear a regra no banco desliga o briefing em silêncio.
 
+### Comandos via webhook do Spark Leads (H71, Pedro 2026-08-05) — flag OFF por padrão
+
+`POST /api/webhooks/sparkbot-command` — uma automação de dentro de uma sub-conta manda ordem pro SparkBot. Flag `SPARKBOT_WEBHOOK_COMMANDS_ENABLED` (kill switch: automação em loop se desliga sem deploy). Código em `src/lib/account-assistant/webhook-commands/` (parse · authorize · run · audit · config).
+
+**Dois modos**, escolhidos por `message_type`:
+- **`notification`** — o texto vai CRU pro WhatsApp do corretor. Síncrono (~2s): o resultado sai na resposta HTTP, pra dar pra testar de fora.
+- **`prompt`** — o SparkBot responde e a RESPOSTA dele vai. Responde **202** e termina em `waitUntil()`; a prova é a mensagem no WhatsApp + a linha na auditoria. Só recebe tools de risco `safe` (derivadas do `TOOL_REGISTRY`, não lista fixa): **comando roda sem humano no circuito** — não existe "Confirma?" pra responder no meio de um turno disparado por automação. Se o Pedro pedir ação de escrita, o caminho é um campo explícito (`allow_actions`), NÃO afrouxar o default.
+
+**Três travas, nesta ordem:**
+1. **Segredo** (`SPARKBOT_COMMAND_SECRET`, header `x-spark-secret` ou campo `secret`, comparação de tempo constante). Enquanto a env não existir, a checagem passa.
+2. **Location conhecida** — tem que existir em `locations`.
+3. **Telefone dentro da location** — `repAtendeLocation` (por `active_location_id` ou por `ghl_users[].location_id`). Uma conta só avisa corretor DELA.
+
+⚠️ **`location_id` NÃO é segredo** — aparece em URL de painel, link de formulário e print de tela. Ele diz *de qual conta veio*, nunca *quem mandou é autorizado*. Quem trava de verdade é a combinação com a regra 3.
+
+⚠️ **O campo `phone` do payload NUNCA é o destino.** O payload de automação do Spark Leads traz `phone` = telefone do **LEAD**; aceitar isso mandaria o aviso do corretor pro cliente dele. `CAMPOS_DESTINO` em `parse.ts` exclui `phone`/`contact_phone` **de propósito** — é a armadilha mais fácil de reintroduzir por "simpatia" com o payload. Protegida pela seção 1 de `scripts/test-webhook-command.ts`.
+
+⚠️ **Merge field não resolvido conta como AUSÊNCIA.** O Spark Leads entrega `{{contact.phone}}` literal quando não consegue resolver; o erro diz isso com todas as letras.
+
+**Quiet hours e silence gate NÃO se aplicam** (quem escolheu a hora foi a automação da própria conta; engolir aviso pedido explicitamente repetiria o erro do "inbound MUDO"). No lugar, trava quantitativa: `SPARKBOT_COMMAND_DAILY_CAP` (default 50/corretor/24h) + rate limit de 30/min por location **antes** da auditoria (é isso que impede loop de inflar a tabela).
+
+**Claim antes de executar** (`claimComando`): a linha nasce `status='running'` ANTES da execução e `running` conta como duplicata. Sem isso, dois webhooks gêmeos no modo prompt (~20s de LLM) não se enxergam — os dois procuram uma linha que nenhum gravou ainda — e o corretor recebe duas mensagens. Reforçado por índice único parcial `(location_id, request_id) WHERE request_id IS NOT NULL AND status IN ('running','sent')`; o predicado de status é o que deixa um comando **rejeitado ou falho** ser reenviado com o mesmo `request_id`.
+
+**Códigos HTTP de propósito** (não 200-pra-tudo — o log de workflow do Spark Leads mostra o status, então o erro fica visível lá dentro): 400 payload · 401 segredo · 403 location/telefone/termos · 404 corretor · 429 rate/cap · 503 flag off ou falha de consulta.
+
+Auditoria: `sparkbot_webhook_commands` (migration `20260806041954_...`), **inclusive as tentativas rejeitadas, com o motivo legível**. Testes: `npx tsx scripts/test-webhook-command.ts` (57/57).
+
 ### SparkBot Cron Guards (Pedro 2026-05-05)
 - pg_cron `sparkbot-proactive` agendado a cada 30s com:
   - `pg_try_advisory_xact_lock(8675309)` — **NÃO serializa as execuções do endpoint** (corrigido 2026-06-10; ver NB-7 em `docs/DECISIONS.md`). O lock é xact-scoped e `net.http_post` (pg_net) é ASSÍNCRONO: o tick só ENFILEIRA o POST e a transação commita (soltando o lock) em ms, antes do Vercel receber o request. Só evita que duas transações de DISPARO do MESMO instante co-enfileirem em paralelo — cenário ~impossível no schedule de 30s. A idempotência real (anti double-execution sob ticks sobrepostos, já que `maxDuration=60` > 30s) vem dos **claims atômicos CAS por linha nos runners**: `fireScheduledReminders` (`UPDATE … SET status='running' WHERE status='pending'`, `reminder-runner.ts`) e `claimBulkRecipients` (RPC `claim_bulk_recipients` com `FOR UPDATE SKIP LOCKED`, ou fallback `UPDATE … SET status='sending' WHERE status='pending'`, `bulk-message-runner.ts`). **NÃO remover esses claims achando que o lock cobre** — o lock fica só como guard barato.
