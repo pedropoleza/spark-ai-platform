@@ -267,18 +267,21 @@ O briefing das 8h (`assistant_proactive_rules` name **"Resumo matinal"**, cron `
 
 **Dois modos**, escolhidos por `message_type`:
 - **`notification`** — o texto vai CRU pro WhatsApp do corretor. Síncrono (~2s): o resultado sai na resposta HTTP, pra dar pra testar de fora.
-- **`prompt`** — o SparkBot responde e a RESPOSTA dele vai. Responde **202** e termina em `waitUntil()`; a prova é a mensagem no WhatsApp + a linha na auditoria. Só recebe tools de risco `safe` (derivadas do `TOOL_REGISTRY`, não lista fixa): **comando roda sem humano no circuito** — não existe "Confirma?" pra responder no meio de um turno disparado por automação. Se o Pedro pedir ação de escrita, o caminho é um campo explícito (`allow_actions`), NÃO afrouxar o default.
+- **`prompt`** — o SparkBot responde e a RESPOSTA dele vai. Responde **202** e termina em `waitUntil()`; a prova é a mensagem no WhatsApp + a linha na auditoria. Só recebe tools de CONSULTA — **comando roda sem humano no circuito**, não existe "Confirma?" pra responder no meio de um turno disparado por automação. ⚠️ `risk: "safe"` **não** quer dizer read-only, quer dizer "não pede confirmação": 9 das 48 tools safe escrevem, incluindo `schedule_reminder` (que agenda WhatsApp futuro). O filtro é fail-closed pelo **verbo do nome** (`get_`/`list_`/`search_`/`count_`/`describe_`/`query_`/`analyze_`/`recap_`/`preview_`) → 37 tools. Se o Pedro pedir ação de escrita, o caminho é um campo explícito (`allow_actions`), NÃO afrouxar o default.
 
-**Três travas, nesta ordem:**
+**Quatro travas, nesta ordem:**
 1. **Segredo** (`SPARKBOT_COMMAND_SECRET`, header `x-spark-secret` ou campo `secret`, comparação de tempo constante). Enquanto a env não existir, a checagem passa.
 2. **Location conhecida** — tem que existir em `locations`.
-3. **Telefone dentro da location** — `repAtendeLocation` (por `active_location_id` ou por `ghl_users[].location_id`). Uma conta só avisa corretor DELA.
+3. **Telefone dentro da location** — `repAtendeLocation` (por `active_location_id` ou por `ghl_users[].location_id`). Uma conta só avisa corretor DELA. A resposta pública NÃO distingue "não existe corretor com esse número" de "existe, mas é de outra conta" — separadas, o endpoint viraria oráculo pra varrer números da plataforma inteira. O motivo exato vai pra `reason` na auditoria.
+4. **Consentimento** — `terms_rejected_at` barra, e `terms_accepted_at` nulo **também**: enquanto não há aceite, o processor lê o próximo inbound como resposta ao gate de termos e `parseTermsResponse` aceita "ok"/"beleza"/"👍". Um aviso não solicitado que arrancasse um "ok" registraria consentimento que a pessoa nunca deu.
 
 ⚠️ **`location_id` NÃO é segredo** — aparece em URL de painel, link de formulário e print de tela. Ele diz *de qual conta veio*, nunca *quem mandou é autorizado*. Quem trava de verdade é a combinação com a regra 3.
 
 ⚠️ **O campo `phone` do payload NUNCA é o destino.** O payload de automação do Spark Leads traz `phone` = telefone do **LEAD**; aceitar isso mandaria o aviso do corretor pro cliente dele. `CAMPOS_DESTINO` em `parse.ts` exclui `phone`/`contact_phone` **de propósito** — é a armadilha mais fácil de reintroduzir por "simpatia" com o payload. Protegida pela seção 1 de `scripts/test-webhook-command.ts`.
 
-⚠️ **Merge field não resolvido conta como AUSÊNCIA.** O Spark Leads entrega `{{contact.phone}}` literal quando não consegue resolver; o erro diz isso com todas as letras.
+⚠️ **Merge field não resolvido conta como AUSÊNCIA** — e no DESTINO ele **aborta**, não cai pro próximo apelido: escolher outro campo ali seria adivinhar pra quem mandar.
+
+⚠️ **`customData` ganha da RAIZ, sempre.** A raiz do payload é montada pela plataforma e usa nomes genéricos pras coisas dela — `message`, `body` e `text` lá em cima costumam ser o texto que o LEAD escreveu, e no modo prompt esse texto vira INSTRUÇÃO pro LLM. Por isso `text`/`texto`/`body`/`content`/`conteudo`/`type`/`to` só valem DENTRO do customData. Pelo mesmo motivo `message`/`mensagem` **não** são sinônimos de tipo (o payload usa `type: "message"` pro tipo do EVENTO). Apelidos sem colisão pra quem precisar: `sparkbot_message`, `command_message`, `sparkbot_prompt`.
 
 **Quiet hours e silence gate NÃO se aplicam** (quem escolheu a hora foi a automação da própria conta; engolir aviso pedido explicitamente repetiria o erro do "inbound MUDO"). No lugar, trava quantitativa: `SPARKBOT_COMMAND_DAILY_CAP` (default 50/corretor/24h) + rate limit de 30/min por location **antes** da auditoria (é isso que impede loop de inflar a tabela).
 
@@ -286,7 +289,13 @@ O briefing das 8h (`assistant_proactive_rules` name **"Resumo matinal"**, cron `
 
 **Códigos HTTP de propósito** (não 200-pra-tudo — o log de workflow do Spark Leads mostra o status, então o erro fica visível lá dentro): 400 payload · 401 segredo · 403 location/telefone/termos · 404 corretor · 429 rate/cap · 503 flag off ou falha de consulta.
 
-Auditoria: `sparkbot_webhook_commands` (migration `20260806041954_...`), **inclusive as tentativas rejeitadas, com o motivo legível**. Testes: `npx tsx scripts/test-webhook-command.ts` (57/57).
+⚠️ **`deliverProactiveMessage` devolve `ok: true` mesmo quando o WhatsApp falhou** — a verdade está em `via`/`error`. `statusDaEntrega()` traduz: `sent` só com `via='whatsapp'`, ou com `blocked_no_optin` (entrega no painel de propósito, gate anti-ban). Nunca use `dr.ok` pra decidir se chegou.
+
+⚠️ **Chave de dedupe própria** (`DeliveryOptions.dedupeKey`): o default do delivery é `fonte:rep:minuto`, e com a fonte constante dois comandos distintos pro mesmo corretor no mesmo minuto viravam um só.
+
+Auditoria: `sparkbot_webhook_commands` (migration `20260806041954_...`), **inclusive as tentativas rejeitadas, com o motivo legível**. Testes: `npx tsx scripts/test-webhook-command.ts` (96/96).
+
+**Limitação conhecida:** o modo prompt roda em `waitUntil()` sob `maxDuration=60`. Turno de LLM que passe disso é morto no meio e a linha fica `running` — o TTL de 5min libera a vaga, o cap não conta mais ela, e sai sinal de admin. Se virar rotina, é sinal de que o prompt está grande demais.
 
 ### SparkBot Cron Guards (Pedro 2026-05-05)
 - pg_cron `sparkbot-proactive` agendado a cada 30s com:

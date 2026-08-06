@@ -323,20 +323,34 @@ export async function POST(request: NextRequest) {
     // difícil de acreditar depois ("o webhook devolveu 200 e nada chegou") —
     // se ele não deixar registro, é o único desfecho da rota que some sem
     // rastro. A linha nasce 'duplicate', que NÃO ocupa vaga de idempotência.
+    //
+    // E o texto tem que dizer a verdade: o índice barra PRA SEMPRE (não dá pra
+    // pôr `now()` num predicado de índice), então essa colisão tanto pode ser
+    // o webhook gêmeo de agora quanto um reprocesso do MESMO evento dias
+    // depois. Dizer "no mesmo instante" nos dois casos mandaria o Pedro
+    // procurar no lugar errado.
+    const b = claim.bloqueio;
+    const quando = b?.received_at ? new Date(b.received_at) : null;
+    const recente = quando ? Date.now() - quando.getTime() < 5 * 60_000 : true;
+    const detalhe = recente
+      ? "Outro webhook com o mesmo request_id reservou a execução agora há pouco. Não reenviei."
+      : `Este request_id já foi processado em ${quando?.toISOString()} (situação: ${b?.status}). ` +
+        "Como ele é a chave de idempotência, o mesmo id nunca reenvia — se a intenção era mandar " +
+        "de novo, use um request_id novo (ou tire o campo).";
     const id = await registrarComando({
       ...comRep,
       status: "duplicate",
-      reason: "duplicata_na_corrida",
-      detail:
-        "Outro webhook idêntico reservou a execução no mesmo instante " +
-        "(conflito no índice de request_id). Não reenviei.",
+      reason: recente ? "duplicata_na_corrida" : "request_id_ja_usado",
+      detail: detalhe,
+      metadata: b ? { bloqueado_por: b.id, status_anterior: b.status, em: b.received_at } : {},
     });
     return NextResponse.json(
       {
         ok: true,
         duplicate: true,
         audit_id: id,
-        detail: "Um comando idêntico entrou em execução no mesmo instante. Não reenviei.",
+        ...(b ? { duplicate_of: b.id } : {}),
+        detail: detalhe,
       },
       { status: 200 },
     );
