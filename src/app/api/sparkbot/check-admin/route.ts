@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     const locationId: string = String(body.locationId || "").trim();
     const companyId: string = String(body.companyId || "").trim();
     const locationName: string | undefined = body.locationName ? String(body.locationName) : undefined;
-    const timezone: string | undefined = body.timezone ? String(body.timezone) : undefined;
+    // body.timezone (fuso do NAVEGADOR) deliberadamente ignorado — ver upsertLocation abaixo.
 
     if (!userId || !locationId || !companyId) {
       return json({ ok: false, reason: "missing_params" }, { status: 400 });
@@ -66,9 +66,16 @@ export async function POST(request: NextRequest) {
       return json({ ok: false, reason: "no_app" });
     }
 
-    // Garante que a location existe (pra Sparkbot poder operar nela)
+    // Garante que a location existe (pra Sparkbot poder operar nela).
+    // Fix bug observado em prod 2026-08-06 (caso Richify/Yolanda): o `timezone`
+    // do body vem do NAVEGADOR de quem abriu o widget, não da location. Um user
+    // brasileiro abrindo o painel de uma conta no Texas gravava
+    // `America/Sao_Paulo` em `locations.timezone` — que é a fonte do fuso dos
+    // agentes lead-facing (slots, data/hora do prompt, offset do
+    // book_appointment) → reunião marcada 2h errada. O fuso autoritativo é o que
+    // o SSO busca em `GET /locations/{id}` da API do GHL; aqui não passamos mais.
     try {
-      await upsertLocation(locationId, companyId, locationName, timezone);
+      await upsertLocation(locationId, companyId, locationName);
     } catch (err) {
       // Não bloqueia — location já pode existir; valida via GHL ainda
       console.warn("[check-admin] upsertLocation falhou (não-fatal):", err instanceof Error ? err.message : err);

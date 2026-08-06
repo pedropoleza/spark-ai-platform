@@ -161,6 +161,11 @@ export const updateAgentConfigSchema = z.object({
     behavior: z.enum(["stop_and_handoff", "continue_until_appointment"]).optional(),
     handoff_message: z.string().optional(),
     allow_reschedule: z.boolean().optional(),
+    // Fix bug observado em prod 2026-08-06 (caso Richify): faltava aqui, e o
+    // z.object() STRIPA chave desconhecida. Como a rota persiste o body VALIDADO
+    // e a UI manda `post_booking` inteiro, todo save do painel apagava o gate de
+    // "pedir contato antes de agendar" (caso Marina) direto no banco.
+    require_contact_before_booking: z.boolean().optional(),
   }).nullable().optional(),
   timezone_config: z.object({
     use_location_default: z.boolean().optional(),

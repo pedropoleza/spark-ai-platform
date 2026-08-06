@@ -83,7 +83,13 @@ function cleanTargetingRules(tr: TargetingRules): TargetingRules {
 }
 
 interface Quiet { enabled: boolean; start: string; end: string; timezone?: string; days?: number[] }
-interface PostBooking { behavior: "stop_and_handoff" | "continue_until_appointment"; handoff_message: string; allow_reschedule: boolean }
+// `require_contact_before_booking` (caso Marina) não tem controle na UI, mas
+// PRECISA sobreviver ao save: o PUT manda `post_booking` inteiro, então uma
+// chave ausente do seed apagava a config no banco.
+// Fix bug observado em prod 2026-08-06 (caso Richify): sem isso, o cliente abrir
+// o painel e salvar qualquer coisa desligava o gate de "pedir telefone antes de
+// agendar" em silêncio.
+interface PostBooking { behavior: "stop_and_handoff" | "continue_until_appointment"; handoff_message: string; allow_reschedule: boolean; require_contact_before_booking?: boolean }
 interface Notif { on_qualified: boolean; on_booked: boolean; on_handed_off: boolean; on_error: boolean; notification_email: string }
 interface Outreach { tag_filter: { tags: string[]; match: "any" | "all" }; rate_per_hour: number; daily_cap: number; respect_working_hours: boolean; opening_message: string }
 
@@ -179,7 +185,7 @@ function makeSeed(c: Record<string, any>): Editable {
       min_delay_minutes: Math.max(1, num(fu.min_delay_minutes, 10)), max_delay_minutes: Math.max(1, num(fu.max_delay_minutes, 10080)),
       custom_prompt: str(fu.custom_prompt), manual_steps: Array.isArray(fu.manual_steps) ? fu.manual_steps : [],
     },
-    post_booking: { behavior: pb.behavior === "continue_until_appointment" ? "continue_until_appointment" : "stop_and_handoff", handoff_message: str(pb.handoff_message), allow_reschedule: bool(pb.allow_reschedule, true) },
+    post_booking: { behavior: pb.behavior === "continue_until_appointment" ? "continue_until_appointment" : "stop_and_handoff", handoff_message: str(pb.handoff_message), allow_reschedule: bool(pb.allow_reschedule, true), require_contact_before_booking: pb.require_contact_before_booking === true },
     specialist_name: str(c.specialist_name),
     preferred_time_slot: str(c.preferred_time_slot),
     calendar_id: str(c.calendar_id),
@@ -792,8 +798,16 @@ function CatIdentity({ e, patch, isLead }: { e: Editable; patch: (p: Partial<Edi
 // era display read-only mas não no PUT — mentira de UI). Lista de modelos
 // curada (Sonnet/Haiku/GPT-4.1) bate com o dispatcher do `llm-client.ts`.
 // "padrão" = vazio = dispatcher escolhe pelo template do agente.
+// Fix bug observado em prod 2026-08-06 (caso Richify/Yolanda): os agentes de
+// cliente novo são aplicados com `claude-sonnet-5`, que NÃO estava nessa lista.
+// Um <select> com value fora das options renderiza vazio — o cliente abria a Cat
+// "Tom & estilo", salvava qualquer coisa e o modelo virava "" (padrão),
+// rebaixando o agente sem ninguém perceber. Manter em sincronia com AI_MODELS de
+// `@/lib/utils/constants`.
 const AI_MODELS: { value: string; label: string }[] = [
   { value: "", label: "Padrão (gerenciado pelo Spark)" },
+  { value: "claude-sonnet-5", label: "Claude Sonnet 5 (recomendado)" },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
   { value: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5 (qualidade)" },
   { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (rápido)" },
   { value: "gpt-4.1-mini", label: "GPT-4.1 mini" },

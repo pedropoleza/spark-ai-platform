@@ -4,10 +4,14 @@ export const GHL_API_VERSION = "2021-07-28";
 
 export const AI_MODELS = [
   // === Claude (Anthropic) ===
-  // Sonnet 4.6 é o padrão (Pedro 2026-05-05) — qualidade muito acima de
-  // GPT em stress tests (review 2026-04-28: GPT 6/7 falhas de prompt-following,
-  // Claude 0/7). Custo +20% mas vale.
-  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (recomendado)", description: "$3/$15 por 1M tokens", provider: "anthropic" },
+  // Sonnet 5 é o que os agentes de cliente novo usam desde 2026-07 (Alves Cury,
+  // Raquel, Richify). Faltava na lista → o <select> da UI renderizava vazio e
+  // um save do cliente rebaixava o agente pro padrão (fix 2026-08-06).
+  { value: "claude-sonnet-5", label: "Claude Sonnet 5 (recomendado)", description: "$3/$15 por 1M tokens", provider: "anthropic" },
+  // Sonnet 4.6 foi o padrão anterior (Pedro 2026-05-05) — qualidade muito acima
+  // de GPT em stress tests (review 2026-04-28: GPT 6/7 falhas de
+  // prompt-following, Claude 0/7).
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", description: "$3/$15 por 1M tokens", provider: "anthropic" },
   { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (rápido e barato)", description: "$0.80/$4 por 1M tokens", provider: "anthropic" },
   // === OpenAI GPT === (manter pra legado/fallback — usuário pode escolher)
   { value: "gpt-4.1-mini", label: "GPT-4.1 Mini", description: "$0.40/$1.60 por 1M tokens", provider: "openai" },

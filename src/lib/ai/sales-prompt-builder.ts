@@ -531,7 +531,11 @@ Nunca use: "assistente", "assistente virtual", "IA", "bot", "robô", "automatiza
   } else if (p?.language === "es") {
     langInst = "\nResponda sempre em espanhol.";
   } else {
-    langInst = "\nResponda em portugues. Se o lead escrever em ingles, responda em ingles. Adapte-se ao idioma do lead.";
+    // Fix bug observado em prod 2026-08-06 (caso Richify): a regra citava só
+    // ingles, então lead em ESPANHOL era respondido em portugues mesmo com o
+    // custom_instructions do agente mandando acompanhar o idioma. Generalizado.
+    langInst =
+      "\nResponda em portugues por padrao. Se a ULTIMA mensagem do lead estiver em outro idioma (ingles, espanhol), responda inteiramente NESSE idioma. Adapte-se sempre ao idioma do lead.";
   }
 
   return `## IDENTIDADE

@@ -96,7 +96,19 @@ function isUserAdmin(user: GHLUser): boolean {
 }
 
 /**
- * Faz upsert da location no banco
+ * Faz upsert da location no banco.
+ *
+ * Fix bug observado em prod 2026-08-06 (caso Richify/Yolanda): antes esse upsert
+ * escrevia SEMPRE `location_name` e `timezone`, caindo nos fallbacks
+ * (`null` / `America/New_York`) quando o caller não passava. Como o
+ * `/api/agents/ui-auth` chama SEM esses args, TODA abertura do painel apagava o
+ * nome real e resetava o fuso que o SSO tinha buscado da API do GHL.
+ * Isso não é cosmético: `locations.timezone` é a fonte do fuso dos agentes
+ * lead-facing (formata os slots livres, a data/hora do prompt e o offset ISO do
+ * `book_appointment`) — fuso errado = reunião marcada na hora errada.
+ * Agora só escrevemos a coluna quando o caller REALMENTE tem o valor; omitir a
+ * chave faz o PostgREST não tocar nela no ON CONFLICT (e no INSERT vale o
+ * DEFAULT da migration 00001).
  */
 export async function upsertLocation(
   locationId: string,
@@ -106,18 +118,17 @@ export async function upsertLocation(
 ) {
   const supabase = createAdminClient();
 
+  const payload: Record<string, unknown> = {
+    location_id: locationId,
+    company_id: companyId,
+    updated_at: new Date().toISOString(),
+  };
+  if (locationName) payload.location_name = locationName;
+  if (timezone) payload.timezone = timezone;
+
   const { error } = await supabase
     .from("locations")
-    .upsert(
-      {
-        location_id: locationId,
-        company_id: companyId,
-        location_name: locationName || null,
-        timezone: timezone || "America/New_York",
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "location_id" }
-    );
+    .upsert(payload, { onConflict: "location_id" });
 
   if (error) {
     console.error("Erro ao upsert location:", error);
