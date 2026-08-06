@@ -295,6 +295,12 @@ O briefing das 8h (`assistant_proactive_rules` name **"Resumo matinal"**, cron `
 
 Auditoria: `sparkbot_webhook_commands` (migration `20260806041954_...`), **inclusive as tentativas rejeitadas, com o motivo legível**. Testes: `npx tsx scripts/test-webhook-command.ts` (96/96).
 
+⚠️ **Existe um guia OPERACIONAL fora deste repo** — `spark-os/_planning/SPARKBOT_COMANDOS_WEBHOOK_GUIA.pdf` (fonte `.html` do lado), escrito pro Gabriel montar a ação de webhook dentro das contas. Ele documenta o CONTRATO visível de fora: nomes de campo, códigos HTTP, limites, pré-requisitos do corretor. **Mexeu em qualquer uma dessas coisas aqui, atualiza o PDF junto** — senão o guia envelhece calado e quem monta nas contas segue a versão velha. O playbook (`spark-os/_planning/SPARK_PLAYBOOK.md` §5.8) aponta pra ele.
+
+O que conta como "mexer no contrato": nome/apelido de campo aceito, sinônimo de `message_type`, código HTTP de qualquer caminho, valor de cap ou rate limit, e as regras de quem pode receber (opt-in de WhatsApp, aceite de termos, corretor da própria location). Mudança só interna — refatorar, trocar consulta, ajustar log — não precisa tocar o PDF.
+
+*(A separação entre os dois repos é temporária: a integração AI platform ↔ Spark OS está planejada em `spark-os/_planning/AI_PLATFORM_OS_INTEGRATION_GUIDE.md`. Quando ela acontecer, esta doc e o guia devem virar um só.)*
+
 **Limitação conhecida:** o modo prompt roda em `waitUntil()` sob `maxDuration=60`. Turno de LLM que passe disso é morto no meio e a linha fica `running` — o TTL de 5min libera a vaga, o cap não conta mais ela, e sai sinal de admin. Se virar rotina, é sinal de que o prompt está grande demais.
 
 ### SparkBot Cron Guards (Pedro 2026-05-05)
