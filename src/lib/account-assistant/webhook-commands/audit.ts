@@ -8,7 +8,8 @@
  *
  * Idempotência (o webhook do Spark Leads reentrega em cima de timeout, e
  * automação com dois caminhos dispara duas vezes):
- *   - com `request_id` explícito → janela de 24h;
+ *   - com `request_id` explícito → o índice único barra PRA SEMPRE (predicado
+ *     de índice não pode usar `now()`); o SELECT de atalho olha 24h;
  *   - sem ele → impressão digital do conteúdo, janela curta (60s default).
  * A janela curta é de propósito: dois avisos idênticos com 10 minutos de
  * intervalo podem ser intencionais; dois no mesmo segundo, não.
@@ -218,10 +219,45 @@ export async function registrarComando(entry: AuditEntry): Promise<string | null
   return (await inserirLinha(entry)).id;
 }
 
+export interface LinhaBloqueadora {
+  id: string;
+  status: string | null;
+  received_at: string | null;
+}
+
 export type ClaimResult =
   | { ok: true; id: string | null }
-  /** Outro webhook idêntico chegou ao claim primeiro — não executar. */
-  | { ok: false; duplicate: true };
+  /** Outro webhook idêntico já tem a vaga — não executar. */
+  | { ok: false; duplicate: true; bloqueio: LinhaBloqueadora | null };
+
+/**
+ * Quem está segurando a vaga deste `request_id` — SEM janela de tempo.
+ *
+ * O índice único parcial não tem recorte temporal (predicado de índice não
+ * pode chamar `now()`), então ele barra pra sempre; o SELECT de duplicata só
+ * enxerga 24h. Quando as duas visões discordam — típico de um reprocesso do
+ * workflow dias depois com o mesmo id — o INSERT estoura 23505 e, sem esta
+ * consulta, a rota responderia "comando idêntico entrou em execução no mesmo
+ * instante", o que é simplesmente falso e manda o Pedro procurar no lugar
+ * errado.
+ */
+async function acharBloqueio(entry: AuditEntry): Promise<LinhaBloqueadora | null> {
+  if (!entry.locationId || !entry.requestId) return null;
+  try {
+    const supabase = createAdminClient();
+    const { data } = await supabase
+      .from("sparkbot_webhook_commands")
+      .select("id, status, received_at")
+      .eq("location_id", entry.locationId)
+      .eq("request_id", entry.requestId)
+      .in("status", STATUS_OCUPADOS as unknown as string[])
+      .order("received_at", { ascending: false })
+      .limit(1);
+    return (data ?? [])[0] ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Reserva a execução ANTES de rodar o comando.
@@ -250,10 +286,14 @@ export async function claimComando(entry: AuditEntry): Promise<ClaimResult> {
   // `running` ÓRFÃ de uma lambda que morreu no meio. Se for órfã e a gente
   // desistir aqui, aquele `request_id` fica queimado pra sempre e o comando
   // nunca mais entrega, devolvendo 200 como se estivesse tudo certo.
-  if (!(await liberarRunningOrfa(entry))) return { ok: false, duplicate: true };
+  if (!(await liberarRunningOrfa(entry))) {
+    return { ok: false, duplicate: true, bloqueio: await acharBloqueio(entry) };
+  }
 
   const segunda = await inserirLinha({ ...entry, status: "running" });
-  if (segunda.codigo === "23505") return { ok: false, duplicate: true };
+  if (segunda.codigo === "23505") {
+    return { ok: false, duplicate: true, bloqueio: await acharBloqueio(entry) };
+  }
   return { ok: true, id: segunda.id };
 }
 

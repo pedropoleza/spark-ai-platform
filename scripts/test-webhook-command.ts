@@ -401,12 +401,16 @@ ok(
 ok(
   "toda liberada começa por verbo de leitura",
   liberadas.every((n) =>
-    ["get_", "list_", "search_", "count_", "describe_", "query_", "analyze_", "recap_", "preview_", "present_"].some(
+    ["get_", "list_", "search_", "count_", "describe_", "query_", "analyze_", "recap_", "preview_"].some(
       (v) => n.startsWith(v),
     ),
   ),
-  liberadas.filter((n) => !/^(get|list|search|count|describe|query|analyze|recap|preview|present)_/.test(n)).join(", "),
+  liberadas.filter((n) => !/^(get|list|search|count|describe|query|analyze|recap|preview)_/.test(n)).join(", "),
 );
+// `present_options` abre menu numerado e espera o rep escolher. Num comando
+// disparado por automação não há ninguém pra escolher — o modelo abriria um
+// menu que morre sozinho.
+ok("`present_options` NÃO está liberada", !liberadas.includes("present_options"));
 ok("a lista não ficou vazia por acidente", liberadas.length >= 30, `${liberadas.length} tools`);
 
 // ── 9. Precedência de escopo: o customData ganha da raiz ────────────────────
