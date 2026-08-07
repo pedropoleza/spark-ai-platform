@@ -11,7 +11,52 @@ import { compressHistory } from "@/lib/ai/history-compressor";
 import { executeActions } from "@/lib/ai/action-executor";
 import { evaluateLeadSilence } from "@/lib/ai/lead-silence";
 import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
-import { transcribeAudioFromUrl } from "@/lib/ai/audio-transcriber";
+import { transcribeAudioFromUrlVerbose } from "@/lib/ai/audio-transcriber";
+
+/**
+ * Rótulo cru de nota de voz que o WhatsApp/Spark Leads coloca no corpo da
+ * mensagem quando o lead manda áudio. Ex: "🎤 Mensagem de voz (0:17)".
+ * (O formato antigo "[audio: url]" já era tratado na agregação.)
+ */
+const ROTULO_NOTA_DE_VOZ = /^\s*(?:🎤\s*)?(?:mensagem de voz|voice message|audio message)\b.*$/gim;
+
+/**
+ * Troca o rótulo cru do áudio pelo TEXTO dele dentro do corpo agregado do turno.
+ *
+ * Fix bug observado em prod 2026-08-06 (caso Márcia/Five Star): a transcrição
+ * era anexada DEPOIS do rótulo, então o modelo lia "🎤 Mensagem de voz (0:17)"
+ * na primeira linha e respondia "não deu pra ouvir seu áudio" mesmo com o texto
+ * logo abaixo. Substituindo o rótulo, o modelo nunca vê um marcador de áudio
+ * ilegível pra um áudio que a gente REALMENTE transcreveu.
+ *
+ * Tenta primeiro casar o corpo exato daquela mensagem; se ele não estiver no
+ * agregado (mensagem só-mídia, corpo vazio, formato novo), cai pro regex do
+ * rótulo; se ainda assim não achar, anexa (comportamento antigo, nunca perde
+ * a transcrição). Puro e exportado pra teste.
+ */
+export function substituirRotuloDeAudio(
+  corpoAgregado: string,
+  corpoDaMensagem: string,
+  substituto: string,
+): string {
+  const agregado = corpoAgregado || "";
+  const cru = (corpoDaMensagem || "").trim();
+
+  if (cru && agregado.includes(cru)) {
+    return agregado.replace(cru, substituto);
+  }
+  ROTULO_NOTA_DE_VOZ.lastIndex = 0;
+  if (ROTULO_NOTA_DE_VOZ.test(agregado)) {
+    ROTULO_NOTA_DE_VOZ.lastIndex = 0;
+    let trocou = false;
+    return agregado.replace(ROTULO_NOTA_DE_VOZ, () => {
+      if (trocou) return "";
+      trocou = true;
+      return substituto;
+    });
+  }
+  return [agregado, substituto].filter(Boolean).join("\n");
+}
 import { processMediaAttachments, type ProcessedMedia } from "@/lib/ai/media-processor";
 import type { MediaAttachment } from "@/lib/ai/media-extractor";
 import { scheduleFollowUps } from "@/lib/queue/follow-up-scheduler";
@@ -679,9 +724,22 @@ async function processGroup(
       }
       if (audioUrl) {
         console.log(`[Processor] Transcribing audio (toggle ON): ${audioUrl.substring(0, 80)}`);
-        const result = await transcribeAudioFromUrl(audioUrl, audioMime);
-        if (result?.text) {
-          group.aggregatedBody = [group.aggregatedBody, result.text].filter(Boolean).join("\n");
+        // Fix bug observado em prod 2026-08-06 (caso Márcia/Five Star, "a IA
+        // continua falando que não consegue ouvir áudio"): a transcrição era
+        // ANEXADA embaixo do corpo agregado, que continuava com o rótulo cru do
+        // WhatsApp ("🎤 Mensagem de voz (0:17)"). O modelo lia a primeira linha
+        // como "tem um áudio aqui que eu não acesso" e respondia "não deu pra
+        // ouvir seu áudio" com a transcrição logo abaixo. Agora o rótulo é
+        // SUBSTITUÍDO pela transcrição — e quando ela falha de verdade, o texto
+        // diz isso explicitamente, pra a recusa ser honesta em vez de aleatória.
+        const verbose = await transcribeAudioFromUrlVerbose(audioUrl, audioMime);
+        if (verbose.ok && verbose.result.text) {
+          const result = verbose.result;
+          group.aggregatedBody = substituirRotuloDeAudio(
+            group.aggregatedBody,
+            msg.message_body,
+            `[Áudio do contato, transcrito] ${result.text}`,
+          );
 
           // C3: cobrar Whisper. Antes deste fix, áudio rodava 100% free.
           if (locationForBilling && result.audio_seconds > 0) {
@@ -701,6 +759,13 @@ async function processGroup(
               console.error("[Processor] Whisper billing failed (non-blocking):", e instanceof Error ? e.message : e);
             }
           }
+        } else if (!verbose.ok) {
+          console.warn(`[Processor] Transcrição falhou (${verbose.code}): ${verbose.message.slice(0, 160)}`);
+          group.aggregatedBody = substituirRotuloDeAudio(
+            group.aggregatedBody,
+            msg.message_body,
+            "[O contato mandou um áudio que eu não consegui abrir. Peça com naturalidade pra ele repetir por escrito ou reenviar o áudio.]",
+          );
         }
       }
     }

@@ -17,6 +17,7 @@ import { reportError } from "@/lib/admin-signals/report-error";
 import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import { executeReactionRules } from "@/lib/ai/reaction-engine";
 import type { FollowUpConfig, AutomationRule } from "@/types/agent";
+import { ajustarParaJanela } from "@/lib/queue/janela-de-envio";
 
 /**
  * Nº de follow-ups que a sequência planejou: `ai_auto` usa max_attempts (cap 10,
@@ -196,6 +197,19 @@ export async function scheduleFollowUps(params: {
       return;
     }
 
+    // Fix bug observado em prod 2026-08-06 (caso Márcia, (862) 371-8457: "a
+    // mensagem foi meia-noite"): o toque proativo era agendado como agora+delay,
+    // sem checagem de horário. Agora todo `scheduled_at` é empurrado pra dentro
+    // da janela de envio no fuso REAL da conta. Fuso vem de `locations` (mesma
+    // fonte do resto do agendamento) e cai em ET se a location sumir.
+    const { data: locFuso } = await supabase
+      .from("locations")
+      .select("timezone")
+      .eq("location_id", locationId)
+      .maybeSingle();
+    const tzConta = (locFuso?.timezone as string) || "America/New_York";
+    const emJanela = (d: Date) => ajustarParaJanela(d, tzConta).toISOString();
+
     // Monta a sequência nova e insere em LOTE (era N inserts separados).
     const rows: Array<Record<string, unknown>> = [];
     if (followUpConfig.mode === "manual") {
@@ -207,7 +221,7 @@ export async function scheduleFollowUps(params: {
           contact_id: contactId,
           conversation_id: conversationId,
           attempt_number: i + 1,
-          scheduled_at: new Date(Date.now() + step.delay_minutes * 60 * 1000).toISOString(),
+          scheduled_at: emJanela(new Date(Date.now() + step.delay_minutes * 60 * 1000)),
           custom_message: step.custom_message || null,
           status: "pending",
         });
@@ -234,7 +248,7 @@ export async function scheduleFollowUps(params: {
           contact_id: contactId,
           conversation_id: conversationId,
           attempt_number: i + 1,
-          scheduled_at: new Date(Date.now() + totalDelayMinutes * 60 * 1000).toISOString(),
+          scheduled_at: emJanela(new Date(Date.now() + totalDelayMinutes * 60 * 1000)),
           status: "pending",
         });
       }

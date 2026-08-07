@@ -601,20 +601,16 @@ async function executeAction(
         }
 
         if (targetApptId) {
-          try {
-            await client.delete(`/calendars/events/appointments/${targetApptId}`);
-          } catch {
-            // Se falhar ao deletar, continua e cria novo
-          }
-          await client.post("/calendars/events/appointments", {
+          const modo = await moveAppointment(client, {
+            appointmentId: targetApptId,
             calendarId: ctx.calendarId || targetCalId,
             locationId: ctx.locationId,
             contactId: ctx.contactId,
             startTime: action.start_time,
             title: targetTitle || "Reunião reagendada",
-            // H65: sem campo de local = Spark Leads aplica o default do calendário.
-            ...(resolveMeetingLocation(ctx.calendarId || targetCalId) ?? {}),
           });
+          (action as unknown as Record<string, unknown>).mode = modo;
+          (action as unknown as Record<string, unknown>).rescheduled_appointment_id = targetApptId;
         } else {
           // Ultra-review 2026-08-03: sem appointment existente E sem calendário
           // conhecido, o POST saía com calendarId "" → 422 do GHL (3× na semana,
@@ -724,6 +720,88 @@ export function pickFutureAppointment<
     if (match) return match;
   }
   return futures[0];
+}
+
+/** Cliente mínimo que o `moveAppointment` precisa (permite teste sem rede). */
+export interface AppointmentMoverClient {
+  put(path: string, body: unknown): Promise<unknown>;
+  delete(path: string): Promise<unknown>;
+  post(path: string, body: unknown): Promise<unknown>;
+  get(path: string, params?: Record<string, string>): Promise<unknown>;
+}
+
+/**
+ * Move uma reunião existente para outro horário SEM nunca deixar duas no ar.
+ *
+ * Fix bug observado em prod 2026-08-06 (caso Anne +1 508 665-7240, reportado
+ * pela Márcia em 05/08 13:28: "o sistema agendou ela para hoje E amanhã"):
+ * o reagendamento era delete-then-create com o DELETE dentro de um `catch {}`
+ * VAZIO — quando o delete falhava, o código seguia e criava assim mesmo,
+ * deixando o contato com DOIS appointments. Foi exatamente o que a forense
+ * mostrou: o reschedule das 08:42 criou o de 06/08 e o de 05/08 continuou vivo
+ * (só foi cancelado à mão às 09:21). O lead recebe confirmação e lembrete da
+ * reunião fantasma, e quem cancela uma continua vendo a outra disparar.
+ *
+ * Ordem agora:
+ *   1. PUT no appointment existente — move preservando o ID. Uma reunião só,
+ *      sem janela de duplicata e sem re-disparar a automação de "novo
+ *      agendamento" do Spark Leads (que era o "mandou a confirmação de novo").
+ *   2. Só se o PUT falhar, cai no delete-then-create legado.
+ *   3. Se o DELETE falhar, ABORTA. Duplicata silenciosa é pior que erro
+ *      honesto: o guard H58 traduz o throw numa mensagem pro lead e a reunião
+ *      original continua de pé.
+ */
+export async function moveAppointment(
+  client: AppointmentMoverClient,
+  p: {
+    appointmentId: string;
+    calendarId?: string;
+    locationId: string;
+    contactId: string;
+    startTime: string;
+    title: string;
+  },
+): Promise<"reschedule_update" | "reschedule_recreate"> {
+  const meetingLoc = resolveMeetingLocation(p.calendarId);
+  try {
+    await client.put(`/calendars/events/appointments/${p.appointmentId}`, {
+      calendarId: p.calendarId,
+      startTime: p.startTime,
+      title: p.title,
+      ...(meetingLoc ?? {}),
+    });
+    // H65: o UPDATE do Spark Leads nunca regenera o local; cura se nasceu vazio.
+    if (!meetingLoc && p.calendarId) {
+      await healMissingMeetingLocation(
+        client as unknown as GHLClient,
+        p.appointmentId,
+        p.calendarId,
+      ).catch(() => {});
+    }
+    return "reschedule_update";
+  } catch (putErr) {
+    console.warn(
+      `[RescheduleAppointment] PUT falhou (${putErr instanceof Error ? putErr.message : putErr}) — caindo pro delete+create`,
+    );
+  }
+
+  try {
+    await client.delete(`/calendars/events/appointments/${p.appointmentId}`);
+  } catch (delErr) {
+    throw new Error(
+      `horario indisponivel: nao consegui remover a reuniao anterior (${p.appointmentId}) — reagendamento abortado pra nao duplicar: ${delErr instanceof Error ? delErr.message : delErr}`,
+    );
+  }
+  await client.post("/calendars/events/appointments", {
+    calendarId: p.calendarId,
+    locationId: p.locationId,
+    contactId: p.contactId,
+    startTime: p.startTime,
+    title: p.title,
+    // H65: sem campo de local = Spark Leads aplica o default do calendário.
+    ...(meetingLoc ?? {}),
+  });
+  return "reschedule_recreate";
 }
 
 async function findExistingAppointment(
