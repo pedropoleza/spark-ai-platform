@@ -17,8 +17,18 @@ import {
 } from "@/lib/ghl/operations";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { stripSilenceMarker, type LeadSilenceDecision } from "@/lib/ai/lead-silence";
-import { validateBookingSlot, isSameSlotInstant, coerceStartTimeToTimezone } from "@/lib/ai/slot-guard";
+import {
+  validateBookingSlot,
+  isSameSlotInstant,
+  coerceStartTimeToTimezone,
+  normalizeCrmStartTime,
+} from "@/lib/ai/slot-guard";
 import { buscaBookingRecente } from "@/lib/ai/booking-recente";
+
+/** Fuso + slots do turno, pra ler os horários que o Spark Leads devolve sem offset (H73). */
+function zonaDoTurno(ctx: ExecutionContext): { timeZone?: string; offeredSlotsIso?: string[] } {
+  return { timeZone: ctx.timezone, offeredSlotsIso: ctx.offeredSlotsIso };
+}
 
 /**
  * H66: corrige o OFFSET do start_time emitido pelo LLM pro fuso da conta ANTES
@@ -509,7 +519,7 @@ async function executeAction(
           // turno anterior → sucesso idempotente (sem erro falso, sem tocar o
           // calendário). Fetch extra SÓ no caminho que já ia falhar. v2:
           // preferStartTime resolve contato com 2+ appointments futuros.
-          const dup = await findExistingAppointment(client, ctx.contactId, ctx.locationId, action.start_time).catch(() => null);
+          const dup = await findExistingAppointment(client, ctx.contactId, ctx.locationId, action.start_time, zonaDoTurno(ctx)).catch(() => null);
           if (dup && isSameSlotInstant(dup.startTime, action.start_time)) {
             (action as unknown as Record<string, unknown>).mode = "idempotent_noop";
             (action as unknown as Record<string, unknown>).existing_appointment_id = dup.id;
@@ -524,7 +534,7 @@ async function executeAction(
       // default do calendário (H65, ver meeting-location.ts).
       const meetingLoc = resolveMeetingLocation(bookCalendarId);
       if (bookCalendarId && action.start_time) {
-        const existingApptForBook = await findExistingAppointment(client, ctx.contactId, ctx.locationId);
+        const existingApptForBook = await findExistingAppointment(client, ctx.contactId, ctx.locationId, undefined, zonaDoTurno(ctx));
 
         if (existingApptForBook) {
           // Tentar atualizar o existente primeiro (evita duplicatas)
@@ -624,7 +634,7 @@ async function executeAction(
           // LLM passou appointment_id, o noop SÓ vale se a duplicata é AQUELE
           // appointment — sem isso, "mover B pro horário do A" virava falso
           // sucesso sem mover nada.
-          const dup = await findExistingAppointment(client, ctx.contactId, ctx.locationId, action.start_time).catch(() => null);
+          const dup = await findExistingAppointment(client, ctx.contactId, ctx.locationId, action.start_time, zonaDoTurno(ctx)).catch(() => null);
           const sameTarget = !action.appointment_id || (dup && String(dup.id) === String(action.appointment_id));
           if (dup && sameTarget && isSameSlotInstant(dup.startTime, action.start_time)) {
             (action as unknown as Record<string, unknown>).mode = "idempotent_noop";
@@ -646,7 +656,7 @@ async function executeAction(
           targetCalId = action.calendar_id ? String(action.calendar_id) : undefined;
           targetTitle = action.title ? String(action.title) : undefined;
         } else {
-          const existingAppt = await findExistingAppointment(client, ctx.contactId, ctx.locationId);
+          const existingAppt = await findExistingAppointment(client, ctx.contactId, ctx.locationId, undefined, zonaDoTurno(ctx));
           if (existingAppt) {
             targetApptId = existingAppt.id;
             targetCalId = existingAppt.calendarId;
@@ -863,6 +873,7 @@ async function findExistingAppointment(
   contactId: string,
   locationId: string,
   preferStartTime?: string,
+  zona?: { timeZone?: string; offeredSlotsIso?: string[] },
 ): Promise<{ id: string; title: string; calendarId: string; startTime: string } | null> {
   // H6 (review 2026-04-28): GHL API tem formato variável; antes deste fix,
   // chamávamos os 3 endpoints SEQUENCIAL (~400ms p99 desnecessário em
@@ -883,15 +894,24 @@ async function findExistingAppointment(
   const results = await Promise.allSettled(
     endpoints.map(async (ep) => {
       const result = await client.get<Record<string, unknown>>(ep.path, ep.params);
-      const items: AppointmentItem[] =
+      const brutos: AppointmentItem[] =
         (result.events as AppointmentItem[]) ||
         (result.appointments as AppointmentItem[]) ||
         (result.data as AppointmentItem[]) ||
         [];
 
-      console.log(`[FindAppointment] ${ep.path} returned ${items.length} items`);
+      console.log(`[FindAppointment] ${ep.path} returned ${brutos.length} items`);
 
-      if (items.length === 0) return null;
+      if (brutos.length === 0) return null;
+      // H73: o Spark Leads devolve "2026-08-12 18:00:00" (wall-clock, sem
+      // offset). Sem normalizar, `Date.parse` usa o fuso do processo — UTC em
+      // produção — e a comparação com o ISO do booking errava por horas: era
+      // por isso que a duplicata nunca era reconhecida e o lead ouvia "não
+      // consegui agendar" depois de já estar agendado. Ver normalizeCrmStartTime.
+      const items = brutos.map((it) => ({
+        ...it,
+        startTime: normalizeCrmStartTime(it.startTime, zona?.timeZone || "America/New_York", zona?.offeredSlotsIso),
+      }));
       return pickFutureAppointment(items, now, preferStartTime);
     }),
   );

@@ -14,6 +14,8 @@ import {
   coerceStartTimeToTimezone,
   offsetMinutesFromSlots,
   validateBookingSlot,
+  normalizeCrmStartTime,
+  isSameSlotInstant,
 } from "@/lib/ai/slot-guard";
 import { achaBookingNoMesmoInstante } from "@/lib/ai/booking-recente";
 import {
@@ -111,6 +113,31 @@ console.log("\n5) Flip-flop: re-emissão do mesmo booking é noop, não erro");
   );
   ok("start_time ausente → null", achaBookingNoMesmoInstante(log, undefined, agora) === null);
   ok("log vazio → null", achaBookingNoMesmoInstante([], "2026-08-07T19:00:00-04:00", agora) === null);
+}
+
+console.log("\n5b) Horário que o CRM devolve SEM offset (o que matava o escape em prod)");
+{
+  const slots = ["2026-08-12T18:00:00-04:00", "2026-08-12T19:00:00-04:00"];
+  const doCrm = normalizeCrmStartTime("2026-08-12 18:00:00", "America/New_York", slots);
+  ok("wall-clock sem offset vira ISO do calendário", doCrm === "2026-08-12T18:00:00-04:00", doCrm);
+  ok(
+    "e aí bate com o booking (era o caso Nery)",
+    isSameSlotInstant(doCrm, "2026-08-12T18:00:00-04:00"),
+  );
+  ok(
+    "(regressão) sem normalizar, em UTC daria 4h de diferença",
+    !isSameSlotInstant(
+      new Date(Date.parse("2026-08-12T18:00:00Z")).toISOString(),
+      "2026-08-12T18:00:00-04:00",
+    ),
+  );
+  ok(
+    "valor que JÁ tem offset passa intocado",
+    normalizeCrmStartTime("2026-08-12T18:00:00-04:00", "America/New_York", slots) === "2026-08-12T18:00:00-04:00",
+  );
+  ok("Z também passa intocado", normalizeCrmStartTime("2026-08-12T22:00:00Z", "America/New_York") === "2026-08-12T22:00:00Z");
+  ok("vazio não quebra", normalizeCrmStartTime("", "America/New_York") === "");
+  ok("lixo passa intocado", normalizeCrmStartTime("amanhã", "America/New_York") === "amanhã");
 }
 
 console.log("\n6) Áudio no histórico nunca vira 'não consigo ouvir'");

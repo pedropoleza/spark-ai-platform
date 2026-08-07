@@ -148,6 +148,33 @@ export function offsetMinutesFromSlots(
 }
 
 /**
+ * Normaliza o `startTime` que o Spark Leads devolve nos appointments.
+ *
+ * Fix bug observado em prod 2026-08-07 (H73, caso Nery/Five Star): o endpoint
+ * `/contacts/{id}/appointments` devolve wall-clock SEM offset e sem "T"
+ * ("2026-08-12 18:00:00"), no fuso do calendário. `Date.parse` disso usa o fuso
+ * do PROCESSO — que em produção é UTC — então comparar com o ISO do booking
+ * ("...T18:00:00-04:00") dava 4h de diferença e o check de duplicata NUNCA
+ * batia. Era esse o motivo de o escape idempotente (H61) nunca ter salvado um
+ * caso real: ele não estava sutilmente errado, estava morto em prod. Localmente
+ * passava despercebido porque a máquina do dev roda em ET.
+ *
+ * Valor com offset explícito (ou Z) passa intocado. PURO.
+ */
+export function normalizeCrmStartTime(
+  raw: string | undefined | null,
+  timeZone: string,
+  offeredSlotsIso?: string[],
+): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return s;
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/.test(s)) return s;
+  const comT = s.includes("T") ? s : s.replace(" ", "T");
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(comT)) return s;
+  return coerceStartTimeToTimezone(comT, timeZone, offeredSlotsIso).iso;
+}
+
+/**
  * Dois ISO representam o MESMO instante (tolerância 60s, igual ao guard)?
  * H61 (caso Adriana/Five Star 2026-08-01): usado pra reconhecer que o slot
  * "indisponível" é o appointment que o PRÓPRIO contato acabou de ganhar num
