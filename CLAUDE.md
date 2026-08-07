@@ -261,6 +261,43 @@ O briefing das 8h (`assistant_proactive_rules` name **"Resumo matinal"**, cron `
 - **Diagnóstico:** `npx tsx scripts/diag-briefing.ts +1XXXXXXXXXX` mostra o que o briefing daquele rep enxerga hoje e se seria enviado ou descartado. Testes: `test-cron-due.ts` (23/23) e `test-briefing-prompt.ts` (22/22).
 - ⚠️ O handler do briefing é escolhido por **comparação literal `rule.name === "Resumo matinal"`**. Renomear a regra no banco desliga o briefing em silêncio.
 
+### O fuso da conta vem do Spark Leads, nunca do navegador (H72, 2026-08-07) — corrigido
+
+**`locations.timezone` é a fonte do fuso dos agentes lead-facing** e alimenta as DUAS pontas do agendamento: o rótulo do horário que o lead LÊ no chat (`formatAvailableSlots`) e o offset ISO que vai pro CRM (`coerceStartTimeToTimezone`/H66). Fuso errado não desloca a reunião — desloca **só uma das pontas**, então a IA fala 7PM e grava 6PM.
+
+Achado em 43 de 160 locations (38 com `America/Sao_Paulo` em conta dos EUA, 5 com agente ativo marcando errado). A causa não estava no agendamento: `/api/sparkbot/check-admin` gravava o fuso do **NAVEGADOR** de quem abrisse o widget dentro do Spark Leads, e `/api/agents/ui-auth` resetava pra `America/New_York` porque o `upsertLocation` escrevia sempre nome+fuso, caindo nos fallbacks quando o caller não passava.
+
+- **Fonte autoritativa é `GET /locations/{id}` da API** (é o que o SSO já fazia). Nenhum caminho que venha do browser pode escrever fuso.
+- **Ao mexer em `upsertLocation`, nunca escreva coluna que o caller não passou** — omitir a chave faz o PostgREST não tocar nela no ON CONFLICT.
+- **O H66 coage o horário PRO fuso da conta.** Se o fuso da conta estiver errado, ele reproduz o erro com fidelidade — foi por isso que o "corrigido em definitivo" de 04/08 não se sustentou. Antes de debugar deslocamento de horário, **confira o fuso da location primeiro**.
+- Auditoria repetível: `scripts/audit-fuso-locations.ts` (compara banco × API). Correção: `scripts/fix-fuso-locations.ts --apply`.
+
+### Reagendar é UPDATE, nunca delete-then-create (H72, 2026-08-07) — corrigido
+
+`reschedule_appointment` fazia DELETE seguido de POST com o delete dentro de um `catch {}` **vazio**: delete falhando, criava assim mesmo e o contato ficava com **duas** reuniões (caso Anne, "o sistema agendou ela para hoje E amanhã"). Reunião fantasma dispara confirmação e lembrete pro cliente final, e quem cancela uma continua vendo a outra.
+
+- Agora é **PUT** no appointment existente (preserva o ID → uma reunião só, sem janela de duplicata e **sem redisparar a automação de "novo agendamento"** do Spark Leads).
+- Delete+create só como fallback do PUT recusado; e **se o DELETE falhar, ABORTA**. Duplicata silenciosa é pior que erro honesto — o guard H58 traduz o throw numa mensagem pro lead e a reunião original fica de pé.
+- Lógica em `moveAppointment()` (exportada) porque `executeActions` instancia o próprio `GHLClient`. Teste: `scripts/test-reschedule-sem-duplicata.ts`.
+
+⚠️ **Nosso motor NÃO manda lembrete nem confirmação de reunião** — isso vem de workflow dentro da conta do cliente. Reclamação de "cancelei e continuou mandando" só é nossa se a IA tiver recriado o appointment; confira o `execution_log` do contato antes de assumir.
+
+⚠️ **Nenhum dos dois repos escreve configuração de calendário** (duração, intervalo, horários) — só cria appointment e lê free-slots. "A duração do calendário mudou sozinha" nunca é o nosso código.
+
+### Áudio: substitua o rótulo, não anexe a transcrição (H72, 2026-08-07) — corrigido
+
+"A IA fala que não consegue ouvir áudio" **não era o áudio**: chega com URL válida em 145 de 146 casos e transcreve certo. A transcrição era ANEXADA por baixo e o corpo agregado continuava começando com o rótulo cru do WhatsApp (`🎤 Mensagem de voz (0:17)`) — o modelo lia a primeira linha como "tem um áudio aqui que eu não acesso" e se desculpava **com a transcrição logo abaixo**.
+
+- `substituirRotuloDeAudio` TROCA o rótulo pelo texto. O modelo nunca vê marcador de áudio ilegível pra áudio que a gente transcreveu.
+- Transcrição que falha de verdade vira texto explícito ("não consegui abrir, peça por escrito") — a recusa passa a ser honesta em vez de aleatória.
+- Regra geral: **placeholder de mídia que sobrevive ao processamento vira alucinação de incapacidade.** Se processou, tire o rótulo.
+
+### Follow-up tem janela de envio (H72, 2026-08-07) — corrigido
+
+`scheduleFollowUps` gravava `scheduled_at = agora + delay` **sem checagem nenhuma de horário** — lead que parava de responder às 23h recebia o toque de 1h à meia-noite. `janela-de-envio.ts` empurra todo agendamento pra 08h-21h **no fuso da conta**, avançando em passos de 1h (imune a DST, offset quebrado e virada de ano). Vale pra frota.
+
+Não confundir com `working_hours` do agente: aquele decide se a IA RESPONDE a um inbound (e quando ligado ADIA a resposta, o que não queremos em conta de anúncio). A janela aqui é só pro toque PROATIVO, que ninguém pediu.
+
 ### Comandos via webhook do Spark Leads (H71, Pedro 2026-08-05) — flag OFF por padrão
 
 `POST /api/webhooks/sparkbot-command` — uma automação de dentro de uma sub-conta manda ordem pro SparkBot. Flag `SPARKBOT_WEBHOOK_COMMANDS_ENABLED` (kill switch: automação em loop se desliga sem deploy). Código em `src/lib/account-assistant/webhook-commands/` (parse · authorize · run · audit · config).
@@ -325,6 +362,9 @@ O que conta como "mexer no contrato": nome/apelido de campo aceito, sinônimo de
 - ❌ **Condição de disparo instantânea dentro de laço serial** (H69, 2026-08-05): o cron do Resumo matinal perguntava "é AGORA o minuto do cron?" a cada rep, mas atendia os reps em série gastando segundos com cada um. A pergunta virava falsa no meio da fila e a metade de baixo perdia o dia — todo dia, sempre os mesmos, sem erro em log nenhum. Regra: **gatilho agendado se pergunta com JANELA** ("já venceu e ainda não entreguei"), nunca com igualdade de instante; e todo laço dentro de um tick precisa de **orçamento de tempo** com o resto ficando pro tick seguinte. Sintoma pra procurar: o `max()` do timestamp de execução nunca passa de X — se o teto é o fim do minuto, não é coincidência, é a janela.
 - ❌ **Recuperar trabalho antigo pegando o ARQUIVO inteiro** (H70, 2026-08-05): ao trazer de volta código parado numa branch ou no working tree, `git checkout <branch> -- <arquivo>` parece atalho e é armadilha — aquela cópia é de uma data anterior e leva junto a AUSÊNCIA de tudo que entrou no main desde então. Concretamente, nesta onda: a cópia de 01/07 do `action-executor`/`queue-processor`/`follow-up-scheduler` reverteria H66 (coerção de fuso no booking), H58 (slot-guard), H61 (contexto de anúncio), o piso de 1h do 1º follow-up e a captura de `messageId` do anti-eco F52; a da branch `sparkbot` reverteria o H68 (trava weekday↔data) e a resolução de funil por nome. Regra: **extrair o TRECHO, aplicar sobre o main de hoje, e listar o que a cópia antiga removeria** (`git diff origin/main:<arq> <ref>:<arq>` e ler as linhas `-`). Se o diff tem remoção que você não sabe explicar, não é recuperação — é regressão.
 - ❌ **Achar que o trabalho está em produção porque foi commitado** (Pedro 2026-08-05): a suspeita era deploy direto na Vercel; a apuração mostrou que o Vercel **já está ligado no GitHub** (todo deploy de prod carrega o alias `-git-main-`). O vazamento real é outro: commit que fica em branch/worktree paralelo e nunca vira merge (`git for-each-ref refs/heads` + `git rev-list --count origin/main..<branch>` acha), e **migration aplicada à mão via MCP sem arquivo no repo** (o banco tinha 00124–00129 aplicadas sem existir arquivo nenhum; o repo pula 00119/00120). Antes de dar um recurso como entregue, conferir as duas coisas — "commitado" ≠ "no main" ≠ "deployado".
+- ❌ **Coagir um valor PRA uma configuração sem conferir se a configuração está certa** (H72, 2026-08-07): o H66 corrige o offset do agendamento "pro fuso da conta" — e o fuso da conta estava errado no banco em 43 de 160 locations. A coerção reproduziu o erro com fidelidade, a gente respondeu "corrigido em definitivo" e voltou 24h depois. Regra: **antes de normalizar contra uma fonte, valide a fonte.** Sintoma pra procurar: o fix é logicamente correto, os testes passam, e o cliente reclama do mesmo jeito.
+- ❌ **`catch {}` vazio antes de uma escrita** (H72, 2026-08-07): o reagendamento fazia `try { delete } catch {}` e seguia pro `create`. Delete falhando = duas reuniões no calendário do cliente final, em silêncio. Se o passo A é pré-condição do passo B, **falha em A tem que impedir B** — erro honesto é melhor que estado duplicado. O comentário no lugar do tratamento (`// Se falhar ao deletar, continua e cria novo`) documentava o bug como se fosse decisão.
+- ❌ **Deixar placeholder de mídia sobreviver ao processamento** (H72, 2026-08-07): a transcrição do áudio era anexada por baixo e o rótulo `🎤 Mensagem de voz (0:17)` continuava na primeira linha — o modelo respondia "não deu pra ouvir seu áudio" COM a transcrição logo abaixo. Pareceu bug de transcrição por semanas e não era: 145 de 146 áudios chegavam íntegros. **Processou a mídia? Tire o rótulo.** Placeholder que sobra vira alucinação de incapacidade.
 - ❌ **Refazer fluxo sem gate de paridade vs legado** (Pedro 2026-05-28): quando refazermos qualquer fluxo (wizard de criação, página de config, dashboard, embed), **NÃO marcar a task como done sem antes:**
   1. Listar literalmente os CAMPOS/AÇÕES do flow anterior (legado ou equivalente — `detail-view` se for criação, `/dashboard/*` se for /hub, etc).
   2. Listar os do flow novo.
