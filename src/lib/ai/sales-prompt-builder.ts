@@ -128,10 +128,18 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     const dataContext = ctx.config.data_fields.length > 0
       ? buildDataFieldsTemplateSection(ctx)
       : "";
+    // H73 (achado no caso Márcia 2026-08-07): o override substituía
+    // `custom_instructions` em SILÊNCIO — o campo continuava preenchido e
+    // visível na UI valendo NADA. Na conta da Márcia isso deixou morta uma
+    // página inteira de regras escritas depois de uma queixa dela (como pedir
+    // os 4 dados numa mensagem só). Agora as duas coisas entram: o override é
+    // a voz, as instruções da conta vêm DEPOIS, como ajuste fino.
+    const regrasDaConta = (ctx.config.custom_instructions || "").trim();
     return [
       buildMetaInstruction(),
       buildIdentitySection(ctx),                   // identidade humana/IA
       ctx.config.system_prompt_override,
+      regrasDaConta ? `# REGRAS DESTA CONTA (valem sobre o texto acima)\n${regrasDaConta}` : "",
       buildKnowledgeBaseSection(ctx),              // KB
       buildRecruitmentSection(ctx),                // anti-vendas em recruitment
       buildBookingSection(ctx),                    // ISO 8601 + tz rules

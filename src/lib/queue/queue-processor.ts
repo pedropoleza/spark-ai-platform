@@ -20,6 +20,38 @@ import { transcribeAudioFromUrlVerbose } from "@/lib/ai/audio-transcriber";
  */
 const ROTULO_NOTA_DE_VOZ = /^\s*(?:🎤\s*)?(?:mensagem de voz|voice message|audio message)\b.*$/gim;
 
+/** Marca o texto de um áudio que a gente REALMENTE transcreveu (turno e histórico). */
+export const PREFIXO_AUDIO_TRANSCRITO = "[Áudio do contato, transcrito]";
+
+/**
+ * O que o histórico mostra pra um áudio cujo texto a gente não tem mais (áudio
+ * anterior ao fix, ou transcrição que falhou na época).
+ *
+ * H73: NUNCA deixar o rótulo cru do WhatsApp ("🎤 Mensagem de voz (0:17)")
+ * chegar ao modelo. Ele lê isso como "existe uma mídia aqui que eu não
+ * consigo abrir" e passa a se declarar incapaz de ouvir áudio — inclusive no
+ * turno atual, que veio transcrito. Placeholder de mídia que sobrevive ao
+ * processamento vira alucinação de incapacidade (mesma lição do H72).
+ */
+export const AUDIO_SEM_TEXTO_NO_HISTORICO =
+  "[áudio que o contato mandou antes — já foi tratado na hora; não comente que não consegue ouvir]";
+
+/**
+ * Limpa rótulos crus de nota de voz do histórico que volta do Spark Leads,
+ * trocando pelo texto transcrito quando a gente tem (mapa por id da mensagem)
+ * e pelo aviso neutro quando não tem. PURO, exportado pra teste.
+ */
+export function limpaRotulosDeAudioNoHistorico(
+  body: string,
+  transcricao?: string,
+): string {
+  if (transcricao) return transcricao;
+  ROTULO_NOTA_DE_VOZ.lastIndex = 0;
+  if (!ROTULO_NOTA_DE_VOZ.test(body)) return body;
+  ROTULO_NOTA_DE_VOZ.lastIndex = 0;
+  return body.replace(ROTULO_NOTA_DE_VOZ, AUDIO_SEM_TEXTO_NO_HISTORICO).trim();
+}
+
 /**
  * Troca o rótulo cru do áudio pelo TEXTO dele dentro do corpo agregado do turno.
  *
@@ -735,11 +767,29 @@ async function processGroup(
         const verbose = await transcribeAudioFromUrlVerbose(audioUrl, audioMime);
         if (verbose.ok && verbose.result.text) {
           const result = verbose.result;
+          const textoTranscrito = `${PREFIXO_AUDIO_TRANSCRITO} ${result.text}`;
           group.aggregatedBody = substituirRotuloDeAudio(
             group.aggregatedBody,
             msg.message_body,
-            `[Áudio do contato, transcrito] ${result.text}`,
+            textoTranscrito,
           );
+
+          // Fix bug observado em prod 2026-08-07 (H73, caso Márcia): o fix de
+          // 06/08 tirou o rótulo do TURNO, mas o histórico que volta do Spark
+          // Leads traz os áudios ANTERIORES como "🎤 Mensagem de voz (0:17)"
+          // cru — e numa conta onde o lead fala por áudio (50 em 7 dias aqui) o
+          // modelo lê a conversa inteira como "tem áudio que eu não acesso" e
+          // segue dizendo que não consegue ouvir. Guardar a transcrição na
+          // PRÓPRIA linha da fila (já consumida) dá ao histórico o texto real.
+          // Best-effort: falhar aqui não pode derrubar o turno.
+          try {
+            await supabase
+              .from("message_queue")
+              .update({ message_body: textoTranscrito })
+              .eq("id", msg.id);
+          } catch (e) {
+            console.warn("[Processor] falha ao persistir transcrição (non-blocking):", e instanceof Error ? e.message : e);
+          }
 
           // C3: cobrar Whisper. Antes deste fix, áudio rodava 100% free.
           if (locationForBilling && result.audio_seconds > 0) {
@@ -873,6 +923,28 @@ async function processGroup(
   let conversationTurns: ConversationTurn[] = [];
   if (messagesSettled.status === "fulfilled" && messagesSettled.value) {
     const messages = messagesSettled.value.messages?.messages || [];
+
+    // H73: transcrições que a gente guardou pros áudios deste contato, pra
+    // reinjetar no histórico (que volta do Spark Leads com o rótulo cru).
+    // Fail-soft: sem o mapa, cada rótulo vira o aviso neutro.
+    const transcricoes = new Map<string, string>();
+    try {
+      const { data: audios } = await supabase
+        .from("message_queue")
+        .select("ghl_message_id,message_body")
+        .eq("location_id", group.locationId)
+        .eq("contact_id", group.contactId)
+        .not("ghl_message_id", "is", null)
+        .like("message_body", `${PREFIXO_AUDIO_TRANSCRITO}%`)
+        .order("received_at", { ascending: false })
+        .limit(50);
+      for (const a of audios ?? []) {
+        if (a.ghl_message_id) transcricoes.set(String(a.ghl_message_id), String(a.message_body));
+      }
+    } catch (e) {
+      console.warn("[Processor] falha ao carregar transcrições do histórico (non-blocking):", e instanceof Error ? e.message : e);
+    }
+
     conversationTurns = messages
       // Fix prod 2026-07-28 (Alves Cury): atividade do CRM ("Opportunity created")
       // e ligação NÃO são fala de ninguém — entravam como turno "assistant" e o
@@ -883,7 +955,10 @@ async function processGroup(
       .slice(-30)
       .map((m) => ({
         role: m.direction === "inbound" ? "user" : "assistant" as const,
-        content: (m.body || "[sem conteudo]").substring(0, 500),
+        content: limpaRotulosDeAudioNoHistorico(
+          m.body || "[sem conteudo]",
+          m.id ? transcricoes.get(String(m.id)) : undefined,
+        ).substring(0, 500),
       }));
 
     if (!group.conversationId) group.conversationId = convId;

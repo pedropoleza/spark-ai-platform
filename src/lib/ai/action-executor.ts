@@ -18,6 +18,7 @@ import {
 import { reportError } from "@/lib/admin-signals/report-error";
 import { stripSilenceMarker, type LeadSilenceDecision } from "@/lib/ai/lead-silence";
 import { validateBookingSlot, isSameSlotInstant, coerceStartTimeToTimezone } from "@/lib/ai/slot-guard";
+import { buscaBookingRecente } from "@/lib/ai/booking-recente";
 
 /**
  * H66: corrige o OFFSET do start_time emitido pelo LLM pro fuso da conta ANTES
@@ -33,11 +34,42 @@ function coerceActionStartTime(
 ): void {
   if (!action.start_time) return;
   const tz = ctx.timezone || "America/New_York";
-  const co = coerceStartTimeToTimezone(action.start_time, tz);
+  // H73: os free-slots do turno decidem o offset quando existem (o fuso da
+  // location é cadastro e pode estar errado — foi o que deslocou a agenda
+  // inteira da Márcia em 1h). Ver coerceStartTimeToTimezone.
+  const co = coerceStartTimeToTimezone(action.start_time, tz, ctx.offeredSlotsIso);
   if (co.coerced) {
     (action as unknown as Record<string, unknown>).offset_coerced_from = co.original;
+    (action as unknown as Record<string, unknown>).offset_source = co.offsetSource;
     action.start_time = co.iso;
-    console.warn(`[${label}] H66: start_time com offset fora do fuso da conta (${tz}) — corrigido: ${co.original} → ${co.iso}`);
+    console.warn(
+      `[${label}] H66/H73: offset do start_time corrigido pelo ${co.offsetSource === "slots" ? "calendário" : `fuso da conta (${tz})`}: ${co.original} → ${co.iso}`,
+    );
+  }
+  // H73: calendário e location discordando é sintoma de cadastro errado — a
+  // conta segue funcionando (o slot manda), mas isso precisa VIRAR trabalho, não
+  // ficar só no log. Mesma classe do H72 (auditoria de fuso da frota).
+  if (co.offsetSource === "slots") {
+    const doLocal = coerceStartTimeToTimezone(action.start_time, tz);
+    if (doLocal.iso !== co.iso) {
+      reportError({
+        title: "Fuso da location diverge do calendário no agendamento",
+        feature: "booking-timezone",
+        severity: "medium",
+        description:
+          `O fuso cadastrado (${tz}) daria ${doLocal.iso} e o calendário deu ${co.iso}. ` +
+          "O booking usou o calendário (correto), mas o cadastro está errado e afeta os horários " +
+          "que a IA FALA pro lead. Rodar scripts/audit-fuso-locations.ts.",
+        metadata: {
+          locationId: ctx.locationId,
+          agentId: ctx.agentId,
+          contactId: ctx.contactId,
+          timezone: tz,
+          iso_calendario: co.iso,
+          iso_location: doLocal.iso,
+        },
+      });
+    }
   }
 }
 import { aplicarGuardaDeConfirmacao, claimsBooking } from "@/lib/ai/booking-guard";
@@ -458,6 +490,16 @@ async function executeAction(
       {
         const slotCheck = validateBookingSlot(action.start_time, ctx.offeredSlotsIso);
         if (!slotCheck.ok) {
+          // H73: antes de perguntar ao CRM, pergunta ao NOSSO log — a re-emissão
+          // do mesmo booking chega segundos depois do original e o Spark Leads
+          // ainda não devolve a reunião recém-criada (foi por isso que o escape
+          // H61 não salvou os casos reais). Ver booking-recente.ts.
+          const jaAgendado = await buscaBookingRecente(ctx.agentId, ctx.contactId, action.start_time);
+          if (jaAgendado) {
+            (action as unknown as Record<string, unknown>).mode = "idempotent_noop";
+            (action as unknown as Record<string, unknown>).noop_source = "execution_log";
+            break;
+          }
           // H61 (fix bug observado em prod 2026-08-01, caso Adriana/Five Star):
           // rajada vira 2 turnos e o 2º re-emite book_appointment pro MESMO
           // horário — o slot já saiu do free-slots (consumido pelo booking do
@@ -562,6 +604,18 @@ async function executeAction(
       {
         const reslotCheck = validateBookingSlot(action.start_time, ctx.offeredSlotsIso);
         if (!reslotCheck.ok) {
+          // H73: mesma primeira linha do book — log local antes do CRM. Aqui só
+          // vale quando o modelo NÃO apontou um appointment específico: com
+          // appointment_id explícito ele quer mover AQUELE, e um noop cego
+          // devolveria falso sucesso sem ter movido nada (lição do H61 v2).
+          if (!action.appointment_id) {
+            const jaAgendado = await buscaBookingRecente(ctx.agentId, ctx.contactId, action.start_time);
+            if (jaAgendado) {
+              (action as unknown as Record<string, unknown>).mode = "idempotent_noop";
+              (action as unknown as Record<string, unknown>).noop_source = "execution_log";
+              break;
+            }
+          }
           // H61: mesma idempotência do book_appointment — reagendar pro horário
           // que o contato JÁ tem é duplicata de rajada, não conflito. Sem isto,
           // o caminho delete-then-create nem chega a rodar mas o lead ganha o

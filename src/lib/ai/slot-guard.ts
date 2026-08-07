@@ -80,22 +80,71 @@ function zoneOffsetMinutes(utcMs: number, timeZone: string): number {
 export function coerceStartTimeToTimezone(
   iso: string | undefined | null,
   timeZone: string,
-): { iso: string; coerced: boolean; original?: string } {
+  offeredSlotsIso?: string[],
+): { iso: string; coerced: boolean; original?: string; offsetSource?: "slots" | "location" } {
   const raw = String(iso ?? "");
   const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
   if (!m) return { iso: raw, coerced: false };
   const [, Y, Mo, D, H, Mi, S] = m;
   const wallAsUtc = Date.UTC(Number(Y), Number(Mo) - 1, Number(D), Number(H), Number(Mi), Number(S || 0));
-  // 2 passadas convergem o offset pro wall-clock (borda de DST inclusa).
-  let off = zoneOffsetMinutes(wallAsUtc, timeZone);
-  off = zoneOffsetMinutes(wallAsUtc - off * 60_000, timeZone);
+  // H73 (fix bug observado em prod 2026-08-07, caso Márcia/Five Star): o offset
+  // de destino vem dos FREE-SLOTS REAIS do turno quando eles existem, e só cai
+  // pro fuso da location quando não há slots. Motivo: `locations.timezone` é
+  // dado de cadastro e pode estar ERRADO (H72 achou 43 contas assim, esta entre
+  // elas) — e coagir contra uma fonte errada reproduz o erro com fidelidade: a
+  // IA falava "7:00 PM (ET)" e gravava 19:00-03:00, que é 6 PM ET. Os slots vêm
+  // do calendário que vai RECEBER a reunião, então são a fonte que decide.
+  // Mantém a correção original do H66 (LLM emite offset de outro fuso): o
+  // wall-clock continua sendo a intenção, só o offset é recalculado.
+  const offFromSlots = offsetMinutesFromSlots(offeredSlotsIso, `${Y}-${Mo}-${D}`);
+  let off: number;
+  if (offFromSlots !== null) {
+    off = offFromSlots;
+  } else {
+    // 2 passadas convergem o offset pro wall-clock (borda de DST inclusa).
+    off = zoneOffsetMinutes(wallAsUtc, timeZone);
+    off = zoneOffsetMinutes(wallAsUtc - off * 60_000, timeZone);
+  }
   const sign = off < 0 ? "-" : "+";
   const abs = Math.abs(off);
   const offStr = `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
   const out = `${Y}-${Mo}-${D}T${H}:${Mi}:${S || "00"}${offStr}`;
   const origInstant = Date.parse(raw);
   const coerced = Number.isNaN(origInstant) || Date.parse(out) !== origInstant;
-  return coerced ? { iso: out, coerced: true, original: raw } : { iso: out, coerced: false };
+  const offsetSource = offFromSlots !== null ? ("slots" as const) : ("location" as const);
+  return coerced
+    ? { iso: out, coerced: true, original: raw, offsetSource }
+    : { iso: out, coerced: false, offsetSource };
+}
+
+/**
+ * Offset (minutos) que o calendário REAL usa no dia `yyyy-mm-dd`, lido dos
+ * free-slots do turno. Só devolve valor quando os slots daquele dia concordam
+ * entre si — divergência (agenda multi-fuso) devolve null e o caller cai pro
+ * fuso da location. Sem slots do dia pedido, tenta o offset predominante da
+ * lista inteira: dentro de uma janela de dias o offset só muda na virada de
+ * DST, e a concordância unânime é a checagem. PURO.
+ */
+export function offsetMinutesFromSlots(
+  offered: string[] | undefined | null,
+  isoDate?: string,
+): number | null {
+  if (!offered || offered.length === 0) return null;
+  const parse = (s: string): number | null => {
+    const m = String(s).match(/T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})$/);
+    if (!m) return null;
+    if (m[1] === "Z") return 0;
+    const mm = m[1].replace(":", "");
+    const sign = mm[0] === "-" ? -1 : 1;
+    return sign * (Number(mm.slice(1, 3)) * 60 + Number(mm.slice(3, 5)));
+  };
+  const doDia = isoDate ? offered.filter((s) => String(s).startsWith(isoDate)) : [];
+  for (const grupo of [doDia, offered]) {
+    const offs = grupo.map(parse).filter((n): n is number => n !== null);
+    if (offs.length === 0) continue;
+    if (offs.every((o) => o === offs[0])) return offs[0];
+  }
+  return null;
 }
 
 /**
