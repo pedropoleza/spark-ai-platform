@@ -111,6 +111,8 @@ export interface LastOutboundForClassify {
   body?: string | null;
   userId?: string | null;
   source?: string | null;
+  /** Quando a mensagem entrou no CRM — usado pra atribuir mídia à nossa automação. */
+  dateAdded?: string | null;
 }
 
 // AUTOMATION_SOURCES (fontes de automação do GHL — welcome/campanha/bulk; NÃO é
@@ -168,6 +170,23 @@ export function hasUnfilledMergeField(body: string): boolean {
   return false;
 }
 
+/** Janela em que uma mídia outbound ainda é atribuível à nossa automação. */
+export const JANELA_NOSSA_MIDIA_MS = 10 * 60_000;
+
+/** O outbound sem corpo saiu junto de uma automação nossa? PURO, testável. */
+export function ehNossaMidia(
+  outboundAtIso: string | undefined | null,
+  ourMediaAtIso?: string[],
+): boolean {
+  if (!outboundAtIso || !ourMediaAtIso?.length) return false;
+  const t = Date.parse(String(outboundAtIso));
+  if (Number.isNaN(t)) return false;
+  return ourMediaAtIso.some((iso) => {
+    const m = Date.parse(String(iso));
+    return !Number.isNaN(m) && Math.abs(m - t) <= JANELA_NOSSA_MIDIA_MS;
+  });
+}
+
 export function classifyLastOutbound(args: {
   lastOutbound: LastOutboundForClassify;
   aiTexts: string[];
@@ -178,8 +197,21 @@ export function classifyLastOutbound(args: {
    * antigos que não passam caem no comportamento anterior (só texto).
    */
   sentIds?: string[];
+  /**
+   * Instantes (ISO) em que a NOSSA automação mandou mídia pra este contato —
+   * áudio de abertura, PDF, foto. Elas saem por outro caminho que o
+   * `send_message` da IA, então não estão em `sentIds` nem em `aiTexts`, e
+   * chegam ao histórico como outbound de corpo VAZIO "de um user do CRM".
+   *
+   * Fix bug observado em prod 2026-08-09 (H73, caso Márcia): o áudio de
+   * abertura que a própria conta dispara era lido como "um humano assumiu a
+   * conversa" e CANCELAVA a sequência de follow-up inteira no primeiro toque.
+   * 46 leads em 14 dias nessa conta — e ela é justamente a que usa áudio na
+   * abertura, então praticamente nenhum follow-up dela saía.
+   */
+  ourMediaAtIso?: string[];
 }): { isHuman: boolean } {
-  const { lastOutbound, aiTexts, sentIds } = args;
+  const { lastOutbound, aiTexts, sentIds, ourMediaAtIso } = args;
   const body = (lastOutbound.body || "").trim();
   const sentByGhlUser = !!lastOutbound.userId;
   const outboundSource = String(lastOutbound.source || "").toLowerCase();
@@ -187,11 +219,17 @@ export function classifyLastOutbound(args: {
   // Match determinístico por ID (2026-07-23, caso Marina/152 falsos): o último
   // outbound é uma mensagem que NÓS enviamos → NUNCA é handoff humano.
   const idEcho = !!lastOutbound.id && !!sentIds?.includes(String(lastOutbound.id));
+  // Mídia NOSSA: outbound sem corpo que saiu junto com uma automação nossa
+  // (±10min). A janela é o que distingue o áudio de abertura de um áudio que a
+  // pessoa da equipe mandou de verdade horas depois — esse continua pausando.
+  const nossaMidia = !body && !!lastOutbound.dateAdded && ehNossaMidia(lastOutbound.dateAdded, ourMediaAtIso);
   const aiEcho = idEcho || (!!body && isAiEcho(body, aiTexts));
 
   let isHuman: boolean;
   if (idEcho) {
     isHuman = false; // certeza: é uma msg NOSSA (id bate com o que a IA enviou)
+  } else if (nossaMidia) {
+    isHuman = false; // áudio/mídia disparado pela nossa própria automação
   } else if (isAutomationOutbound) {
     isHuman = false; // automação/workflow do GHL não é humano (mesmo com userId)
   } else if (aiEcho) {

@@ -3,7 +3,7 @@
  * Hot path: falso-positivo de "humano" = agente pausa errado (fica mudo).
  * Falso-negativo = IA atropela o humano. Os dois são ruins → cobrir bem.
  */
-import { isAiEcho, extractAiSentTexts, classifyLastOutbound, hasUnfilledMergeField } from "../src/lib/queue/human-takeover";
+import { isAiEcho, extractAiSentTexts, classifyLastOutbound, hasUnfilledMergeField, ehNossaMidia } from "../src/lib/queue/human-takeover";
 import { isHumanOutboundMessage } from "../src/lib/queue/lead-history";
 
 let passed = 0, failed = 0;
@@ -106,6 +106,26 @@ eq("detecta [[NAO_ENVIAR]]", SENTINEL_RE.test("[[NAO_ENVIAR]]"), true);
 eq("detecta com espaços [[ NAO_ENVIAR ]]", SENTINEL_RE.test("[[ NAO_ENVIAR ]]"), true);
 eq("mensagem normal NÃO casa sentinela", SENTINEL_RE.test("Oi Pedro, tudo bem?"), false);
 eq("o default do parse ('Pode me contar mais?') NÃO casa sentinela", SENTINEL_RE.test("Pode me contar mais?"), false);
+
+console.log("\n=== H73: áudio de abertura da NOSSA automação não é humano (caso Márcia) ===");
+{
+  const T = "2026-08-07T03:55:15.552Z";
+  const aiMsgs = ["Que bom que você chegou! Somos a Márcia e a Roberta"];
+  // O áudio sai por outro caminho: corpo vazio, "de um user do CRM", source=api.
+  const audioAbertura = { id: "m1", body: "", userId: "aWbuJxjP73ORHWZ4YiCK", source: "api", dateAdded: T };
+  eq("áudio da nossa automação (±10min) → NÃO humano",
+    classifyLastOutbound({ lastOutbound: audioAbertura, aiTexts: aiMsgs, ourMediaAtIso: ["2026-08-07T03:55:14.000Z"] }).isHuman, false);
+  eq("(regressão) sem saber da automação, era lido como humano e cancelava a sequência",
+    classifyLastOutbound({ lastOutbound: audioAbertura, aiTexts: aiMsgs }).isHuman, true);
+  eq("áudio de VERDADE de alguém da equipe (horas depois) segue pausando",
+    classifyLastOutbound({ lastOutbound: audioAbertura, aiTexts: aiMsgs, ourMediaAtIso: ["2026-08-07T01:00:00.000Z"] }).isHuman, true);
+  eq("texto de humano não vira nossa mídia (corpo preenchido)",
+    classifyLastOutbound({ lastOutbound: { ...audioAbertura, body: "oi, aqui é a Roberta" }, aiTexts: aiMsgs, ourMediaAtIso: ["2026-08-07T03:55:14.000Z"] }).isHuman, true);
+  eq("janela: 9min59 conta", ehNossaMidia(T, ["2026-08-07T04:05:14.000Z"]), true);
+  eq("janela: 11min não conta", ehNossaMidia(T, ["2026-08-07T04:06:20.000Z"]), false);
+  eq("sem lista de mídia → false", ehNossaMidia(T, []), false);
+  eq("data inválida → false", ehNossaMidia("qualquer", ["2026-08-07T03:55:14.000Z"]), false);
+}
 
 console.log(`\n=== ${passed} passed, ${failed} failed ===\n`);
 process.exit(failed > 0 ? 1 : 0);

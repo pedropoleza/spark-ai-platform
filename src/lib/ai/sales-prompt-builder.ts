@@ -1414,9 +1414,15 @@ quieto que mandar um follow-up sem noção.
   posso pagar", "agora não dá", "para de mandar"): NÃO insista. "message": "",
   "conversation_status": "disqualified".
 - O lead pediu pra falar com humano: "message": "", "conversation_status": "handed_off".
-- A ÚLTIMA mensagem da conversa foi SUA (AGENTE) e o lead ainda não respondeu:
-  NÃO empilhe outra mensagem em cima da sua. Dê espaço. "message": "".
+- Você mandou mensagem pro lead AGORA HÁ POUCO (nos últimos minutos) e ela ainda
+  nem foi lida: não empilhe outra em cima. "message": "".
 - A conversa já está agendada/fechada e não há o que retomar: "message": "".
+
+ATENÇÃO: "a última mensagem da conversa foi sua e o lead não respondeu" é
+exatamente a situação que gera um follow-up — NÃO é motivo pra ficar quieto. Se
+fosse, nenhum follow-up sairia nunca. O intervalo de espera já foi respeitado
+antes de te chamarem aqui: se o lead sumiu numa conversa aberta e não adiou nem
+recusou, MANDE.
 SÓ mande follow-up quando o lead realmente sumiu no meio de uma conversa aberta,
 sem ter adiado nem recusado.
 

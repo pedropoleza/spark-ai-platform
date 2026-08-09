@@ -791,11 +791,31 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
               .order("created_at", { ascending: false })
               .limit(15);
             const aiTexts = extractAiSentTexts(sentRows);
+            // H73 (caso Márcia): as automações NOSSAS que mandam mídia (áudio de
+            // abertura, PDF) chegam ao histórico como outbound de corpo vazio e
+            // eram lidas como "humano assumiu" — o que CANCELAVA a sequência
+            // inteira no 1º toque, justamente nas contas que abrem com áudio.
+            const { data: midiaRows } = await supabase
+              .from("execution_log")
+              .select("created_at")
+              .eq("location_id", followUp.location_id)
+              .eq("contact_id", followUp.contact_id)
+              .in("action_type", ["agent_activated_automation", "send_media", "reaction_executed"])
+              .order("created_at", { ascending: false })
+              .limit(10);
+            const ourMediaAtIso = (midiaRows ?? []).map((r) => String(r.created_at));
             const { isHuman } = classifyLastOutbound({
+              ourMediaAtIso,
               // 2026-07-23 (caso Marina): +id no lastOutbound e sentIds → o gate de
               // "humano assumiu" antes de mandar follow-up também casa por ID (não
               // cancela a sequência achando falso-handoff em IG).
-              lastOutbound: { id: lastOutbound.id, body: lastOutbound.body, userId: lastOutbound.userId, source: lastOutbound.source },
+              lastOutbound: {
+                id: lastOutbound.id,
+                body: lastOutbound.body,
+                userId: lastOutbound.userId,
+                source: lastOutbound.source,
+                dateAdded: lastOutbound.dateAdded,
+              },
               aiTexts,
               sentIds: extractAiSentIds(sentRows),
             });
