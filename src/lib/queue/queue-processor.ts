@@ -14,6 +14,29 @@ import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { transcribeAudioFromUrlVerbose } from "@/lib/ai/audio-transcriber";
 
 /**
+ * `post_booking.behavior = "stop_and_handoff"` quer dizer "depois de agendar, a
+ * IA para e passa pra um humano". Isso era só uma frase no prompt — o modelo lia
+ * no turno do agendamento e esquecia no seguinte.
+ *
+ * Fix bug observado em prod 2026-08-07 (caso Liberty Financial): decide de forma
+ * determinística se este turno deve pausar a IA pro contato. A checagem de que o
+ * agendamento REALMENTE aconteceu fica com o chamador (consulta ao
+ * execution_log) — aqui só a política, pra ser testável sem banco.
+ *
+ * `jaPausado` evita reescrever o carimbo a cada turno (mesma lição do H52: pausa
+ * que se renova sozinha vira pausa permanente).
+ */
+export function devePausarAposAgendamento(p: {
+  finalStatus: string;
+  behavior?: string;
+  jaPausado: boolean;
+}): boolean {
+  if (p.jaPausado) return false;
+  if (p.behavior !== "stop_and_handoff") return false;
+  return p.finalStatus === "booked";
+}
+
+/**
  * Rótulo cru de nota de voz que o WhatsApp/Spark Leads coloca no corpo da
  * mensagem quando o lead manda áudio. Ex: "🎤 Mensagem de voz (0:17)".
  * (O formato antigo "[audio: url]" já era tratado na agregação.)
@@ -1777,6 +1800,62 @@ async function processGroup(
       });
     } catch (noteErr) {
       console.error("[Processor] Summary note error:", noteErr instanceof Error ? noteErr.message : noteErr);
+    }
+  }
+
+  // 10b. post_booking = "stop_and_handoff" → PARA DE VERDADE.
+  //
+  // Fix bug observado em prod 2026-08-07 (caso Liberty Financial, queixa do
+  // cliente "o bot continua mesmo depois de fazer o agendamento"): a config
+  // `post_booking.behavior` NUNCA foi enforced no runtime — existia só como
+  // texto no prompt ("NAO continue a conversa"), que o modelo lê no MESMO turno
+  // do agendamento e esquece no turno seguinte. Provado no contato
+  // lWZEh9p46XcuWgITgIWa (Marta, 02/08): agendou 02:45:44, mandou a mensagem de
+  // handoff 02:45:47 e seguiu conversando — re-agendou 3× nos 5 minutos
+  // seguintes e no dia seguinte abriu uma conversa nova oferecendo horário.
+  //
+  // A pausa reusa a infra que já existe (o gate de `ai_paused_at` no topo do
+  // processGroup + a aba "Pausadas" do painel, onde um humano religa em 1
+  // clique) em vez de criar um gate novo pra manter.
+  //
+  // Só pausa com booking REAL registrado: se o modelo alegou "booked" e o guard
+  // H58 barrou a alegação falsa, a conversa continua — pausar aí deixaria o lead
+  // sem resposta E sem reunião.
+  if (
+    devePausarAposAgendamento({
+      finalStatus,
+      behavior: config.post_booking?.behavior,
+      jaPausado: !!convState?.ai_paused_at,
+    })
+  ) {
+    const { data: bookingReal } = await supabase
+      .from("execution_log")
+      .select("id")
+      .eq("agent_id", agent.id)
+      .eq("contact_id", group.contactId)
+      .in("action_type", ["book_appointment", "reschedule_appointment"])
+      .eq("success", true)
+      .limit(1);
+
+    if (bookingReal && bookingReal.length > 0) {
+      const nowIso = new Date().toISOString();
+      await supabase
+        .from("conversation_state")
+        .update({ ai_paused_at: nowIso, ai_paused_reason: "post_booking:stop_and_handoff", updated_at: nowIso })
+        .eq("agent_id", agent.id)
+        .eq("contact_id", group.contactId);
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        conversation_id: group.conversationId,
+        contact_id: group.contactId,
+        location_id: group.locationId,
+        action_type: "ai_paused",
+        action_payload: { reason: "post_booking:stop_and_handoff" },
+        success: true,
+      });
+      log("log", "post_booking=stop_and_handoff → IA pausada pra este contato (reunião agendada)");
+    } else {
+      log("warn", "status=booked mas nenhum agendamento real no log — NÃO pausando (possível claim falso)");
     }
   }
 
