@@ -20,6 +20,19 @@ const ALLOWED_HOST_PATTERNS: RegExp[] = [
   /\.msgsndr\.com$/i,
   /\.highlevel-backend\.com$/i,
   /\.lcassetbucket\.com$/i,
+  // CDN de mídia do Spark Leads — é DAQUI que vem a voz-nota do WhatsApp
+  // (assets.cdn.filesafe.space/<locationId>/media/<uuid>.ogg).
+  //
+  // Fix bug observado em prod 2026-08-11 (H73, caso Márcia): faltar este host
+  // aqui era a causa REAL do "a IA fala que não consegue ouvir áudio" — a
+  // transcrição nem chegava a rodar, o fetch morria no guard. Três ondas
+  // anteriores mexeram no rótulo, no histórico e na chave da OpenAI porque o
+  // erro era engolido num console.warn; o alerta novo mostrou em uma linha:
+  // "URL blocked: host not in allowlist: assets.cdn.filesafe.space".
+  //
+  // Escapou de todo teste local porque `validateExternalUrl` libera qualquer
+  // host fora de produção — o bug só existia em prod, por definição.
+  /(^|\.)filesafe\.space$/i,
   // Sparkleads white-label
   /\.sparkleads\.pro$/i,
   // Stevo (Evolution API) — Hetzner object storage
