@@ -95,5 +95,46 @@ export function validateEnv(): void {
   }
 }
 
+/**
+ * Credenciais que viram header HTTP. Espaço ou quebra de linha invisível no
+ * valor vira 401 no provedor, não erro de configuração.
+ */
+const CHAVES_DE_API = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "VOYAGE_API_KEY",
+  "GROQ_API_KEY",
+  "GHL_CLIENT_SECRET",
+  "SUPABASE_SERVICE_ROLE_KEY",
+] as const;
+
+/**
+ * Tira espaço/quebra-de-linha das credenciais no boot.
+ *
+ * Fix bug observado em prod 2026-08-10 (H73, queixa da Márcia "a IA não ouve
+ * áudio"): a `OPENAI_API_KEY` da Vercel estava salva com um `\n` colado no fim
+ * (166 chars em vez de 164). A chave era a CERTA — a OpenAI devolvia 401 por
+ * causa do caractere invisível. Quebrava Whisper (áudio), Vision (imagem),
+ * embeddings e o fallback OpenAI, na frota inteira, enquanto o resto da IA
+ * seguia funcionando (Claude) — por isso pareceu bug de transcrição por dias.
+ *
+ * Saneia em UM lugar em vez de espalhar `.trim()` por ~20 chamadas: as libs
+ * (OpenAI SDK, Anthropic SDK) leem `process.env` por conta própria.
+ */
+export function sanearChavesDeApi(): void {
+  for (const nome of CHAVES_DE_API) {
+    const bruto = process.env[nome];
+    if (typeof bruto !== "string") continue;
+    const limpo = bruto.trim();
+    if (limpo !== bruto) {
+      process.env[nome] = limpo;
+      console.warn(
+        `[env] ⚠️  ${nome} tinha espaço/quebra-de-linha nas pontas (${bruto.length} → ${limpo.length} chars) — corrigido em memória. Corrija o valor na Vercel.`,
+      );
+    }
+  }
+}
+
 // Executa imediatamente no carregamento do módulo
+sanearChavesDeApi();
 validateEnv();

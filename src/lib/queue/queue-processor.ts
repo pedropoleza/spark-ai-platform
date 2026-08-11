@@ -834,6 +834,26 @@ async function processGroup(
           }
         } else if (!verbose.ok) {
           console.warn(`[Processor] Transcrição falhou (${verbose.code}): ${verbose.message.slice(0, 160)}`);
+          // H73 (2026-08-10): a transcrição falhava em SILÊNCIO — só console.warn.
+          // Uma credencial inválida derrubou o áudio da frota por dias e quem
+          // percebeu foi a cliente, não a gente. Credencial/cota é problema de
+          // plataforma e precisa acordar alguém; falha pontual de um arquivo não.
+          const ehCredencial = /401|invalid.*api key|incorrect api key|quota|billing|429/i.test(
+            `${verbose.code} ${verbose.message}`,
+          );
+          reportError({
+            title: ehCredencial
+              ? "Transcrição de áudio fora do ar (credencial/cota do provedor)"
+              : "Falha ao transcrever áudio do lead",
+            feature: "audio-transcription",
+            severity: ehCredencial ? "high" : "low",
+            description:
+              `${verbose.code}: ${verbose.message.slice(0, 300)}` +
+              (ehCredencial
+                ? " — a IA está respondendo 'não consegui ouvir seu áudio' pra TODOS os leads que mandam voz. Conferir OPENAI_API_KEY na Vercel (inclusive espaço/quebra-de-linha no valor)."
+                : ""),
+            metadata: { locationId: group.locationId, agentId: agent.id, contactId: group.contactId, code: verbose.code },
+          });
           group.aggregatedBody = substituirRotuloDeAudio(
             group.aggregatedBody,
             msg.message_body,
