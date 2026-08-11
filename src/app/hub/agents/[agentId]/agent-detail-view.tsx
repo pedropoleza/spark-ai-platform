@@ -63,6 +63,12 @@ function isCompleteLeaf(r: TargetingRule): boolean {
       return !!r.custom_field_key?.trim();
     case "pipeline_stage":
       return !!r.pipeline_stage_id?.trim();
+    case "attribution":
+      // is_set/not_set não têm valor — a folha já está completa com o operador.
+      if (r.attribution_operator === "is_set" || r.attribution_operator === "not_set") return true;
+      return r.attribution_operator === "in"
+        ? !!r.attribution_values?.some((v) => v.trim())
+        : !!r.attribution_value?.trim();
     default:
       return false;
   }
@@ -997,8 +1003,11 @@ function detectActivationType(
   // Set v2 (grupos E/OU) OU array com folha de mensagem → modo Avançado.
   if (!Array.isArray(rules)) return "advanced";
   if (rules.length === 0) return "inbound";
-  if (rules.some((r) => r.type === "message")) return "advanced";
-  return rules[0].type === "message" ? "advanced" : rules[0].type;
+  // `message` e `attribution` (origem/anúncio) não têm chip simples próprio —
+  // são condições que só fazem sentido compostas, então caem no Avançado.
+  if (rules.some((r) => r.type === "message" || r.type === "attribution")) return "advanced";
+  const t = rules[0].type;
+  return t === "message" || t === "attribution" ? "advanced" : t;
 }
 
 const ACTIVATION_CHIPS: { value: ActivationType; label: string; hint: string }[] = [
@@ -1030,6 +1039,34 @@ const COND_TYPES: { value: TargetingRule["type"]; label: string }[] = [
   { value: "tag", label: "Tag" },
   { value: "custom_field", label: "Campo personalizado" },
   { value: "pipeline_stage", label: "Etapa do funil" },
+  { value: "attribution", label: "Origem do contato (anúncio)" },
+];
+
+// Campos de origem que o Spark Leads devolve no contato (Pedro 2026-08-11).
+// "Como chegou" (sessionSource) é o que separa anúncio pago de DM orgânica.
+const ATTR_FIELDS: { value: NonNullable<TargetingRule["attribution_field"]>; label: string }[] = [
+  { value: "sessionSource", label: "Como chegou (Paid Social, Social media...)" },
+  { value: "campaign", label: "Nome da campanha" },
+  { value: "campaignId", label: "ID da campanha" },
+  { value: "adId", label: "ID do anúncio" },
+  { value: "adSetId", label: "ID do conjunto" },
+  { value: "medium", label: "Canal (instagram, facebook...)" },
+  { value: "utmCampaign", label: "utm_campaign" },
+  { value: "utmMedium", label: "utm_medium" },
+  { value: "utmContent", label: "utm_content" },
+  { value: "referrer", label: "Site de origem" },
+  { value: "url", label: "URL de entrada" },
+  { value: "any", label: "Qualquer campo de origem" },
+];
+
+const ATTR_OPS: { value: NonNullable<TargetingRule["attribution_operator"]>; label: string; multi?: boolean; semValor?: boolean }[] = [
+  { value: "contains", label: "contém" },
+  { value: "eq", label: "é exatamente" },
+  { value: "not_contains", label: "não contém" },
+  { value: "starts_with", label: "começa com" },
+  { value: "in", label: "é qualquer um da lista", multi: true },
+  { value: "is_set", label: "está preenchido", semValor: true },
+  { value: "not_set", label: "está vazio", semValor: true },
 ];
 
 /** Editor de UMA folha (condição) dentro de um grupo. */
@@ -1067,6 +1104,11 @@ function LeafEditor({
             message_operator: next === "message" ? "contains" : undefined,
             message_value: undefined,
             message_values: undefined,
+            attribution_field: next === "attribution" ? "sessionSource" : undefined,
+            attribution_operator: next === "attribution" ? "contains" : undefined,
+            attribution_value: next === "attribution" ? "Paid" : undefined,
+            attribution_values: undefined,
+            attribution_scope: undefined,
           });
         }}
       >
@@ -1134,6 +1176,69 @@ function LeafEditor({
           onChange={(next) => onChange({ pipeline_id: next.pipeline_id, pipeline_stage_id: next.pipeline_stage_id })}
         />
       )}
+      {r.type === "attribution" && (() => {
+        const aOp = r.attribution_operator ?? "contains";
+        const meta = ATTR_OPS.find((o) => o.value === aOp);
+        return (
+          <>
+            <select
+              className="input"
+              style={{ width: "auto", minWidth: 200 }}
+              value={r.attribution_field ?? "sessionSource"}
+              onChange={(ev) => onChange({ attribution_field: ev.target.value as NonNullable<TargetingRule["attribution_field"]> })}
+            >
+              {ATTR_FIELDS.map((f) => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+            <select
+              className="input"
+              style={{ width: "auto", minWidth: 150 }}
+              value={aOp}
+              onChange={(ev) => {
+                const nextOp = ev.target.value as NonNullable<TargetingRule["attribution_operator"]>;
+                const m = ATTR_OPS.find((o) => o.value === nextOp);
+                if (m?.semValor) {
+                  onChange({ attribution_operator: nextOp, attribution_value: undefined, attribution_values: undefined });
+                } else if (m?.multi) {
+                  onChange({ attribution_operator: nextOp, attribution_values: r.attribution_values ?? (r.attribution_value ? [r.attribution_value] : []), attribution_value: undefined });
+                } else {
+                  onChange({ attribution_operator: nextOp, attribution_value: r.attribution_value ?? r.attribution_values?.[0] ?? "", attribution_values: undefined });
+                }
+              }}
+            >
+              {ATTR_OPS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            {!meta?.semValor && (meta?.multi ? (
+              <input
+                className="input grow"
+                value={(r.attribution_values ?? []).join(", ")}
+                onChange={(ev) => onChange({ attribution_values: ev.target.value.split(",").map((v) => v.trim()).filter(Boolean) })}
+                placeholder="valores separados por vírgula"
+              />
+            ) : (
+              <input
+                className="input grow"
+                value={r.attribution_value ?? ""}
+                onChange={(ev) => onChange({ attribution_value: ev.target.value })}
+                placeholder={r.attribution_field === "sessionSource" ? "Paid" : "valor"}
+              />
+            ))}
+            <select
+              className="input"
+              style={{ width: "auto", minWidth: 130 }}
+              value={r.attribution_scope ?? "first"}
+              onChange={(ev) => onChange({ attribution_scope: ev.target.value as "first" | "last" })}
+              title="Primeiro toque = a origem que trouxe o contato. Último = a interação mais recente."
+            >
+              <option value="first">1º contato</option>
+              <option value="last">contato mais recente</option>
+            </select>
+          </>
+        );
+      })()}
 
       <button className="btn btn--quiet btn--icon btn--sm" onClick={onRemove} aria-label="Remover condição"><Trash2 size={13} /></button>
     </div>

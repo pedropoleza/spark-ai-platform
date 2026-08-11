@@ -3,7 +3,49 @@ export type AgentStatus = "active" | "inactive";
 export type AgentObjective = "qualification_only" | "qualification_and_booking" | "booking_only";
 export type ConversationStatus = "active" | "qualified" | "booked" | "disqualified" | "handed_off" | "stale";
 export type QueueStatus = "pending" | "processing" | "completed" | "failed";
-export type TargetingRuleType = "tag" | "custom_field" | "pipeline_stage" | "message";
+export type TargetingRuleType = "tag" | "custom_field" | "pipeline_stage" | "message" | "attribution";
+
+/**
+ * Campos de ORIGEM que o Spark Leads devolve em `attributionSource` /
+ * `lastAttributionSource` (Pedro 2026-08-11, conta Marina's Support Account:
+ * 464 de 500 contatos preenchidos). Não são custom fields nem tags — vêm no
+ * próprio contato, no MESMO `GET /contacts/{id}` que o targeting já chama, então
+ * filtrar por origem não custa nenhuma chamada extra.
+ *
+ * `sessionSource` é o discriminador bom pra "veio de anúncio": na conta da
+ * Marina são 313 `Paid Social` (anúncio) × 190 `Social media` (DM orgânica) ×
+ * 1 `Direct traffic` (formulário). Os `utm*` existem mas são o nome do
+ * conjunto/criativo que o anunciante escolheu — servem pra recortar campanha,
+ * não pra decidir "é anúncio?".
+ *
+ * `any` casa contra TODOS os campos juntos — é o que atende o "só quero saber
+ * se veio de anúncio, qualquer coisa preenchida serve".
+ */
+export type AttributionField =
+  | "any"
+  | "sessionSource"
+  | "medium"
+  | "campaign"
+  | "campaignId"
+  | "adId"
+  | "adSetId"
+  | "utmCampaign"
+  | "utmMedium"
+  | "utmContent"
+  | "referrer"
+  | "url";
+
+/** Operadores da folha `attribution`: os de texto + presença/ausência. */
+export type AttributionOp = MessageMatchOp | "is_set" | "not_set";
+
+/**
+ * Primeiro toque × último toque. `attributionSource` é a origem que TROUXE o
+ * contato; `lastAttributionSource` é a mais recente. A diferença é real e foi
+ * vista em prod: a Andrea Zimmerman entrou por `Paid Social` e depois mandou DM
+ * orgânica, então o último toque virou `Social media`. "Veio de anúncio" é
+ * pergunta de PRIMEIRO toque — por isso o default é `first`.
+ */
+export type AttributionScope = "first" | "last";
 
 /** Operadores de texto pro type="message" (Pedro 2026-06-17). Espelha TextOp em
  *  @/lib/account-assistant/filter-engine/text-ops (o matcher). */
@@ -29,6 +71,14 @@ export interface TargetingRule {
   message_value?: string; // operadores single-value
   message_values?: string[]; // operador "in" (qualquer da lista)
   case_sensitive?: boolean; // default false
+  // type="attribution" (Pedro 2026-08-11): filtro por ORIGEM do contato —
+  // "veio de anúncio?", "veio da campanha X?". Lê attributionSource do próprio
+  // contato (mesmo GET que o targeting já faz, sem chamada extra).
+  attribution_field?: AttributionField; // default "any"
+  attribution_operator?: AttributionOp;
+  attribution_value?: string;
+  attribution_values?: string[]; // operador "in"
+  attribution_scope?: AttributionScope; // default "first"
 }
 
 /**

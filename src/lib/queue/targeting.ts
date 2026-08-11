@@ -20,6 +20,8 @@ import type {
   TargetingRules,
   TargetingRuleSet,
   TargetingGroup,
+  AttributionField,
+  AttributionScope,
 } from "@/types/agent";
 import { GHLClient } from "@/lib/ghl/client";
 import { matchTextOp, type TextOp } from "@/lib/account-assistant/filter-engine/text-ops";
@@ -60,6 +62,40 @@ interface GhlContact {
   tags?: Array<string | { name?: string }>;
   customFields?: Array<{ id?: string; key?: string; value?: unknown }>;
   customField?: Array<{ id?: string; key?: string; value?: unknown }>;
+  // Origem do contato (Pedro 2026-08-11). Vem no MESMO GET /contacts/{id} que
+  // este módulo já faz — filtrar por anúncio não custa chamada extra.
+  attributionSource?: Record<string, unknown> | null;
+  lastAttributionSource?: Record<string, unknown> | null;
+}
+
+/** Campos de atribuição considerados pelo seletor `any`. */
+const CAMPOS_ATRIBUICAO = [
+  "sessionSource", "medium", "campaign", "campaignId", "adId", "adSetId",
+  "utmCampaign", "utmMedium", "utmContent", "referrer", "url",
+] as const;
+
+/**
+ * Texto a comparar numa folha `attribution`.
+ *
+ * `any` concatena todos os campos preenchidos — é o que atende "só quero saber
+ * se veio de anúncio, qualquer coisa preenchida serve". Campo específico devolve
+ * só ele. String vazia = ausente (o Spark Leads devolve `null` nos campos que
+ * não se aplicam, ex: `adId: null` em contato orgânico).
+ */
+export function valorDeAtribuicao(
+  contact: GhlContact | null | undefined,
+  field: AttributionField = "any",
+  scope: AttributionScope = "first",
+): string {
+  const fonte = (scope === "last" ? contact?.lastAttributionSource : contact?.attributionSource) || {};
+  const ler = (k: string): string => {
+    const v = (fonte as Record<string, unknown>)[k];
+    return v === null || v === undefined ? "" : String(v).trim();
+  };
+  if (field === "any") {
+    return CAMPOS_ATRIBUICAO.map(ler).filter(Boolean).join(" | ");
+  }
+  return ler(field);
 }
 
 interface GhlOpp {
@@ -172,6 +208,37 @@ function evalLeaf(
         ? "match"
         : "no_match";
     }
+    case "attribution": {
+      // Pedro 2026-08-11: "veio de anúncio?" sem depender de tag aplicada por
+      // workflow. Diferente da folha `message`, esta NÃO é neutra em conversa
+      // ativa nem em proativo — a origem do contato não muda com o turno.
+      const op = rule.attribution_operator;
+      if (!op) return "neutral";
+      const texto = valorDeAtribuicao(
+        contact,
+        rule.attribution_field || "any",
+        rule.attribution_scope || "first",
+      );
+
+      if (op === "is_set") return texto ? "match" : "no_match";
+      if (op === "not_set") return texto ? "no_match" : "match";
+
+      const val = op === "in" ? rule.attribution_values ?? [] : rule.attribution_value ?? "";
+      // Needle vazio → NEUTRA (mesma defesa da folha `message`): sem isso,
+      // "contains" com "" casaria qualquer contato e "not_contains" bloquearia
+      // todos. Quem quer só presença usa is_set/not_set, que é explícito.
+      const needleEmpty = Array.isArray(val) ? !val.some((v) => v.trim()) : !val.trim();
+      if (needleEmpty) return "neutral";
+
+      // Sem atribuição nenhuma: só "not_contains" faz sentido dar match (o
+      // contato realmente NÃO contém aquilo). Os demais são no_match — evita
+      // que contato sem origem entre por acidente num filtro de anúncio.
+      if (!texto) return op === "not_contains" ? "match" : "no_match";
+
+      return matchTextOp(op as TextOp, texto, val, { caseSensitive: rule.case_sensitive })
+        ? "match"
+        : "no_match";
+    }
     default:
       return "neutral";
   }
@@ -247,7 +314,10 @@ export async function checkContactMatchesTargeting(
   try {
     const client = new GHLClient(companyId, locationId);
     const types = collectLeafTypes(set);
-    const needsContact = types.has("tag") || types.has("custom_field");
+    // `attribution` lê do próprio contato (attributionSource) — sem ele aqui, o
+    // GET nem aconteceria e a regra de origem nunca casaria em produção.
+    const needsContact =
+      types.has("tag") || types.has("custom_field") || types.has("attribution");
     const needsOpps = types.has("pipeline_stage");
 
     const [contactRes, oppsRes] = await Promise.all([

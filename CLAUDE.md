@@ -261,6 +261,16 @@ O briefing das 8h (`assistant_proactive_rules` name **"Resumo matinal"**, cron `
 - **Diagnóstico:** `npx tsx scripts/diag-briefing.ts +1XXXXXXXXXX` mostra o que o briefing daquele rep enxerga hoje e se seria enviado ou descartado. Testes: `test-cron-due.ts` (23/23) e `test-briefing-prompt.ts` (22/22).
 - ⚠️ O handler do briefing é escolhido por **comparação literal `rule.name === "Resumo matinal"`**. Renomear a regra no banco desliga o briefing em silêncio.
 
+### Ativação por origem do contato / anúncio (H74, Pedro 2026-08-11)
+
+Novo tipo de folha de targeting: **`attribution`** — "só atende quem veio de anúncio", "só a campanha X". Lê `attributionSource`/`lastAttributionSource`, que **não são tag nem custom field**: vêm no próprio contato, no MESMO `GET /contacts/{id}` que o targeting já fazia (custo de API: zero).
+
+- **A receita certa é `sessionSource` CONTÉM `Paid`**, não "UTM preenchido". Na conta da Marina: 313 `Paid Social` (anúncio) × 190 `Social media` (DM orgânica) × 1 `Direct traffic`. Os campos `utm*` existem mas são o nome do conjunto/criativo que o anunciante escolheu — servem pra RECORTAR campanha, não pra decidir "é anúncio?". `any + is_set` casa orgânico também.
+- **Default é PRIMEIRO toque** (`attributionSource`). Visto em prod: a Andrea entrou por `Paid Social` e depois mandou DM orgânica, então o `lastAttributionSource` virou `Social media`. Quem veio de anúncio não deixa de ter vindo — filtrar por último toque perderia o lead.
+- **Contato sem atribuição nenhuma NÃO casa** filtro de anúncio (só `not_contains`/`not_set`). Contas cujos leads entram por CTWA (Horizon, Liberty) têm os 3 campos `undefined` — lá a identificação de anúncio continua sendo por tag (`anuncio`, `ctwa-lead`, aplicadas pelo Spark OS no inbound).
+- ⚠️ Ao adicionar tipo de folha novo, **acrescente-o ao `needsContact`** em `checkContactMatchesTargeting` — senão o GET do contato nem acontece e a regra nunca casa. E ao zod de `targeting_rules`: `z.object()` estripa chave desconhecida e a rota persiste o body VALIDADO.
+- Diagnóstico: `scripts/probe-targeting-anuncio-marina.ts [locationId]` mostra, contra contatos reais, quantos a regra pegaria antes de ligar.
+
 ### Comportamento configurado tem que ser enforced no runtime (H73, 2026-08-07) — corrigido
 
 `post_booking.behavior = "stop_and_handoff"` ("parar e passar pra humano" na UI) existia **só como frase no prompt**. O modelo lê "NAO continue a conversa" no turno em que agenda e esquece no turno seguinte — o lead escreve, o turno roda, a IA responde. O cliente da Liberty configurou isso no AI Hub e reportou que não funcionava; estava certo.

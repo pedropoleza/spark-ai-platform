@@ -25,7 +25,7 @@ export const updateAgentSchema = z.object({
 // Targeting rule
 const targetingRuleSchema = z.object({
   id: z.string(),
-  type: z.enum(["tag", "custom_field", "pipeline_stage", "message"]),
+  type: z.enum(["tag", "custom_field", "pipeline_stage", "message", "attribution"]),
   tag: z.string().optional(),
   custom_field_key: z.string().optional(),
   custom_field_value: z.string().optional(),
@@ -38,6 +38,24 @@ const targetingRuleSchema = z.object({
   message_value: z.string().optional(),
   message_values: z.array(z.string()).optional(),
   case_sensitive: z.boolean().optional(),
+  // type="attribution" (Pedro 2026-08-11): filtro por ORIGEM do contato.
+  // Precisa estar AQUI: z.object() estripa chave desconhecida e a rota persiste
+  // o body VALIDADO — foi assim que o require_contact_before_booking sumia (H72).
+  attribution_field: z
+    .enum([
+      "any", "sessionSource", "medium", "campaign", "campaignId", "adId",
+      "adSetId", "utmCampaign", "utmMedium", "utmContent", "referrer", "url",
+    ])
+    .optional(),
+  attribution_operator: z
+    .enum([
+      "contains", "not_contains", "eq", "starts_with", "ends_with", "in",
+      "matches_regex", "is_set", "not_set",
+    ])
+    .optional(),
+  attribution_value: z.string().optional(),
+  attribution_values: z.array(z.string()).optional(),
+  attribution_scope: z.enum(["first", "last"]).optional(),
 });
 
 // Composição E/OU v2 (Pedro 2026-06-17). targeting_rules aceita o array flat
