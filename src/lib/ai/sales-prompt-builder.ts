@@ -1340,6 +1340,16 @@ interface FollowUpPromptContext {
    * onde a conversa parou e referenciar de forma natural.
    */
   recentHistory?: string;
+  /**
+   * Texto que o admin escreveu pra ESTE toque (follow_up_config.manual_steps).
+   *
+   * H73 (caso Márcia 2026-08-11): antes esse texto era enviado CRU, pulando o
+   * prompt inteiro — e como o relógio da sequência reseta a cada turno, o passo
+   * "Me manda seus dados rapidinho?" saía 1h depois de o lead ter mandado todos
+   * os dados. Agora ele entra aqui como mensagem preferida, com ordem de manter
+   * o texto quando ainda serve e de adaptar quando a conversa andou.
+   */
+  mensagemSugerida?: string;
 }
 
 export function buildFollowUpPrompt(ctx: FollowUpPromptContext): string {
@@ -1382,6 +1392,31 @@ ${ctx.config.specialist_name ? `Se precisar escalar, mencione que ${ctx.config.s
     ? `\n\n## ÚLTIMAS MENSAGENS (onde a conversa parou)\n${ctx.recentHistory.substring(0, 2000)}`
     : "";
 
+  // H73: o texto do admin é o PADRÃO deste toque — o modelo só o troca quando
+  // ele contradiz o que já aconteceu na conversa (pedir dado que o lead já
+  // mandou, prometer material que a gente não envia, tratar como novo alguém
+  // que já está conversando). Sem esta seção o texto ia cru e produzia o
+  // "looping de pedir os dados" que a dona da conta reportou.
+  const sugestaoBlock = ctx.mensagemSugerida?.trim()
+    ? `\n\n## MENSAGEM ESCRITA PELO ADMIN PRA ESTE TOQUE
+"${ctx.mensagemSugerida.trim()}"
+
+REGRA QUE VEM ANTES DE TUDO: você NÃO consegue enviar anexo (relato, vídeo,
+material, print, áudio). Se o texto acima prometer mandar alguma coisa, corte
+essa promessa — mesmo que o resto do texto fique igual. Prometer e não entregar
+é pior que mudar o texto do admin.
+
+Fora isso: se o texto ainda fizer sentido pro momento da conversa, copie
+PALAVRA POR PALAVRA — não troque nomes, origem ("vídeo do Matheus"), emojis nem
+a ordem das frases. O admin escreveu assim de propósito.
+Reescreva (curto, mesmo tom, mesma intenção) só se ele contradisser o que já
+aconteceu — por exemplo:
+- pede dados que o lead JÁ mandou (olhe DADOS JÁ COLETADOS e as últimas
+  mensagens): cobre só o que REALMENTE falta, ou fale do próximo passo;
+- trata como primeiro contato quem já está conversando com você.
+Se o texto do admin já serve e não promete nada, não invente: mande ele.`
+    : "";
+
   return `## IDENTIDADE
 ${identityInst}${contactBlock}
 Data: ${ctx.currentDate} | Timezone: ${ctx.timezone}
@@ -1398,7 +1433,7 @@ REGRAS ABSOLUTAS (VALEM SEMPRE, SEM EXCEÇÃO)
 ============================================================
 
 ## CONTEXTO
-${contextDesc}${collectedBlock}${historyBlock}
+${contextDesc}${collectedBlock}${historyBlock}${sugestaoBlock}
 
 ## DECIDA PRIMEIRO: VALE A PENA MANDAR ESTE FOLLOW-UP AGORA?
 Você é inteligente sobre isso — NÃO é um robô que cutuca sempre. Leia o CONTEXTO

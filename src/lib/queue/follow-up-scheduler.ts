@@ -703,17 +703,22 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       // mandava "SEMPRE envie" → virava o "já voltou do Brasil?" 10min depois.
       let aiDecidedSkip = false;
 
-      // Se tem mensagem customizada, enviar como está (texto explícito do admin).
-      if (followUp.custom_message) {
-        const r = await sendFollowUpMessage(
-          client,
-          { contactId: followUp.contact_id, outboundType, subject: outboundSubject },
-          followUp.custom_message,
-        );
-        sentBubbles = r.bubbles;
-        sentMessageId = r.messageId;
-        sentText = sentBubbles.join("\n\n");
-      } else {
+      // Fix bug observado em prod 2026-08-11 (H73, caso Márcia — "o cliente
+      // passou os dados e a IA ficou num looping de tentar pegar os dados
+      // dele"): o texto fixo do admin era enviado CRU aqui, num `if` antes de
+      // tudo — sem histórico, sem o gate de "1 dono por conversa", sem olhar o
+      // que já tinha sido coletado. E como o relógio da sequência RESETA a cada
+      // turno, o passo #1 ("Me manda seus dados rapidinho?") era reagendado e
+      // disparava 1 hora depois de o lead ter mandado nome, nascimento, estado
+      // e fumante — provado no contato DfVDzxNrxvHsGpmlhtoc (08/08 11:32 o lead
+      // entregou tudo, 12:32 a IA pediu de novo). Mesma origem da queixa "a IA
+      // oferece relatos que nunca foram enviados": o passo #2 prometia material.
+      //
+      // Agora o texto do admin é a mensagem PREFERIDA e passa pelo mesmo caminho
+      // do follow-up gerado: os gates rodam e o modelo só reescreve quando a
+      // conversa andou. Se a chamada falhar, o literal é enviado do mesmo jeito
+      // (fail-open — perder o toque seria pior que mandar o texto de sempre).
+      {
         // Buscar contexto recente (últimas 10 msgs + nome) para personalizar o follow-up.
         // Dois fetches em paralelo para minimizar latência do scheduler.
         const convId = (convState as { conversation_id?: string } | null)?.conversation_id || "";
@@ -858,6 +863,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           contactName,
           collectedData,
           recentHistory,
+          mensagemSugerida: followUp.custom_message || undefined,
         });
 
         const result = await processWithAI({
@@ -931,6 +937,21 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           }
         } else if (result.success) {
           aiDecidedSkip = true; // sucesso sem campo message = decidiu não mandar
+        } else if (followUp.custom_message) {
+          // H73: a chamada FALHOU (timeout, provedor fora) e existe texto do
+          // admin — manda o literal. Perder o toque por falha técnica é pior que
+          // mandar o texto de sempre; só a decisão de NÃO mandar é do modelo.
+          console.warn(
+            `[FollowUp] geração falhou (${result.error ?? "sem detalhe"}) — enviando o texto do admin como está`,
+          );
+          const r = await sendFollowUpMessage(
+            client,
+            { contactId: followUp.contact_id, outboundType, subject: outboundSubject },
+            followUp.custom_message,
+          );
+          sentBubbles = r.bubbles;
+          sentMessageId = r.messageId;
+          sentText = sentBubbles.join("\n\n");
         }
       }
 
