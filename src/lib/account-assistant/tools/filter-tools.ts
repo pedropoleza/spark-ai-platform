@@ -35,7 +35,9 @@ import { getRepGhlUserId } from "./types";
 // Helper — converte ToolContext em FilterExecutionContext
 // =====================================================================
 
-function toEngineCtx(
+// Exportado 2026-08-14: bulk_update_tags (tags.ts) resolve o alvo via filter
+// engine e precisa do mesmo contexto de execução.
+export function toEngineCtx(
   ctx: ToolContext,
   consumer: string,
 ): FilterExecutionContext {

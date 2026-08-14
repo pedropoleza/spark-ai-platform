@@ -624,6 +624,10 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
       activeLocationId,
       source: "proactive_rule",
       kind: rule.name,
+      // 2026-08-14 (mesma classe do fix do reminder-runner): o default `fonte:rep:minuto`
+      // colidia quando DUAS regras (ou dois targets — ex: 2 reuniões terminando juntas →
+      // 2 post_meeting) disparavam pro mesmo rep no mesmo tick. rule.id+target distingue.
+      dedupeKey: `proactive:rule:${rule.id}:${targetId ?? "-"}:${Math.floor(Date.now() / 60_000)}`,
       extraMetadata: {
         rule_id: rule.id,
         alert_type: rule.name,

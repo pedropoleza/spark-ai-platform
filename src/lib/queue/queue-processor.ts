@@ -1205,16 +1205,19 @@ async function processGroup(
         // Stevo (tudo source="api") esse fallback às vezes pausa por engano e
         // engolia o lead sem a rep saber. Avisa a dona (cooldown 4h por contato,
         // reusa o dedup do handoff). Fail-soft: nunca quebra o pause.
-        const pausedContactName =
-          contactSettled.status === "fulfilled" ? contactSettled.value?.contact?.name : undefined;
-        const pausedAssignedTo =
-          contactSettled.status === "fulfilled" ? contactSettled.value?.contact?.assignedTo : undefined;
+        // 2026-08-14: `.name` sozinho vinha vazio pra lead de anúncio (só tem
+        // firstName) → a rep recebia "Pausei a IA na conversa com um contato"
+        // sem saber QUAL (Jussara ~20×, Priscila ~30× em 2 semanas). Mesmo
+        // fallback do resto do arquivo (linha ~1229) + telefone.
+        const pausedContact =
+          contactSettled.status === "fulfilled" ? contactSettled.value?.contact : undefined;
         await notifyAutoPauseToRep({
           agentId: agent.id,
           locationId: group.locationId,
           contactId: group.contactId,
-          contactName: pausedContactName,
-          assignedUserId: pausedAssignedTo,
+          contactName: pausedContact?.name || pausedContact?.firstName || undefined,
+          contactPhone: pausedContact?.phone || undefined,
+          assignedUserId: pausedContact?.assignedTo,
         });
         return; // não responde — humano está conduzindo
       }

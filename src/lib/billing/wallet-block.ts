@@ -436,9 +436,36 @@ export async function notifyWalletBlockOwnerOnce(locationId: string): Promise<vo
       .eq("location_id", locationId)
       .maybeSingle();
     if (!loc?.wallet_blocked_at) return;
+
+    // 2026-08-14 (review 30/07–13/08: Renan recebeu o MESMO aviso diário por 14
+    // dias; a 5XQL está bloqueada desde 17/07 sem ninguém agir). Depois de 7
+    // dias o aviso diário é fadiga, não informação: vira SEMANAL e o caso escala
+    // pro admin (sinal com fingerprint estável — occurrences agregam por dia).
+    const bloqueadaHaMs = Date.now() - new Date(loc.wallet_blocked_at as string).getTime();
+    const bloqueioVelho = bloqueadaHaMs > 7 * 24 * 60 * 60 * 1000;
+    const cooldownMs = bloqueioVelho ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    if (bloqueioVelho) {
+      try {
+        const { recordSignalAsync } = await import("@/lib/admin-signals/recorder");
+        recordSignalAsync({
+          type: "failure",
+          title: `💳 Wallet bloqueada há mais de 7 dias (${locationId})`,
+          description:
+            `Location ${locationId} está sem saldo desde ${String(loc.wallet_blocked_at).slice(0, 10)} ` +
+            `(${Math.floor(bloqueadaHaMs / 86_400_000)} dias). O aviso automático à dona já virou semanal — ` +
+            `esse cliente precisa de contato humano (recarga ou desligamento da conta).`,
+          severity: "high",
+          source: "bot_auto",
+          metadata: { location_id: locationId, blocked_days: Math.floor(bloqueadaHaMs / 86_400_000) },
+        });
+      } catch {
+        /* sinal não crítico */
+      }
+    }
+
     const prevNotifiedAt = (loc.wallet_block_notified_at as string | null) || null;
     const last = prevNotifiedAt ? new Date(prevNotifiedAt).getTime() : 0;
-    if (Date.now() - last < 24 * 60 * 60 * 1000) return;
+    if (Date.now() - last < cooldownMs) return;
     // H52 review adversarial: resolve a dona ANTES de queimar o cooldown —
     // location lead-facing-only (sem rep no SparkBot) não pode gastar as 24h
     // num aviso que nunca sai. Dona = rep não-internal mais recente.
@@ -467,8 +494,8 @@ export async function notifyWalletBlockOwnerOnce(locationId: string): Promise<vo
     }
     // CAS do cooldown (H52 review adversarial): só quem GANHA o UPDATE envia —
     // corrida de 2 lambdas não vira aviso duplo, e perder a corrida não perde
-    // o aviso (o vencedor envia).
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // o aviso (o vencedor envia). Cutoff acompanha o cooldown dinâmico (24h/7d).
+    const cutoff = new Date(Date.now() - cooldownMs).toISOString();
     const nowIso = new Date().toISOString();
     const { data: won } = await supabase
       .from("locations")

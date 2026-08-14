@@ -287,20 +287,45 @@ const listCalendars: ToolEntry = {
     try {
       const res = await ghlListCalendars(ctx.ghlClient, ctx.locationId);
       const pref = getSchedulingPref(ctx);
-      const calendars = (res.calendars || []).map((c) => ({
-        id: c.id,
-        name: c.name,
-        description: c.description,
-        slug: c.widgetSlug,
-        // Agendamento V2: flag pro LLM saber qual já é o padrão salvo do rep.
-        is_default_for_rep: !!pref.default_calendar_id && c.id === pref.default_calendar_id,
-      }));
+      // 2026-08-14 (review 30/07–13/08): calendário inativo ou sem membro do time
+      // SEMPRE falha no create — mas o bot só descobria no erro e re-oferecia os
+      // mesmos ("Legacy" 3 dias no beco; Cleybart criou calendário novo pra
+      // escapar). Agora cada item declara `bookable` + o motivo, e o LLM é
+      // instruído (na msg de erro calendar_unbookable) a oferecer só bookable.
+      const calendars = (res.calendars || []).map((c) => {
+        const semTime = !c.teamMembers || c.teamMembers.length === 0;
+        const inativo = c.isActive === false;
+        const bookable = !inativo && !semTime;
+        return {
+          id: c.id,
+          name: c.name,
+          description: c.description,
+          slug: c.widgetSlug,
+          // Agendamento V2: flag pro LLM saber qual já é o padrão salvo do rep.
+          is_default_for_rep: !!pref.default_calendar_id && c.id === pref.default_calendar_id,
+          bookable,
+          ...(bookable
+            ? {}
+            : {
+                unbookable_reason: inativo
+                  ? "calendário INATIVO no Spark Leads — agendar aqui sempre falha"
+                  : "calendário SEM membro do time — agendar aqui sempre falha (422)",
+              }),
+        };
+      });
 
       // Resolução pro LLM agendar sem perguntar (named > pref > único).
       // `named` (nome dito pelo rep) é resolvido pelo próprio LLM; aqui cobrimos
-      // pref salva e o caso de calendário único.
+      // pref salva e o caso de calendário único. Só calendários utilizáveis
+      // entram na resolução (se todos estiverem quebrados, mantém todos — o
+      // erro orienta o rep a chamar o admin).
+      const bookableIds = calendars
+        .filter((c) => c.bookable)
+        .map((c) => c.id)
+        .filter((id): id is string => !!id);
+      const allIds = calendars.map((c) => c.id).filter((id): id is string => !!id);
       const choice = resolveCalendarChoice(
-        calendars.map((c) => c.id).filter((id): id is string => !!id),
+        bookableIds.length > 0 ? bookableIds : allIds,
         pref.default_calendar_id,
       );
 
@@ -311,6 +336,14 @@ const listCalendars: ToolEntry = {
           resolved_calendar_id: choice.resolved_calendar_id,
           resolution: choice.resolution,
           default_duration_min: pref.default_duration_min,
+          ...(calendars.some((c) => !c.bookable)
+            ? {
+                note:
+                  "Calendários com bookable=false NÃO aceitam agendamento (inativo ou sem time). " +
+                  "Não ofereça esses ao rep — se ele pedir um deles, explique o motivo e sugira " +
+                  "pedir ao admin pra corrigir em Settings → Calendars.",
+              }
+            : {}),
         },
       };
     } catch (err) {

@@ -200,6 +200,9 @@ export async function notifyRepViaSparkbot(args: NotifyArgs): Promise<NotifyResu
         activeLocationId: rep.active_location_id || locationId,
         source: "lead_handoff_notification",
         kind: decision.reason.split(":")[0],
+        // 2026-08-14: chave por CONTATO — dois leads pedindo humano no mesmo
+        // minuto pro mesmo rep não podem virar "duplicata" no transporte.
+        dedupeKey: `handoff:${contactId}:${Math.floor(Date.now() / 60_000)}`,
         extraMetadata: {
           handoff_reason: decision.reason,
           lead_contact_id: contactId,
@@ -270,24 +273,58 @@ export async function notifyAutoPauseToRep(args: {
   locationId: string;
   contactId: string;
   contactName?: string | null;
+  contactPhone?: string | null;
   assignedUserId?: string | null;
 }): Promise<{ notified: boolean; reason: string }> {
-  const { agentId, locationId, contactId, contactName, assignedUserId } = args;
+  const { agentId, locationId, contactId, assignedUserId } = args;
   const reason = "auto_pause:human_message:history";
   try {
     const supabase = createAdminClient();
     const rep = await resolveOwnerRep(supabase, locationId, {
-      contact: { assignedUserId: assignedUserId || undefined, name: contactName || undefined },
+      contact: { assignedUserId: assignedUserId || undefined, name: args.contactName || undefined },
     } as unknown as LeadContext);
     if (!rep) return { notified: false, reason: "no_owner_resolved" };
     if (await alreadyNotified(supabase, locationId, contactId, reason)) {
       return { notified: false, reason: "cooldown" };
     }
-    const who = contactName ? `*${contactName}*` : "um contato";
+
+    // 2026-08-14: aviso sem NOME é ruído — a rep recebia "Pausei a IA na
+    // conversa com um contato" (Jussara ~20×, Priscila ~30× em 2 semanas) sem
+    // ter como saber qual, nem como agir. Se o caller não trouxe nome/telefone,
+    // busca no CRM (barato: cooldown de 4h por contato limita a 1 GET por caso).
+    let contactName = args.contactName || null;
+    let contactPhone = args.contactPhone || null;
+    if (!contactName || !contactPhone) {
+      try {
+        const { data: loc } = await supabase
+          .from("locations")
+          .select("company_id")
+          .eq("location_id", locationId)
+          .maybeSingle();
+        if (loc?.company_id) {
+          const { GHLClient } = await import("@/lib/ghl/client");
+          const ghl = new GHLClient(loc.company_id, locationId);
+          const res = await ghl.get<{
+            contact?: { contactName?: string; firstName?: string; name?: string; phone?: string };
+          }>(`/contacts/${contactId}`);
+          const c = res.contact;
+          contactName = contactName || c?.contactName || c?.name || c?.firstName || null;
+          contactPhone = contactPhone || c?.phone || null;
+        }
+      } catch {
+        // fail-soft: aviso sai mesmo sem nome — pior seria não avisar
+      }
+    }
+
+    const who = contactName
+      ? `*${contactName}*${contactPhone ? ` (${contactPhone})` : ""}`
+      : contactPhone
+        ? `o contato ${contactPhone}`
+        : "um contato";
     const message =
       `🤖 Pausei a IA na conversa com ${who} porque apareceu uma resposta que parece de ` +
       `outra pessoa/automação (nessa conta o WhatsApp não distingue bem quem enviou). ` +
-      `Se foi engano e você quer a IA de volta nesse contato, me avisa aqui que eu retomo.`;
+      `Se foi engano, responde "retoma a IA ${contactName || contactPhone ? `com ${contactName || contactPhone}` : "nesse contato"}" que eu ligo de volta.`;
     const { deliverProactiveMessage } = await import("@/lib/account-assistant/proactive/whatsapp-delivery");
     const delivery = await deliverProactiveMessage(
       { id: rep.id, phone: rep.phone || "", last_inbound_at: null },
@@ -296,6 +333,9 @@ export async function notifyAutoPauseToRep(args: {
         activeLocationId: rep.active_location_id || locationId,
         source: "lead_handoff_notification",
         kind: "auto_pause",
+        // 2026-08-14: chave por contato — dois auto-pauses no mesmo minuto pro
+        // mesmo rep (rajada de automação) não podem se engolir no transporte.
+        dedupeKey: `autopause:${contactId}:${Math.floor(Date.now() / 60_000)}`,
         extraMetadata: { handoff_reason: reason, lead_contact_id: contactId, lead_name: contactName || null, agent_id: agentId },
       },
     );

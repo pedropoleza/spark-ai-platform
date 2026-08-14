@@ -11,10 +11,11 @@ import {
   type SilenceState,
 } from "@/lib/account-assistant/proactive/silence-gate";
 
-const st = (counter: number, paused = false, warned = false): SilenceState => ({
+const st = (counter: number, paused = false, warned = false, pauseSource: string | null = null): SilenceState => ({
   consecutive_proactive_without_reply: counter,
   proactive_paused_at: paused ? new Date().toISOString() : null,
   proactive_warned_at: warned ? new Date().toISOString() : null,
+  proactive_pause_source: pauseSource,
 });
 
 interface Case { name: string; ok: boolean }
@@ -45,8 +46,21 @@ const r2 = checkSilenceGate(st(2), "requested");
 check("requested c2 → SEM warning (não ameaça), NÃO incrementa", r2.canSend === true && r2.warningNote === null && r2.nextCounter === 2 && r2.markWarned === false);
 const r3 = checkSilenceGate(st(3), "requested");
 check("requested c3 → ainda envia limpo (não pune lembrete pedido)", r3.canSend === true && r3.warningNote === null && r3.nextCounter === 3);
-const rp = checkSilenceGate(st(2, true), "requested");
-check("requested pausado → respeita pausa (anti-ban)", rp.canSend === false && rp.reason === "already_paused");
+// 2026-08-14: pausa de SILÊNCIO não segura mais lembrete PEDIDO (sinal de
+// 08/08: "O rep PEDIU esse lembrete e não recebeu" — task 3 dias em defer até
+// expirar como failed). Pausa de loop_guard (IA×IA) continua barrando tudo.
+const rpSil = checkSilenceGate(st(2, true), "requested");
+check(
+  "requested + pausa de SILÊNCIO → FURA (rep pediu, rep recebe)",
+  rpSil.canSend === true && rpSil.warningNote === null && rpSil.nextCounter === 2 && rpSil.markWarned === false,
+);
+const rpLoop = checkSilenceGate(st(2, true, false, "loop_guard"), "requested");
+check(
+  "requested + pausa de LOOP_GUARD → respeita (segurança dura)",
+  rpLoop.canSend === false && rpLoop.reason === "already_paused",
+);
+const npSil = checkSilenceGate(st(1, true), "nudge");
+check("nudge + pausa de silêncio → continua barrado", npSil.canSend === false && npSil.reason === "already_paused");
 
 // ── Ordem: o recado vem DEPOIS do conteúdo ──
 // Caso real (Nathalia Barbosa, 05/08): o Resumo matinal chegou abrindo com "Se

@@ -59,6 +59,10 @@ export async function notifySequenceCompleted(sequenceId: string): Promise<Notif
         activeLocationId: seq.location_id,
         source: "followup_sequence_completed",
         kind: "followup_completed",
+        // 2026-08-14: chave por sequência — duas sequências completando no mesmo
+        // minuto pro mesmo rep não se engolem no transporte (classe do fix do
+        // reminder-runner).
+        dedupeKey: `fu-completed:${sequenceId}:${Math.floor(Date.now() / 60_000)}`,
         extraMetadata: { sequence_id: sequenceId },
       },
     );
@@ -128,6 +132,7 @@ export async function notifySequencePausedByReply(sequenceId: string): Promise<N
         activeLocationId: seq.location_id,
         source: "followup_sequence_paused_by_reply",
         kind: "followup_paused",
+        dedupeKey: `fu-paused:${sequenceId}:${Math.floor(Date.now() / 60_000)}`,
         extraMetadata: { sequence_id: sequenceId, contact_id: seq.contact_id },
       },
     );

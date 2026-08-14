@@ -88,6 +88,7 @@ export async function notifyRepJobCompleted(jobId: string): Promise<NotifyResult
         activeLocationId: job.location_id,
         source: "bulk_completion_notification",
         kind: "bulk_completed",
+        dedupeKey: `bulk-completed:${jobId}:${Math.floor(Date.now() / 60_000)}`,
         extraMetadata: {
           job_id: jobId,
           sent: job.sent_count,

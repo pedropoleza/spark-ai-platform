@@ -509,14 +509,41 @@ const setProactivity: ToolEntry = {
       return { status: "error", message: `Falha ao atualizar proatividade: ${msg}`, retryable: false };
     }
 
+    // Fix bug observado em prod 2026-08-14 (caso Taciana): desligar task_reminder
+    // mudava a PREF, mas os ghl_task_reminder já ENFILEIRADOS continuavam
+    // disparando ("Pode parar de me mandar as tasks" → "Pronto, desativei" →
+    // chegaram mais 6, alguns atrasados 2 dias). Cancela os pendentes na hora.
+    let cancelledPending = 0;
+    if (rule === "task_reminder" && !enabled) {
+      try {
+        const { createAdminClient } = await import("@/lib/supabase/admin");
+        const sb = createAdminClient();
+        const { data: cancelled } = await sb
+          .from("assistant_scheduled_tasks")
+          .update({ status: "cancelled", last_run_at: new Date().toISOString() })
+          .eq("rep_id", ctx.rep.id)
+          .eq("task_type", "ghl_task_reminder")
+          .eq("status", "pending")
+          .select("id");
+        cancelledPending = cancelled?.length ?? 0;
+      } catch (err) {
+        console.warn(
+          `[set_proactivity] cancelar ghl_task_reminders pendentes falhou (rep ${ctx.rep.id}):`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
     const leadNote = rule === "task_reminder" && leadMin ? ` Vou lembrar ${leadMin}min antes do vencimento.` : "";
+    const cancelNote = cancelledPending > 0 ? ` ${cancelledPending} lembrete(s) já na fila foram cancelados.` : "";
     return {
       status: "ok",
       data: {
         rule,
         enabled,
         lead_min: leadMin ?? null,
-        message: `${label} ${enabled ? "ativado" : "desativado"}.${leadNote}`,
+        cancelled_pending: cancelledPending,
+        message: `${label} ${enabled ? "ativado" : "desativado"}.${leadNote}${cancelNote}`,
       },
     };
   },

@@ -286,6 +286,26 @@ export function ghlErrorToResult(err: unknown, action: string): ToolResult {
     };
   }
 
+  // 2026-08-14 (review 30/07–13/08: 51 falhas de create_appointment, reps em
+  // beco sem saída — Legacy 3 dias seguidos, Cleybart "o calendário tá vazio").
+  // Calendário INUTILIZÁVEL (inativo / sem membro no time) tem que orientar o
+  // próximo passo, senão o LLM re-oferece os mesmos calendários quebrados.
+  if (/calendar is inactive|not part of calendar team|no team member|user id not part/i.test(fullMsg)) {
+    const causa = /inactive/i.test(fullMsg)
+      ? "esse calendário está INATIVO no Spark Leads"
+      : "esse calendário está sem membro do time (ou o usuário não participa dele)";
+    return {
+      status: "error",
+      message:
+        `${action}: ${causa} — nenhuma tentativa nele vai funcionar até o admin ` +
+        `corrigir em Settings → Calendars. NÃO ofereça esse calendário de novo: chame ` +
+        `list_calendars e ofereça só os que vierem com bookable=true. Se nenhum servir, ` +
+        `diga ao rep qual configuração falta em vez de tentar outro.`,
+      retryable: false,
+      code: "calendar_unbookable",
+    };
+  }
+
   // Onda 2 (2026-05-20): 403 — escopo insuficiente ou location sem acesso.
   // Mantém mensagem existente mas injeta o code pra governança de escopo.
   if (statusCode === 403 || /forbidden/i.test(fullMsg)) {

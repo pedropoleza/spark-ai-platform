@@ -202,6 +202,39 @@ async function fireOne(task: ScheduledTaskRow): Promise<"fired" | "failed" | "sk
   // bot-initiated (regra), então passa pelo gate completo (warn/pausa) pra proteger
   // contra spam/ban se o rep some (Pedro 2026-05-21). Reseta em qualquer inbound.
   const reminderKind = task.task_type === "ghl_task_reminder" ? "nudge" : "requested";
+
+  // Fix bug observado em prod 2026-08-14 (caso Taciana): a pref task_reminder
+  // só era checada no AGENDAMENTO (task-reminders.ts) — rep que desligava depois
+  // ("pode parar de me mandar as tasks") continuava recebendo os já enfileirados.
+  // Re-checa na ENTREGA; se desligou, cancela em vez de entregar.
+  if (task.task_type === "ghl_task_reminder") {
+    try {
+      const { resolveProactivityPref } = await import("./preferences");
+      const repRow = await findRepFieldsById<
+        Pick<import("@/types/account-assistant").RepIdentity, "proactivity_prefs" | "daily_briefing_enabled">
+      >(task.rep_id, "proactivity_prefs, daily_briefing_enabled");
+      if (repRow) {
+        const pref = resolveProactivityPref(repRow, "task_reminder");
+        if (!pref.enabled) {
+          await supabase
+            .from("assistant_scheduled_tasks")
+            .update({ status: "cancelled", last_run_at: new Date().toISOString() })
+            .eq("id", task.id);
+          console.log(
+            `[reminder-runner] task ${task.id} cancelada na entrega — rep ${task.rep_id} desligou task_reminder`,
+          );
+          return "skipped";
+        }
+      }
+    } catch (err) {
+      // fail-open: erro na checagem não segura o lembrete
+      console.warn(
+        `[reminder-runner] re-check da pref task_reminder falhou (task ${task.id}):`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
   const decision = await loadSilenceDecision(supabase, task.rep_id, reminderKind);
   if (!decision.canSend) {
     console.log(
@@ -319,6 +352,13 @@ async function deliverReminderWhatsapp(
     source: "scheduled_reminder",
     reminderId: task.id,
     kind: task.task_type,
+    // Fix bug observado em prod 2026-08-14 (casos Milton/Raquel/Natalia): o default
+    // `fonte:rep:minuto` fazia DOIS lembretes distintos do mesmo rep vencendo no
+    // mesmo minuto virarem "duplicata" no SparkZap — o 2º sumia com a task marcada
+    // completed (9 lembretes perdidos em 15d). task.id distingue lembretes; o
+    // minuto fica pra recurring_reminder (mesmo task.id re-dispara em ticks
+    // futuros) e pro retry intra-tick continuar dedupado.
+    dedupeKey: `proactive:reminder:${task.id}:${Math.floor(Date.now() / 60_000)}`,
     // F1 (contact-resolution 2026-06): propaga o contato do lembrete pra metadata da msg
     // (slot extraMetadata já existe em whatsapp-delivery.ts) → herança no inbound (F3).
     extraMetadata: {
@@ -632,6 +672,14 @@ async function fireOutboundToContact(
 const DEFER_BASE_MS = 30 * 60 * 1000;
 const DEFER_CAP_MS = 12 * 60 * 60 * 1000;
 const DEFER_MAX_MS = 3 * 24 * 60 * 60 * 1000;
+/**
+ * 2026-08-14 (caso Taciana): lembrete de TASK do CRM (nudge automático) atrasado
+ * 2 dias é ruído — ela recebeu 6 seguidos com "(lembrete atrasado — era pra ter
+ * chegado 10/08)". Nudge tem teto de 24h e expira como cancelled SEM sinal (não
+ * é promessa ao rep — diferente do lembrete que ele PEDIU, que mantém 3 dias +
+ * failed + sinal de admin).
+ */
+const DEFER_MAX_NUDGE_MS = 24 * 60 * 60 * 1000;
 
 /** Espera com backoff: 30min, 1h, 2h, 4h, 8h, 12h… — ~8 tentativas em 3 dias.
  *  Sem isso seriam 144 re-claims por lembrete e hoje existem 151 lembretes
@@ -657,7 +705,22 @@ async function deferBlockedTask(task: ScheduledTaskRow, reason: string): Promise
   const payload = (task.task_payload || {}) as Record<string, unknown>;
   const primeiro = typeof payload.first_blocked_at === "string" ? payload.first_blocked_at : nowIso;
   const vezes = (typeof payload.blocked_count === "number" ? payload.blocked_count : 0) + 1;
-  const estourou = Date.now() - new Date(primeiro).getTime() > DEFER_MAX_MS;
+  const ehNudge = task.task_type === "ghl_task_reminder";
+  const tetoMs = ehNudge ? DEFER_MAX_NUDGE_MS : DEFER_MAX_MS;
+  const estourou = Date.now() - new Date(primeiro).getTime() > tetoMs;
+
+  if (estourou && ehNudge) {
+    // Nudge automático velho morre quieto — sem selo de atraso, sem sinal.
+    await supabase
+      .from("assistant_scheduled_tasks")
+      .update({
+        status: "cancelled",
+        last_run_at: nowIso,
+        task_payload: { ...payload, first_blocked_at: primeiro, blocked_count: vezes, blocked_reason: reason },
+      })
+      .eq("id", task.id);
+    return;
+  }
 
   if (estourou) {
     await supabase
@@ -725,6 +788,22 @@ async function advanceTask(task: ScheduledTaskRow): Promise<void> {
         .eq("id", task.id);
       return;
     }
+
+    // 2026-08-14 (caso Matheus): recorrência com data-fim (`until` da tool) —
+    // quando a PRÓXIMA execução cai depois do fim, a série completa sozinha em
+    // vez de rodar até alguém lembrar de cancelar.
+    const untilRaw = (task.task_payload as Record<string, unknown> | null)?.recurrence_until;
+    if (typeof untilRaw === "string") {
+      const untilMs = Date.parse(untilRaw);
+      if (Number.isFinite(untilMs) && nextRun.getTime() > untilMs) {
+        await supabase
+          .from("assistant_scheduled_tasks")
+          .update({ status: "completed", last_run_at: nowIso })
+          .eq("id", task.id);
+        return;
+      }
+    }
+
     await supabase
       .from("assistant_scheduled_tasks")
       .update({

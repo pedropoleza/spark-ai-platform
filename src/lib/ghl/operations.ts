@@ -571,6 +571,7 @@ export async function listCalendars(
   calendars?: Array<{
     id: string; name?: string; description?: string; widgetSlug?: string;
     slotDuration?: number; slotDurationUnit?: string;
+    isActive?: boolean;
     openHours?: Array<{
       daysOfTheWeek: number[];
       hours: Array<{ openHour: number; openMinute: number; closeHour: number; closeMinute: number }>;
@@ -582,6 +583,7 @@ export async function listCalendars(
     calendars?: Array<{
       id: string; name?: string; description?: string; widgetSlug?: string;
       slotDuration?: number; slotDurationUnit?: string;
+      isActive?: boolean;
       openHours?: Array<{
         daysOfTheWeek: number[];
         hours: Array<{ openHour: number; openMinute: number; closeHour: number; closeMinute: number }>;

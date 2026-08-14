@@ -43,6 +43,8 @@ export interface SilenceState {
   consecutive_proactive_without_reply: number;
   proactive_paused_at: string | null;
   proactive_warned_at: string | null;
+  /** 'loop_guard' = pausa de segurança dura; null/outros = pausa de silêncio. */
+  proactive_pause_source?: string | null;
 }
 
 /**
@@ -81,6 +83,21 @@ export function checkSilenceGate(
   kind: ProactiveKind = "nudge",
 ): SilenceDecision {
   if (state.proactive_paused_at) {
+    // 2026-08-14 (sinal de 08/08: "O rep PEDIU esse lembrete e não recebeu"):
+    // a pausa de SILÊNCIO existe pra parar nudge automático em quem sumiu — mas
+    // segurava também o lembrete que o rep agendou de propósito ("me lembra
+    // sábado 8h"), que então ficava 3 dias em defer e expirava como failed.
+    // Lembrete pedido ("requested") agora FURA a pausa de silêncio; a pausa de
+    // loop_guard (IA×IA, segurança dura) continua barrando tudo.
+    const pausaDura = state.proactive_pause_source === "loop_guard";
+    if (kind === "requested" && !pausaDura) {
+      return {
+        canSend: true,
+        warningNote: null,
+        nextCounter: state.consecutive_proactive_without_reply ?? 0,
+        markWarned: false,
+      };
+    }
     return { canSend: false, reason: "already_paused", shouldSetPaused: false };
   }
 
@@ -88,9 +105,9 @@ export function checkSilenceGate(
 
   // Onda 1 (V2 2026-05-20): proativo SOLICITADO pelo rep (lembrete que ele
   // agendou via schedule_reminder) NUNCA ameaça nem conta como "silêncio" — ele
-  // pediu pra ser lembrado, não precisa "responder". Só respeita a pausa total
-  // (acima). Sem warningNote, sem incrementar o counter. Resolve o caso A2b
-  // (aviso/ameaça nocivo grudado num lembrete do próprio rep).
+  // pediu pra ser lembrado, não precisa "responder". Sem warningNote, sem
+  // incrementar o counter. Resolve o caso A2b (aviso/ameaça nocivo grudado num
+  // lembrete do próprio rep).
   if (kind === "requested") {
     return { canSend: true, warningNote: null, nextCounter: cur, markWarned: false };
   }
@@ -172,7 +189,7 @@ export async function loadSilenceDecision(
   const { data: rep, error } = await supabase
     .from("rep_identities")
     .select(
-      "consecutive_proactive_without_reply, proactive_paused_at, proactive_warned_at",
+      "consecutive_proactive_without_reply, proactive_paused_at, proactive_warned_at, proactive_pause_source",
     )
     .eq("id", repId)
     .single();
@@ -197,5 +214,6 @@ export async function loadSilenceDecision(
     consecutive_proactive_without_reply: rep.consecutive_proactive_without_reply,
     proactive_paused_at: rep.proactive_paused_at,
     proactive_warned_at: rep.proactive_warned_at,
+    proactive_pause_source: rep.proactive_pause_source ?? null,
   }, kind);
 }

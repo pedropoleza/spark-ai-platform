@@ -299,6 +299,11 @@ const scheduleMessageToContact: ToolEntry = {
           type: "string",
           description: "OPCIONAL mas IMPORTANTE: o dia-da-semana que o REP falou ('quinta-feira', 'segunda'), com a palavra dele. O servidor confere se a data que você mandou cai mesmo nesse dia e te devolve a correção se não cair. Copie o par dia/data do bloco [CALENDÁRIO REAL] — não calcule. Omita só quando o rep der data explícita ('20/07') ou 'hoje/amanhã'.",
         },
+        until: {
+          type: "string",
+          description:
+            "OPCIONAL, só com recurrence: última data em que a recorrência ainda VALE (ISO, ex '2026-08-19T23:59:59-04:00'). Quando o rep diz 'todos os dias até dia 19', passe o dia 19 aqui — a série para sozinha depois dele, sem o rep precisar lembrar de cancelar.",
+        },
       },
       required: ["contact_id", "message", "send_at"],
     },
@@ -352,6 +357,31 @@ const scheduleMessageToContact: ToolEntry = {
       };
     }
 
+    // 2026-08-14 (caso Matheus, "todos os dias até dia 19"): sem data-fim o bot
+    // pedia PRO REP lembrar de cancelar ("quando chegar no dia 19 me avisa que eu
+    // paro"). `until` entra no payload; o advanceTask do runner completa a série
+    // quando a próxima execução passar dele.
+    let recurrenceUntil: string | null = null;
+    if (args.until) {
+      if (!recurrence) {
+        return {
+          status: "error",
+          message: "`until` só faz sentido com `recurrence`. Pra one-shot, use só send_at.",
+          retryable: false,
+        };
+      }
+      const untilInvalid = validateIso8601(String(args.until), "until");
+      if (untilInvalid) return untilInvalid;
+      recurrenceUntil = new Date(String(args.until)).toISOString();
+      if (new Date(recurrenceUntil).getTime() < new Date(isoSend).getTime()) {
+        return {
+          status: "error",
+          message: "`until` é antes do 1º envio (send_at). Confira as datas.",
+          retryable: false,
+        };
+      }
+    }
+
     const channel = String(args.channel || "SMS");
     const validChannels = ["SMS", "WhatsApp", "Email", "IG"];
     if (!validChannels.includes(channel)) {
@@ -397,6 +427,60 @@ const scheduleMessageToContact: ToolEntry = {
         };
       }
 
+      // Fix bug observado em prod 2026-08-14 (caso Angel — a Iara recebeu a MESMA
+      // mensagem 4×): rep editando o texto ("adiciona X no final", "não, corrige Y")
+      // gerava um agendamento NOVO por edição — todos pro mesmo contato no mesmo
+      // horário. Pending pro mesmo (rep, contato, horário ±2min) com texto diferente
+      // é EDIÇÃO: substitui o texto do existente em vez de criar irmão.
+      if (!recurrence) {
+        const janelaIni = new Date(new Date(isoSend).getTime() - 2 * 60 * 1000).toISOString();
+        const janelaFim = new Date(new Date(isoSend).getTime() + 2 * 60 * 1000).toISOString();
+        const { data: irmao } = await supabase
+          .from("assistant_scheduled_tasks")
+          .select("id, next_run_at, task_payload")
+          .eq("rep_id", ctx.rep.id)
+          .eq("location_id", ctx.locationId)
+          .eq("status", "pending")
+          .eq("task_type", "outbound_to_contact")
+          .gte("next_run_at", janelaIni)
+          .lte("next_run_at", janelaFim)
+          .eq("task_payload->>contact_id", contactId)
+          .limit(1)
+          .maybeSingle();
+        if (irmao?.id) {
+          const payloadAntigo = (irmao.task_payload || {}) as Record<string, unknown>;
+          const { error: upErr } = await supabase
+            .from("assistant_scheduled_tasks")
+            .update({
+              next_run_at: isoSend,
+              task_payload: {
+                ...payloadAntigo,
+                message,
+                channel,
+                ...(args.subject ? { subject: String(args.subject) } : {}),
+              },
+            })
+            .eq("id", irmao.id)
+            .eq("status", "pending");
+          if (!upErr) {
+            return {
+              status: "ok",
+              data: {
+                scheduled_id: irmao.id,
+                contact_id: contactId,
+                send_at: isoSend,
+                channel,
+                recurring: false,
+                recurrence: null,
+                replaced: true,
+                note:
+                  "Já havia uma mensagem agendada pra esse contato nesse horário — ATUALIZEI o texto dela (não criei outra). O contato vai receber só a versão nova.",
+              },
+            };
+          }
+        }
+      }
+
       const { data, error } = await supabase
         .from("assistant_scheduled_tasks")
         .insert({
@@ -410,6 +494,7 @@ const scheduleMessageToContact: ToolEntry = {
             message,
             channel,
             ...(args.subject ? { subject: String(args.subject) } : {}),
+            ...(recurrenceUntil ? { recurrence_until: recurrenceUntil } : {}),
             source: "rep_request",
             scheduled_by_rep_id: ctx.rep.id,
           },
@@ -436,6 +521,7 @@ const scheduleMessageToContact: ToolEntry = {
           channel,
           recurring: !!recurrence,
           recurrence: recurrence || null,
+          ...(recurrenceUntil ? { recurrence_until: recurrenceUntil } : {}),
         },
       };
     } catch (err) {
