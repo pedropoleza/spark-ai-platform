@@ -261,6 +261,13 @@ O briefing das 8h (`assistant_proactive_rules` name **"Resumo matinal"**, cron `
 - **Diagnóstico:** `npx tsx scripts/diag-briefing.ts +1XXXXXXXXXX` mostra o que o briefing daquele rep enxerga hoje e se seria enviado ou descartado. Testes: `test-cron-due.ts` (23/23) e `test-briefing-prompt.ts` (22/22).
 - ⚠️ O handler do briefing é escolhido por **comparação literal `rule.name === "Resumo matinal"`**. Renomear a regra no banco desliga o briefing em silêncio.
 
+### Fathom no SparkBot (H77, 2026-08-14) — no ar
+
+O pipeline Fathom→nota **vive no spark-os** (workflow `lc_fathom_new_recording` do cliente → webhook → escada de match → `writeContactNote`), não aqui. O SparkBot só ENXERGA: `get_meeting_summaries` (safe) lista eventos+status da location via porta `POST /api/ingest/meetings/summaries` do OS (bearer `sparkbot`, origin derivado de `SPARK_OS_WA_URL`); `attach_meeting_summary` (medium) salva um evento `review` no contato que o rep confirmar (porta `/attach`, idempotente, 409 se já entregue a outro).
+- **Duas flavors de nota**: a do OS começa `🟣 Resumo da reunião (Fathom)`; a da integração NATIVA tem `fathom.video`/`VIEW RECORDING`. O prompt procura as duas — não "corrija" pra uma só.
+- **O `contact_id` da raiz do payload do workflow é o contato-fallback da integração** (sempre o mesmo, "Spark") — NUNCA usar como match. Os `review` são reuniões sem lead identificável; quem desempata é o rep, via attach.
+- **Ligar em conta nova é provisioning** (workflow do GHL postando no webhook do OS), não código — só a location do Guilherme (`E6nskmJvk1wDe6FuRAu9`) posta hoje.
+
 ### Ativação por origem do contato / anúncio (H74, Pedro 2026-08-11)
 
 Novo tipo de folha de targeting: **`attribution`** — "só atende quem veio de anúncio", "só a campanha X". Lê `attributionSource`/`lastAttributionSource`, que **não são tag nem custom field**: vêm no próprio contato, no MESMO `GET /contacts/{id}` que o targeting já fazia (custo de API: zero).

@@ -43,6 +43,8 @@ import { isGroupCampaignsEnabled } from "../group-campaigns/config";
 // Task orchestrator (Pedro 2026-06-20): rascunho persistente de fluxos N-etapas (anti-alucinação).
 import { TASK_ORCHESTRATOR_TOOLS } from "./task-orchestrator";
 import { isTaskOrchestratorEnabled } from "../task-orchestrator/config";
+// Resumos de reunião Fathom via Spark OS (H77, caso Guilherme 2026-08-14).
+import { MEETING_SUMMARY_TOOLS } from "./meetings";
 
 const ALL_ENTRIES: ToolEntry[] = [
   ...CONTACTS_TOOLS,
@@ -64,6 +66,7 @@ const ALL_ENTRIES: ToolEntry[] = [
   ...BULK_MANAGEMENT_TOOLS,
   ...FOLLOWUP_TOOLS,
   ...PRESENTATION_TOOLS,
+  ...MEETING_SUMMARY_TOOLS,
   // Gated: só expõe as tools do acompanhamento guiado quando a feature tá ligada.
   ...(isGuidedOutreachEnabled() ? GUIDED_OUTREACH_TOOLS : []),
   // Gated: campanhas em grupo só aparecem com GROUP_CAMPAIGNS_ENABLED (default OFF).
