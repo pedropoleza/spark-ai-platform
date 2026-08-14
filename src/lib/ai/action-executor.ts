@@ -15,6 +15,7 @@ import {
   updateOpportunity,
   resolvePipelineStage,
 } from "@/lib/ghl/operations";
+import { resolveTagsForWrite, resolveTagsForRemoval } from "@/lib/ghl/tag-resolver";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { stripSilenceMarker, type LeadSilenceDecision } from "@/lib/ai/lead-silence";
 import {
@@ -466,15 +467,19 @@ async function executeAction(
       }
       break;
 
+    // H75: mesma armadilha do SparkBot — `action.tag` é texto livre do modelo e
+    // o CRM cria a tag que não existe. Casa com a grafia da conta antes de gravar.
     case "add_tag":
       if (action.tag) {
-        await addTagsToContact(client, ctx.contactId, [action.tag]);
+        const resolved = await resolveTagsForWrite(client, ctx.locationId, [action.tag]);
+        await addTagsToContact(client, ctx.contactId, resolved.map((r) => r.used));
       }
       break;
 
     case "remove_tag":
       if (action.tag) {
-        await removeTagsFromContact(client, ctx.contactId, [action.tag]);
+        const alvos = await resolveTagsForRemoval(client, ctx.locationId, [action.tag]);
+        await removeTagsFromContact(client, ctx.contactId, alvos);
       }
       break;
 
@@ -553,7 +558,7 @@ async function executeAction(
             if (!meetingLoc) {
               await healMissingMeetingLocation(client, existingApptForBook.id, bookCalendarId);
             }
-            await tagBookedByAi(client, ctx.contactId); // tag interna (ver nota abaixo)
+            await tagBookedByAi(client, ctx.locationId, ctx.contactId); // tag interna (ver nota abaixo)
             // MC-10 (review Marcia 2026-07-28): o log genérico ({...action}) não
             // distinguia CREATE de RESCHEDULE — 2 "bookings" em 27s pareciam
             // double-booking quando o 2º era update do existente. Marca o modo.
@@ -586,7 +591,7 @@ async function executeAction(
           });
           // Tag interna "agendado pela ia" (Pedro 2026-06-22): rastreia no CRM que
           // a IA agendou, SEM poluir o título/convite da reunião. Non-blocking.
-          await tagBookedByAi(client, ctx.contactId);
+          await tagBookedByAi(client, ctx.locationId, ctx.contactId);
         } catch (bookingError) {
           // Re-classify slot/availability errors with an actionable message
           if (bookingError instanceof Error &&
@@ -748,9 +753,16 @@ async function executeAction(
  * o rastro via tag na automação). Non-blocking: o booking já aconteceu; se a tag
  * falhar, só loga (não derruba o fluxo).
  */
-async function tagBookedByAi(client: GHLClient, contactId: string): Promise<void> {
+async function tagBookedByAi(
+  client: GHLClient,
+  locationId: string,
+  contactId: string,
+): Promise<void> {
   try {
-    await addTagsToContact(client, contactId, ["agendado pela ia"]);
+    // H75: a conta pode já ter "Agendado pela IA" — usar a grafia dela mantém o
+    // rastro num lugar só (e casa com a automação que o cliente amarrou nela).
+    const resolved = await resolveTagsForWrite(client, locationId, ["agendado pela ia"]);
+    await addTagsToContact(client, contactId, resolved.map((r) => r.used));
   } catch (e) {
     console.warn(
       "[BookAppointment] falha ao adicionar tag 'agendado pela ia' (non-blocking):",

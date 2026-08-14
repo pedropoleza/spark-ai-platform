@@ -21,6 +21,7 @@ import {
   createOpportunity,
   resolvePipelineStage,
 } from "@/lib/ghl/operations";
+import { resolveTagsForWrite, resolveTagsForRemoval } from "@/lib/ghl/tag-resolver";
 import type { AutomationRule, AutomationAction } from "@/types/agent";
 
 const BUCKET = "agent-media";
@@ -148,14 +149,18 @@ async function executeOne(
   messageType: string
 ): Promise<void> {
   switch (action.type) {
+    // H75: a UI oferece picker das tags reais, mas nada impede digitar à mão —
+    // e tag com grafia nova vira automação que nunca dispara, em silêncio.
     case "add_tag": {
       if (!action.tag) return;
-      await client.post(`/contacts/${ctx.contactId}/tags`, { tags: [action.tag] });
+      const resolved = await resolveTagsForWrite(client, ctx.locationId, [action.tag]);
+      await client.post(`/contacts/${ctx.contactId}/tags`, { tags: resolved.map((r) => r.used) });
       break;
     }
     case "remove_tag": {
       if (!action.tag) return;
-      await client.delete(`/contacts/${ctx.contactId}/tags`, { tags: [action.tag] });
+      const alvos = await resolveTagsForRemoval(client, ctx.locationId, [action.tag]);
+      await client.delete(`/contacts/${ctx.contactId}/tags`, { tags: alvos });
       break;
     }
     case "move_pipeline": {
