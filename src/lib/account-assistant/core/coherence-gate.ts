@@ -119,6 +119,20 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
     regex: /\b(oportunidade|opp|opportunity|deal|neg[oó]cio|pipeline)\s+(atualizad[ao]|movid[ao]|fechad[ao]|trocad[ao]|atribu[ií]d[ao]|abandonad[ao]|perdid[ao]|ganh[ao])s?\b|\b(movi|fechei|atualizei|atribu[ií])\s+(a\s+|o\s+)?(oportunidade|opp|deal|neg[oó]cio|pipeline)\b|\b(movid[ao]|mov[ií])\s+(pra|para|pro)\s+(M[0-9]|stage|[A-Z][a-z]+)/i,
     satisfying_tools: ["update_opportunity", "update_opportunity_status", "move_opportunity"],
   },
+  {
+    // H78 (caso Bianca/Precious Planning, ticket #95): promessa em FUTURO de
+    // parar de mandar avisos ("não vou mais te mandar/lembrar") — o catch-all
+    // genérico só vê pretérito, e a promessa sem tool é a mesma mentira.
+    family: "proactivity_off",
+    // "mais" é OBRIGATÓRIO (antes ou depois do verbo): "não vou mandar nada
+    // agora" fala de um envio específico, não de desligar avisos — sem o "mais"
+    // o FP seria constante.
+    regex: /\bn[aã]o\s+vou\s+(mais\s+(te\s+)?(mandar|enviar|avisar|lembrar|incomodar|cobrar)|(te\s+)?(mandar|enviar|avisar|lembrar|incomodar|cobrar)\s+mais)\b/i,
+    satisfying_tools: [
+      "set_proactivity", "set_daily_briefing", "cancel_reminder", "cancel_scheduled_message",
+      "cancel_followup", "pause_followup", "pause_bulk_job", "cancel_bulk_job", "cancel_guided_outreach",
+    ],
+  },
 ];
 
 // ── Família NOVA (loop de qualidade 2026-07-06) — atrás de flag COHERENCE_PIPELINE_FAMILY (default OFF) ──
@@ -152,8 +166,13 @@ function activeClaimPatterns(): ClaimPattern[] {
 }
 
 // Verbos de write em 1ª pessoa pretérito — catch-all genérico.
+// H78 (caso Bianca 05/08, ticket #95): rep mandou "Stop", bot respondeu "Tudo
+// certo, parei" com tools=[] e os avisos continuaram — "parei"/"desativei"/
+// "desliguei"/"silenciei" faltavam aqui, então a mentira não tinha família NEM
+// catch-all. Qualquer write de verdade (set_proactivity, pause_*, cancel_*)
+// satisfaz o genérico, então o custo de falso-positivo é ~zero.
 const GENERIC_WRITE_VERB_REGEX =
-  /\b(criei|criamos|agendei|agendamos|marquei|marcamos|salvei|salvamos|anotei|anotamos|registrei|registramos|removi|removemos|adicionei|adicionamos|mandei|mandamos|enviei|enviamos|disparei|disparamos|atualizei|atualizamos|atribu[ií]|atribu[ií]mos|deletei|deletamos|apaguei|apagamos|completei|completamos|fechei|fechamos|movi|movemos|troquei|trocamos|bloqueei|bloqueamos|cancelei|cancelamos|pausei|pausamos|configurei|configuramos|confirmei|confirmamos|inseri|inserimos|despachei|despachamos|cadastrei|cadastramos|importei|importamos|sincronizei|sincronizamos|reagendei|reagendamos|reatribu[ií]|reatribu[ií]mos)\b/i;
+  /\b(criei|criamos|agendei|agendamos|marquei|marcamos|salvei|salvamos|anotei|anotamos|registrei|registramos|removi|removemos|adicionei|adicionamos|mandei|mandamos|enviei|enviamos|disparei|disparamos|atualizei|atualizamos|atribu[ií]|atribu[ií]mos|deletei|deletamos|apaguei|apagamos|completei|completamos|fechei|fechamos|movi|movemos|troquei|trocamos|bloqueei|bloqueamos|cancelei|cancelamos|pausei|pausamos|configurei|configuramos|confirmei|confirmamos|inseri|inserimos|despachei|despachamos|cadastrei|cadastramos|importei|importamos|sincronizei|sincronizamos|reagendei|reagendamos|reatribu[ií]|reatribu[ií]mos|parei|paramos|desativei|desativamos|desliguei|desligamos|silenciei|silenciamos)\b/i;
 
 /**
  * Checa se o match está em contexto NEGATIVO ou PREVIEW (reduz falsos-positivos).

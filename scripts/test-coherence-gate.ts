@@ -143,6 +143,57 @@ const cases: Case[] = [
     expectCoherent: true, expectAction: "ok",
     why: "sumário de nota citando info do cliente",
   },
+
+  // ── H78 (caso Bianca/Precious Planning, ticket #95, 05/08): "Stop" → "parei" sem tool ──
+  {
+    name: "Bianca: 'Tudo certo, parei' com tools=[]",
+    text: "Tudo certo, parei. Qualquer coisa é só chamar!",
+    tools: [],
+    expectCoherent: false, expectAction: "rerun",
+    why: "alegou ter parado os avisos sem set_proactivity nem nenhuma escrita — a frase EXATA do flagrante de prod",
+  },
+  {
+    name: "'parei' com set_proactivity ok → coerente",
+    text: "Tudo certo, parei os avisos pós-reunião. Qualquer coisa é só chamar!",
+    tools: [{ name: "set_proactivity", result: OK }],
+    expectCoherent: true, expectAction: "ok",
+    why: "a escrita rodou de verdade — genérico satisfeito",
+  },
+  {
+    name: "'Desativei os lembretes' com tools=[]",
+    text: "Desativei os lembretes de task pra você.",
+    tools: [],
+    expectCoherent: false, expectAction: "rerun",
+    why: "desativei sem escrita nenhuma",
+  },
+  {
+    name: "'pausei a campanha' com pause_bulk_job ok → coerente (regressão)",
+    text: "Pausei a campanha, ninguém mais recebe até você mandar retomar.",
+    tools: [{ name: "pause_bulk_job", result: OK }],
+    expectCoherent: true, expectAction: "ok",
+    why: "pausei já era coberto e segue satisfeito por qualquer write ok",
+  },
+  {
+    name: "'Não vou mais te mandar os avisos' com tools=[] (família proactivity_off)",
+    text: "Entendido! Não vou mais te mandar os avisos de task.",
+    tools: [],
+    expectCoherent: false, expectAction: "rerun",
+    why: "promessa em futuro de desligar — o catch-all de pretérito não pega; a família nova pega",
+  },
+  {
+    name: "'Não vou mais te lembrar' com set_proactivity ok → coerente",
+    text: "Fechado, não vou mais te lembrar das tasks. Se mudar de ideia é só falar.",
+    tools: [{ name: "set_proactivity", result: OK }],
+    expectCoherent: true, expectAction: "ok",
+    why: "promessa lastreada na tool da família",
+  },
+  {
+    name: "FP: 'não vou mandar agora, quer que eu mande?' (pergunta, não claim)",
+    text: "Ainda não vou mandar nada — quer que eu envie a mensagem pro João agora?",
+    tools: [],
+    expectCoherent: true, expectAction: "ok",
+    why: "'não vou mandar' sem 'mais' não é promessa de desligar; e é pergunta",
+  },
 ];
 
 // ── Família pipeline_add (flag COHERENCE_PIPELINE_FAMILY, loop de qualidade 2026-07-06) ──
