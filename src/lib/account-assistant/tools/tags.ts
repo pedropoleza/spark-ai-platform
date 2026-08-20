@@ -5,7 +5,7 @@
 import type { ToolEntry } from "./types";
 import { validateGhlId, ghlErrorToResult } from "./types";
 import { addTagsToContact, removeTagsFromContact } from "@/lib/ghl/operations";
-import { resolveTagsForWrite, resolveTagsForRemoval } from "@/lib/ghl/tag-resolver";
+import { resolveTagsForWrite, resolveTagsForRemoval, tagKey } from "@/lib/ghl/tag-resolver";
 
 const addTag: ToolEntry = {
   def: {
@@ -17,7 +17,10 @@ const addTag: ToolEntry = {
       "pediu — narre SEMPRE a partir de `added`, nunca do que você mandou. Quando vier " +
       "`created_tags`, a tag não existia e foi criada agora: avise o rep, principalmente se " +
       "`similar` mostrar que a conta já tinha algo parecido (automação amarrada na outra grafia " +
-      "não dispara).",
+      "não dispara). Depois de aplicar, a tool RELÊ o contato: se vier " +
+      "`removidas_logo_apos_aplicar`, uma automação da conta consumiu a tag segundos depois — " +
+      "narre ISSO pro rep (a tag entrou, disparou a automação e foi removida; sugira conferir o " +
+      "workflow), NUNCA um 'adicionada ✅' seco.",
     risk: "medium",
     parameters: {
       type: "object",
@@ -41,12 +44,43 @@ const addTag: ToolEntry = {
       const used = resolved.map((r) => r.used);
       await addTagsToContact(ctx.ghlClient, contactId, used);
 
+      // H79 (fix bug observado em prod 2026-08-20, caso Rafael/Jussara): o POST
+      // aceita a tag e um workflow da conta pode consumi-la em segundos (padrão
+      // gatilho-que-se-consome: dispara → re-etiqueta → remove). O bot dizia
+      // "adicionada ✅" e a realidade desfazia — falso positivo pro rep. Relê o
+      // contato ~2,5s depois e devolve o que sumiu; releitura falhando não vira
+      // erro (best-effort), só perde a verificação.
+      let sumiram: string[] = [];
+      let releu = false;
+      try {
+        await new Promise((r) => setTimeout(r, 2500));
+        const re = await ctx.ghlClient.get<{ contact?: { tags?: string[] } }>(
+          `/contacts/${contactId}`,
+        );
+        const atuais = new Set((re.contact?.tags || []).map(tagKey));
+        sumiram = used.filter((t) => !atuais.has(tagKey(t)));
+        releu = true;
+      } catch {
+        // sem releitura, segue com o resultado do POST
+      }
+
       const renamed = resolved.filter((r) => r.status === "normalized");
       const created = resolved.filter((r) => r.status === "created");
       return {
         status: "ok",
         data: {
           added: used,
+          ...(releu && sumiram.length
+            ? {
+                removidas_logo_apos_aplicar: sumiram,
+                atencao:
+                  "O Spark Leads aceitou a tag mas ela JÁ NÃO ESTÁ no contato segundos depois — " +
+                  "alguma automação da conta removeu (padrão comum: workflow dispara na tag e a " +
+                  "remove no fim). Avise o rep disso e sugira conferir o workflow; não afirme só " +
+                  "que a tag foi adicionada.",
+              }
+            : {}),
+          ...(releu && !sumiram.length ? { verificada_no_contato: true } : {}),
           ...(renamed.length
             ? { matched_existing: renamed.map((r) => ({ pedida: r.asked, usada: r.used })) }
             : {}),
