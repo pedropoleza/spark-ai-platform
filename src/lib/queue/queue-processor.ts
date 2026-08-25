@@ -12,6 +12,7 @@ import { executeActions } from "@/lib/ai/action-executor";
 import { evaluateLeadSilence } from "@/lib/ai/lead-silence";
 import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { transcribeAudioFromUrlVerbose } from "@/lib/ai/audio-transcriber";
+import { slotWindowDays } from "@/lib/queue/slot-window";
 
 /**
  * `post_booking.behavior = "stop_and_handoff"` quer dizer "depois de agendar, a
@@ -920,7 +921,10 @@ async function processGroup(
   const shouldFetchSlots = !!config.calendar_id && config.objective !== "qualification_only";
   const slotsNow = new Date();
   const slotsStartDate = String(slotsNow.getTime());
-  const slotsEndDate = String(slotsNow.getTime() + 7 * 24 * 60 * 60 * 1000);
+  // H80 (caso Marina/Sandra 2026-08-25): janela configurável por agente (era 7d fixo).
+  const slotsEndDate = String(
+    slotsNow.getTime() + slotWindowDays(config as { slot_window_days?: number | null }) * 24 * 60 * 60 * 1000,
+  );
 
   type MessagesResp = { messages: { messages: GHLMessage[] } };
   type ContactResp = { contact: {

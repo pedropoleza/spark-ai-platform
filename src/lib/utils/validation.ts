@@ -170,6 +170,8 @@ export const updateAgentConfigSchema = z.object({
   knowledge_base_instructions: z.string().max(10000).nullable().optional(),
   system_prompt_override: z.string().max(20000).nullable().optional(),
   debounce_seconds: z.number().min(5).max(60).nullable().optional(),
+  // H80: janela de free-slots por agente (dias). Máx 31 = limite do free-slots do Spark Leads.
+  slot_window_days: z.number().int().min(1).max(31).nullable().optional(),
   max_messages_per_conversation: z.number().min(10).max(200).nullable().optional(),
   working_hours: workingHoursSchema.nullable().optional(),
   follow_up_config: followUpConfigSchema.nullable().optional(),

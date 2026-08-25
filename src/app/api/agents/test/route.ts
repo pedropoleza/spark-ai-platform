@@ -12,6 +12,7 @@ import { executeActions } from "@/lib/ai/action-executor";
 import { evaluateLeadSilence, stripSilenceMarker } from "@/lib/ai/lead-silence";
 import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { isChatMessageType } from "@/lib/ghl/message-sources";
+import { slotWindowDays } from "@/lib/queue/slot-window";
 
 /**
  * POST /api/agents/test
@@ -174,7 +175,10 @@ export async function POST(request: NextRequest) {
 
   const slotsNow = new Date();
   const slotsStartDate = String(slotsNow.getTime());
-  const slotsEndDate = String(slotsNow.getTime() + 7 * 24 * 60 * 60 * 1000);
+  // H80: espelha o queue-processor — o teste tem que enxergar a MESMA janela de slots.
+  const slotsEndDate = String(
+    slotsNow.getTime() + slotWindowDays(config as { slot_window_days?: number | null }) * 24 * 60 * 60 * 1000,
+  );
 
   // Se há contact_id, também buscamos o histórico real do GHL. Isso é crítico
   // pra "modo continuação": se o lead já conversou em prod, a IA entra como
