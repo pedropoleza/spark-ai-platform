@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { processIncoming } from "@/lib/account-assistant/processor";
+import { acquireTurnLock, releaseTurnLock } from "@/lib/account-assistant/core/turn-lock";
 import { verifySparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
 import { resolvePrimaryHub, getEnvHubLocationId } from "@/lib/account-assistant/hub-resolver";
@@ -226,7 +227,22 @@ export async function POST(request: NextRequest) {
 
   // 8. Processa via Sparkbot — channel='web_ui' injetado no runtime context
   // pra prompt-builder/tools saberem o contexto.
+  // Lock de turno (H87): o painel é a SEGUNDA porta pro mesmo rep. Sem isso, o
+  // rep digitando aqui enquanto chega WhatsApp reproduz exatamente a corrida do
+  // caso Daniely — mesmo rep, mesmo histórico, dois turnos em paralelo. O lock é
+  // por rep, então as duas portas se excluem mutuamente.
+  // Chave calculada UMA vez: acquire e release têm que usar exatamente a mesma,
+  // senão o release não acha a linha e o rep fica travado até o TTL.
+  const lockKey = `web:${userInsertId ?? `anon-${Date.now()}`}`;
+  const lockOutcome = await acquireTurnLock(rep.id, lockKey);
+  if (lockOutcome.status !== "acquired") {
+    console.warn(
+      `[Sparkbot:send] turn-lock ${lockOutcome.status} rep=${rep.id} após ${lockOutcome.waitedMs}ms — seguindo sem lock`,
+    );
+  }
+
   const startTs = Date.now();
+  try {
   const result = await processIncoming({
     rep,
     input: repInput,
@@ -294,4 +310,9 @@ export async function POST(request: NextRequest) {
     duration_ms: durationMs,
     user_message_id: userInsertId,
   });
+  } finally {
+    if (lockOutcome.status === "acquired") {
+      await releaseTurnLock(rep.id, lockKey);
+    }
+  }
 }

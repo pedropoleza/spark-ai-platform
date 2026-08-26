@@ -10,6 +10,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { GHLClient } from "@/lib/ghl/client";
 import { identifyRep } from "./identity";
 import { processIncoming } from "./processor";
+import { acquireTurnLock, releaseTurnLock } from "./core/turn-lock";
 import { buildProcessorConfig } from "./core/processor-config";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { reportError } from "@/lib/admin-signals/report-error";
@@ -187,6 +188,9 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   // Garantia: liberar in-flight ao sair da função, qualquer caminho.
   // try/finally wrapping abaixo cobre exceções E early returns.
   const cleanupInFlight = () => { if (ghlMessageId) releaseInFlight(ghlMessageId); };
+  // Lock de turno (H87) — declarado aqui pra o `finally` lá embaixo alcançar.
+  let turnLockRepId: string | null = null;
+  let turnLockKeyHeld: string | null = null;
   try {
 
   // REACTION detection (fix audit Reaction emoji loops + recency check):
@@ -839,6 +843,22 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
     console.warn("[Sparkbot] silence reset falhou (não-bloqueante):", err instanceof Error ? err.message : err);
   }
 
+  // Lock de turno (H87): esta rota está DORMENTE hoje (100% do inbound de rep
+  // entra pelo SparkZap desde 08/2026), mas é o fallback documentado — se voltar
+  // a receber tráfego sem o lock, a corrida do caso Daniely volta junto. O
+  // `inFlightMessages` acima é intra-lambda; este é cross-lambda.
+  const turnLockKey = ghlMessageId || `ghl-${Date.now()}`;
+  const turnLock = await acquireTurnLock(rep.id, turnLockKey);
+  if (turnLock.status === "acquired") {
+    turnLockRepId = rep.id;
+    turnLockKeyHeld = turnLockKey; // MESMA chave no release, senão não solta
+  }
+  if (turnLock.status !== "acquired") {
+    console.warn(
+      `[Sparkbot] turn-lock ${turnLock.status} rep=${rep.id} após ${turnLock.waitedMs}ms — seguindo sem lock`,
+    );
+  }
+
   // 6. Processa
   const result = await processIncoming({
     rep,
@@ -921,5 +941,8 @@ export async function handleAssistantInbound(args: HandleAssistantInboundArgs): 
   } finally {
     // Cleanup do in-flight mutex, qualquer caminho de saída
     cleanupInFlight();
+    if (turnLockRepId && turnLockKeyHeld) {
+      await releaseTurnLock(turnLockRepId, turnLockKeyHeld);
+    }
   }
 }

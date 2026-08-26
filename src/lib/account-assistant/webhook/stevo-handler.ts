@@ -72,11 +72,28 @@ function isStevoInteractiveEnabled(): boolean {
   return /^(1|true|yes)$/i.test(process.env.STEVO_INTERACTIVE_ENABLED?.trim() || "");
 }
 
-/** Janela de debounce (ms) pra juntar rajada de texto. 0 = desliga.
- *  Default OFF (0) — ligar via STEVO_DEBOUNCE_MS=4000 no go-live supervisionado.
- *  Assim deployar NÃO muda o timing das respostas até a gente validar junto. */
+/**
+ * Janela de debounce (ms) pra juntar rajada de texto. 0 = desliga.
+ *
+ * ⚠️ O NOME "STEVO_" É LEGADO. Este handler não é mais do Stevo: desde o
+ * cutover, **100% do inbound de rep entra pelo SparkZap** (medido em 08/2026:
+ * 1.392 mensagens, todas com `source='sparkzap'`, zero via Stevo). A rota
+ * `/api/webhooks/spark-zap` traduz o envelope e reusa `parseStevoWebhook` +
+ * este handler de propósito — um parser só, pra os fixes de prod valerem pros
+ * dois motores (ver H57 no CLAUDE.md). Então esta env governa o WhatsApp de
+ * verdade, não um transporte morto.
+ *
+ * Aceita `SPARKBOT_DEBOUNCE_MS` (nome certo) com fallback pra `STEVO_DEBOUNCE_MS`
+ * — mesmo caminho que `isSparkbotSendEnabled` já fez em wa-transport.ts. Assim
+ * a env antiga configurada na Vercel continua valendo enquanto não migra.
+ *
+ * Default 0 (desligado): deployar não muda o timing das respostas. Com o lock de
+ * turno (H87) no ar, ligar isto virou seguro — o ganho é economizar LLM na
+ * rajada rápida, não corrigir corrida (o lock já corrige).
+ */
 function getDebounceMs(): number {
-  const raw = parseInt(process.env.STEVO_DEBOUNCE_MS?.trim() || "0", 10);
+  const bruto = process.env.SPARKBOT_DEBOUNCE_MS?.trim() || process.env.STEVO_DEBOUNCE_MS?.trim() || "0";
+  const raw = parseInt(bruto, 10);
   return Number.isFinite(raw) && raw >= 0 ? raw : 0;
 }
 
