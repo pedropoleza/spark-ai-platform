@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>As IAs do Instagram da Bianca</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  :root {
+    --violeta: #6D4AFF;
+    --violeta-escuro: #4A2FC7;
+    --violeta-suave: #F4F1FF;
+    --violeta-linha: #E4DDFF;
+    --coral: #E14B5A;
+    --coral-suave: #FFF2F3;
+    --verde: #0E9B6A;
+    --verde-suave: #E9F8F2;
+    --tinta: #1A1526;
+    --cinza: #6E6880;
+    --cinza-claro: #9A94A8;
+    --linha: #ECE9F2;
+    --painel: #FBFAFD;
+  }
+
+  body {
+    font-family: "Avenir Next", "SF Pro Text", -apple-system, "Helvetica Neue", sans-serif;
+    color: var(--tinta);
+    font-size: 10.5pt;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .pagina {
+    width: 210mm; height: 297mm;
+    position: relative; overflow: hidden;
+    page-break-after: always;
+    background: #fff;
+  }
+  .pagina:last-child { page-break-after: auto; }
+  .corpo { padding: 22mm 20mm 20mm; }
+
+  /* ── capa ─────────────────────────────────────────── */
+  .capa-fundo {
+    position: absolute; inset: 0 0 auto 0; height: 148mm;
+    background: linear-gradient(150deg, #7B5BFF 0%, #6D4AFF 42%, #5334D8 100%);
+  }
+  .capa-fundo::after {
+    content: ""; position: absolute; right: -50mm; top: -40mm;
+    width: 140mm; height: 140mm; border-radius: 50%;
+    background: rgba(255,255,255,.07);
+  }
+  .capa-fundo::before {
+    content: ""; position: absolute; left: -30mm; bottom: -55mm;
+    width: 100mm; height: 100mm; border-radius: 50%;
+    background: rgba(255,255,255,.05);
+  }
+  .capa-conteudo { position: relative; padding: 30mm 20mm 0; color: #fff; }
+  .selo {
+    display: inline-block; padding: 5px 13px; border-radius: 100px;
+    background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.24);
+    font-size: 8.5pt; letter-spacing: .09em; text-transform: uppercase; font-weight: 600;
+  }
+  .capa h1 {
+    font-size: 33pt; line-height: 1.12; font-weight: 700;
+    letter-spacing: -.022em; margin: 16mm 0 6mm; max-width: 150mm;
+  }
+  .capa .lead { font-size: 12.5pt; line-height: 1.5; opacity: .92; max-width: 132mm; font-weight: 400; }
+
+  .cartao-capa {
+    position: absolute; left: 20mm; right: 20mm; top: 128mm;
+    background: #fff; border-radius: 16px; padding: 9mm 10mm;
+    box-shadow: 0 18px 44px rgba(40,20,100,.16), 0 2px 8px rgba(40,20,100,.06);
+    display: flex; gap: 12mm;
+  }
+  .cartao-capa .col { flex: 1; }
+  .cartao-capa .rot { font-size: 8pt; letter-spacing: .1em; text-transform: uppercase; color: var(--cinza-claro); font-weight: 700; margin-bottom: 4px; }
+  .cartao-capa .val { font-size: 11.5pt; font-weight: 600; }
+
+  .capa-resumo { position: absolute; left: 20mm; right: 20mm; top: 172mm; }
+  .capa-resumo h2 { font-size: 13pt; font-weight: 700; margin-bottom: 5mm; letter-spacing: -.01em; }
+  .lista-capa { display: flex; flex-direction: column; gap: 4mm; }
+  .item-capa { display: flex; gap: 5mm; align-items: flex-start; }
+  .num {
+    flex: none; width: 24px; height: 24px; border-radius: 8px;
+    background: var(--violeta-suave); color: var(--violeta);
+    font-weight: 700; font-size: 9.5pt;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .item-capa p { font-size: 10.5pt; color: var(--tinta); }
+  .item-capa b { font-weight: 600; }
+
+  .rodape-capa {
+    position: absolute; left: 20mm; right: 20mm; bottom: 14mm;
+    display: flex; justify-content: space-between; align-items: center;
+    padding-top: 5mm; border-top: 1px solid var(--linha);
+    font-size: 8.5pt; color: var(--cinza-claro);
+  }
+
+  /* ── cabeçalho das páginas internas ───────────────── */
+  .topo { display: flex; align-items: baseline; gap: 4mm; margin-bottom: 3mm; }
+  .topo .kicker { font-size: 8pt; letter-spacing: .12em; text-transform: uppercase; color: var(--violeta); font-weight: 700; }
+  h2.titulo { font-size: 21pt; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+  .sub { font-size: 10.5pt; color: var(--cinza); margin-top: 2mm; max-width: 150mm; }
+  .regua { height: 3px; width: 46px; background: var(--violeta); border-radius: 3px; margin: 6mm 0 8mm; }
+
+  h3.secao {
+    font-size: 8.5pt; letter-spacing: .11em; text-transform: uppercase;
+    color: var(--cinza-claro); font-weight: 700; margin: 6.5mm 0 3.5mm;
+  }
+  h3.secao:first-of-type { margin-top: 0; }
+
+  /* ── antes → agora ────────────────────────────────── */
+  .par { display: flex; align-items: stretch; gap: 0; margin-bottom: 5mm; }
+  .lado {
+    flex: 1; border-radius: 13px; padding: 5mm 6mm;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .antes { background: var(--coral-suave); border: 1px solid #FBDDE0; }
+  .agora { background: var(--verde-suave); border: 1px solid #CFEEE1; }
+  .lado .rot { font-size: 7.5pt; letter-spacing: .1em; text-transform: uppercase; font-weight: 700; margin-bottom: 3px; }
+  .antes .rot { color: var(--coral); }
+  .agora .rot { color: var(--verde); }
+  .lado h4 { font-size: 10.5pt; font-weight: 700; margin-bottom: 3px; letter-spacing: -.005em; }
+  .lado p { font-size: 9.5pt; color: #453E55; line-height: 1.5; }
+  .flecha {
+    flex: none; width: 13mm; display: flex; align-items: center; justify-content: center;
+    color: var(--cinza-claro);
+  }
+
+  /* ── fluxo de decisão ─────────────────────────────── */
+  .fluxo { display: flex; flex-direction: column; align-items: center; }
+  .no {
+    width: 100%; border-radius: 12px; padding: 3.2mm 5.5mm;
+    display: flex; align-items: center; gap: 5mm;
+  }
+  .no .marca {
+    flex: none; width: 26px; height: 26px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 10pt; color: #fff;
+  }
+  .no .txt { flex: 1; }
+  .no .q { font-size: 10.5pt; font-weight: 700; letter-spacing: -.005em; }
+  .no .nota { font-size: 9pt; color: var(--cinza); margin-top: 1px; }
+  .no .saida { font-size: 9.5pt; font-weight: 700; white-space: nowrap; }
+
+  .no.inicio { background: var(--violeta); color: #fff; justify-content: center; padding: 3.2mm; }
+  .no.inicio .q { color: #fff; font-size: 11pt; }
+  .no.bloq { background: var(--coral-suave); border: 1px solid #FBDDE0; }
+  .no.bloq .marca { background: var(--coral); }
+  .no.bloq .saida { color: var(--coral); }
+  .no.vio { background: var(--violeta-suave); border: 1px solid var(--violeta-linha); }
+  .no.vio .marca { background: var(--violeta); }
+  .no.vio .saida { color: var(--violeta); }
+  .no.ver { background: var(--verde-suave); border: 1px solid #CFEEE1; }
+  .no.ver .marca { background: var(--verde); }
+  .no.ver .saida { color: var(--verde); }
+  .no.neutro { background: var(--painel); border: 1px solid var(--linha); }
+  .no.neutro .marca { background: var(--cinza-claro); }
+  .no.neutro .saida { color: var(--cinza); }
+  .conector { width: 2px; height: 4mm; background: var(--violeta-linha); }
+
+  /* ── cartões dos agentes ──────────────────────────── */
+  .duplo { display: flex; gap: 5mm; }
+  .agente { flex: 1; border-radius: 14px; padding: 5mm 5.5mm; border: 1px solid; }
+  .agente.a { background: var(--violeta-suave); border-color: var(--violeta-linha); }
+  .agente.b { background: var(--verde-suave); border-color: #CFEEE1; }
+  .agente .cab { display: flex; align-items: center; gap: 3mm; margin-bottom: 3.2mm; }
+  .ponto { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .agente.a .ponto { background: var(--violeta); }
+  .agente.b .ponto { background: var(--verde); }
+  .agente h4 { font-size: 12pt; font-weight: 700; letter-spacing: -.012em; }
+  .agente dl { display: flex; flex-direction: column; gap: 2.8mm; }
+  .agente dt { font-size: 7.5pt; letter-spacing: .09em; text-transform: uppercase; font-weight: 700; color: var(--cinza-claro); margin-bottom: 1px; }
+  .agente dd { font-size: 9.3pt; line-height: 1.4; color: #3B3548; }
+
+  /* ── passos ───────────────────────────────────────── */
+  .passos { display: flex; flex-direction: column; gap: 3.5mm; }
+  .passo { display: flex; gap: 5mm; align-items: center; }
+  .passo .bolha {
+    flex: none; width: 28px; height: 28px; border-radius: 10px;
+    background: var(--violeta); color: #fff; font-weight: 700; font-size: 10.5pt;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .passo p { font-size: 10.5pt; }
+  .passo b { font-weight: 600; }
+
+  /* ── etiquetas ────────────────────────────────────── */
+  .etq { border-radius: 14px; padding: 5.5mm 6mm; margin-bottom: 4mm; border: 1px solid; }
+  .etq.on { background: var(--verde-suave); border-color: #CFEEE1; }
+  .etq.off { background: var(--coral-suave); border-color: #FBDDE0; }
+  .etq .cab { display: flex; align-items: center; gap: 3mm; margin-bottom: 2.5mm; }
+  .chip {
+    font-family: "SF Mono", Menlo, monospace; font-size: 10pt; font-weight: 600;
+    padding: 3px 10px; border-radius: 7px; color: #fff;
+  }
+  .etq.on .chip { background: var(--verde); }
+  .etq.off .chip { background: var(--coral); }
+  .etq .efeito { font-size: 10pt; font-weight: 700; }
+  .etq p { font-size: 9.5pt; color: #453E55; line-height: 1.5; }
+  .etq p + p { margin-top: 2mm; }
+
+  /* ── avisos e listas ──────────────────────────────── */
+  .aviso {
+    display: flex; gap: 4mm; border-radius: 13px; padding: 5mm 6mm;
+    background: var(--painel); border: 1px solid var(--linha);
+  }
+  .aviso.destaque { background: var(--violeta-suave); border-color: var(--violeta-linha); }
+  .aviso .ic { flex: none; margin-top: 1px; }
+  .aviso h4 { font-size: 10.5pt; font-weight: 700; margin-bottom: 2mm; }
+  .aviso p { font-size: 9.5pt; color: #453E55; line-height: 1.5; }
+
+  ul.regras { list-style: none; display: flex; flex-direction: column; gap: 3mm; }
+  ul.regras li { display: flex; gap: 4mm; align-items: flex-start; font-size: 10pt; line-height: 1.5; }
+  ul.regras .ic { flex: none; margin-top: 2px; }
+
+  .paradas { display: flex; flex-direction: column; gap: 3.5mm; }
+  .parada { border-left: 3px solid var(--violeta-linha); padding-left: 5mm; }
+  .parada h4 { font-size: 10pt; font-weight: 700; color: var(--violeta); }
+  .parada p { font-size: 9.5pt; color: var(--cinza); }
+
+  .rodape {
+    position: absolute; left: 20mm; right: 20mm; bottom: 12mm;
+    display: flex; justify-content: space-between;
+    font-size: 8pt; color: var(--cinza-claro);
+    padding-top: 4mm; border-top: 1px solid var(--linha);
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════ CAPA ══════════════ -->
+<section class="pagina capa">
+  <div class="capa-fundo"></div>
+  <div class="capa-conteudo">
+    <span class="selo">Guia rápido</span>
+    <h1>As IAs do Instagram<br>da Bianca</h1>
+    <p class="lead">Agora são duas, cada uma com o seu público — e você liga ou desliga qualquer uma direto do celular.</p>
+  </div>
+
+  <div class="cartao-capa">
+    <div class="col"><div class="rot">Para</div><div class="val">Bianca Amorim e Sofia</div></div>
+    <div class="col"><div class="rot">Conta</div><div class="val">Five Rings</div></div>
+    <div class="col"><div class="rot">Data</div><div class="val">26 de agosto de 2026</div></div>
+  </div>
+
+  <div class="capa-resumo">
+    <h2>O que você precisa saber</h2>
+    <div class="lista-capa">
+      <div class="item-capa"><div class="num">1</div><p>A <b>IA de Tráfego Pago</b> atende quem chega pelo anúncio. Ela entra sozinha e agora consegue marcar reunião na agenda da Bianca.</p></div>
+      <div class="item-capa"><div class="num">2</div><p>A <b>IA de Novos Seguidores</b> é nova. Conversa com o jeito da Bianca e só fala em reunião se a pessoa demonstrar interesse de verdade.</p></div>
+      <div class="item-capa"><div class="num">3</div><p>Duas etiquetas ligam e desligam a IA em qualquer contato, <b>pelo aplicativo do celular</b>.</p></div>
+      <div class="item-capa"><div class="num">4</div><p>Cliente, contato pessoal e membro da agência <b>nunca</b> são abordados por nenhuma das duas.</p></div>
+    </div>
+  </div>
+
+  <div class="rodape-capa"><span>Spark Leads</span><span>Instagram · Five Rings</span></div>
+</section>
+
+<!-- ══════════════ PÁGINA 2 ══════════════ -->
+<section class="pagina">
+  <div class="corpo">
+    <div class="topo"><span class="kicker">Parte 1</span></div>
+    <h2 class="titulo">O que mudou</h2>
+    <p class="sub">Três coisas estavam travando o atendimento. As três foram resolvidas.</p>
+    <div class="regua"></div>
+
+    <div class="par">
+      <div class="lado antes">
+        <div class="rot">Antes</div>
+        <h4>A IA quase não respondia</h4>
+        <p>Ela só entrava se a pessoa mandasse uma frase exata do anúncio, com vírgula e tudo. Em 30 dias, <b>222 pessoas escreveram e ficaram sem resposta</b>.</p>
+      </div>
+      <div class="flecha">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </div>
+      <div class="lado agora">
+        <div class="rot">Agora</div>
+        <h4>Reconhece quem veio de anúncio</h4>
+        <p>Não depende mais da frase. O próprio Spark Leads registra que a pessoa clicou num anúncio, e a IA usa esse dado.</p>
+      </div>
+    </div>
+
+    <div class="par">
+      <div class="lado antes">
+        <div class="rot">Antes</div>
+        <h4>Não conseguia agendar</h4>
+        <p>O calendário nunca tinha sido ligado na configuração. Ela conversava bem, mas não tinha como marcar a reunião.</p>
+      </div>
+      <div class="flecha">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </div>
+      <div class="lado agora">
+        <div class="rot">Agora</div>
+        <h4>Marca na agenda da Bianca</h4>
+        <p>Calendário 1:1 ligado, enxergando <b>14 dias</b> à frente — e ela só oferece horário que está realmente livre.</p>
+      </div>
+    </div>
+
+    <div class="par">
+      <div class="lado antes">
+        <div class="rot">Antes</div>
+        <h4>Só dava pra ligar no computador</h4>
+        <p>O botão de ativar a IA aparece no Spark Leads do navegador. No aplicativo do celular ele simplesmente não existe.</p>
+      </div>
+      <div class="flecha">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      </div>
+      <div class="lado agora">
+        <div class="rot">Agora</div>
+        <h4>Liga e desliga pelo celular</h4>
+        <p>Duas etiquetas fazem isso em qualquer contato, de onde você estiver. Detalhes na parte 3.</p>
+      </div>
+    </div>
+
+    <h3 class="secao">E ainda</h3>
+    <div class="aviso">
+      <span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0E9B6A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+      <div>
+        <h4>Uma trava nova protege quem não deve ser abordado</h4>
+        <p>Contatos com etiqueta de <b>cliente</b>, <b>contato pessoal</b>, <b>pessoal bia</b> ou <b>membro da agência</b> ficam de fora das duas IAs — mesmo que tenham vindo de um anúncio um dia. A conta é a operação inteira da Bianca, então essa separação é o que mantém tudo seguro.</p>
+      </div>
+    </div>
+  </div>
+  <div class="rodape"><span>As IAs do Instagram da Bianca</span><span>2</span></div>
+</section>
+
+<!-- ══════════════ PÁGINA 3 ══════════════ -->
+<section class="pagina">
+  <div class="corpo">
+    <div class="topo"><span class="kicker">Parte 2</span></div>
+    <h2 class="titulo">Quem fala com quem</h2>
+    <p class="sub">Quando alguém manda mensagem no Instagram, o sistema faz estas perguntas — nesta ordem.</p>
+    <div class="regua"></div>
+
+    <div class="fluxo">
+      <div class="no inicio"><div class="q">Chegou mensagem no Instagram</div></div>
+      <div class="conector"></div>
+
+      <div class="no bloq">
+        <div class="marca">1</div>
+        <div class="txt">
+          <div class="q">É cliente, contato pessoal ou membro da agência?</div>
+          <div class="nota">Ou tem a etiqueta <b>ia-desligada</b></div>
+        </div>
+        <div class="saida">Nenhuma IA<br>responde</div>
+      </div>
+      <div class="conector"></div>
+
+      <div class="no vio">
+        <div class="marca">2</div>
+        <div class="txt">
+          <div class="q">A pessoa veio de um anúncio?</div>
+          <div class="nota">O Spark Leads registra isso sozinho, no primeiro contato dela</div>
+        </div>
+        <div class="saida">IA de<br>Tráfego Pago</div>
+      </div>
+      <div class="conector"></div>
+
+      <div class="no ver">
+        <div class="marca">3</div>
+        <div class="txt">
+          <div class="q">Tem a etiqueta <b>novo seguidor</b> ou <b>ia-ligada</b>?</div>
+          <div class="nota">Quem coloca é você, pelo celular ou pelo computador</div>
+        </div>
+        <div class="saida">IA de Novos<br>Seguidores</div>
+      </div>
+      <div class="conector"></div>
+
+      <div class="no neutro">
+        <div class="marca">4</div>
+        <div class="txt">
+          <div class="q">Nenhum dos casos acima</div>
+          <div class="nota">Ninguém responde automaticamente</div>
+        </div>
+        <div class="saida">O atendimento<br>é de vocês</div>
+      </div>
+    </div>
+
+    <h3 class="secao">As duas, lado a lado</h3>
+    <div class="duplo">
+      <div class="agente a">
+        <div class="cab"><span class="ponto"></span><h4>Tráfego Pago</h4></div>
+        <dl>
+          <div><dt>Quem atende</dt><dd>Quem clicou no anúncio. Entra sozinha.</dd></div>
+          <div><dt>Objetivo</dt><dd>Qualificar e marcar a reunião 1:1 com a Bianca.</dd></div>
+          <div><dt>O que pergunta</dt><dd>Estado, permissão de trabalho, profissão e motivação.</dd></div>
+          <div><dt>Se a pessoa some</dt><dd>Até 3 lembretes, dentro de 24h — limite do Instagram.</dd></div>
+        </dl>
+      </div>
+      <div class="agente b">
+        <div class="cab"><span class="ponto"></span><h4>Novos Seguidores</h4></div>
+        <dl>
+          <div><dt>Quem atende</dt><dd>Só quem você marcar com a etiqueta.</dd></div>
+          <div><dt>Objetivo</dt><dd>Criar conexão. Só convida se a pessoa demonstrar interesse real.</dd></div>
+          <div><dt>O que pergunta</dt><dd>Leve, uma de cada vez: onde mora, o que faz, o que busca.</dd></div>
+          <div><dt>Se a pessoa some</dt><dd>Um único lembrete, 4h depois. Sem cobrança.</dd></div>
+        </dl>
+      </div>
+    </div>
+
+    <div style="margin-top:4mm;padding:4mm 5.5mm" class="aviso">
+      <span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6D4AFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>
+      <div><p>Uma nunca rouba o contato da outra. <b>Quem veio de anúncio fica sempre com a IA de Tráfego Pago</b>, mesmo que receba a etiqueta de seguidor.</p></div>
+    </div>
+  </div>
+  <div class="rodape"><span>As IAs do Instagram da Bianca</span><span>3</span></div>
+</section>
+
+<!-- ══════════════ PÁGINA 4 ══════════════ -->
+<section class="pagina">
+  <div class="corpo">
+    <div class="topo"><span class="kicker">Parte 3 · para a Sofia</span></div>
+    <h2 class="titulo">As duas etiquetas</h2>
+    <p class="sub">É assim que você liga e desliga a IA em qualquer contato, direto do celular.</p>
+    <div class="regua"></div>
+
+    <h3 class="secao">Passo a passo no aplicativo</h3>
+    <div class="passos">
+      <div class="passo"><div class="bolha">1</div><p>Abra o contato no aplicativo do Spark Leads.</p></div>
+      <div class="passo"><div class="bolha">2</div><p>Toque em <b>Tags</b> (etiquetas).</p></div>
+      <div class="passo"><div class="bolha">3</div><p><b>Escolha da lista.</b> Não digite — as duas já estão criadas.</p></div>
+      <div class="passo"><div class="bolha">4</div><p>Pronto. A IA entra ou sai desse contato na hora.</p></div>
+    </div>
+
+    <h3 class="secao">O que cada uma faz</h3>
+
+    <div class="etq on">
+      <div class="cab"><span class="chip">ia-ligada</span><span class="efeito">Liga a IA de Novos Seguidores</span></div>
+      <p>Use quando quiser que a IA cuide de alguém que ela não pegaria sozinha.</p>
+      <p><b>Se ninguém falou com a pessoa ainda</b>, a IA manda a primeira mensagem. <b>Se você já escreveu</b>, ela espera a pessoa responder e assume dali — nunca fala por cima de você.</p>
+    </div>
+
+    <div class="etq on">
+      <div class="cab"><span class="chip">novo seguidor</span><span class="efeito">Mesmo efeito</span></div>
+      <p>Essa etiqueta já existia na conta e continua valendo. Use a que for mais natural pra você.</p>
+    </div>
+
+    <div class="etq off">
+      <div class="cab"><span class="chip">ia-desligada</span><span class="efeito">Desliga qualquer IA</span></div>
+      <p>Ganha de todas as outras regras. Use quando quiser assumir a conversa você mesma.</p>
+      <p>Para devolver o contato para a IA, é só <b>tirar a etiqueta</b>.</p>
+    </div>
+
+    <div class="aviso">
+      <span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E14B5A" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+      <div>
+        <h4>Um cuidado só</h4>
+        <p>Sempre escolha a etiqueta da lista, nunca digite uma nova. Uma etiqueta escrita diferente — <b>IA Ligada</b>, <b>ia ligada</b> — não funciona: o sistema procura a grafia exata.</p>
+      </div>
+    </div>
+  </div>
+  <div class="rodape"><span>As IAs do Instagram da Bianca</span><span>4</span></div>
+</section>
+
+<!-- ══════════════ PÁGINA 5 ══════════════ -->
+<section class="pagina">
+  <div class="corpo">
+    <div class="topo"><span class="kicker">Parte 4</span></div>
+    <h2 class="titulo">O que esperar</h2>
+    <p class="sub">Os limites das duas IAs, quando elas param sozinhas e como acompanhar o trabalho delas.</p>
+    <div class="regua"></div>
+
+    <h3 class="secao">As duas nunca fazem isso</h3>
+    <ul class="regras">
+      <li><span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E14B5A" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span>Prometer valor de ganho — nem se a pessoa insistir ou trouxer um número que viu.</span></li>
+      <li><span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E14B5A" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span>Dizer que é humana. Se perguntarem se é robô, ela desconversa uma vez; se insistirem, passa para vocês.</span></li>
+      <li><span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E14B5A" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span>Falar de contrato, comissão ou estrutura por escrito — isso fica para a conversa com a Bianca.</span></li>
+      <li><span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E14B5A" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span>Orientar sobre visto ou imigração, ou pedir qualquer documento.</span></li>
+      <li><span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E14B5A" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span>Prometer mandar algo por e-mail ou WhatsApp — o canal delas é o Instagram.</span></li>
+      <li><span class="ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E14B5A" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span><span>Oferecer um horário que não esteja realmente livre na agenda.</span></li>
+    </ul>
+
+    <h3 class="secao">Quando a IA para sozinha</h3>
+    <div class="paradas">
+      <div class="parada"><h4>Vocês responderem na conversa</h4><p>Ela sai na hora e deixa o atendimento com vocês.</p></div>
+      <div class="parada"><h4>A pessoa pedir para falar com alguém</h4><p>Ela avisa que o time entra em contato e para.</p></div>
+      <div class="parada"><h4>Assunto sensível ou que ela não sabe</h4><p>Ela não inventa: diz que vai verificar e para.</p></div>
+    </div>
+
+    <h3 class="secao">Como acompanhar</h3>
+    <p style="font-size:10pt;line-height:1.55;color:#453E55">No Spark Leads pelo computador, cada contato mostra se a IA está ativa e marca quais mensagens foram enviadas por ela. As etiquetas <b>origem-anuncio-ia</b> e <b>origem-seguidor-ia</b> dizem qual das duas atendeu; <b>agendado-anuncio-ia</b> e <b>agendado-seguidor-ia</b> mostram de onde veio cada reunião marcada. É assim que vamos medir qual caminho traz mais resultado.</p>
+
+    <div style="margin-top:7mm" class="aviso destaque">
+      <span class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6D4AFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+      <div>
+        <h4>Se algo parecer errado</h4>
+        <p>Coloque a etiqueta <b>ia-desligada</b> no contato — isso para a IA imediatamente — e nos mande um print da conversa. Tudo o que as IAs fazem fica registrado, então conseguimos ver exatamente o que aconteceu e corrigir.</p>
+      </div>
+    </div>
+  </div>
+  <div class="rodape"><span>Spark Leads · 26/08/2026</span><span>5</span></div>
+</section>
+
+</body>
+</html>
