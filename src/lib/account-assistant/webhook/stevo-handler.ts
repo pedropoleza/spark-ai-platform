@@ -41,6 +41,7 @@ import {
   warnIfStevoCredentialStale,
 } from "@/lib/repositories/stevo-instances.repo";
 import { resolveBurstTurn } from "../core/debounce";
+import { acquireTurnLock, releaseTurnLock } from "../core/turn-lock";
 import type { ParsedStevoMessage } from "./stevo-parser";
 import {
   sendStevoText,
@@ -438,6 +439,34 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
     );
   }
 
+  // ===== LOCK DE TURNO (review de uso 2026-08-25, caso Daniely 24/08) =====
+  // A partir daqui só UM turno por rep roda de cada vez. Rajada de mensagens
+  // virava lambdas concorrentes lendo históricos parciais — e o turno que leu a
+  // pergunta "qual Thaty?" ainda sem resposta escolheu sozinho e AGENDOU, 4s
+  // antes de a rep responder. Quem não pega o lock ESPERA (não descarta) e só
+  // então lê o histórico, que a essa altura já tem a resposta anterior.
+  // Fail-open em qualquer erro: bot com risco de corrida > bot mudo.
+  const lockOutcome = await acquireTurnLock(rep.id, parsed.messageId);
+  if (lockOutcome.status !== "acquired") {
+    console.warn(
+      `[stevo-handler] turn-lock ${lockOutcome.status} rep=${rep.id} após ${lockOutcome.waitedMs}ms — seguindo sem lock`,
+    );
+    reportError({
+      title: "SparkBot: turno seguiu sem lock (risco de corrida)",
+      feature: "sparkbot-turn-lock",
+      severity: "medium",
+      error: new Error(
+        `turn-lock ${lockOutcome.status} após ${lockOutcome.waitedMs}ms — o turno anterior do rep passou de ${Math.round(lockOutcome.waitedMs / 1000)}s, ou o banco recusou o lock.`,
+      ),
+      metadata: { rep_id: rep.id, waited_ms: lockOutcome.waitedMs, outcome: lockOutcome.status },
+    });
+  } else if (lockOutcome.waitedMs > 0) {
+    console.log(
+      `[stevo-handler] turn-lock adquirido após ${lockOutcome.waitedMs}ms de espera rep=${rep.id} — histórico relido com a resposta do turno anterior`,
+    );
+  }
+
+  try {
   // ===== DEBOUNCE (Pedro 2026-05-20): junta rajada de texto numa resposta só =====
   // O path Stevo processava cada msg na hora → 2 msgs em 3s viravam 2 respostas
   // fragmentadas (visto no fluxo 15:34 EDT). Estratégia "latest-wins": espera uma
@@ -770,4 +799,11 @@ export async function handleStevoInbound(parsed: ParsedStevoMessage): Promise<vo
       send_bubbles: sendResult ? `${sendResult.sent}/${sendResult.total}` : null,
     },
   });
+  } finally {
+    // Solta o lock em QUALQUER saída (inclusive nos early-returns e throws lá
+    // dentro). Se falhar, o TTL de 75s cobre — nunca deixa o rep travado.
+    if (lockOutcome.status === "acquired") {
+      await releaseTurnLock(rep.id, parsed.messageId);
+    }
+  }
 }
