@@ -265,4 +265,84 @@ FASE 5  (medição)               ── painel de origem: agendamentos pago × 
 
 ## 10. Registro de execução
 
+### 2026-08-26 — Fases 0, 1, 2-N1 e 3 EXECUTADAS
+
+**H81 (código, commit `7d4abed`, deploy Ready):** folha de EXCLUSÃO (`negate`) no
+targeting. Não existia negação pra `tag`/`custom_field`/`pipeline_stage` — sem
+isso a Fase 0 seria abrir o gate sem poder dizer "menos quem é cliente", ou seja,
+repetir a Jussara. Regra de segurança: neutro nunca inverte. UI ganhou checkbox
+"EXCLUIR" (exclusão invisível seria mina pro rep). Teste 17/17 · regressões
+`test-targeting-message` 61/61 e atribuição verdes · tsc + build limpos.
+
+**Fase 0 — `scripts/apply-bianca-fase0.ts`** (config, `--revert` disponível):
+- gate novo: ENTRADA (any: atribuição `Paid` 1º toque · frase CURTA do anúncio)
+  + EXCLUSÃO (all, negadas: `client`, `cliente`, `contato pessoal`, `pessoal
+  bia`, `membro da agencia`, `ia-desligada`);
+- `calendar_id` = `7esidBgOQphCRLUt4YaL` (estava VAZIO) + `slot_window_days` = 14
+  (medido: 7d → 2 dias/7 horários; 14d → 6 dias/43);
+- nome: `Manu — Recrutamento Bianca [TESTE]` → **`Bianca — Tráfego Pago (IG)`**.
+- **Simulação contra 100 contatos reais** (`probe-bianca-gate-simulado.ts`):
+  13 atendidos (todos `Paid Social`), 87 barrados, **1 deles pela trava de
+  exclusão** (`pessoal bia`), **zero vazamento** de cliente/pessoal/agência.
+- ⚠️ Correção durante a execução: `ia-ligada` saiu da entrada do agente A. O
+  roteador escolhe o agente mais ANTIGO entre os que casam — com a tag nos dois,
+  o de anúncio (18/06) ganharia sempre e a alavanca da SDR nunca chegaria no
+  agente de seguidores.
+
+**Fase 1 — `scripts/apply-bianca-fase1.ts`:** `add_tag origem-anuncio-ia` na regra
+`agent_activated` que já existia (move_pipeline preservado) + regra nova
+`event: booked` → `add_tag agendado-anuncio-ia`. É o que vai permitir medir
+campanha × agendamento depois.
+
+**Fase 2-N1 — tags-alavanca** (`scripts/apply-bianca-tags.ts`): `ia-ligada` e
+`ia-desligada` criadas com grafia canônica. Pré-criar importa porque o matching é
+acento/caixa-insensível mas **não** hífen-insensível: "IA Ligada" digitada no
+celular não casaria. (O GET logo após o POST devolve lista velha — consistência
+eventual; o script espera 3s antes de verificar.)
+
+**Fase 3 — agente B** (`scripts/apply-bianca-novos-seguidores.ts`):
+`47cdcb0d-5840-4ae4-bc8b-b60e70870b50` — **`Bianca — Novos Seguidores (IG)`**,
+`custom_agent`, **INATIVO**. Entrada: tag `novo seguidor` OU `ia-ligada`; grupo
+`g-organico` (`sessionSource not_contains Paid`) garante que ele **nunca rouba
+lead de anúncio**; mesma exclusão do A. Persona "Manu" com a PERSONALIDADE da
+Bianca. `data_fields` todos opcionais, debounce 25s, 1 follow-up leve em 4h,
+`post_booking: continue_until_appointment`, automações de origem
+(`origem-seguidor-ia` / `agendado-seguidor-ia`).
+
+**Testes**
+- `test-bianca-roteamento.ts` **18/18** — separação determinística dos 2 agentes
+  contra o roteador real, incluindo os conflitos de fronteira (lead pago com tag
+  de seguidor → A; `ia-desligada` ganha da `ia-ligada`) e a invariante "nenhum
+  agente sem regra" (sem-regra vira catch-all e engole o outro).
+- `stress-bianca-seguidores.ts` **111/111, zero críticas** (LLM real, zero envio).
+  2 defeitos REAIS achados e corrigidos no caminho: (a) reperguntava o que a
+  pessoa ignorou e ainda apontava isso ("vi que vc não contou…") — cobrança justo
+  com quem disse não ter interesse; (b) faltava tratamento explícito de "não
+  tenho interesse". 2 checagens do teste estavam ERRADAS e foram corrigidas em
+  vez de distorcer o agente: exigir 1 só `?` reprovava fala humana natural, e a
+  regex de convite casava "horário" em "manda no horário" e "marco" dentro de
+  "marcou".
+- `stress-bianca-anuncio.ts` **7/7** — o caminho de agendamento do agente A, que
+  **nunca tinha rodado** (calendário vazio desde 18/06).
+
+**Defeito achado e corrigido no agente A (família H50/H68):** no 1º stress com
+calendário ligado, com a lista mostrando `Wednesday, August 26` e depois só
+`Tuesday, September 1`, ele ofereceu **"quinta, 27/08"** e **"amanhã, quinta"** —
+datas SEM vaga nenhuma. O modelo computava a data em vez de copiar a que já vinha
+pronta. Em prod isso vira slot-guard bloqueando (H58) ou lead no dia errado.
+A regra **não coube** em `custom_instructions` (7.974 de 8.000 — o zod do F31
+barra o save do painel acima disso; o guard do script pegou), então foi pra
+`conversation_examples`, que estava **vazio** desde 18/06 (era o gap §5.4) — e
+exemplo ERRADO×CERTO ensina melhor que regra abstrata.
+`scripts/apply-bianca-exemplos-anuncio.ts`, 3.308 chars, `--revert` volta a vazio.
+Pós-fix: zero datas fora da lista em todos os turnos.
+
+### O que falta (bloqueado em decisão do Pedro)
+- **Fase 2-N2** (tag como GATILHO): escolher Marketplace × endpoint dedicado (§8.3).
+- **Fase 4** (`steps_by_channel`): só quando o WhatsApp da conta existir.
+- **Fase 5** (medição): 48h de dado com as tags de origem já carimbando.
+- **Religar o agente B**: depende de 1 conversa real validada com a SDR.
+
+### Registro anterior
+
 - **2026-08-26** — Levantamento completo (este doc). Medições: 274 skip × 4 send; atribuição 13 Paid / 67 Social / 20 vazio em 100 contatos; `ContactTagUpdate` = 0 ocorrências em 4.319 amostras; `calendar_id` vazio; 5 `manual_switch` da SDR. Probes criados: `_probe-bianca-contas.ts`, `_probe-bianca-atribuicao.ts`, `_probe-bianca-inventario.ts` (todos read-only). **Nada foi alterado na conta.**

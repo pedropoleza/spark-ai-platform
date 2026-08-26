@@ -102,8 +102,12 @@ const TARGETING_NOVO: TargetingRuleSet = {
           message_operator: "contains",
           message_value: "Quero me tornar um Agente Financeiro",
         },
-        // 3) A SDR ligou à mão (celular) — ver cabeçalho.
-        { id: "ent-tag-sdr", type: "tag", tag: "ia-ligada" },
+        // NOTA (26/08): `ia-ligada` NÃO entra aqui de propósito. Ela liga o
+        // agente de NOVOS SEGUIDORES. O roteador de inbound escolhe o agente
+        // mais ANTIGO entre os que casam (created_at ASC) — se os dois
+        // aceitassem a mesma tag, este (18/06) ganharia sempre e a alavanca da
+        // SDR nunca chegaria no agente de seguidores. Se um dia for preciso
+        // forçar ESTE agente à mão, criar uma tag própria (`ia-anuncio`).
       ],
     },
     {
@@ -147,7 +151,7 @@ async function main() {
 
   console.log("=== FASE 0 — Bianca (Five Rings) ===");
   console.log(`agente: ${agent.name} [${agent.status}]`);
-  console.log(`\nentrada (any): atribuição 'Paid' (1º toque) · frase curta do anúncio · tag 'ia-ligada'`);
+  console.log(`\nentrada (any): atribuição 'Paid' (1º toque) · frase curta do anúncio`);
   console.log(`exclusão (all, negadas): ${TAGS_EXCLUIDAS.join(" · ")}`);
   console.log(`calendário: ${CALENDARIO_1ON1} · slot_window_days: 14`);
   console.log(`nome: "${agent.name}" → "${NOME_NOVO}"`);
@@ -187,7 +191,7 @@ async function main() {
   console.log(`nome: ${ag2?.name}`);
   console.log(`entrada: ${nEnt} folha(s) | exclusão: ${nExc} folha(s) negadas`);
   console.log(`calendar_id: ${check?.calendar_id || "(vazio!)"} | slot_window_days: ${check?.slot_window_days}`);
-  const ok = nEnt === 3 && nExc === TAGS_EXCLUIDAS.length && check?.calendar_id === CALENDARIO_1ON1 && check?.slot_window_days === 14;
+  const ok = nEnt === 2 && nExc === TAGS_EXCLUIDAS.length && check?.calendar_id === CALENDARIO_1ON1 && check?.slot_window_days === 14;
   console.log(ok ? "\n✅ Fase 0 aplicada." : "\n❌ Estado divergente — conferir.");
   console.log("Rollback: npx tsx scripts/apply-bianca-fase0.ts --revert");
   process.exit(ok ? 0 : 1);
