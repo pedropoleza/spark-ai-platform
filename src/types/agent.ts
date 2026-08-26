@@ -256,6 +256,12 @@ export interface HandoffPolicy {
   skip_if_lead_requested_human: boolean;
   /** Quando skip, manda msg pro rep dono via SparkBot. */
   notify_rep_via_sparkbot: boolean;
+  /**
+   * Avisa a dona quando a PRÓPRIA IA fecha o turno em handed_off (2026-08-26).
+   * Default FALSE de propósito: notify_rep_via_sparkbot já vem true no merge, e
+   * reusar aquele ligaria WhatsApp pra frota inteira sem ninguém ter pedido.
+   */
+  notify_rep_on_llm_handoff?: boolean;
   /** Opp em estágio fechado (won/lost) → bot silencia. */
   notify_on_opp_stage_closed: boolean;
   /**
@@ -285,6 +291,7 @@ export const DEFAULT_HANDOFF_POLICY: HandoffPolicy = {
   skip_if_human_replied_within_minutes: 60,
   skip_if_lead_requested_human: true,
   notify_rep_via_sparkbot: true,
+  notify_rep_on_llm_handoff: false,
   notify_on_opp_stage_closed: true,
   custom_keywords_handoff: [
     // Alvos (1 palavra) — inequívocos em PT/EN mesmo fora de contexto.

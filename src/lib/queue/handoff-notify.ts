@@ -102,6 +102,33 @@ async function resolveOwnerRep(
     return anyRep[0] as RepRow;
   }
 
+  // Fallback 2 (2026-08-26, caso Marina): rep que É USUÁRIO desta location, mesmo
+  // com `active_location_id` apontando pra outra. Acontece em conta dividida em
+  // duas sub-contas (a Marina opera na Support e o agente de pós-venda vive na
+  // Personal) — antes disso, location sem rep "residente" não notificava NINGUÉM
+  // e o "já te retorno" da IA morria em silêncio. Só entra quando os degraus
+  // acima falharam, e exige que o rep tenha um ghl_user REAL na location.
+  //
+  // NÃO filtra `proactive_paused_at` aqui, de propósito. A pausa de SILÊNCIO
+  // existe pra parar nudge automático em quem sumiu do SparkBot — e a Marina
+  // está nela desde 20/08 justamente por não responder a lembrete automático.
+  // Aviso de handoff é outra coisa: a dona PEDIU explicitamente, é sobre um lead
+  // real esperando resposta dela, e já vem limitado a 1 por contato a cada 4h.
+  // É o mesmo raciocínio que o silence-gate já aplica a lembrete `requested`
+  // (silence-gate.ts:92): fura a pausa de silêncio, respeita a pausa DURA de
+  // loop_guard (IA×IA), que continua barrando tudo.
+  const { data: porUsuario } = await supabase
+    .from("rep_identities")
+    .select("id, phone, active_location_id, ghl_users")
+    .contains("ghl_users", [{ location_id: locationId }])
+    .eq("is_internal", false)
+    .not("terms_accepted_at", "is", null)
+    .or("proactive_pause_source.is.null,proactive_pause_source.neq.loop_guard")
+    .limit(1);
+  if (porUsuario && porUsuario.length > 0) {
+    return porUsuario[0] as RepRow;
+  }
+
   return null;
 }
 
@@ -351,6 +378,126 @@ export async function notifyAutoPauseToRep(args: {
     return { notified: delivery.ok, reason };
   } catch (err) {
     reportError({ title: "Auto-pause notify falhou (não-bloqueante)", feature: "lead-awareness-handoff", severity: "low", error: err });
+    return { notified: false, reason: "error" };
+  }
+}
+
+/**
+ * Avisa a dona quando a PRÓPRIA IA decidiu segurar a conversa
+ * (`conversation_status = "handed_off"` vindo do LLM) — 2026-08-26, caso Marina.
+ *
+ * O buraco que isto fecha: o agente foi treinado pra dizer "deixa eu olhar isso
+ * com calma e já te retorno" em reembolso, cobrança, visto, jurídico e teste de
+ * humanidade insistente. Só que NINGUÉM era notificado: o toggle
+ * `notifications.on_handed_off` é dead-write documentado (F29/C2-3 removeu da UI
+ * porque "runtime nunca enviava email"). Ou seja, todo "já te retorno" dependia
+ * de alguém abrir o painel por acaso. O swarm adversarial de 25/08 marcou isso
+ * como crítico em 7 de 7 conversas.
+ *
+ * Gate: `handoff_policy.notify_rep_on_llm_handoff` — default FALSE, opt-in por
+ * agente. NÃO reusa `notify_rep_via_sparkbot` de propósito: aquele já vem `true`
+ * por default no merge, e ligá-lo aqui mandaria WhatsApp pra frota inteira sem
+ * ninguém ter pedido.
+ *
+ * Fail-soft total: nunca lança pro caller (o turno não pode quebrar por causa do
+ * aviso). Cooldown de 4h por (location, contato, motivo), igual aos irmãos.
+ */
+export async function notifyLlmHandoffToRep(args: {
+  agentId: string;
+  locationId: string;
+  contactId: string;
+  contactName?: string | null;
+  contactPhone?: string | null;
+  assignedUserId?: string | null;
+  /** Última coisa que o lead escreveu — é o que dá contexto pra ela agir. */
+  leadMessage?: string | null;
+  /** O que a IA respondeu antes de segurar. */
+  aiMessage?: string | null;
+}): Promise<{ notified: boolean; reason: string }> {
+  const { agentId, locationId, contactId, assignedUserId } = args;
+  const reason = "llm_handoff";
+  try {
+    const supabase = createAdminClient();
+    const rep = await resolveOwnerRep(supabase, locationId, {
+      contact: { assignedUserId: assignedUserId || undefined, name: args.contactName || undefined },
+    } as unknown as LeadContext);
+    if (!rep) return { notified: false, reason: "no_owner_resolved" };
+    if (await alreadyNotified(supabase, locationId, contactId, reason)) {
+      return { notified: false, reason: "cooldown" };
+    }
+
+    const quem = args.contactName
+      ? `*${args.contactName}*${args.contactPhone ? ` (${args.contactPhone})` : ""}`
+      : args.contactPhone
+        ? `o contato ${args.contactPhone}`
+        : "um contato";
+    const corta = (t: string | null | undefined, n: number) =>
+      t ? (t.length > n ? t.slice(0, n).trim() + "…" : t.trim()) : "";
+    const oQueEleDisse = corta(args.leadMessage, 220);
+    const oQueEuDisse = corta(args.aiMessage, 160);
+
+    const message =
+      `🙋 Segurei a conversa com ${quem} e falei que você retorna.\n\n` +
+      (oQueEleDisse ? `Ela disse:\n"${oQueEleDisse}"\n\n` : "") +
+      (oQueEuDisse ? `Eu respondi:\n"${oQueEuDisse}"\n\n` : "") +
+      `Assumi que é assunto seu (cobrança, reembolso, visto, jurídico ou algo que eu não podia ` +
+      `afirmar). A IA não vai continuar essa conversa sozinha.`;
+
+    const { deliverProactiveMessage } = await import("@/lib/account-assistant/proactive/whatsapp-delivery");
+    const delivery = await deliverProactiveMessage(
+      { id: rep.id, phone: rep.phone || "", last_inbound_at: null },
+      message,
+      {
+        activeLocationId: rep.active_location_id || locationId,
+        source: "lead_handoff_notification",
+        kind: "llm_handoff",
+        dedupeKey: `llmhandoff:${contactId}:${Math.floor(Date.now() / 60_000)}`,
+        extraMetadata: {
+          handoff_reason: reason,
+          lead_contact_id: contactId,
+          lead_name: args.contactName || null,
+          agent_id: agentId,
+        },
+      },
+    );
+
+    // `dr.ok` mente quando o WhatsApp falha (H71): a verdade está em `via`.
+    const entregou = delivery.ok && delivery.via === "whatsapp";
+
+    await supabase.from("execution_log").insert({
+      agent_id: agentId,
+      location_id: locationId,
+      contact_id: contactId,
+      action_type: "handoff_notification",
+      action_payload: {
+        rep_id: rep.id,
+        reason,
+        delivery_via: delivery.via,
+        delivery_ok: delivery.ok,
+      },
+      success: entregou,
+      error_message: delivery.error || null,
+    });
+
+    try {
+      await supabase.from("handoff_notifications").insert({
+        agent_id: agentId,
+        location_id: locationId,
+        contact_id: contactId,
+        rep_id: rep.id,
+        reason,
+        trigger_message: (args.leadMessage || "").slice(0, 1000),
+        metadata: { delivery_via: delivery.via },
+      });
+    } catch {
+      // tabela ausente — execution_log já cobre
+    }
+
+    return { notified: entregou, reason: entregou ? "sent" : `delivery:${delivery.via || "?"}` };
+  } catch (err) {
+    console.warn(
+      `[llm-handoff-notify] falhou (não-bloqueante): ${err instanceof Error ? err.message.slice(0, 200) : err}`,
+    );
     return { notified: false, reason: "error" };
   }
 }

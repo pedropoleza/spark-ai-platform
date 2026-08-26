@@ -13,6 +13,38 @@ import { evaluateLeadSilence } from "@/lib/ai/lead-silence";
 import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { transcribeAudioFromUrlVerbose } from "@/lib/ai/audio-transcriber";
 import { slotWindowDays } from "@/lib/queue/slot-window";
+import { alertarAtendimento, type MotivoAlerta } from "@/lib/queue/alerta-atendimento";
+
+/**
+ * H83 — o catch do laço de grupos não tem a config do agente em mãos (o erro
+ * pode ter acontecido ANTES de carregá-la). Busca aqui, fail-soft.
+ */
+async function alertarTurnoFalhou(
+  supabase: ReturnType<typeof createAdminClient>,
+  agentId: string,
+  locationId: string,
+  contactId: string,
+  erro: unknown,
+): Promise<void> {
+  try {
+    const { data } = await supabase
+      .from("agent_configs")
+      .select("notifications")
+      .eq("agent_id", agentId)
+      .maybeSingle();
+    if (!data) return;
+    await alertarAtendimento({
+      agentId,
+      locationId,
+      contactId,
+      motivo: "turno_falhou",
+      detalhe: "A mensagem dele chegou, mas a IA não conseguiu processar e o lead ficou sem resposta.",
+      config: data,
+    });
+  } catch {
+    /* observabilidade best-effort */
+  }
+}
 
 /**
  * `post_booking.behavior = "stop_and_handoff"` quer dizer "depois de agendar, a
@@ -379,6 +411,11 @@ export async function processMessageQueue(): Promise<{
         errorType: "queue_processing_failure",
         message: error instanceof Error ? error.message : String(error),
       }).catch(() => {});
+      // H83: o sinal acima é TÉCNICO (vai pro painel de admin). Quem está com o
+      // lead parado na mão é a operação do cliente — avisa quem cuida.
+      if (group.agentId) {
+        void alertarTurnoFalhou(supabase, group.agentId, group.locationId, group.contactId, error);
+      }
     } finally {
       // SEMPRE marcar mensagens — evita orfãos em "processing"
       await supabase
@@ -1683,6 +1720,16 @@ async function processGroup(
         action_payload: { reason: "ai_parse_failure_loop" },
         success: true,
       });
+      // H83: lead travado de verdade — a conversa foi pausada e ninguém assume
+      // se ninguém for avisado.
+      void alertarAtendimento({
+        agentId: agent.id,
+        locationId: group.locationId,
+        contactId: group.contactId,
+        motivo: "ia_pausada",
+        detalhe: "A IA errou o formato da resposta duas vezes seguidas e se pausou. O lead está esperando.",
+        config,
+      });
       // Sweep F49 2026-06-05: ponto cego real do parse_failed. Reportamos AQUI
       // (lead travou: 2+ JSONs inválidos seguidos → conversa pausada), NÃO em
       // openai-client (que dispararia em toda falha transitória recuperada pelo
@@ -1786,6 +1833,41 @@ async function processGroup(
     offeredSlotsIso, // H58: gate de slot real no book/reschedule
     timezone: locationTz, // H66: corrige offset do start_time pro fuso da conta
   });
+
+  // 8b. H85 (2026-08-26, caso Marina): a IA fechou o turno em `handed_off` —
+  // ou seja, ela DISSE ao lead que alguém retorna. Até aqui isso não avisava
+  // ninguém: o toggle `notifications.on_handed_off` é dead-write documentado
+  // (F29/C2-3 tirou da UI porque "runtime nunca enviava email"), então a promessa
+  // dependia de alguém abrir o painel por acaso. Opt-in por agente
+  // (`handoff_policy.notify_rep_on_llm_handoff`, default false = frota intacta).
+  // Fail-soft e DEPOIS do envio ao lead: o aviso nunca pode atrapalhar a resposta.
+  if (aiResult.response.conversation_status === "handed_off") {
+    const politica = getHandoffPolicy(
+      config as { handoff_policy?: import("@/types/agent").HandoffPolicy | null },
+    );
+    if (politica.notify_rep_on_llm_handoff) {
+      try {
+        const { notifyLlmHandoffToRep } = await import("@/lib/queue/handoff-notify");
+        const c =
+          contactSettled.status === "fulfilled" ? contactSettled.value?.contact : undefined;
+        const r = await notifyLlmHandoffToRep({
+          agentId: agent.id,
+          locationId: group.locationId,
+          contactId: group.contactId,
+          contactName: c?.name || c?.firstName || null,
+          contactPhone: c?.phone || null,
+          assignedUserId: c?.assignedTo || null,
+          leadMessage: group.aggregatedBody,
+          aiMessage: Array.isArray(aiResult.response.message)
+            ? aiResult.response.message.join(" ")
+            : String(aiResult.response.message || ""),
+        });
+        log("log", `H85 aviso de handoff: ${r.notified ? "entregue" : `não (${r.reason})`}`);
+      } catch (err) {
+        log("warn", `H85 aviso de handoff falhou (fail-soft): ${err instanceof Error ? err.message : err}`);
+      }
+    }
+  }
 
   // 9. Sincronizar dados coletados pela IA de volta pro GHL
   if (aiResult.response.collected_data && Object.keys(aiResult.response.collected_data).length > 0) {

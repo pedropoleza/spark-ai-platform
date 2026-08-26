@@ -218,6 +218,10 @@ export const updateAgentConfigSchema = z.object({
       skip_if_human_replied_within_minutes: z.number().int().min(0).max(1440),
       skip_if_lead_requested_human: z.boolean(),
       notify_rep_via_sparkbot: z.boolean(),
+      // H85: aviso quando o LLM fecha o turno em handed_off. Tem que estar AQUI —
+      // z.object() estripa chave desconhecida e a rota persiste o body VALIDADO,
+      // que foi como o require_contact_before_booking sumia (H72).
+      notify_rep_on_llm_handoff: z.boolean().optional(),
       notify_on_opp_stage_closed: z.boolean(),
       custom_keywords_handoff: z.array(z.string().max(80)).max(30),
     })
