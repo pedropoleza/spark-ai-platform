@@ -306,6 +306,20 @@ export const updateAgentConfigSchema = z.object({
     on_handed_off: z.boolean().optional(),
     on_error: z.boolean().optional(),
     notification_email: z.string().optional(),
+    // H83 (2026-08-26): aviso por WhatsApp quando o atendimento TRAVA (turno
+    // estourou, envio falhou, IA se pausou). Tem que estar AQUI — z.object()
+    // estripa chave desconhecida e a rota persiste o body VALIDADO, que foi como
+    // o require_contact_before_booking sumia (H72). Sem esta linha, salvar pelo
+    // painel APAGARIA o destinatário do alerta em silêncio.
+    alerta_whatsapp: z
+      .object({
+        enabled: z.boolean().optional(),
+        phone: z.string().max(30).optional(),
+        motivos: z
+          .array(z.enum(["turno_falhou", "envio_falhou", "ia_pausada", "passou_pra_humano"]))
+          .optional(),
+      })
+      .optional(),
   }).nullable().optional(),
   // Sparkbot-specific configs (added 2026-05-03 — Pedro Sprint 1)
   // IMPORTANTE: schemas precisam aceitar PARCIAIS — sales/recruitment salvam

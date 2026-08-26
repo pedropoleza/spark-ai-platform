@@ -96,7 +96,7 @@ interface Quiet { enabled: boolean; start: string; end: string; timezone?: strin
 // o painel e salvar qualquer coisa desligava o gate de "pedir telefone antes de
 // agendar" em silêncio.
 interface PostBooking { behavior: "stop_and_handoff" | "continue_until_appointment"; handoff_message: string; allow_reschedule: boolean; require_contact_before_booking?: boolean }
-interface Notif { on_qualified: boolean; on_booked: boolean; on_handed_off: boolean; on_error: boolean; notification_email: string }
+interface Notif { on_qualified: boolean; on_booked: boolean; on_handed_off: boolean; on_error: boolean; notification_email: string; alerta_whatsapp?: { enabled?: boolean; phone?: string; motivos?: string[] } }
 interface Outreach { tag_filter: { tags: string[]; match: "any" | "all" }; rate_per_hour: number; daily_cap: number; respect_working_hours: boolean; opening_message: string }
 
 interface Editable {
@@ -209,7 +209,11 @@ function makeSeed(c: Record<string, any>): Editable {
     enable_image_analysis: bool(c.enable_image_analysis, true),
     enable_pdf_reading: bool(c.enable_pdf_reading, true),
     enable_summary_notes: bool(c.enable_summary_notes, false),
-    notifications: { on_qualified: bool(nt.on_qualified, true), on_booked: bool(nt.on_booked, true), on_handed_off: bool(nt.on_handed_off, false), on_error: bool(nt.on_error, true), notification_email: str(nt.notification_email) },
+    // H83: `alerta_whatsapp` PRECISA ser carregado aqui. Este normalizador
+    // reconstrói `notifications` campo a campo e a rota persiste o objeto
+    // inteiro — uma chave ausente aqui é uma chave APAGADA no banco no primeiro
+    // save do painel. Foi assim que o require_contact_before_booking sumiu (H72).
+    notifications: { on_qualified: bool(nt.on_qualified, true), on_booked: bool(nt.on_booked, true), on_handed_off: bool(nt.on_handed_off, false), on_error: bool(nt.on_error, true), notification_email: str(nt.notification_email), alerta_whatsapp: nt.alerta_whatsapp },
     outreach: {
       tag_filter: { tags: Array.isArray(oc.tag_filter?.tags) ? (oc.tag_filter.tags as string[]) : [], match: oc.tag_filter?.match === "all" ? "all" : "any" },
       rate_per_hour: clampNum(oc.rate_per_hour, 1, 500, 20),
@@ -2250,6 +2254,39 @@ function CatLimits({ e, patch, isRep }: { e: Editable; patch: (p: Partial<Editab
           notify.ts pra erros críticos. Re-introduzir só quando ligarmos
           infra de email (Resend/SMTP). Zod tolera campos antigos no PUT
           (silenciosamente preserva, sem usar). */}
+      {/* H83 (2026-08-26): aviso por WhatsApp quando o atendimento TRAVA. Os
+          toggles de email acima são dead-write; ESTE tem gate determinístico
+          atrás (lib/queue/alerta-atendimento.ts). Fica visível na UI de
+          propósito — config que o cliente não enxerga vira mina (H73). */}
+      <SubHd>Avisar no WhatsApp quando travar</SubHd>
+      <p className="muted" style={{ fontSize: 12.5, margin: "0 0 8px" }}>
+        Manda uma mensagem pra quem cuida do atendimento quando a IA não consegue responder,
+        quando o envio falha ou quando ela se pausa sozinha. Assim ninguém fica esperando sem saber.
+      </p>
+      <Field label="Ligar o aviso">
+        <label className="row" style={{ gap: 8, alignItems: "center", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={!!nt.alerta_whatsapp?.enabled}
+            onChange={(ev) => setN({ alerta_whatsapp: { ...(nt.alerta_whatsapp || {}), enabled: ev.target.checked } })}
+          />
+          <span style={{ fontSize: 13 }}>Avisar por WhatsApp</span>
+        </label>
+      </Field>
+      {nt.alerta_whatsapp?.enabled && (
+        <Field
+          label="WhatsApp de quem recebe"
+          hint="Precisa ser um número já cadastrado no SparkBot. Se a pessoa nunca escreveu pro SparkBot, o aviso fica só no painel — ela precisa mandar um 'oi' uma vez pra liberar o WhatsApp."
+        >
+          <input
+            className="input"
+            value={nt.alerta_whatsapp?.phone || ""}
+            onChange={(ev) => setN({ alerta_whatsapp: { ...(nt.alerta_whatsapp || {}), phone: ev.target.value } })}
+            placeholder="+1 754 971-5189"
+          />
+        </Field>
+      )}
+
       <SubHd>Avisos por email</SubHd>
       <p className="muted" style={{ fontSize: 12.5, margin: "0 0 6px" }}>
         Por enquanto só enviamos avisos de erros críticos pra equipe técnica. Para acompanhar leads, use a aba Mensagens.

@@ -418,6 +418,33 @@ export async function executeActions(
           channel: ctx.channel || "SMS",
         },
       });
+      // H83 (2026-08-26): o reportError acima é sinal TÉCNICO (painel de admin).
+      // Este é o caso mais silencioso que existe — a IA respondeu, o lead não
+      // recebeu, e a conversa "parece" atendida pra quem olha de fora. Quem
+      // cuida do atendimento precisa saber pra assumir à mão. Busca a config
+      // aqui porque o ExecutionContext não carrega `notifications`; é caminho de
+      // erro (raro), então a query extra não pesa. Fail-soft.
+      void (async () => {
+        try {
+          const { data: cfgRow } = await supabase
+            .from("agent_configs")
+            .select("notifications")
+            .eq("agent_id", ctx.agentId)
+            .maybeSingle();
+          if (!cfgRow) return;
+          const { alertarAtendimento } = await import("@/lib/queue/alerta-atendimento");
+          await alertarAtendimento({
+            agentId: ctx.agentId,
+            locationId: ctx.locationId,
+            contactId: ctx.contactId,
+            motivo: "envio_falhou",
+            detalhe: `A IA escreveu a resposta mas o envio pelo ${ctx.channel || "canal"} falhou. O lead provavelmente não recebeu.`,
+            config: cfgRow,
+          });
+        } catch {
+          /* observabilidade best-effort */
+        }
+      })();
     }
   }
 

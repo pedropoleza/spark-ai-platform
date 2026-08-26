@@ -463,6 +463,24 @@ export interface NotificationsConfig {
   on_handed_off: boolean;
   on_error: boolean;
   notification_email: string;
+  /**
+   * H83 (2026-08-26): aviso por WhatsApp quando o atendimento TRAVA.
+   *
+   * Os quatro booleanos acima são dead-write conhecido — o F29/C2-3 tirou três
+   * deles da UI justamente porque o runtime nunca leu, e o `on_error` que
+   * sobrou dispara sinal TÉCNICO pra equipe, não pro cliente. Este bloco é o
+   * que de fato avisa a pessoa que cuida do atendimento, e tem gate
+   * determinístico atrás (`lib/queue/alerta-atendimento.ts`).
+   *
+   * Ausente = desligado. Nenhuma conta da frota muda de comportamento.
+   */
+  alerta_whatsapp?: {
+    enabled?: boolean;
+    /** E.164. Precisa existir em `rep_identities` — é assim que o SparkBot endereça. */
+    phone?: string;
+    /** Ausente = todos os motivos. */
+    motivos?: Array<"turno_falhou" | "envio_falhou" | "ia_pausada" | "passou_pra_humano">;
+  };
 }
 
 export interface WorkingHoursDay {
