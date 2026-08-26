@@ -15,7 +15,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { processWithAI, parseAIResponse } from "@/lib/ai/openai-client";
+import { processWithAI } from "@/lib/ai/openai-client";
 import { lerTokenMarina } from "@/lib/marina-lab/auth";
 
 export const maxDuration = 60;
@@ -71,9 +71,12 @@ falando com essa pessoa: você escreve o rascunho que a MARINA vai copiar e mand
 4. Se o print não tiver informação suficiente, ou se o caso for daqueles de segurar
    (reembolso, cobrança, visto, jurídico), diga isso claramente em vez de inventar resposta.
 
-Responda SÓ com JSON válido, sem cerca de código:
-{"leitura":"1-3 frases do que você entendeu do print (pra Marina conferir se você leu certo)","bolhas":["mensagem 1","mensagem 2"],"porque":"1 frase explicando a escolha","confianca":"alta|media|baixa"}
-As "bolhas" são o texto EXATO pra copiar — sem aspas em volta, sem colchete, sem placeholder.`;
+FORMATO DA RESPOSTA — responda SÓ com JSON válido, sem cerca de código:
+{"message":["bolha 1","bolha 2"],"should_send_message":true,"actions":[],"collected_data":{},"conversation_status":"active","internal_notes":"LEITURA: o que você entendeu do print, 1-3 frases | PORQUE: 1 frase sobre a escolha | CONFIANCA: alta ou media ou baixa"}
+"message" é o rascunho EXATO pra Marina copiar, quebrado em bolhas curtas — sem aspas em
+volta, sem colchete, sem placeholder, sem "[nome]". "internal_notes" é só pra ela conferir
+se você leu o print certo; use CONFIANCA: baixa quando não tiver certeza de quem falou o quê.
+"actions" é SEMPRE lista vazia aqui — este é um rascunho, não um turno de verdade.`;
 
   const entrada = nota
     ? `Print(s) da conversa em anexo. Observação da Marina: ${nota}`
@@ -88,25 +91,32 @@ As "bolhas" são o texto EXATO pra copiar — sem aspas em volta, sem colchete, 
       images: validas.map((u) => ({ url: "", base64DataUri: u })),
     });
 
-    const bruto = r.response as unknown;
-    const texto =
-      typeof bruto === "string" ? bruto : ((bruto as { raw?: string })?.raw ?? JSON.stringify(bruto ?? ""));
-    const parsed = (parseAIResponse(texto) ?? null) as unknown as {
-      leitura?: string; bolhas?: unknown; porque?: string; confianca?: string;
-    } | null;
+    // O processWithAI SEMPRE normaliza pro formato da plataforma (message /
+    // internal_notes / ...) — então a gente fala a língua dele em vez de inventar
+    // um schema paralelo. Bônus: as bolhas passam pelo mesmo sanitizador do
+    // agente de produção (tira travessão, saudação repetida), então o rascunho
+    // já sai no padrão que ela aprovou.
+    const resp = (r.response || {}) as { message?: unknown; internal_notes?: unknown };
+    const msg = resp.message;
+    const bolhas = (Array.isArray(msg) ? msg : msg ? [msg] : [])
+      .map((x) => String(x).trim())
+      .filter(Boolean);
 
-    let leitura = parsed?.leitura || "";
-    let bolhas = Array.isArray(parsed?.bolhas) ? parsed!.bolhas.map(String).filter(Boolean) : [];
-    const porque = parsed?.porque || "";
-    const confianca = parsed?.confianca || "media";
+    const notas = String(resp.internal_notes || "");
+    const pega = (rot: string) => {
+      const m = notas.match(new RegExp(`${rot}\\s*:\\s*([^|]+)`, "i"));
+      return m ? m[1].trim() : "";
+    };
+    const leitura = pega("LEITURA");
+    const porque = pega("PORQUE");
+    const conf = pega("CONFIANCA").toLowerCase();
+    const confianca = /baix/.test(conf) ? "baixa" : /alt/.test(conf) ? "alta" : "media";
 
-    // Fallback honesto: se o JSON não veio, devolve o texto cru como uma bolha
-    // só — melhor a Marina ver o que a IA escreveu do que um erro seco.
     if (bolhas.length === 0) {
-      const limpo = String(texto || "").replace(/```(json)?/g, "").trim();
-      if (!limpo) return NextResponse.json({ ok: false, erro: "não consegui ler o print, tenta de novo" }, { status: 502 });
-      bolhas = [limpo.slice(0, 1200)];
-      leitura = leitura || "(não consegui estruturar a leitura — segue o rascunho cru)";
+      return NextResponse.json(
+        { ok: false, erro: "não consegui ler esse print — tenta um mais nítido ou recorta só a conversa" },
+        { status: 502 },
+      );
     }
 
     const { data: reg } = await supabase
