@@ -137,6 +137,15 @@ export async function routeProactiveEvent(
   if (type === "CONTACTUPDATE") {
     const ev = extractContactCustomFieldEvent(body);
     if (ev) await triggerReactiveAgents(ev);
+    // H82 (caso Bianca 2026-08-26): TAG pelo CONTACTUPDATE. Medido ao vivo na
+    // conta da Bianca: adicionar uma tag NÃO gera `ContactTagUpdate` (zero em
+    // teste controlado, 45s de observação) — gera `ContactUpdate` com o contato
+    // inteiro, tags incluídas. O handler de tag existia desde a F27.D e nunca
+    // rodou porque escutava um evento que o app não assina. Aqui a gente lê a
+    // tag do payload que REALMENTE chega.
+    for (const ev2 of extractContactTagsEvents(body)) {
+      await triggerReactiveAgents(ev2);
+    }
     return;
   }
   if (type === "OPPORTUNITYSTAGEUPDATE") {
@@ -180,6 +189,48 @@ function extractContactTagEvent(body: Record<string, unknown>): ReactiveTriggerC
   if (!key || !key.trim()) return null;
 
   return { locationId, contactId, kind: "tag_added", key: key.trim() };
+}
+
+/**
+ * H82 (caso Bianca 2026-08-26) — extrai UM evento `tag_added` por tag presente
+ * no `ContactUpdate`.
+ *
+ * Por que aqui e não no `extractContactTagEvent`: aquele assume "a última tag da
+ * lista é a que acabou de entrar", o que só vale pro `ContactTagUpdate` (evento
+ * de mudança). O `ContactUpdate` traz a lista COMPLETA e ATUAL, sem diff — não
+ * dá pra saber qual mudou, então devolvemos todas e deixamos as guardas
+ * decidirem, exatamente como o custom field já faz:
+ *   1. só casa tag que ALGUM agente ativo declara como folha de ENTRADA
+ *      (`matchedTriggerKey`, que pula folha `negate` desde o H81);
+ *   2. `hasConversation` — nunca reabre contato que já tem conversa com o agente;
+ *   3. dedup de 24h por (agente, contato, `tag_added:<tag>`);
+ *   4. e, no turno, o gate `should_respond` (skip_if_human_replied_within_minutes)
+ *      segura o caso "a SDR mandou a 1ª mensagem à mão e só depois marcou a tag" —
+ *      aí a IA espera o lead responder em vez de falar por cima dela.
+ *
+ * Cap de 30 tags: contato com lista gigante não vira 30 varreduras de agente.
+ */
+export function extractContactTagsEvents(body: Record<string, unknown>): ReactiveTriggerContext[] {
+  const contactId = pickStr(body, "contactId", "contact_id", "id");
+  const locationId = pickStr(body, "locationId", "location_id");
+  if (!contactId || !locationId) return [];
+
+  const raw = body.tags ?? body.contactTags ?? body.contact_tags;
+  if (!Array.isArray(raw)) return [];
+
+  const vistas = new Set<string>();
+  const eventos: ReactiveTriggerContext[] = [];
+  for (const t of raw as unknown[]) {
+    const nome = (typeof t === "string" ? t : asRecord(t).name);
+    const key = typeof nome === "string" ? nome.trim() : "";
+    if (!key) continue;
+    const norm = key.toLowerCase();
+    if (vistas.has(norm)) continue;
+    vistas.add(norm);
+    eventos.push({ locationId, contactId, kind: "tag_added", key });
+    if (eventos.length >= 30) break;
+  }
+  return eventos;
 }
 
 /**

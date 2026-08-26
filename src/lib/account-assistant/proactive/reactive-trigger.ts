@@ -244,8 +244,20 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
     if (!dedupKey) continue;
     matched++;
 
-    // Guarda anti-reabertura (custom_field): não re-abre contato já em conversa.
-    if (ev.kind === "custom_field_changed" && (await hasConversation(supabase, a.id, ev.contactId))) continue;
+    // Guarda anti-reabertura: não re-abre contato que já tem conversa com ESTE
+    // agente. Vale pros dois eventos que vêm do CONTACTUPDATE — que manda o
+    // contato INTEIRO, sem diff antes/depois. H82 (2026-08-26) estendeu pra
+    // `tag_added`: como a tag agora é lida do ContactUpdate (o
+    // ContactTagUpdate não é entregue — medido ao vivo em 26/08), qualquer
+    // atualização do contato reapresenta as mesmas tags, e sem esta guarda um
+    // ContactUpdate solto reabriria do zero a conversa de quem já está sendo
+    // atendido.
+    if (
+      (ev.kind === "custom_field_changed" || ev.kind === "tag_added") &&
+      (await hasConversation(supabase, a.id, ev.contactId))
+    ) {
+      continue;
+    }
 
     if (await alreadyFired(supabase, a.id, ev.contactId, dedupKey)) continue;
 
