@@ -235,6 +235,42 @@ SparkBot monta fluxos de follow-up GRANDES por chat (N msgs, multi-turno, com m�
 - **Biblioteca de Fluxos Salvos (F7, fix prod 2026-06-29, caso Jussara) — NO AR**: a Jussara queria montar um fluxo 1 vez e depois só dizer "manda o fluxo X pra fulano". O orquestrador resolvia fluxo por RECÊNCIA (último draft), sem busca por NOME → pegava o errado / dizia "não encontrei, monto do zero?" (buscava no transcript, não numa biblioteca). Fix (migration **00117** `task_drafts.saved_at`, aditiva): `flow-resolver.ts` reusa o scorer fuzzy do H45 (`nameScore`/`dice`/`deburr`) → `confidence` (high/needs_confirm/ambiguous/low), mesmo padrão do `search_contacts`. 4 tools novas (gated): `save_flow` (medium), `list_flows`/`find_flow` (safe), `apply_saved_flow` (**high**, reusa `applyFlowToContacts` — não consome o template; ambíguo NÃO aplica, devolve candidatos). Prompt: "buscar antes de remontar" + "oferecer salvar" + confirmar nome antes de disparar (anti-alucinação). Sinergia: só é seguro reaplicar template a N porque o `[nome]` agora interpola por-contato. Rollout: biblioteca da Jussara seedada (`Triagem` 12 passos + `No-show` 3 passos). Teste `scripts/test-task-orchestrator.ts` 84/84. Estudo: `_planning/jussara-sparkbot/ESTUDO-fluxos-salvos.md`. **Fora do MVP**: editar fluxo salvo (reusa edit_step apontando pro draft salvo), biblioteca compartilhada na location, UI no /hub.
 - **Pra ligar em prod (👤)**: `TASK_ORCHESTRATOR_ENABLED=1` na Vercel (JÁ LIGADA — a Jussara usa em prod) + validar **1 conversa real com o LLM dirigindo as tools**. Teste: `scripts/test-task-orchestrator.ts` (84/84) + `scripts/smoke-task-orchestrator.ts` (18/18, via `executeTool`).
 
+### Review de uso 13→25/08 (H82-H84, 2026-08-26) — no ar
+
+Li as 1.799 msgs do período uma a uma. Relatório: `_planning/review-uso-2026-08-25/RELATORIO.md`.
+Seis correções, todas trocando **instrução de prompt por dado determinístico**.
+
+- **O nome do dia-da-semana agora é DERIVADO da data no texto de saída** (`weekday-text-guard.ts`).
+  O `[CALENDÁRIO REAL]` do H68 cobre a janela (agora 6 semanas, era 3) — mas os 13 pares errados do
+  período estavam TODOS fora dela e 9 batiam com o calendário de 2025. O guard corrige nas duas ordens
+  ("quinta, 24/09" e "24/09 cai num domingo"), com concordância de artigo, e vale pro menu do
+  `present_options`. Horizonte infinito. ⚠️ A conjunção **"e" não entra** na lista de verbos da ordem B:
+  com ela, "24/09 e quinta 15/10" vira afirmação e o guard reescreve o item seguinte.
+- **`calendar_name` vem no retorno do agendamento** — o bot narrava o calendário de memória e confirmava
+  "1.2 Segundo Encontro" pra gravar no "1.1" (caso Daniely). **Sem `calendar_name` no retorno, o prompt
+  manda OMITIR o calendário** — dizer errado é pior que não dizer.
+- **`get_booking_link`** — o `widgetSlug` sempre veio no `GET /calendars/`. `<base>/widget/booking/{id}`
+  resolve em 100% dos calendários testados e slug/id inexistente devolve **JSON 404 explícito**, então a
+  tool **testa o link antes de entregar**. Base em `SPARK_BOOKING_BASE_URL` (o domínio é da AGÊNCIA;
+  `locations.domain` vem vazio na API). Usa o **id**, não o slug: o id é imutável e alguns slugs têm 100+
+  chars de UUID. Antes disso o bot chegou a inventar uma URL e oferecer mandar pro prospect.
+- **Handoff é ato de fala, não palavra** (`queue/handoff-intent.ts` + migration 00130). Entrada com espaço
+  = frase (substring); entrada de 1 palavra = ALVO e exige intenção em volta. **Nunca ponha substantivo
+  comum solto como gatilho em PT** — "pessoa" era default em 31 de 32 contas e causou 28 das 29
+  interrupções indevidas, todas com o lead respondendo a TRIAGEM ("vivo só com uma pessoa").
+- **Um turno por rep de cada vez** (`core/turn-lock.ts` + `sparkbot_turn_locks`). Rajada virava lambdas
+  concorrentes; o turno que leu "qual Thaty?" sem resposta agendou sozinho 4s antes da rep responder.
+  Filosofia **espera, não descarta**: quem chega depois aguarda (teto 15s, p99 dos turnos é 13,3s) e lê o
+  histórico já com a resposta anterior. `shouldStillRespond` NÃO resolve isso — ele roda pré-ENVIO, quando
+  a tool já rodou. `STEVO_DEBOUNCE_MS` segue 0; ligar agora é seguro e economiza LLM na rajada rápida.
+- **O re-run do coherence-gate não pode responder à própria auditoria** (`leaksInternalCheck`). A diretiva
+  entra como `{role:"user"}` com "não exponha isto" — H73 puro. 4 respostas chegaram ao rep dizendo "não
+  executei nenhuma ferramenta neste turno". Agora é descartado.
+
+⚠️ **Regra que se repetiu nas 6**: todo detector novo foi rodado contra as **1.094 msgs reais** (ou as 29
+interrupções reais) ANTES de ficar pronto — e em 3 dos 6 isso derrubou padrão meu que parecia certo. Não
+declare detector pronto sem replay no corpus de produção.
+
 ### Data e dia-da-semana: o modelo usa o calendário do ano de treino (H68, 2026-08-04) — corrigido
 
 **O LLM mapeia dia-da-semana ↔ data pelo calendário de 2025.** Medido na frota em 21 dias: **73 pares "dia + data" errados e 73 batendo com 2025, zero com 2026** (SparkBot 66/401 = 16,5%, 17 reps; lead-facing 7/84, 3 agentes). Não é aritmética ruim — erro de conta espalharia ±1/±7. Dano real: 2 reuniões de cliente criadas no dia errado, e nos dois casos o bot AFIRMOU que estava certo quando o rep reclamou.
