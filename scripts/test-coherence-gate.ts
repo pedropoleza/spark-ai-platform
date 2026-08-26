@@ -4,7 +4,11 @@
 // Cobre as falhas REAIS do review + a regra de ouro de segurança:
 // NUNCA re-executar quando já houve escrita bem-sucedida (não duplica ação de cliente).
 
-import { analyzeCoherence, type ToolCallRecord } from "@/lib/account-assistant/core/coherence-gate";
+import {
+  analyzeCoherence,
+  leaksInternalCheck,
+  type ToolCallRecord,
+} from "@/lib/account-assistant/core/coherence-gate";
 
 interface Case {
   name: string;
@@ -269,6 +273,49 @@ delete process.env.COHERENCE_PIPELINE_FAMILY;
   console.log(`${ok ? "✅" : "❌"} Leidy com flag OFF → coerente=${off.coherent} action=${off.action} (esperado ok/true = idêntico a hoje)`);
   if (ok) pass++;
   else fail++;
+}
+
+// ── Vazamento da diretiva interna (review de uso 2026-08-25) ──────────────
+// As 4 primeiras são VERBATIM do que chegou no WhatsApp do rep. As "NÃO vaza"
+// são honestidade legítima voltada pro rep — não podem ser barradas.
+console.log("\n--- leaksInternalCheck: meta-texto da auditoria não pode sair ---");
+const vazamentos: Array<[string, string, boolean]> = [
+  ["PROD Gustavo 24/08", "Boa observação do sistema - esse trecho era parte do *resumo do histórico de mensagens*, não uma ação que eu executei. Não agendei nada.", true],
+  ["PROD Luciano 14/08 (a)", 'Luciano, só uma correção no que falei: Quando mencionei "mensagens enviadas pelo CRM" - estava descrevendo o que o sistema é capaz de rastrear, não que eu executei alguma ação. Não enviei nada neste turno.', true],
+  ["PROD Luciano 14/08 (b)", "Correto - não executei nenhuma ferramenta de envio neste turno. O que afirmei sobre a mensagem pra Marcella foi referência a uma ação feita em turno anterior desta sessão.", true],
+  ["PROD Gustavo 24/08 (b)", 'Deixa eu corrigir: eu disse que ela tem "reunião agendada pra 02/09" mas isso veio das notas dela, não de algo que eu agendei agora. Nada foi criado neste turno.', true],
+  // Regressão dos 2 falso-positivos achados rodando o detector contra as 1.094
+  // msgs reais do período. Ambos são mensagens LEGÍTIMAS e frequentes.
+  ["NÃO vaza: aviso real do advisor de bulk (apareceu em prod)", "Hmm, o sistema sinalizou risco alto pra *Cláudia Gouvea Pimentel Duarte* - ela tem 19 mensagens sem resposta no histórico e nunca respondeu por esse canal.", false],
+  ["NÃO vaza: fallback de anti-timeout (10× em prod)", "Tive um problema técnico depois de iniciar algumas ações. Pode confirmar o que foi feito antes de tentar de novo? (algumas tools podem ter rodado com sucesso, outras não)", false],
+  ["NÃO vaza: fallback honesto (é a saída desejada)", "Na real, ainda não consegui concluir isso aqui - não quero te dizer que fiz algo que não foi feito. Pode confirmar pra eu tentar de novo?", false],
+  ["NÃO vaza: fallback honesto pós-escrita", "Fiz parte do que falei, mas ainda não consegui concluir isso aqui - não quero te dar uma confirmação que não confere. Me pergunta o status que eu confiro item por item.", false],
+  ["NÃO vaza: honestidade normal pro rep", "Não consegui salvar a nota agora - o Spark Leads recusou. Quer que eu tente de novo?", false],
+  ["NÃO vaza: resposta útil citando ferramenta do CLIENTE", "Ela usa a ferramenta de simulação da National pra isso.", false],
+  ["NÃO vaza: confirmação normal", "Nota salva na *Cassia Mendes* com o resumo completo da reunião. ✅", false],
+  ["NÃO vaza: fala de reunião em turno de trabalho", "A reunião do turno da manhã da Cida ficou pra quarta.", false],
+];
+for (const [nome, txt, esperado] of vazamentos) {
+  const got = leaksInternalCheck(txt);
+  const ok = got === esperado;
+  console.log(`${ok ? "✅" : "❌"} ${nome} → vaza=${got} (esperado ${esperado})`);
+  if (!ok) console.log(`   texto: ${txt.slice(0, 120)}`);
+  ok ? pass++ : fail++;
+}
+
+// ── safeRewrite muda quando JÁ houve escrita (não pode dizer "não fiz nada") ──
+console.log("\n--- safeRewrite honesto conforme houve escrita ou não ---");
+{
+  const semEscrita = analyzeCoherence("Nota salva pra Caroline!", []);
+  const comEscrita = analyzeCoherence("Enviei as 4 mensagens e salvei a nota.", [
+    { name: "send_message_to_contact", result: OK },
+  ]);
+  const a = !/Fiz parte/.test(semEscrita.safeRewrite) && semEscrita.safeRewrite.includes("não foi feito");
+  const b = /Fiz parte do que falei/.test(comEscrita.safeRewrite);
+  console.log(`${a ? "✅" : "❌"} sem escrita → "não quero te dizer que fiz algo que não foi feito"`);
+  console.log(`${b ? "✅" : "❌"} com escrita → admite o parcial em vez de negar tudo`);
+  a ? pass++ : fail++;
+  b ? pass++ : fail++;
 }
 
 console.log(`\n${pass}/${pass + fail} OK (${Math.round((pass / (pass + fail)) * 100)}%)`);

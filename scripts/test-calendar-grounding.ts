@@ -53,7 +53,8 @@ console.log("\n2. Anti-2025: todo par dia/data do bloco confere com 2026");
   const bloco = buildCalendarGrounding(new Date("2026-08-04T20:14:00Z"), NY).block;
   const curto = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
   const pares = [...bloco.matchAll(/(dom|seg|ter|qua|qui|sex|sáb) (\d{2})\/(\d{2})/g)];
-  check("achou os 21 dias", pares.length === 21, `achou ${pares.length}`);
+  // Janela de 6 semanas (weeksAhead=5, review de uso 2026-08-25): 42 dias.
+  check("achou os 42 dias (6 semanas)", pares.length === 42, `achou ${pares.length}`);
   let okAll = true;
   for (const [, wd, dd, mm] of pares) {
     const real = new Date(Date.UTC(2026, Number(mm) - 1, Number(dd))).getUTCDay();
@@ -62,7 +63,7 @@ console.log("\n2. Anti-2025: todo par dia/data do bloco confere com 2026");
       console.error(`     ${wd} ${dd}/${mm} → real 2026 é ${curto[real]}`);
     }
   }
-  check("todos os 21 pares batem com 2026", okAll);
+  check("todos os 42 pares batem com 2026", okAll);
 }
 
 // ── 3. Fuso: o "hoje" é o do rep, não o do servidor ──────────────────────────
@@ -126,8 +127,12 @@ console.log("\n6. Fail-soft");
 // ── 7. Custo: o bloco precisa ser barato (vai em TODO turno) ─────────────────
 console.log("\n7. Custo do bloco");
 {
+  // Teto de 6 semanas: ~960 chars ≈ 240 tok na user message (não-cacheada). A
+  // ~2,4 chamadas/turno e ~1.100 turnos/13 dias isso dá ~$2/mês — o preço de
+  // não mandar o rep pra reunião no dia errado. Se passar de 1.200, a janela
+  // cresceu demais: revisar, porque aí o guard de texto é quem deve segurar.
   const b = buildCalendarGrounding(new Date("2026-08-04T20:14:00Z"), NY).block;
-  check(`bloco < 700 chars (~175 tok) — tem ${b.length}`, b.length < 700);
+  check(`bloco < 1200 chars (~300 tok) — tem ${b.length}`, b.length < 1200);
 }
 
 console.log(`\n${fail === 0 ? "✅" : "❌"} ${pass}/${pass + fail} passaram`);

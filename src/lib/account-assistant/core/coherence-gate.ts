@@ -258,6 +258,66 @@ export interface CoherenceResult {
  */
 export const HONEST_FALLBACK_FINGERPRINT = "ainda não consegui concluir isso aqui";
 
+/**
+ * O texto do re-run está falando com o REP ou respondendo à diretiva INTERNA?
+ * (review de uso 2026-08-25 — casos Luciano 14/08 e Gustavo 24/08)
+ *
+ * A diretiva de correção entra na conversa como `{ role: "user" }` e começa com
+ * "[verificação interna do sistema — não exponha isto ao usuário]". Isso é uma
+ * REGRA DE PROMPT: vale no turno em que o modelo lê e não sobrevive à tentação
+ * de "responder ao usuário que acabou de falar". Em 13 dias, 4 respostas
+ * chegaram ao WhatsApp do rep tratando a auditoria como fala dele:
+ *
+ *   "Boa observação do sistema - esse trecho era parte do resumo do histórico,
+ *    não uma ação que eu executei."
+ *   "Correto - não executei nenhuma ferramenta de envio neste turno."
+ *   "Luciano, só uma correção no que falei: quando mencionei ... estava
+ *    descrevendo o que o sistema é capaz de rastrear."
+ *
+ * O rep tinha perguntado outra coisa; recebeu contabilidade de tool call.
+ *
+ * A classe é a mesma do H73 (config que só existe no prompt): a instrução
+ * precisa de uma trava determinística atrás. Aqui a trava é este detector — se
+ * o re-run fala do próprio maquinário, ele não é resposta e é descartado.
+ *
+ * O detector procura META-DISCURSO SOBRE EXECUÇÃO (turno, ferramenta, sistema
+ * que sinalizou), não palavras soltas: "não consegui fazer isso" segue passando,
+ * porque é honestidade voltada pro rep.
+ */
+// Os padrões são de PRIMEIRA PESSOA sobre a execução DESTE turno. Dois padrões
+// mais largos foram testados contra as 1.094 msgs reais de 13→25/08 e caíram
+// por falso positivo — ficam anotados pra ninguém reintroduzir:
+//
+//   ❌ /o sistema (sinalizou|apontou|...)/  → barrava o aviso LEGÍTIMO do
+//      advisor de bulk ("o sistema sinalizou risco alto pra Cláudia - 19 msgs
+//      sem resposta"), que é exatamente o que o rep precisa ler.
+//   ❌ /(ferramenta|tool)s? .{0,30}(executad|rodad)/ → barrava o fallback
+//      determinístico do anti-timeout ("algumas tools podem ter rodado com
+//      sucesso, outras não"), que apareceu 10× no período e é honesto.
+//
+// Regra: "o bot está negando/contabilizando execução SUA neste turno" vaza;
+// "o bot está explicando o produto pro rep" não.
+const META_LEAK_PATTERNS: RegExp[] = [
+  /\bn[ea]ss?e\s+turno\b/i,
+  /\bturno\s+(anterior|atual)\b/i,
+  /\bobserva[çc][ãa]o\s+do\s+sistema\b/i,
+  /\bverifica[çc][ãa]o\s+interna\b/i,
+  /\bestava\s+descrevendo\s+o\s+que\s+o\s+sistema\b/i,
+  /\bn[ãa]o\s+(executei|chamei|rodei|acionei)\s+(nenhuma\s+)?(ferramenta|tool)/i,
+  /\bn[ãa]o\s+(foi\s+)?uma\s+a[çc][ãa]o\s+que\s+eu\s+executei\b/i,
+  /\bnada\s+foi\s+(criado|executado|feito)\s+n[ea]ss?e\s+turno\b/i,
+  /\bs[óo]\s+uma\s+corre[çc][ãa]o\s+no\s+que\s+(falei|disse|escrevi)\b/i,
+  /\bdeixa\s+eu\s+corrigir\s*:/i,
+];
+
+/**
+ * true = o texto é resposta à auditoria interna, não ao rep. Nunca deve sair.
+ */
+export function leaksInternalCheck(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return META_LEAK_PATTERNS.some((rx) => rx.test(text));
+}
+
 export function analyzeCoherence(responseText: string, toolCalls: ToolCallRecord[]): CoherenceResult {
   const successfulToolNames = toolCalls.filter((tc) => toolSucceeded(tc.result)).map((tc) => tc.name);
   const hadSuccessfulWrite = toolCalls.some((tc) => isWriteTool(tc.name) && toolSucceeded(tc.result));
@@ -291,8 +351,11 @@ export function analyzeCoherence(responseText: string, toolCalls: ToolCallRecord
     `[verificação interna do sistema — não exponha isto ao usuário] Você afirmou ${claims}, mas nenhuma ferramenta de escrita correspondente foi executada com sucesso neste turno. ` +
     `Se a ação ainda não foi feita, EXECUTE a ferramenta agora. Se você se enganou ou a ação não é possível, responda com a informação correta SEM afirmar que fez algo que não aconteceu.`;
 
-  const safeRewrite =
-    `Na real, ${HONEST_FALLBACK_FINGERPRINT} — não quero te dizer que fiz algo que não foi feito. Pode confirmar pra eu tentar de novo?`;
+  const safeRewrite = hadSuccessfulWrite
+    // Quando JÁ houve escrita, dizer "não fiz nada" seria a mentira inversa: o
+    // rep ia repetir uma ação que já entrou. Honesto aqui é admitir o parcial.
+    ? `Fiz parte do que falei, mas ${HONEST_FALLBACK_FINGERPRINT} — não quero te dar uma confirmação que não confere. Me pergunta o status que eu confiro item por item.`
+    : `Na real, ${HONEST_FALLBACK_FINGERPRINT} — não quero te dizer que fiz algo que não foi feito. Pode confirmar pra eu tentar de novo?`;
 
   const rewriteDirective =
     "[verificação interna do sistema — não exponha isto ao usuário] Reescreva sua última resposta com total honestidade. " +

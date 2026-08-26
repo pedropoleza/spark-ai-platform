@@ -73,6 +73,7 @@ import {
 import {
   analyzeCoherence,
   HONEST_FALLBACK_FINGERPRINT,
+  leaksInternalCheck,
   type ToolCallRecord,
 } from "./core/coherence-gate";
 import {
@@ -81,6 +82,10 @@ import {
   REPEAT_BREAK_DIRECTIVE,
   REPEAT_HARD_FALLBACK,
 } from "./core/repeat-guard";
+import {
+  fixWeekdayDatePairs,
+  type WeekdayTextCorrection,
+} from "./weekday-text-guard";
 
 export interface ProcessInput {
   rep: RepIdentity;
@@ -1010,14 +1015,43 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
           // 'rerun' (write nova) e 'rewrite' (write já feita no turno original).
           const combined = [...result.tool_calls, ...rerun.tool_calls];
           const recheck = analyzeCoherence(rerun.text, combined as ToolCallRecord[]);
-          if (rerun.text && recheck.coherent) {
+          // O re-run pode sair coerente e ainda assim não servir: se ele
+          // RESPONDEU à diretiva interna em vez de falar com o rep, o que chega
+          // no WhatsApp é contabilidade de tool call. Ver leaksInternalCheck.
+          const vazou = leaksInternalCheck(rerun.text);
+          if (vazou) {
+            console.warn(
+              `[Sparkbot] COHERENCE re-run VAZOU a verificação interna rep=${rep.id} — descartado. Preview: ${rerun.text.slice(0, 140)}`,
+            );
+            recordSignalAsync({
+              type: "failure",
+              title: "Coherence: re-run respondeu à diretiva interna (descartado)",
+              description:
+                "O re-run do coherence-gate produziu meta-texto sobre a própria execução ('não executei nenhuma ferramenta neste turno', 'boa observação do sistema') em vez de falar com o rep. " +
+                "Foi barrado antes de sair; o rep recebeu o fallback honesto. Se repetir, revisar a diretiva de correção.",
+              severity: "medium",
+              source: "bot_auto",
+              metadata: {
+                rep_id: rep.id,
+                rep_phone: rep.phone,
+                location_id: activeLocationId,
+                agent_id: input.agentId,
+                action: coherence.action,
+                families: coherence.violations.map((v) => v.family),
+                leaked_preview: rerun.text.slice(0, 200),
+              },
+            });
+          }
+          if (rerun.text && recheck.coherent && !vazou) {
             result.text = rerun.text;
             result.tool_calls = combined;
           } else if (alreadyWarnedLastTurn) {
             // Loop-breaker: o fallback honesto JÁ foi enviado no turno anterior.
             // Repetir trava o rep num loop verbatim (caso Sieder). Deixa a
             // resposta do re-run (mais honesta) ou a original passar pra destravar.
-            result.text = rerun.text || result.text;
+            // Mas NUNCA deixa passar o re-run que vazou a auditoria interna —
+            // destravar o rep não vale mandar contabilidade de tool call.
+            result.text = (!vazou && rerun.text) || result.text;
             result.tool_calls = combined;
             recordSignalAsync({
               type: "failure",
@@ -1121,18 +1155,64 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
   // prompt sozinha NÃO segurou (msgs pós-deploy ainda vinham com "—"). Strip
   // determinístico no que SAI pro rep — troca por hífen normal (sem o "tell" de AI).
   const stripDashes = (s: string): string => s.replace(/[—–]/g, "-");
+
+  // ── Guarda dia-da-semana ↔ data no TEXTO (review de uso 2026-08-25) ──
+  // A tabela [CALENDÁRIO REAL] (H68) cobre as próximas semanas; os 7 erros que
+  // sobraram na frota em 13 dias estavam TODOS fora dessa janela (14/09, 21/09,
+  // 24/09, 15/10) e 5 batiam com o calendário de 2025. Aqui o nome do dia é
+  // DERIVADO da data por código — mesma escola do `booked_label` (H50) e das
+  // agendas pré-renderizadas do briefing (H69). Roda no menu também: no caso
+  // Ana Gusmão o par errado estava dentro do present_options.
+  const correcoesWd: WeekdayTextCorrection[] = [];
+  const fixWd = (s: string): string => {
+    if (!s) return s;
+    const r = fixWeekdayDatePairs(s, timezone, new Date());
+    if (r.corrections.length) correcoesWd.push(...r.corrections);
+    return r.text;
+  };
+  const limpar = (s: string): string => fixWd(stripDashes(s));
+
   if (interactive) {
-    interactive.body = stripDashes(interactive.body);
+    interactive.body = limpar(interactive.body);
     interactive.options = interactive.options.map((o) => ({
       ...o,
-      label: stripDashes(o.label),
-      description: o.description ? stripDashes(o.description) : o.description,
+      label: limpar(o.label),
+      description: o.description ? limpar(o.description) : o.description,
     }));
-    if (interactive.title) interactive.title = stripDashes(interactive.title);
-    if (interactive.footer) interactive.footer = stripDashes(interactive.footer);
-    if (interactive.buttonText) interactive.buttonText = stripDashes(interactive.buttonText);
+    if (interactive.title) interactive.title = limpar(interactive.title);
+    if (interactive.footer) interactive.footer = limpar(interactive.footer);
+    if (interactive.buttonText) interactive.buttonText = limpar(interactive.buttonText);
   }
-  let finalText = stripDashes(interactive ? interactiveFallbackText(interactive) : result.text);
+  let finalText = limpar(interactive ? interactiveFallbackText(interactive) : result.text);
+
+  // Sinaliza o que a guarda corrigiu — é a régua pra saber se o modelo ainda erra
+  // data (e se o erro segue com a assinatura do calendário de 2025 do H68).
+  if (correcoesWd.length > 0) {
+    const anoAnterior = correcoesWd.filter((c) => c.batendoAnoAnterior).length;
+    console.warn(
+      `[Sparkbot] WEEKDAY-TEXT-GUARD rep=${rep.id} corrigiu ${correcoesWd.length} par(es) dia/data ` +
+        `(${anoAnterior} batendo com o ano anterior): ${correcoesWd.map((c) => `"${c.original}"→"${c.fixed}"`).join(" · ")}`,
+    );
+    recordSignalAsync({
+      type: "error",
+      title: "Weekday-text-guard: bot escreveu dia-da-semana errado pra data",
+      description:
+        "O texto que ia pro rep tinha par 'dia + data' incoerente e foi corrigido por código antes de sair. " +
+        "Se o volume subir, a janela do [CALENDÁRIO REAL] provavelmente está curta pro horizonte que esse rep usa.",
+      severity: "medium",
+      source: "bot_auto",
+      metadata: {
+        rep_id: rep.id,
+        rep_phone: rep.phone,
+        location_id: activeLocationId,
+        agent_id: input.agentId,
+        timezone,
+        total: correcoesWd.length,
+        batendo_ano_anterior: anoAnterior,
+        correcoes: correcoesWd.slice(0, 5),
+      },
+    });
+  }
 
   // ── Anti-repeat guard (F57, Fix bug observado em prod 2026-06-04 — Sieder + Soraia) ──
   // Independente de coherence: se o texto que VAMOS mandar é eco verbatim de uma das
@@ -1177,7 +1257,9 @@ export async function processIncoming(input: ProcessInput): Promise<ProcessOutpu
         if (rerun.call_usage?.length) result.call_usage = [...(result.call_usage || []), ...rerun.call_usage];
         // Só aceita o re-run se ele REALMENTE saiu do loop (não ecoa de novo).
         if (rerun.text && !findBotEcho(rerun.text, history) && !isNearDuplicate(rerun.text, finalText)) {
-          broke = stripDashes(rerun.text);
+          // O re-run gera texto NOVO depois da guarda acima — passa pela mesma
+          // limpeza (a função é idempotente, então re-aplicar é seguro).
+          broke = limpar(rerun.text);
         }
       } catch (err) {
         console.error(

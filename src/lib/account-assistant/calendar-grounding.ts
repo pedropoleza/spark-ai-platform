@@ -86,16 +86,25 @@ export interface CalendarGrounding {
 }
 
 /**
- * Monta a tabela de datas reais. 4 linhas cobrem o vocabulário que o rep usa de
- * fato ("essa semana", "semana que vem", "daqui duas semanas") — ~110 tokens na
- * user message (não-cacheada), custo irrelevante perto do prefixo de 40-76K.
+ * Monta a tabela de datas reais. Semana começa na SEGUNDA (convenção BR).
  *
- * Semana começa na SEGUNDA (convenção BR).
+ * JANELA (review de uso 2026-08-25): era 3 semanas (weeksAhead=2). Medido na
+ * frota em 13 dias, os 13 pares dia/data que o bot escreveu errado estavam
+ * TODOS fora dessa janela — o rep marca prova de licença, revisão de apólice e
+ * mentoria com 1-2 meses de antecedência (14/09, 21/09, 24/09, 15/10). Subimos
+ * pra 6 semanas, que é o horizonte real dessas conversas.
+ *
+ * Custo: ~20 tokens por linha na user message (não-cacheada) → ~140 tokens no
+ * total, irrelevante perto do prefixo de 40-76K.
+ *
+ * A tabela NÃO é a última linha de defesa: o `weekday-text-guard` corrige o par
+ * no texto de saída em horizonte infinito. Ampliar aqui reduz a chance de o
+ * modelo escrever errado; o guard garante que, se escrever, não chega ao rep.
  */
 export function buildCalendarGrounding(
   now: Date,
   tz: string,
-  weeksAhead = 2,
+  weeksAhead = 5,
 ): CalendarGrounding {
   const hoje = ymdInTz(now, tz);
   const hojeWd = weekdayInTz(now, tz);

@@ -60,6 +60,40 @@ function getRepTz(ctx: ToolContext): string {
   return getRepTimezone(ctx);
 }
 
+/**
+ * Nome do calendário REALMENTE usado no agendamento (review de uso 2026-08-25).
+ *
+ * O BUG: o retorno de sucesso trazia `booked_label` (dia/hora determinísticos)
+ * mas NÃO o calendário — então o bot narrava o nome de memória. Caso Daniely
+ * (17/08 15:12): a pergunta de confirmação dizia "1.2 - Segundo Encontro", o
+ * rep tocou Confirmar, e 20s depois o bot anunciou "Marcado! ✅ ... no 1.1 -
+ * Primeiro Encontro". O rep aprovou uma coisa e ouviu outra — e não tem como
+ * saber qual das duas foi pro CRM.
+ *
+ * Mesma escola do `booked_label` (H50): dado derivável do estado real é
+ * produzido por código, nunca pelo modelo.
+ *
+ * Custo: zero quando o calendário é o padrão salvo do rep (caso dominante);
+ * 1 GET best-effort caso contrário. Falha em silêncio — sem nome, o prompt
+ * manda o bot omitir o calendário em vez de adivinhar.
+ */
+async function resolveCalendarName(
+  ctx: ToolContext,
+  calendarId: string,
+): Promise<string | undefined> {
+  if (!calendarId) return undefined;
+  const pref = getSchedulingPref(ctx);
+  if (pref.default_calendar_id === calendarId && pref.default_calendar_name) {
+    return pref.default_calendar_name;
+  }
+  try {
+    const det = await getCalendarDetails(ctx.ghlClient, calendarId);
+    return det.calendar?.name || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 
 /**
  * Resolve qual calendário usar pra agendar SEM perguntar (parte code-side da
@@ -1381,16 +1415,13 @@ const createAppointment: ToolEntry = {
       // pref salva → grava o calendário usado como padrão. Resolução continua
       // "nome dito > pref > único", então o rep pode nomear outro depois (ganha)
       // e trocar via chat/UI. Reversível.
+      // Nome do calendário usado — resolvido UMA vez e reaproveitado pelo
+      // auto-learn abaixo e pelo retorno (que é o que o bot narra pro rep).
+      const calName = await resolveCalendarName(ctx, calendarId);
+
       let learnedDefaultCalendar: { id: string; name?: string } | undefined;
       const hasPref = !!ctx.rep.profile?.preferences?.scheduling?.default_calendar_id;
       if (!hasPref && apptId) {
-        let calName: string | undefined;
-        try {
-          const calDet = await getCalendarDetails(ctx.ghlClient, calendarId);
-          calName = calDet.calendar?.name;
-        } catch {
-          // nome é best-effort; salva o id mesmo sem nome
-        }
         try {
           const cp = (ctx.rep.profile || {}) as Record<string, unknown>;
           const cpp = (cp.preferences || {}) as Record<string, unknown>;
@@ -1458,6 +1489,10 @@ const createAppointment: ToolEntry = {
           // no fuso do rep). O bot DEVE narrar o confirm a partir daqui — nunca
           // recalcular a data de cabeça (foi o que gerou "Segunda 14/07" errado).
           booked_label: formatWeekdayDate(String(args.start_time), getRepTz(ctx)),
+          // Review de uso 2026-08-25 (caso Daniely): o calendário que entrou de
+          // FATO. Narrar daqui — não de memória. Ausente = omitir na resposta.
+          calendar_id: calendarId,
+          ...(calName ? { calendar_name: calName } : {}),
           // Quando setado, o bot deve avisar o rep que vai usar esse calendário
           // por padrão daqui pra frente (e que dá pra trocar). 1ª vez só.
           learned_default_calendar: learnedDefaultCalendar,
@@ -2136,6 +2171,10 @@ const createAppointmentsBatch: ToolEntry = {
       });
     }
 
+    // Review de uso 2026-08-25: mesmo motivo do create_appointment — o bot narra
+    // o calendário a partir daqui, não de memória.
+    const batchCalName = await resolveCalendarName(ctx, calendarId);
+
     return {
       status: "ok",
       data: {
@@ -2147,6 +2186,8 @@ const createAppointmentsBatch: ToolEntry = {
         failed,
         not_attempted: notAttempted,
         assigned_to: assignedUserId || null,
+        calendar_id: calendarId,
+        ...(batchCalName ? { calendar_name: batchCalName } : {}),
         summary:
           `${created.length}/${rawItems.length} criadas` +
           (failed.length ? `, ${failed.length} falharam` : "") +
