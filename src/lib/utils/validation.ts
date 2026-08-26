@@ -56,6 +56,11 @@ const targetingRuleSchema = z.object({
   attribution_value: z.string().optional(),
   attribution_values: z.array(z.string()).optional(),
   attribution_scope: z.enum(["first", "last"]).optional(),
+  // H81 (2026-08-26): inverte a folha (exclusão). Precisa estar AQUI pelo mesmo
+  // motivo do bloco acima — z.object() estripa chave desconhecida e a rota
+  // persiste o body VALIDADO (foi assim que o require_contact_before_booking
+  // sumia, H72). Sem esta linha, salvar pelo painel APAGA a trava de exclusão.
+  negate: z.boolean().optional(),
 });
 
 // Composição E/OU v2 (Pedro 2026-06-17). targeting_rules aceita o array flat

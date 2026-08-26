@@ -79,6 +79,16 @@ export interface TargetingRule {
   attribution_value?: string;
   attribution_values?: string[]; // operador "in"
   attribution_scope?: AttributionScope; // default "first"
+  /**
+   * H81 (caso Bianca 2026-08-26): INVERTE o resultado desta folha. Serve pra
+   * EXCLUSÃO — "atende, MENOS quem tem a tag `client`". Sem isso não havia como
+   * expressar negação de tag/custom_field/pipeline_stage (só `message` e
+   * `attribution` tinham `not_contains`), e abrir um gate numa conta que é a
+   * operação inteira do cliente virava o incidente da Jussara (19/08).
+   * Folha NEUTRA (malformada / sem texto) NUNCA é invertida — inverter neutro
+   * transformaria regra quebrada em catch-all.
+   */
+  negate?: boolean;
 }
 
 /**

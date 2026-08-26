@@ -1086,6 +1086,25 @@ function LeafEditor({
       className="row"
       style={{ gap: 8, alignItems: "center", background: "var(--surface-1)", border: "1px solid var(--border)", borderRadius: "var(--r-sm)", padding: 8, flexWrap: "wrap" }}
     >
+      {/* H81 (caso Bianca 2026-08-26): EXCLUIR inverte a folha. Fica ANTES do
+          tipo porque muda a leitura da linha inteira ("NÃO atender quem…").
+          Sem controle visível, uma regra de exclusão salva por script viraria
+          mina: o rep editaria o grupo sem entender por que o contato não casa. */}
+      <label
+        className="row"
+        style={{ gap: 4, alignItems: "center", width: "auto", cursor: "pointer", userSelect: "none" }}
+        title="Inverte esta condição: o agente NÃO atende quem casar com ela."
+      >
+        <input
+          type="checkbox"
+          checked={!!r.negate}
+          onChange={(ev) => onChange({ negate: ev.target.checked || undefined })}
+        />
+        <span style={{ fontSize: 12, color: r.negate ? "var(--danger, #c0392b)" : "var(--text-2)", fontWeight: r.negate ? 600 : 400 }}>
+          {r.negate ? "EXCLUIR" : "excluir"}
+        </span>
+      </label>
+
       {/* Tipo da condição */}
       <select
         className="input"

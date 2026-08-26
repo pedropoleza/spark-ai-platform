@@ -149,7 +149,27 @@ export function normalizeTargeting(
 // message sem texto — não conta na composição, igual ao `continue` legado).
 type LeafResult = "match" | "no_match" | "neutral";
 
+/**
+ * H81 (caso Bianca 2026-08-26): aplica `negate` sobre a folha crua.
+ *
+ * NEUTRO NUNCA É INVERTIDO — é a propriedade de segurança inteira desta função.
+ * Folha neutra significa "malformada / não se aplica a este turno" (tag vazia,
+ * folha `message` sem texto do lead, operador ausente). Invertê-la transformaria
+ * uma regra quebrada num catch-all que atende TODO MUNDO — exatamente o estrago
+ * que a exclusão existe pra impedir.
+ */
 function evalLeaf(
+  rule: TargetingRule,
+  contact: GhlContact | null,
+  opps: GhlOpp[],
+  opts: TargetingOpts,
+): LeafResult {
+  const raw = evalLeafRaw(rule, contact, opps, opts);
+  if (!rule.negate || raw === "neutral") return raw;
+  return raw === "match" ? "no_match" : "match";
+}
+
+function evalLeafRaw(
   rule: TargetingRule,
   contact: GhlContact | null,
   opps: GhlOpp[],
