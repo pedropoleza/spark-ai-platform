@@ -26,6 +26,12 @@ import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 import { updateRepById } from "@/lib/repositories/rep-identities.repo";
 // H48 (2026-07-10): compromissos do Google Calendar / bloqueios na agenda.
 import { fetchCalendarBlocks } from "../calendar-context";
+// Review de uso 2026-08-25: link público de agendamento (montar + validar).
+import {
+  getBookingBaseUrl,
+  montarBookingLinks,
+  validarBookingLink,
+} from "../booking-link";
 // H50 (2026-07-15, caso Caua): guarda determinística weekday↔data — o LLM
 // calculava a data do dia-da-semana nomeado e errava, marcando no dia errado.
 import {
@@ -303,6 +309,137 @@ const listAppointments: ToolEntry = {
       };
     } catch (err) {
       return ghlErrorToResult(err, "listagem de appointments");
+    }
+  },
+};
+
+/**
+ * Link público de agendamento — o pedido mais repetido do review de 08/2026
+ * (Paulo 2×, Danielle 1×) e o que já gerou UMA alucinação de URL enviada a um
+ * prospect. Ver lib/account-assistant/booking-link.ts pra apuração completa.
+ */
+const getBookingLink: ToolEntry = {
+  def: {
+    name: "get_booking_link",
+    description:
+      "Devolve o LINK PÚBLICO de agendamento de um calendário — aquele que o rep manda pro cliente escolher o horário sozinho. " +
+      "Use sempre que o rep pedir 'meu link da agenda', 'link de agendamento', 'link pro cliente marcar'. " +
+      "O servidor MONTA e TESTA o link antes de devolver: nunca escreva um link de agendamento de cabeça. " +
+      "Sem calendar_id, usa o padrão do rep; se ele tiver vários e não houver padrão, devolve a lista pra você perguntar qual.",
+    risk: "safe",
+    parameters: {
+      type: "object",
+      properties: {
+        calendar_id: {
+          type: "string",
+          description: "Opcional. ID do calendário (use list_calendars pra descobrir). Omita pra usar o padrão do rep.",
+        },
+      },
+    },
+  },
+  handler: async (ctx, args) => {
+    try {
+      const res = await ghlListCalendars(ctx.ghlClient, ctx.locationId);
+      const pref = getSchedulingPref(ctx);
+      const ativos = (res.calendars || []).filter((c) => c.isActive !== false && c.id);
+
+      if (ativos.length === 0) {
+        return {
+          status: "not_found",
+          message: "Não achei nenhum calendário ativo nesta conta do Spark Leads.",
+          retryable: false,
+        };
+      }
+
+      const pedido = String(args.calendar_id || "").trim();
+      let alvo = pedido ? ativos.find((c) => c.id === pedido) : undefined;
+      if (pedido && !alvo) {
+        return {
+          status: "not_found",
+          message: `Não achei o calendário ${pedido} entre os ativos desta conta.`,
+          retryable: false,
+        };
+      }
+      if (!alvo) alvo = ativos.find((c) => c.id === pref.default_calendar_id);
+      if (!alvo && ativos.length === 1) alvo = ativos[0];
+
+      // Vários calendários e nenhum padrão → o LLM pergunta qual (não adivinha).
+      if (!alvo) {
+        return {
+          status: "ok",
+          data: {
+            precisa_escolher: true,
+            calendars: ativos.map((c) => ({ id: c.id, name: c.name })),
+            message:
+              "O rep tem mais de um calendário e nenhum padrão salvo. Pergunte qual ele quer mandar pro cliente e chame de novo com calendar_id.",
+          },
+        };
+      }
+
+      const candidatos = montarBookingLinks(alvo.id as string, alvo.widgetSlug);
+      if (candidatos.length === 0) {
+        return {
+          status: "error",
+          message: "Não consegui montar o link desse calendário (sem id utilizável).",
+          retryable: false,
+        };
+      }
+
+      // Testa antes de entregar — é o que separa este fix da alucinação que ele
+      // corrige. `null` = não deu pra confirmar (rede); nunca vira "está bom".
+      let escolhido = candidatos[0];
+      let confirmado: boolean | null = null;
+      for (const c of candidatos) {
+        const ok = await validarBookingLink(c.url);
+        if (ok === true) {
+          escolhido = c;
+          confirmado = true;
+          break;
+        }
+        if (confirmado === null) confirmado = ok; // guarda o 1º veredito não-positivo
+      }
+
+      if (confirmado === false) {
+        recordSignalAsync({
+          type: "error",
+          title: "get_booking_link: link montado não abre",
+          description:
+            "O widget de agendamento devolveu 404 pro calendário. Provável mudança de domínio white-label (SPARK_BOOKING_BASE_URL) ou calendário sem widget publicado.",
+          severity: "medium",
+          source: "bot_auto",
+          metadata: {
+            rep_id: ctx.rep.id,
+            location_id: ctx.locationId,
+            calendar_id: alvo.id,
+            base: getBookingBaseUrl(),
+            tentadas: candidatos.map((c) => c.url),
+          },
+        });
+        return {
+          status: "error",
+          message:
+            "Montei o link desse calendário mas ele não abriu quando testei — não vou te passar um link quebrado. " +
+            "Pega o link direto no Spark Leads em Calendários, e avisa o suporte que o link automático falhou.",
+          retryable: false,
+        };
+      }
+
+      return {
+        status: "ok",
+        data: {
+          calendar_id: alvo.id,
+          calendar_name: alvo.name,
+          booking_url: escolhido.url,
+          // false = testado e abriu; null = não deu pra testar agora.
+          verificado: confirmado === true,
+          message:
+            confirmado === true
+              ? "Link testado e funcionando. Pode mandar pro cliente."
+              : "Não consegui testar o link agora (rede). Ele está no formato certo — se o cliente reclamar, confira no Spark Leads.",
+        },
+      };
+    } catch (err) {
+      return ghlErrorToResult(err, "link de agendamento");
     }
   },
 };
@@ -2202,6 +2339,7 @@ const createAppointmentsBatch: ToolEntry = {
 export const CALENDAR_TOOLS: ToolEntry[] = [
   listAppointments,
   listCalendars,
+  getBookingLink,
   getFreeSlots,
   listMyFreeSlots,
   getAppointment,

@@ -16,6 +16,7 @@
  *
  * Fail-soft: se a policy não tem `enabled`, sempre responde (retrocompat).
  */
+import { detectarPedidoDeHumano } from "@/lib/queue/handoff-intent";
 import type {
   HandoffPolicy,
   LeadContext,
@@ -69,12 +70,15 @@ export function evaluateShouldRespond(
     }
   }
 
-  // 2. Lead pediu humano (regex)
+  // 2. Lead pediu humano — por INTENÇÃO, não por substring.
+  // Antes era `bodyNorm.includes(keyword)`, e como o default seeded traz o
+  // substantivo solto "pessoa" (31 dos 32 agent_configs), 11 de 11 handoffs da
+  // frota em 13 dias foram falso positivo: o lead respondendo a triagem ("vivo
+  // só com uma pessoa") derrubava a IA. Ver queue/handoff-intent.ts.
   if (policy.skip_if_lead_requested_human && currentMessageBody) {
-    const bodyNorm = NORM(currentMessageBody);
-    const keywords = (policy.custom_keywords_handoff || []).map(NORM).filter(Boolean);
-    const matched = keywords.find((k) => bodyNorm.includes(k));
-    if (matched) {
+    const hit = detectarPedidoDeHumano(currentMessageBody, policy.custom_keywords_handoff);
+    if (hit) {
+      const matched = hit.keyword;
       return {
         decision: "skip",
         reason: `lead_requested_human:"${matched}"`,

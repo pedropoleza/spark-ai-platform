@@ -258,7 +258,17 @@ export interface HandoffPolicy {
   notify_rep_via_sparkbot: boolean;
   /** Opp em estágio fechado (won/lost) → bot silencia. */
   notify_on_opp_stage_closed: boolean;
-  /** Keywords adicionais que disparam handoff (PT-BR + EN). */
+  /**
+   * Gatilhos de handoff (PT-BR + EN). Duas semânticas, ver queue/handoff-intent.ts:
+   *  • entrada com ESPAÇO = frase, casa por substring (já carrega a intenção);
+   *  • entrada de UMA PALAVRA = alvo, só conta com intenção de pedido em volta.
+   *
+   * ⚠️ NÃO coloque substantivo comum solto aqui. "pessoa" era default e, mesmo
+   * com o matcher de intenção, "Tenho que falar com a pessoa" (o cônjuge do
+   * lead) continua ambíguo em PT. Use a frase ("falar com uma pessoa",
+   * "pessoa de verdade"). Só palavras que ninguém usa casualmente — "humano",
+   * "atendente", "real person" — funcionam como alvo solto.
+   */
   custom_keywords_handoff: string[];
 }
 
@@ -276,7 +286,21 @@ export const DEFAULT_HANDOFF_POLICY: HandoffPolicy = {
   skip_if_lead_requested_human: true,
   notify_rep_via_sparkbot: true,
   notify_on_opp_stage_closed: true,
-  custom_keywords_handoff: ["humano", "atendente", "pessoa", "falar com alguem", "falar com alguém", "real person", "agent please"],
+  custom_keywords_handoff: [
+    // Alvos (1 palavra) — inequívocos em PT/EN mesmo fora de contexto.
+    "humano",
+    "atendente",
+    // Frases — substring direta. Substituem o antigo alvo solto "pessoa", que
+    // gerou 28 das 29 interrupções indevidas medidas em ago/2026.
+    "falar com alguem",
+    "falar com alguém",
+    "falar com uma pessoa",
+    "pessoa de verdade",
+    "pessoa real",
+    "atendimento humano",
+    "real person",
+    "agent please",
+  ],
 };
 
 export function getLeadHistoryConfig(c: { lead_history_config?: LeadHistoryConfig | null }): LeadHistoryConfig {

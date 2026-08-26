@@ -116,20 +116,22 @@ test("acentos/case insensitive em keywords", () => {
   }
 });
 
-test("opp em status 'won' → skip silently", () => {
+// MC-8 (review Marcia 2026-07-28): o skip por opp fechada SAIU do
+// evaluateShouldRespond — era opt-in junto do handoff (não rodava com handoff
+// OFF) e tinha semântica ANY-closed (opp lost antiga silenciava lead
+// re-engajado). Quem cobre isso agora é o closed-opp-gate STANDALONE. Este
+// teste ficou 1 mês vermelho afirmando o comportamento antigo; agora afirma o
+// contrato de verdade: aqui a decisão é "respond".
+test("opp 'won' NÃO silencia aqui (MC-8 moveu pro closed-opp-gate)", () => {
   const p: HandoffPolicy = { ...DEFAULT_HANDOFF_POLICY, enabled: true };
   const ctx = emptyContext();
   ctx.has_closed_opp = true;
   ctx.opportunities = [{ id: "o1", status: "won" }];
   const d = evaluateShouldRespond(ctx, "oi tudo bem?", p);
-  eq(d.decision, "skip");
-  if (d.decision === "skip") {
-    if (!d.reason.startsWith("opp_closed")) throw new Error(`bad reason: ${d.reason}`);
-    eq(d.notify_rep, false);
-  }
+  eq(d.decision, "respond");
 });
 
-test("opp 'won' mas skip_if_lead_requested_human pega antes", () => {
+test("pedido curto e seco ('humano por favor') dispara mesmo sem verbo", () => {
   const p: HandoffPolicy = { ...DEFAULT_HANDOFF_POLICY, enabled: true };
   const ctx = emptyContext();
   ctx.has_closed_opp = true;
@@ -158,13 +160,14 @@ test("skip_if_human_replied desligado (threshold 0) → não silencia", () => {
   eq(d.decision, "respond");
 });
 
-test("keyword 'humano' substring em 'humanoide' NÃO mata (acidentalmente match)", () => {
-  // Note: nosso match é includes substring, então "humanoide" DEVE matchear
-  // "humano" — esse é o comportamento esperado dado a simplicidade.
-  // Esse test documenta a limitação atual.
+// Era "documenta a limitação atual": com match por substring, "humanoide"
+// disparava "humano". O matcher de intenção (handoff-intent.ts) fecha a palavra
+// com \b, então a limitação deixou de existir — e o teste passa a afirmar o
+// comportamento certo.
+test("'humanoide' NÃO dispara 'humano' (fronteira de palavra)", () => {
   const p: HandoffPolicy = { ...DEFAULT_HANDOFF_POLICY, enabled: true };
   const d = evaluateShouldRespond(emptyContext(), "esse robô parece humanoide demais", p);
-  eq(d.decision, "skip"); // intentional substring match
+  eq(d.decision, "respond");
 });
 
 console.log("\nisHumanOutboundSource (fonte ÚNICA humano×bot):");
