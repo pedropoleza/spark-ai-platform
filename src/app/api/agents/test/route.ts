@@ -12,6 +12,7 @@ import { executeActions } from "@/lib/ai/action-executor";
 import { evaluateLeadSilence, stripSilenceMarker } from "@/lib/ai/lead-silence";
 import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { isChatMessageType } from "@/lib/ghl/message-sources";
+import { lerTokenMarina } from "@/lib/marina-lab/auth";
 import { slotWindowDays } from "@/lib/queue/slot-window";
 
 /**
@@ -35,12 +36,30 @@ import { slotWindowDays } from "@/lib/queue/slot-window";
  * antigos que ainda mandam conversation_history como string.
  */
 export async function POST(request: NextRequest) {
-  const session = await getSession();
+  const body = await request.json();
+
+  // Marina Lab (2026-08-26, temporário — `_planning/marina-lab/PLANO.md`): a
+  // Marina testa o agente DELA por uma página com senha própria, sem SSO do
+  // Spark Leads. O escopo vem do TOKEN (agent_id + location), nunca do body —
+  // então essa senha não vira chave pra cutucar agente de outra conta. Some
+  // com MARINA_LAB_ENABLED=0.
+  let session = await getSession();
+  if (!session) {
+    const marina = await lerTokenMarina(request);
+    if (marina && body?.agent_id === marina.agent_id) {
+      session = {
+        userId: "marina-lab",
+        locationId: marina.location_id,
+        companyId: marina.company_id,
+        locationName: "Marina's Personal Account",
+        isAdmin: false,
+      } as Awaited<ReturnType<typeof getSession>>;
+    }
+  }
   if (!session) {
     return NextResponse.json({ error: "Nao autenticado" }, { status: 401 });
   }
 
-  const body = await request.json();
   const {
     agent_id,
     message,
