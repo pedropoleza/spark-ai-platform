@@ -64,3 +64,27 @@ casos que ninguém inventou.
 `MARINA_LAB_ENABLED=0` mata a página. Os dados (feedback + pares de print) ficam — são o
 material de treino. A tabela é aditiva e não é lida por nenhum caminho de produção além do
 `agent_feedback`, que já existia.
+
+## 7. Validado em produção (2026-08-26)
+
+| Checagem | Resultado |
+|---|---|
+| `/marina` responde | 200 |
+| Senha errada | 401 |
+| Chat sem cookie | 401 |
+| Senha certa → cookie | ok (httpOnly, 7d) |
+| Chat com cookie | turno completo, fecho de 2 bolhas correto |
+| **Escopo**: cookie dela abre outro agente (Manu)? | **401 — não abre** |
+| Print → sugestão | confiança **alta**; identificou quem é quem pelo lado das bolhas; 5 bolhas prontas; link correto; 2ª bolha do fecho presente |
+| 👍/👎 + sugestão → `agent_feedback` | grava com `context='marina-lab'` (o prompt lê) |
+| Sugestão livre → `marina_lab_feedback` | grava |
+| Feedback sem cookie | 401 |
+
+Dados do teste foram **apagados** depois — feedback de teste no `agent_feedback` viraria
+treino de verdade do agente (o `buildFeedbackSection` não distingue teste de real).
+
+⚠️ **Achado durante a implementação:** `processWithAI` SEMPRE normaliza a saída pro formato
+da plataforma (`message` / `internal_notes` / …). Schema paralelo no prompt é descartado em
+silêncio e volta JSON cru dentro da bolha. Quem for reusar esse motor pra outra tarefa:
+fale a língua dele (`message` = o texto, `internal_notes` = metadados) em vez de inventar
+formato.
