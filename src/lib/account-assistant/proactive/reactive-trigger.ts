@@ -101,6 +101,14 @@ function extractConfig(agent: AgentRow) {
 export function matchedTriggerKey(rules: TargetingRule[], ev: ReactiveTriggerContext): string | null {
   if (!rules || rules.length === 0) return null;
   for (const rule of rules) {
+    // H81 (2026-08-26): folha de EXCLUSÃO NUNCA é gatilho. O achatamento acima
+    // junta as folhas de TODOS os grupos, então as negadas (ex: `client`,
+    // `ia-desligada`) chegavam aqui iguais às de entrada — e este matcher só
+    // olhava type+tag. Resultado: marcar um contato como `client` DISPARARIA a
+    // conversa proativa do agente de recrutamento com um cliente, que é o
+    // oposto exato do que a exclusão existe pra fazer (é o incidente da Jussara
+    // chegando pela porta dos fundos). Negar é o contrário de ativar: pula.
+    if (rule.negate) continue;
     if (ev.kind === "tag_added" && rule.type === "tag" && rule.tag && ev.key === rule.tag) {
       return `tag_added:${rule.tag}`;
     }
