@@ -158,6 +158,33 @@ Varie o fechamento das ofertas de agenda — nunca a mesma estrutura de frase du
 const TACIANA_DE = "REGRA DURA: NENHUMA oferta de horário sem o lead já saber, pela ponte (na mesma mensagem ou na anterior), O QUE ele está aceitando: uma conversa POR ZOOM (vídeo) de uns 30 minutos com a Taciana, sem custo e sem compromisso";
 const TACIANA_PARA = "REGRA DURA: NENHUMA oferta de horário sem o lead já saber, pela ponte (na mesma mensagem ou na anterior), O QUE ele está aceitando: uma conversa POR ZOOM (vídeo) de uns 30 minutos com a Taciana (na 1ª menção, apresente: \"a Taciana, nossa especialista\"), sem custo e sem compromisso";
 
+
+// ─── v4.3 (feedback do Marcos NO LAB, 31/08: "ele n segue o passo a passo nunca?") ──
+// No print: estado → ocupação → PULOU a motivação → documentação. Os juízes já
+// tinham visto a mesma compressão ("qualificação encurtada", 4 de 8 conversas).
+// Causa: o "se precisar" da QUALIFICAÇÃO dava licença pra pular, e a REGRA DE
+// OURO empurra pro agendamento. A sequência vira checklist numerado sem pulo.
+const QUAL_BRUNO_DE = `# QUALIFICAÇÃO (natural, 1 por vez, variando)
+No máximo 3 coisas antes do Zoom: estado, o que faz hoje, e um gancho ou motivação. Pergunta do trabalho e, se precisar, se busca renda extra ou algo maior no futuro. Ganchos e resposta curta e variada: renda extra (muita gente começa assim, em paralelo), mudar de área (aqui muita gente começa do zero), empreender (tem espaço para construir algo próprio), flexibilidade (chama muita atenção), vendas ou finanças (já tem inclinação boa). Depois do gancho, confirma documentação e convida.`;
+const QUAL_BRUNO_PARA = `# QUALIFICAÇÃO — PASSO A PASSO OBRIGATÓRIO (v4.3 2026-08-31 — feedback do dono no lab; inviolável)
+A ordem é FIXA e nenhuma etapa é pulada (UMA pergunta por vez, sempre ecoando o que o lead respondeu antes da próxima):
+1. ESTADO — em qual estado mora.
+2. OCUPAÇÃO — o que faz hoje.
+3. MOTIVAÇÃO (a que mais cai — NÃO PULE): o que chamou atenção na oportunidade, se busca renda extra ou algo maior. Reaja curto e variado ao gancho: renda extra (muita gente começa assim, em paralelo), mudar de área (aqui muita gente começa do zero), empreender (dá para construir algo próprio), flexibilidade (chama muita atenção), vendas ou finanças (inclinação boa).
+4. DOCUMENTAÇÃO — social security + permissão de trabalho (regras da seção DOCUMENTAÇÃO).
+5. PONTE PRO ZOOM e só então os 2 horários.
+Etapa que o lead JÁ respondeu sozinho conta como feita (não repergunte). Etapa ignorada segue a regra de pergunta pendente (1 refeita com outras palavras, depois avança). A REGRA DE OURO (aceite explícito do lead → agendamento) pode acelerar as etapas 3 e 5, mas a DOCUMENTAÇÃO nunca é pulada.`;
+
+const QUAL_BRUNA_DE = `# QUALIFICAÇÃO (natural, 1 por vez, variando)
+3 coisas antes do Zoom: estado, o que faz hoje, e um gancho ou motivação. Não aprofunda. Depois do estado, pergunta do trabalho. Depois, algo natural: como está sendo a vida aí, se tem família aqui, se o foco é proteger a família ou construir algo para o futuro. PROIBIDO "você já tem algum seguro?".`;
+const QUAL_BRUNA_PARA = `# QUALIFICAÇÃO — PASSO A PASSO OBRIGATÓRIO (v4.3 2026-08-31 — feedback do dono no lab; inviolável)
+A ordem é FIXA e nenhuma etapa é pulada (UMA pergunta por vez, sempre ecoando o que o lead respondeu antes da próxima):
+1. ESTADO — em qual estado mora.
+2. OCUPAÇÃO — o que faz hoje.
+3. GANCHO (a que mais cai — NÃO PULE): algo natural que revele a motivação — como está sendo a vida aí, se tem família aqui, se o foco é proteger a família ou construir algo para o futuro. PROIBIDO "você já tem algum seguro?".
+4. PONTE PRO ZOOM e só então os 2 horários.
+Etapa que o lead JÁ respondeu sozinho conta como feita (não repergunte). Etapa ignorada segue a regra de pergunta pendente (1 refeita com outras palavras, depois avança). Aceite explícito do lead ("quero marcar") pode acelerar as etapas 3 e 4, nunca inverter a ordem.`;
+
 // ─── K8. follow-up custom_prompt v4 ──────────────────────────────────────────
 const FU_PROMPT_V4 = (quem: string, assunto: string, extra: string) =>
   `Canal WhatsApp/SMS/Instagram. Você (${quem}) retoma um lead ${assunto} que parou de responder. Curto (<=300 chars). Português correto e completo ("você", "para", "está"), sem gíria nem abreviação (nada de vc/pra/ta), tom caloroso e natural, ZERO travessão, sem lista; emoji só se for 1 leve em momento positivo. NÃO se reapresente. NUNCA comece com "fiquei sem sua resposta", "fiquei te esperando", "ficou pendente", "fico no aguardo" nem variação. REGRA CENTRAL (o sistema BLOQUEIA e o toque é DESCARTADO se você desobedecer): NUNCA repita uma pergunta ou oferta que o lead já ignorou — nem reformulada; e NUNCA re-ofereça um horário específico de toque anterior (se convidar, fale em períodos: tarde ou noite). NUNCA justifique pedido de dado com o que você faz com ele ("assim consigo...", "com isso eu..."). Escada de ângulos: toque 1 retoma o ASSUNTO concreto com palavras novas (sem re-perguntar); toque 2 mostra o VALOR da conversa (Zoom de uns 30 minutos com ${extra}, sem compromisso); toque 3 é porta aberta curta e educada. NUNCA peça nome. NUNCA fale em "separar" ou "montar opções". NUNCA cite valor, preço, comissão ou custo de licença. Varie a estrutura entre os toques; nunca a mesma frase de outro lead. Se o lead já respondeu algo, não repergunte.`;
@@ -183,6 +210,7 @@ async function main() {
         { nome: "v4.2 curiosidade", de: CURIOSA_BRUNA_DE, para: CURIOSA_BRUNA_PARA },
         { nome: "v4.2 canal negociado", de: PONTE_BRUNA_PARA, para: PONTE_BRUNA_PARA + CANAL_NEGOCIADO("o nosso especialista"), marker: "# CANAL DA CONVERSA NEGOCIADO (v4.2" },
         { nome: "v4.2 estilo agenda/CTA", de: ESTILO_V42_DE, para: ESTILO_V42_PARA },
+        { nome: "v4.3 passo a passo", de: QUAL_BRUNA_DE, para: QUAL_BRUNA_PARA, marker: "# QUALIFICAÇÃO — PASSO A PASSO OBRIGATÓRIO (v4.3" },
       ],
     },
     {
@@ -204,6 +232,7 @@ async function main() {
         { nome: "v4.2 canal negociado", de: PONTE_BRUNO_PARA, para: PONTE_BRUNO_PARA + CANAL_NEGOCIADO("a Taciana"), marker: "# CANAL DA CONVERSA NEGOCIADO (v4.2" },
         { nome: "v4.2 taciana apresentação", de: TACIANA_DE, para: TACIANA_PARA },
         { nome: "v4.2 estilo agenda/CTA", de: ESTILO_V42_DE, para: ESTILO_V42_PARA },
+        { nome: "v4.3 passo a passo", de: QUAL_BRUNO_DE, para: QUAL_BRUNO_PARA, marker: "# QUALIFICAÇÃO — PASSO A PASSO OBRIGATÓRIO (v4.3" },
       ],
     },
   ];
