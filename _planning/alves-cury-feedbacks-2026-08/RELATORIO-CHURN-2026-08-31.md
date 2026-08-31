@@ -146,6 +146,68 @@ lead que é 100% WhatsApp. Reply do turno normal já usa o canal do inbound.
    number EN, "renda extra é possível?" (pergunta real da Andréia), tricky de valor.
 3. Workflow qualitativo multi-persona + juízes (checklist dos feedbacks do Marcos).
 
+## EXECUÇÃO (31/08, overnight) — TUDO APLICADO
+
+- **Código (H88)**: C1-C9 implementados, commit `8cb422f` + `bd511a9`, deploy Ready.
+  - ⚠️ Descoberta no caminho: **`CUSTOM_INSTRUCTIONS_CAP=8000` truncava EM
+    SILÊNCIO o final das instruções** — a v3.3 tinha 10,6K chars, então as
+    REGRAS ANTI-INCIDENTE (campanha/2-tempos/anti-hoje-amanhã/máx-2-balões)
+    NUNCA chegaram ao modelo em produção. Os "vazamentos de regra" da janela
+    eram regra invisível. Cap → 16000.
+  - ⚠️ Bug de regex achado no replay: `\b` do JS é ASCII-only — `amanhã\b`
+    NUNCA casa. Lookarounds unicode no lead-day-guard.
+- **Config v4.1** aplicada nos 2 agentes (apply-alves-cury-v4.ts, idempotente,
+  3ª rodada = 0 edits). Agentes seguem `inactive`.
+- **Validação**:
+  - test-lead-day-guard **19/19** · test-followup-repeat-guard **14/14** (replay
+    de strings reais) · test-alves-targeting-v4 **11/11** (corpos reais da
+    janela: Andréia→Bruno, headline-só→Bruna, clientes existentes fora).
+  - Bateria v4 em prod (test endpoint): **14/14** — sem negação de frente +
+    handed_off na 1ª resposta, ponte Zoom antes de horário, espanhol sem
+    meta-narração, wrong-number em inglês, sem custo de licença, transversais
+    limpos (a 1ª rodada pegou 2 vazamentos → v4.1 → limpo).
+  - Regressão v3 em prod: **25/25** (asserção de emoji atualizada pra política
+    v4 — máx 1 leve/bolha, calibrada pelos 👍 do Marcos).
+  - E2E do guard de follow-up com LLM real: 1/4 gerações repetiu a pergunta →
+    guard pegou → regeneração salvou o toque com ângulo novo.
+  - Workflow qualitativo rodada 1 (8 personas + 8 juízes + síntese): **5/8
+    aprovados** — Bruno 3/3; mecânica dura (datas 8/8 verificadas contra o
+    calendário real, fuso, preço, negação de frente, ponte) confirmada
+    resolvida. 3 reprovações da Bruna → rodada 2:
+    - venda-apressada: fechava "ligação" gravando title "Zoom -" → bloco CANAL
+      NEGOCIADO (config) → **re-aprovado** (title "Ligação - Seguro de vida" ✓).
+    - venda-curiosa-recrut: curiosidade derrubava o funil (handed_off +
+      move_pipeline) → distinção na regra de campanha (config) → **re-aprovado**
+      (responde curto + volta pros horários, zero handoff).
+    - venda-evasiva: 3ª pergunta idêntica → guard de CÓDIGO `turnRepeatVerdict`
+      no processor + test route (3ª ocorrência regenera 1x; persistiu →
+      re-pergunta é REMOVIDA). 1º re-teste ainda reprovou e o juiz achou o furo:
+      a ELIPSE do PT ("Você mora em qual?") virava só o token "mora", fora da
+      família estado → r2.1 adiciona mora/vive/reside à família (+ neutraliza o
+      idiom "faz sentido" que colidiria com a família trabalho) → **re-aprovado**
+      (teto de 2 pedidos respeitado, funil seguiu, booking ok).
+    - Padrões menores dos juízes tratados em config: teatro de agenda ("deixa
+      eu ver a agenda") banido, CTA obrigatório em turno de reação, despedida
+      sem re-emitir action, Taciana apresentada na 1ª menção.
+  - **Placar final: 8/8 críticas graves fechadas** (5 na rodada 1 + 3 nas
+    rodadas 2/2.1). Bateria determinística v4 re-rodada após cada rodada:
+    14/14 sempre.
+
+## Checklist de religa (👤 Pedro/Marcos)
+
+1. `UPDATE agents SET status='active' WHERE id IN ('a0339877-...', 'e698f2b4-...')`
+   — **OS DOIS JUNTOS, nunca um só** (Bruno desligado = funil de recrutamento
+   invisível; foi metade do churn).
+2. Avisar o Marcos: ele NÃO precisa mais setar o campo AI por lead — lead de
+   anúncio ativa sozinho (palavra-chave/headline). O campo AI vira só o
+   kill-switch por contato (Off) e ativação manual de lead antigo.
+3. Combinar com o Marcos o texto do aviso de handoff (quando um lead da
+   campanha errada cair com o agente errado, o time é notificado via SparkBot).
+4. Validar 1 lead real de cada funil no dia da religa (hypercare: conferir
+   execution_log targeting_reroute/targeting_skip nas primeiras 24h).
+5. Decidir IG orgânico (caso Cássia): se a Bruna deve atender DM orgânica,
+   é 1 regra de config a adicionar.
+
 ### Fica pro Pedro (👤)
 - **Religar**: os DOIS agentes juntos (`status='active'`), nunca um só. Checklist no fim.
 - Pílula GU-7: lista de agentes pode ficar stale (Bruno religado não aparecia); refresh ao
