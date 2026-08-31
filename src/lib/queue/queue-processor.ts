@@ -153,6 +153,9 @@ import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
 import { pickAgentActivatedRules } from "@/lib/queue/agent-activated-automation";
 import { checkContactMatchesTargeting, normalizeTargeting } from "@/lib/queue/targeting";
+// H88 rodada 2 (caso Alves Cury): 3ª ocorrência da mesma pergunta no turno é
+// bloqueada — regra de prompt não segurou (juiz venda-evasiva 31/08).
+import { turnRepeatVerdict, stripRepeatedAsks } from "@/lib/queue/followup-repeat-guard";
 import { isChatMessageType } from "@/lib/ghl/message-sources";
 import type { TargetingRules } from "@/types/agent";
 // F27.D (Pedro 2026-05-29): detecção de trigger reativo (msg sintética
@@ -1781,6 +1784,86 @@ async function processGroup(
   }
 
   // Re-narrow pós-retry (o reassign acima alarga o tipo de aiResult.response).
+  if (!aiResult.success || !aiResult.response) {
+    throw new Error(aiResult.error || "Falha no processamento AI");
+  }
+
+  // H88 rodada 2 (juiz venda-evasiva 31/08): pergunta repetida DENTRO da
+  // conversa. A regra do prompt ("refaça 1x com palavras diferentes; depois
+  // siga sem o dado") vazou — o bot perguntou o estado 3× (2 delas VERBATIM),
+  // reproduzindo a classe "pediu nome 5×" que derrubou a conta 2 vezes. A 3ª
+  // ocorrência do mesmo pedido é bloqueada: 1 regeneração com diretiva; se
+  // repetir de novo, a re-pergunta é REMOVIDA deterministicamente (a parte que
+  // responde o lead fica; o fluxo segue sem o dado, como o prompt já mandava).
+  if (!group.syntheticTrigger) {
+    const assistantPrior = conversationTurns
+      .filter((t) => t.role === "assistant")
+      .map((t) => t.content);
+    const bolhasCand = Array.isArray(aiResult.response.message)
+      ? aiResult.response.message.filter((m): m is string => typeof m === "string")
+      : aiResult.response.message
+        ? [String(aiResult.response.message)]
+        : [];
+    const candTexto = bolhasCand.join("\n");
+    if (candTexto.trim() && assistantPrior.length >= 2) {
+      const veredito = turnRepeatVerdict(candTexto, assistantPrior);
+      if (veredito.repeated) {
+        log("warn", `pergunta repetida ${veredito.occurrences}x na conversa — regenerando 1x`);
+        const retryRepeat = await processWithAI({
+          systemPrompt,
+          runtimeContext,
+          conversationMessages: compressed.turns,
+          conversationHistory: "",
+          newMessages:
+            safeNewMessages +
+            `\n\n[SISTEMA: você JÁ perguntou isso ${veredito.occurrences} vezes nesta conversa sem resposta: "${(veredito.matched || "").slice(0, 160)}". PROIBIDO perguntar de novo em qualquer formulação. Responda o que o lead trouxe e SIGA o fluxo sem esse dado (avance pra próxima etapa: ocupação, gancho ou a ponte pro Zoom). Mesmo formato JSON.]`,
+          model: config.ai_model || "claude-sonnet-4-6",
+          images: imageInputs.length > 0 ? imageInputs : undefined,
+          responseSchema,
+          priorTurnCount: conversationTurns.length,
+          cacheTtl: cacheOptimized ? "1h" : undefined,
+        });
+        const retryBolhas =
+          retryRepeat.success && retryRepeat.response && !retryRepeat.parse_failed
+            ? Array.isArray(retryRepeat.response.message)
+              ? retryRepeat.response.message.filter((m): m is string => typeof m === "string")
+              : retryRepeat.response.message
+                ? [String(retryRepeat.response.message)]
+                : []
+            : [];
+        const retryOk =
+          retryBolhas.length > 0 && !turnRepeatVerdict(retryBolhas.join("\n"), assistantPrior).repeated;
+        if (retryOk && retryRepeat.success && retryRepeat.response) {
+          aiResult = retryRepeat;
+          await supabase.from("execution_log").insert({
+            agent_id: agent.id,
+            location_id: group.locationId,
+            contact_id: group.contactId,
+            conversation_id: group.conversationId,
+            action_type: "turn_repeat_regenerated",
+            action_payload: { matched: (veredito.matched || "").slice(0, 160), occurrences: veredito.occurrences },
+            success: true,
+          });
+        } else {
+          const strip = stripRepeatedAsks(bolhasCand, assistantPrior);
+          if (strip.stripped && strip.messages.length > 0) {
+            aiResult.response.message = strip.messages;
+            await supabase.from("execution_log").insert({
+              agent_id: agent.id,
+              location_id: group.locationId,
+              contact_id: group.contactId,
+              conversation_id: group.conversationId,
+              action_type: "turn_repeat_stripped",
+              action_payload: { matched: (veredito.matched || "").slice(0, 160), kept: strip.messages.length },
+              success: true,
+            });
+          }
+          // strip vazio (a resposta ERA só a re-pergunta): mantém o original —
+          // 3ª pergunta ainda é melhor que turno mudo; fica auditado no warn.
+        }
+      }
+    }
+  }
   if (!aiResult.success || !aiResult.response) {
     throw new Error(aiResult.error || "Falha no processamento AI");
   }

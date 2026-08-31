@@ -15,6 +15,7 @@ import { isChatMessageType } from "@/lib/ghl/message-sources";
 import { lerTokenMarina } from "@/lib/marina-lab/auth";
 import { slotWindowDays } from "@/lib/queue/slot-window";
 import { aplicarGuardaDeDataLead } from "@/lib/queue/lead-day-guard";
+import { turnRepeatVerdict, stripRepeatedAsks } from "@/lib/queue/followup-repeat-guard";
 
 /**
  * POST /api/agents/test
@@ -420,6 +421,50 @@ export async function POST(request: NextRequest) {
       { error: result.error || "Falha no processamento", session_id: sessionId },
       { status: 500 }
     );
+  }
+
+  // H88 rodada 2 — paridade com o queue-processor (regra do gate de paridade do
+  // CLAUDE.md): 3ª ocorrência da MESMA pergunta na conversa é bloqueada — 1
+  // regeneração com diretiva; se repetir, a re-pergunta é removida.
+  {
+    const assistantPrior = conversationTurns.filter((t) => t.role === "assistant").map((t) => t.content);
+    const bolhasCand = Array.isArray(result.response.message)
+      ? result.response.message.filter((m): m is string => typeof m === "string")
+      : result.response.message
+        ? [String(result.response.message)]
+        : [];
+    if (bolhasCand.join("").trim() && assistantPrior.length >= 2) {
+      const veredito = turnRepeatVerdict(bolhasCand.join("\n"), assistantPrior);
+      if (veredito.repeated) {
+        const retryRepeat = await processWithAI({
+          systemPrompt,
+          runtimeContext,
+          conversationMessages: conversationTurns,
+          conversationHistory: "",
+          newMessages:
+            message +
+            `\n\n[SISTEMA: você JÁ perguntou isso ${veredito.occurrences} vezes nesta conversa sem resposta: "${(veredito.matched || "").slice(0, 160)}". PROIBIDO perguntar de novo em qualquer formulação. Responda o que o lead trouxe e SIGA o fluxo sem esse dado. Mesmo formato JSON.]`,
+          model: config.ai_model || "claude-sonnet-4-6",
+          responseSchema,
+          priorTurnCount: effectivePriorTurnCount,
+        });
+        const retryBolhas =
+          retryRepeat.success && retryRepeat.response && !retryRepeat.parse_failed
+            ? Array.isArray(retryRepeat.response.message)
+              ? retryRepeat.response.message.filter((m): m is string => typeof m === "string")
+              : retryRepeat.response.message
+                ? [String(retryRepeat.response.message)]
+                : []
+            : [];
+        if (retryBolhas.length > 0 && !turnRepeatVerdict(retryBolhas.join("\n"), assistantPrior).repeated && retryRepeat.response) {
+          result.response.message = retryRepeat.response.message;
+          if (retryRepeat.response.actions) result.response.actions = retryRepeat.response.actions;
+        } else {
+          const strip = stripRepeatedAsks(bolhasCand, assistantPrior);
+          if (strip.stripped && strip.messages.length > 0) result.response.message = strip.messages;
+        }
+      }
+    }
   }
 
   // ==========================================================================

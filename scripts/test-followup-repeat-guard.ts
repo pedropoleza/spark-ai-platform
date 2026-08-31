@@ -2,7 +2,13 @@
 // (Cleidmar/Joe/Marcos Ciprian 26-27/08 + Lucy 08-09/08). Regra H85: detector
 // só está pronto depois de rodar contra o corpus real.
 // Rodar: npx tsx scripts/test-followup-repeat-guard.ts
-import { isRepeatedAsk, extractAsks, agentLinesFromHistory } from "@/lib/queue/followup-repeat-guard";
+import {
+  isRepeatedAsk,
+  extractAsks,
+  agentLinesFromHistory,
+  turnRepeatVerdict,
+  stripRepeatedAsks,
+} from "@/lib/queue/followup-repeat-guard";
 
 let pass = 0;
 let fail = 0;
@@ -80,6 +86,26 @@ console.log("— não-repetições (não pode flagar) —");
   caso("sem pergunta não flaga", v2.repeated, false);
   const v3 = isRepeatedAsk("O que te fez buscar proteção financeira agora?", ["Você mora em qual estado?", "E o que você faz hoje?"]);
   caso("gancho novo não flaga", v3.repeated, false, v3.via);
+}
+
+console.log("— turnRepeatVerdict (repetição DENTRO da conversa — juiz venda-evasiva) —");
+{
+  // Replay da conversa reprovada: estado perguntado nos turnos 1 e 2, candidato repete no 3.
+  const prior = [
+    "Oi, tudo bem? Vi que você se interessou em saber mais sobre proteção financeira.\nQue ótimo que você chegou até a gente! Me conta, você mora em qual estado?",
+    "Atendemos brasileiros nos EUA que querem proteger a família ou construir algo para o futuro.\nVocê mora em qual estado?",
+  ];
+  const v3rd = turnRepeatVerdict("O processo é rápido. Você mora em qual estado?", prior);
+  caso("3ª ocorrência flagada", v3rd.repeated, true, `occ=${v3rd.occurrences}`);
+  // 2ª ocorrência (1 refeita) é PERMITIDA:
+  const v2nd = turnRepeatVerdict("Você mora em qual estado?", [prior[0]]);
+  caso("2ª ocorrência (refeita 1x) permitida", v2nd.repeated, false);
+  // pergunta nova no 3º turno passa:
+  const vNova = turnRepeatVerdict("E o que você faz hoje de trabalho?", prior);
+  caso("pergunta nova no 3º turno passa", vNova.repeated, false);
+  // strip preserva a parte que responde e corta a re-pergunta:
+  const s = stripRepeatedAsks(["O processo é bem rápido, em uns 30 minutos você entende tudo.", "Você mora em qual estado?"], prior);
+  caso("strip corta só a re-pergunta", s.stripped && s.messages.length === 1 && /processo/.test(s.messages[0]), true, JSON.stringify(s.messages));
 }
 
 console.log("— helpers —");

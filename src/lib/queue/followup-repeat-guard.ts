@@ -173,3 +173,77 @@ export function agentLinesFromHistory(recentHistory: string): string[] {
     .map((l) => l.slice("AGENTE:".length).trim())
     .filter(Boolean);
 }
+
+// ============================================================================
+// H88 rodada 2 (juiz venda-evasiva, 31/08): pergunta repetida DENTRO do turno.
+// A 1ª pergunta + 1 refeita são permitidas (é a regra do prompt: "refaça com
+// palavras diferentes 1x"); a partir da 3ª ocorrência vira interrogatório — a
+// classe exata do "pediu nome 5×" que derrubou a conta 2 vezes.
+// ============================================================================
+
+export interface TurnRepeatVerdict extends RepeatVerdict {
+  /** Em quantos turnos ANTERIORES distintos o mesmo pedido já apareceu. */
+  occurrences?: number;
+}
+
+/**
+ * O texto candidato do TURNO repete um pedido que a IA já fez em ≥2 turnos
+ * anteriores (dentro do lookback)? 3ª ocorrência = repetido.
+ */
+export function turnRepeatVerdict(
+  candidate: string,
+  priorAssistantTexts: string[],
+  opts: { lookback?: number; maxPriorTurnsWithAsk?: number } = {},
+): TurnRepeatVerdict {
+  const lookback = opts.lookback ?? 6;
+  const maxPrior = opts.maxPriorTurnsWithAsk ?? 2;
+  const prior = priorAssistantTexts.slice(-lookback);
+  const candAsks = extractAsks(candidate);
+  if (candAsks.length === 0 || prior.length < maxPrior) return { repeated: false };
+
+  for (const ask of candAsks) {
+    let turnsComEsse = 0;
+    let matched: string | undefined;
+    let via: "familia" | "similaridade" | undefined;
+    for (const turno of prior) {
+      const v = isRepeatedAsk(ask, [turno]);
+      if (v.repeated) {
+        turnsComEsse++;
+        matched = v.matched;
+        via = v.via;
+      }
+    }
+    if (turnsComEsse >= maxPrior) {
+      return { repeated: true, matched, via, occurrences: turnsComEsse };
+    }
+  }
+  return { repeated: false };
+}
+
+/**
+ * Remove das bolhas as FRASES que repetem o pedido já esgotado, preservando o
+ * resto (a parte "responde o que o lead trouxe" fica; a re-pergunta cai).
+ * Fallback determinístico quando a regeneração também repete.
+ */
+export function stripRepeatedAsks(
+  bubbles: string[],
+  priorAssistantTexts: string[],
+  opts: { lookback?: number; maxPriorTurnsWithAsk?: number } = {},
+): { messages: string[]; stripped: boolean } {
+  let stripped = false;
+  const messages = bubbles
+    .map((b) => {
+      const sentences = b.split(/(?<=[.!?\n])\s*/u).filter((s) => s.trim());
+      const kept = sentences.filter((s) => {
+        const v = turnRepeatVerdict(s, priorAssistantTexts, opts);
+        if (v.repeated) {
+          stripped = true;
+          return false;
+        }
+        return true;
+      });
+      return kept.join(" ").trim();
+    })
+    .filter(Boolean);
+  return { messages, stripped };
+}

@@ -129,6 +129,35 @@ REGRA DURA: NENHUMA oferta de horário sem o lead já saber, pela ponte (na mesm
 A ponte ECOA algo CONCRETO que o lead disse (nunca "pelo que você me falou" sozinho), diz o que é a conversa (Zoom, ~30 min, Taciana, sem compromisso) e por que faz sentido pro caso DELE, e aí sim os horários. Modelo cliente (sem doc): a Taciana ajuda famílias a entender a proteção para o caso. Varie o fraseado.
 PROIBIDO oferecer ligação sua ("posso te ligar", "te chamo rapidinho") — você atende por mensagem e o próximo passo é sempre o Zoom.`;
 
+// ─── v4.2 (pós-workflow qualitativo 31/08: 8 personas + juízes) ──────────────
+// Juiz venda-curiosa-recrut: curiosidade de lead DA campanha certa fazia a
+// Bruna abandonar o agendamento (handed_off) e mover pipeline. Distinção dura:
+const CURIOSA_BRUNA_DE = "Histórico com conversa antiga da OUTRA campanha: não continue aquele assunto; esclareça em 1 frase qual é o assunto DESTA conversa SEM negar a outra.";
+const CURIOSA_BRUNA_PARA = `Histórico com conversa antiga da OUTRA campanha: não continue aquele assunto; esclareça em 1 frase qual é o assunto DESTA conversa SEM negar a outra.
+DIFERENTE DISSO (v4.2 — juiz 31/08): lead DESTA campanha (seguro) que no MEIO do seu fluxo pergunta da outra frente por curiosidade ("como funciona trabalhar com vocês?"): responda em 1-2 frases honestas ("temos sim essa frente de carreira, posso pedir pro time te contar depois"), aplique add_tag "interesse-recrutamento", e VOLTE imediatamente pro assunto do seguro dele (se havia agendamento em curso, retome os horários na MESMA resposta). PROIBIDO nesse caso: handed_off, move_pipeline, abandonar o agendamento ou deixar a pergunta sem resposta nenhuma. handed_off é SÓ para quem veio PELA outra campanha desde o início.`;
+const CURIOSA_BRUNO_PARA = `Histórico com conversa antiga da OUTRA campanha: não continue aquele assunto; esclareça em 1 frase qual é o assunto DESTA conversa SEM negar a outra.
+DIFERENTE DISSO (v4.2 — juiz 31/08): lead DESTA campanha (carreira) que pergunta de seguro para a PRÓPRIA família é a virada-cliente — você mesmo conduz (regra DOCUMENTAÇÃO). Curiosidade solta sobre a frente de seguro: responda em 1-2 frases honestas, aplique add_tag "interesse-seguro" e volte ao seu fluxo. PROIBIDO mover pipeline por curiosidade. handed_off é SÓ para quem veio PELA campanha de seguro desde o início.`;
+
+// Juiz venda-apressada: fechou "ligação, sem câmera" gravando title "Zoom -" e
+// zero registro da preferência — promessa sem lastro (a variante do "posso te
+// ligar"). Bloco novo depois da ponte:
+const CANAL_NEGOCIADO = (especialista: string) => `
+
+# CANAL DA CONVERSA NEGOCIADO (v4.2 2026-08-31 — juiz: promessa sem lastro; inviolável)
+O padrão é Zoom. Lead recusa vídeo mas aceita a conversa ("pode ser, mas é ligação hein"): (1) confirme como LIGAÇÃO com naturalidade; (2) no book_appointment o title COMEÇA com "Ligação - " (NUNCA "Zoom - " nesse caso) e inclua em collected_data o campo canal_preferido: "ligação, sem vídeo"; (3) NÃO diga "a confirmação chega por aqui" nesse caso (a confirmação automática fala de Zoom) — diga que ${especialista} LIGA no número dele no horário combinado; (4) NUNCA prometa formato que você não registrou no sistema.`;
+
+// P3 (teatro de agenda) + P5 (turno morto) + despedida com action re-emitida:
+const ESTILO_V42_DE = `A PRIMEIRA bolha de uma conversa nunca é fragmento ("Da Alves Cury Financial.") — apresente-se em frase completa e natural.`;
+const ESTILO_V42_PARA = `A PRIMEIRA bolha de uma conversa nunca é fragmento ("Da Alves Cury Financial.") — apresente-se em frase completa e natural.
+Isso inclui a AGENDA (v4.2): nunca "deixa eu ver a agenda" / "vou olhar aqui" — você JÁ está com os horários na mão; apresente-os direto.
+NENHUM turno seu termina sem próximo passo (v4.2): reação curta ("Orlando, ótimo!") SEMPRE vem com a próxima pergunta ou convite na MESMA resposta — turno sem pergunta só em encerramento ou handoff.
+Turno de despedida do lead ("obrigada, até terça!") = SÓ texto curto e caloroso; NUNCA re-emita actions (agendamento já feito não se repete).
+Varie o fechamento das ofertas de agenda — nunca a mesma estrutura de frase duas vezes na conversa.`;
+
+// P6: Taciana entra sem apresentação (2 dos 3 cenários do Bruno).
+const TACIANA_DE = "REGRA DURA: NENHUMA oferta de horário sem o lead já saber, pela ponte (na mesma mensagem ou na anterior), O QUE ele está aceitando: uma conversa POR ZOOM (vídeo) de uns 30 minutos com a Taciana, sem custo e sem compromisso";
+const TACIANA_PARA = "REGRA DURA: NENHUMA oferta de horário sem o lead já saber, pela ponte (na mesma mensagem ou na anterior), O QUE ele está aceitando: uma conversa POR ZOOM (vídeo) de uns 30 minutos com a Taciana (na 1ª menção, apresente: \"a Taciana, nossa especialista\"), sem custo e sem compromisso";
+
 // ─── K8. follow-up custom_prompt v4 ──────────────────────────────────────────
 const FU_PROMPT_V4 = (quem: string, assunto: string, extra: string) =>
   `Canal WhatsApp/SMS/Instagram. Você (${quem}) retoma um lead ${assunto} que parou de responder. Curto (<=300 chars). Português correto e completo ("você", "para", "está"), sem gíria nem abreviação (nada de vc/pra/ta), tom caloroso e natural, ZERO travessão, sem lista; emoji só se for 1 leve em momento positivo. NÃO se reapresente. NUNCA comece com "fiquei sem sua resposta", "fiquei te esperando", "ficou pendente", "fico no aguardo" nem variação. REGRA CENTRAL (o sistema BLOQUEIA e o toque é DESCARTADO se você desobedecer): NUNCA repita uma pergunta ou oferta que o lead já ignorou — nem reformulada; e NUNCA re-ofereça um horário específico de toque anterior (se convidar, fale em períodos: tarde ou noite). NUNCA justifique pedido de dado com o que você faz com ele ("assim consigo...", "com isso eu..."). Escada de ângulos: toque 1 retoma o ASSUNTO concreto com palavras novas (sem re-perguntar); toque 2 mostra o VALOR da conversa (Zoom de uns 30 minutos com ${extra}, sem compromisso); toque 3 é porta aberta curta e educada. NUNCA peça nome. NUNCA fale em "separar" ou "montar opções". NUNCA cite valor, preço, comissão ou custo de licença. Varie a estrutura entre os toques; nunca a mesma frase de outro lead. Se o lead já respondeu algo, não repergunte.`;
@@ -144,13 +173,16 @@ async function main() {
       fuAssunto: "do anúncio de seguro de vida",
       fuExtra: "o especialista, onde sai o número exato",
       edits: [
-        { nome: "K2 campanha", de: CAMPANHA_BRUNA_DE, para: CAMPANHA_BRUNA_PARA },
-        { nome: "K5/K6 estilo", de: ESTILO_V3_DE, para: ESTILO_V4_PARA },
+        { nome: "K2 campanha", de: CAMPANHA_BRUNA_DE, para: CAMPANHA_BRUNA_PARA, marker: "CAMPANHA DESTA CONVERSA (v4 2026-08-31" },
+        { nome: "K5/K6 estilo", de: ESTILO_V3_DE, para: ESTILO_V4_PARA, marker: "# CANAL E ESTILO (v4 2026-08-31" },
         { nome: "K3 moeda de troca", de: OPCOES_DE, para: OPCOES_PARA },
         { nome: "K6 emoji (bloco nome)", de: EMOJI_DE, para: EMOJI_PARA },
-        { nome: "K4/K7 ponte", de: PONTE_BRUNA_DE, para: PONTE_BRUNA_PARA },
+        { nome: "K4/K7 ponte", de: PONTE_BRUNA_DE, para: PONTE_BRUNA_PARA, marker: "# GANCHO E PONTE PRO ZOOM (v4 2026-08-31" },
         { nome: "v4.1 primeira resposta", de: PRIMEIRA_BRUNA_DE, para: PRIMEIRA_BRUNA_PARA },
         { nome: "v4.1 pro→para o", de: PRO_DE, para: PRO_PARA },
+        { nome: "v4.2 curiosidade", de: CURIOSA_BRUNA_DE, para: CURIOSA_BRUNA_PARA },
+        { nome: "v4.2 canal negociado", de: PONTE_BRUNA_PARA, para: PONTE_BRUNA_PARA + CANAL_NEGOCIADO("o nosso especialista"), marker: "# CANAL DA CONVERSA NEGOCIADO (v4.2" },
+        { nome: "v4.2 estilo agenda/CTA", de: ESTILO_V42_DE, para: ESTILO_V42_PARA },
       ],
     },
     {
@@ -161,13 +193,17 @@ async function main() {
       fuAssunto: "interessado em virar agente financeiro",
       fuExtra: "a Taciana, onde ele entende como funciona e o que precisa",
       edits: [
-        { nome: "K2 campanha", de: CAMPANHA_BRUNO_DE, para: CAMPANHA_BRUNO_PARA },
-        { nome: "K5/K6 estilo", de: ESTILO_V3_DE, para: ESTILO_V4_PARA },
+        { nome: "K2 campanha", de: CAMPANHA_BRUNO_DE, para: CAMPANHA_BRUNO_PARA, marker: "CAMPANHA DESTA CONVERSA (v4 2026-08-31" },
+        { nome: "K5/K6 estilo", de: ESTILO_V3_DE, para: ESTILO_V4_PARA, marker: "# CANAL E ESTILO (v4 2026-08-31" },
         { nome: "K3 moeda de troca", de: OPCOES_DE, para: OPCOES_PARA },
         { nome: "K6 emoji (bloco nome)", de: EMOJI_DE, para: EMOJI_PARA },
-        { nome: "K4/K7 ponte", de: PONTE_BRUNO_DE, para: PONTE_BRUNO_PARA },
+        { nome: "K4/K7 ponte", de: PONTE_BRUNO_DE, para: PONTE_BRUNO_PARA, marker: "# PONTE PRO ZOOM (v4 2026-08-31" },
         { nome: "v4.1 primeira resposta", de: PRIMEIRA_BRUNO_DE, para: PRIMEIRA_BRUNO_PARA },
         { nome: "v4.1 pro→para o", de: PRO_DE, para: PRO_PARA },
+        { nome: "v4.2 curiosidade", de: CURIOSA_BRUNA_DE, para: CURIOSA_BRUNO_PARA },
+        { nome: "v4.2 canal negociado", de: PONTE_BRUNO_PARA, para: PONTE_BRUNO_PARA + CANAL_NEGOCIADO("a Taciana"), marker: "# CANAL DA CONVERSA NEGOCIADO (v4.2" },
+        { nome: "v4.2 taciana apresentação", de: TACIANA_DE, para: TACIANA_PARA },
+        { nome: "v4.2 estilo agenda/CTA", de: ESTILO_V42_DE, para: ESTILO_V42_PARA },
       ],
     },
   ];
@@ -187,7 +223,12 @@ async function main() {
       // Idempotência: remoção (para="") está feita quando o DE sumiu; troca
       // está feita quando o PARA INTEIRO já está no texto (slice de prefixo
       // dava falso-positivo quando DE e PARA começam iguais — K3).
-      const jaAplicado = e.para === "" ? !ci.includes(e.de) : ci.includes(e.para);
+      const eMarker = (e as { marker?: string }).marker;
+      const jaAplicado = eMarker
+        ? ci.includes(eMarker)
+        : e.para === ""
+          ? !ci.includes(e.de)
+          : ci.includes(e.para);
       if (jaAplicado) {
         pulados++;
         continue;
