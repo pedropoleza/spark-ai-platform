@@ -41,7 +41,10 @@ const ASK_VERBS = new Set(
 
 /** Famílias de dado que a IA costuma pedir. Mesmo family em 2 pedidos = repetição. */
 const FAMILIAS: Record<string, string[]> = {
-  estado: ["estado", "estados"],
+  // "mora/vive" na família estado (re-teste 31/08, juiz venda-evasiva): a
+  // elipse do PT ("Você mora em qual?") vira só o token "mora" após stopwords
+  // e furava a contagem — a 3ª pergunta do estado saía livre.
+  estado: ["estado", "estados", "mora", "moram", "vive", "vives", "reside", "vivendo", "morando"],
   nome: ["nome", "chama", "chamar", "chamo", "llamas", "nombre"],
   trabalho: ["faz", "fazendo", "trabalha", "trabalho", "trabalhando", "ocupacao", "profissao", "trabajas", "trabajo", "dedicas"],
   telefone: ["telefone", "numero", "whatsapp", "celular", "telefono"],
@@ -59,6 +62,9 @@ export function deburrLower(s: string): string {
 /** Tokens de conteúdo de uma frase (deburr, sem pontuação/stopwords/ask-verbs). */
 export function contentTokens(sentence: string): string[] {
   return deburrLower(sentence)
+    // Idioms que colidiriam com famílias: "faz sentido" não é pergunta de
+    // ocupação ("faz" ∈ família trabalho) — sai antes da tokenização.
+    .replace(/\bfaz(er)?\s+sentido\b/g, " ")
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
     .filter((t) => t.length >= 2 && !STOPWORDS.has(t) && !ASK_VERBS.has(t));

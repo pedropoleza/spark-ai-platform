@@ -108,6 +108,30 @@ console.log("— turnRepeatVerdict (repetição DENTRO da conversa — juiz vend
   caso("strip corta só a re-pergunta", s.stripped && s.messages.length === 1 && /processo/.test(s.messages[0]), true, JSON.stringify(s.messages));
 }
 
+console.log("— elipse do PT (re-teste 31/08: 'Você mora em qual?' furava a contagem) —");
+{
+  const prior = [
+    "Oi, tudo bem? Vi que você se interessou em saber mais sobre proteção financeira.\nÓtimo que você chegou até aqui! Me conta, você mora em qual estado?",
+    "Sim, atendemos em vários estados aqui nos EUA.\nVocê mora em qual?",
+  ];
+  const v = turnRepeatVerdict("O processo é rápido, sem burocracia.\nVocê mora em qual estado?", prior);
+  caso("elipse conta como estado (3ª flagada)", v.repeated, true, `occ=${v.occurrences}`);
+  const s = stripRepeatedAsks(["O processo é rápido, sem burocracia.", "Você mora em qual estado?"], prior);
+  caso("strip remove a 3ª elíptica", s.stripped && s.messages.length === 1, true, JSON.stringify(s.messages));
+  // "onde você mora?" também conta:
+  const v2 = turnRepeatVerdict("E onde você mora?", prior);
+  caso("'onde você mora?' mesma família", v2.repeated, true);
+  // frase sem pedido com "mora" NÃO flaga ("muita gente que mora aqui se preocupa com isso"):
+  const v3 = turnRepeatVerdict("Muita gente que mora aqui se preocupa exatamente com isso. Faz sentido para você?", prior);
+  caso("menção a 'mora' sem pedido de estado não flaga", v3.repeated, false, v3.via);
+  // "Faz sentido?" NÃO pode colidir com a família trabalho ("o que você faz hoje?"):
+  const priorTrab = ["E o que você faz hoje de trabalho?", "Me conta, você trabalha com o quê?"];
+  const v4 = turnRepeatVerdict("Faz sentido para você seguir por esse caminho?", priorTrab);
+  caso("'faz sentido?' não colide com trabalho", v4.repeated, false, v4.via);
+  const v5 = turnRepeatVerdict("E hoje, o que você faz?", priorTrab);
+  caso("3ª pergunta de trabalho ainda flaga", v5.repeated, true, `occ=${v5.occurrences}`);
+}
+
 console.log("— helpers —");
 {
   const hist = "LEAD: Moro nos EUA\nAGENTE: Que bom!\nAGENTE: Você mora em qual estado?\nLEAD: Flórida";
