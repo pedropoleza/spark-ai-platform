@@ -463,6 +463,90 @@ export async function processMessageQueue(): Promise<{
   return { processed, errors };
 }
 
+/**
+ * MC-3v2 (caso Alves Cury 2026-08-31): quando o targeting do agente da fila NÃO
+ * casa, tenta os OUTROS agentes lead-facing ativos da location. Se um deles
+ * casa (failMode closed — só match positivo re-roteia), as rows do grupo são
+ * re-atribuídas pra ele com status pending e o turno roda na vez dele.
+ *
+ * Sem loop possível: só re-roteia pra agente cujas regras CASARAM — o gate dele
+ * vai passar; e o gate atual só chegou aqui porque as regras DESTE não casam
+ * (fail-open: erro de fetch nem chega no skip). Dedup extra de 10min por
+ * contato cobre corrida de ticks.
+ */
+async function tentarReRotearTargeting(
+  supabase: ReturnType<typeof createAdminClient>,
+  group: MessageGroup,
+  currentAgentId: string,
+  companyId: string,
+): Promise<string | null> {
+  const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const { data: prev } = await supabase
+    .from("execution_log")
+    .select("id")
+    .eq("location_id", group.locationId)
+    .eq("contact_id", group.contactId)
+    .eq("action_type", "targeting_reroute")
+    .gte("created_at", cutoff)
+    .limit(1);
+  if (prev && prev.length > 0) return null;
+
+  const { data: others } = await supabase
+    .from("agents")
+    .select("id, type, agent_configs(targeting_rules, enabled_channels)")
+    .eq("location_id", group.locationId)
+    .eq("status", "active")
+    .in("type", ["sales_agent", "recruitment_agent", "custom_agent"])
+    .order("created_at", { ascending: true });
+
+  for (const cand of others || []) {
+    const candidato = cand as { id: string; agent_configs: unknown };
+    if (candidato.id === currentAgentId) continue;
+    const cfg = (Array.isArray(candidato.agent_configs)
+      ? candidato.agent_configs[0]
+      : candidato.agent_configs) as {
+      targeting_rules?: TargetingRules | null;
+      enabled_channels?: string[] | null;
+    } | null;
+    const rules = cfg?.targeting_rules ?? null;
+    if (!normalizeTargeting(rules)) continue; // catch-all não entra: o webhook já teria escolhido
+    const canais = cfg?.enabled_channels || ["SMS", "WhatsApp"];
+    if (group.channel && !canais.includes(group.channel)) continue;
+    const match = await checkContactMatchesTargeting(
+      group.contactId,
+      rules,
+      companyId,
+      group.locationId,
+      { messageText: group.aggregatedBody, failMode: "closed" },
+    );
+    if (!match.ok) continue;
+
+    const ids = group.messages.map((m) => m.id);
+    const nowIso = new Date().toISOString();
+    const { error: moveErr } = await supabase
+      .from("message_queue")
+      .update({
+        agent_id: candidato.id,
+        status: "pending",
+        process_after: new Date(Date.now() + 2000).toISOString(),
+        updated_at: nowIso,
+      })
+      .in("id", ids);
+    if (moveErr) return null;
+    await supabase.from("execution_log").insert({
+      agent_id: candidato.id,
+      location_id: group.locationId,
+      contact_id: group.contactId,
+      conversation_id: group.conversationId,
+      action_type: "targeting_reroute",
+      action_payload: { from_agent: currentAgentId, moved_messages: ids.length },
+      success: true,
+    });
+    return candidato.id;
+  }
+  return null;
+}
+
 async function processGroup(
   supabase: ReturnType<typeof createAdminClient>,
   group: MessageGroup
@@ -689,6 +773,30 @@ async function processGroup(
       { messageText: group.aggregatedBody, isProactive: !!group.syntheticTrigger, conversationActive },
     );
     if (!match.ok) {
+      // MC-3v2 (caso Alves Cury 2026-08-31, Andréia): a fila pode ter
+      // enfileirado pro agente ERRADO — o defer do webhook escolhe UM agente e
+      // o recheck só avaliava as regras DELE. Antes de calar o lead, tenta os
+      // OUTROS agentes ativos da location: se um deles casa este
+      // contato/mensagem, as rows são re-atribuídas e o turno roda na vez dele.
+      if (!group.syntheticTrigger) {
+        try {
+          const movedTo = await tentarReRotearTargeting(
+            supabase,
+            group,
+            agent.id,
+            locationForBilling.company_id,
+          );
+          if (movedTo) {
+            log("log", `targeting_reroute → agente ${movedTo.substring(0, 8)} (rows voltam pra pending)`);
+            return;
+          }
+        } catch (rerouteErr) {
+          console.warn(
+            "[Processor] reroute de targeting falhou (segue pro skip):",
+            rerouteErr instanceof Error ? rerouteErr.message : rerouteErr,
+          );
+        }
+      }
       log("log", `SKIP outside_targeting (${match.reason || "no match"})`);
       // Audit pra dono ver no execution_log que houve skip por targeting.
       await supabase.from("execution_log").insert({
@@ -1832,6 +1940,9 @@ async function processGroup(
     silenceDecision,
     offeredSlotsIso, // H58: gate de slot real no book/reschedule
     timezone: locationTz, // H66: corrige offset do start_time pro fuso da conta
+    // C8 (caso Alves Cury 2026-08-31): title default do appointment legível.
+    agentLabel: ((config as { personality?: { name?: string } | null }).personality)?.name || undefined,
+    leadName: contactName && contactName !== group.contactId ? contactName : undefined,
   });
 
   // 8b. H85 (2026-08-26, caso Marina): a IA fechou o turno em `handed_off` —

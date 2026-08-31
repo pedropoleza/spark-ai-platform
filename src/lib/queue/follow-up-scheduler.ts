@@ -18,6 +18,11 @@ import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import { executeReactionRules } from "@/lib/ai/reaction-engine";
 import type { FollowUpConfig, AutomationRule } from "@/types/agent";
 import { ajustarParaJanela } from "@/lib/queue/janela-de-envio";
+// Caso Alves Cury 2026-08-31: guardas determinísticas do follow-up (pergunta
+// repetida + rótulo de dia relativo). Regra em prompt não segurou — ver
+// _planning/alves-cury-feedbacks-2026-08/RELATORIO-CHURN-2026-08-31.md.
+import { isRepeatedAsk, agentLinesFromHistory } from "@/lib/queue/followup-repeat-guard";
+import { aplicarGuardaDeDataLead } from "@/lib/queue/lead-day-guard";
 
 /**
  * Nº de follow-ups que a sequência planejou: `ai_auto` usa max_attempts (cap 10,
@@ -907,9 +912,85 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           // vir como string OU array. Antes mandava o array serializado
           // direto pra GHL (400 ou comportamento estranho).
           const msgRaw = result.response.message;
-          const msgText = Array.isArray(msgRaw)
+          let msgText = Array.isArray(msgRaw)
             ? msgRaw.filter((s) => typeof s === "string" && s.trim()).join("\n\n")
             : String(msgRaw);
+
+          // Guarda determinística de pergunta repetida (caso Alves Cury
+          // 2026-08-31): a regra "nunca repita pergunta ignorada" era só prompt
+          // e vazou — 3 leads receberam "em qual estado?" 3× cada. Se o texto
+          // repete um pedido que a IA já fez, regenera 1x com proibição
+          // explícita; repetiu de novo → cancela o toque (silêncio > robô).
+          if (msgText.trim() && !/\[\[\s*NAO_ENVIAR\s*\]\]/i.test(msgText)) {
+            const priorAi = agentLinesFromHistory(recentHistory);
+            const veredito = isRepeatedAsk(msgText, priorAi);
+            if (veredito.repeated) {
+              const constraint =
+                `\n\n## PERGUNTA JÁ FEITA (PROIBIDO REPETIR — regra dura)\n` +
+                `Você já pediu isso antes e o lead NÃO respondeu: "${(veredito.matched || "").slice(0, 200)}".\n` +
+                `PROIBIDO pedir esse dado ou reoferecer a mesma escolha de novo, em qualquer formulação.\n` +
+                `Use OUTRO ângulo pro toque #${followUp.attempt_number}: o valor concreto do próximo passo ` +
+                `(conversa rápida de ~30 min no Zoom com especialista, sem compromisso) OU um convite direto ` +
+                `deixando a porta aberta. Se nenhum ângulo novo fizer sentido, responda "[[NAO_ENVIAR]]".`;
+              const retry = await processWithAI({
+                systemPrompt: followUpPrompt + constraint,
+                conversationHistory: "",
+                newMessages: `Follow-up #${followUp.attempt_number} para o lead. Gere uma unica mensagem de follow-up.`,
+                model: config.ai_model || "gpt-4.1-mini",
+              });
+              try {
+                await trackAndCharge({
+                  locationId: followUp.location_id,
+                  companyId: location.company_id,
+                  agentId: followUp.agent_id,
+                  contactId: followUp.contact_id,
+                  actionType: "follow_up",
+                  model: config.ai_model || "gpt-4.1-mini",
+                  promptTokens: retry.prompt_tokens || 0,
+                  completionTokens: retry.completion_tokens || 0,
+                  cachedTokens: retry.cached_tokens || 0,
+                  usesCustomKey: false,
+                });
+              } catch { /* billing best-effort no retry */ }
+              const retryRaw = retry.success ? retry.response?.message : null;
+              const retryText = Array.isArray(retryRaw)
+                ? retryRaw.filter((s) => typeof s === "string" && s.trim()).join("\n\n")
+                : retryRaw != null
+                  ? String(retryRaw)
+                  : "";
+              const retryOk =
+                retryText.trim() &&
+                !/\[\[\s*NAO_ENVIAR\s*\]\]/i.test(retryText) &&
+                !isRepeatedAsk(retryText, priorAi).repeated;
+              if (retryOk) {
+                msgText = retryText;
+                console.log(
+                  `[FollowUp] pergunta repetida regenerada (contact=${followUp.contact_id}, via=${veredito.via})`,
+                );
+              } else {
+                // Cancela SÓ este toque — o próximo irmão re-avalia na vez dele.
+                await supabase.from("scheduled_followups").update({ status: "cancelled" }).eq("id", followUp.id);
+                await supabase.from("execution_log").insert({
+                  agent_id: followUp.agent_id,
+                  conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+                  contact_id: followUp.contact_id,
+                  location_id: followUp.location_id,
+                  action_type: "followup_skipped",
+                  action_payload: {
+                    attempt_number: followUp.attempt_number,
+                    reason: "repeated_question",
+                    matched: (veredito.matched || "").slice(0, 160),
+                    via: veredito.via,
+                  },
+                  success: true,
+                });
+                console.log(
+                  `[FollowUp] toque cancelado: repetiria pergunta ignorada (contact=${followUp.contact_id})`,
+                );
+                continue;
+              }
+            }
+          }
           // Sentinela do gate de decisão (Fix P0 review 2026-06-18): a IA marca
           // "não vale follow-up" com [[NAO_ENVIAR]]. NÃO dá pra usar message:""
           // porque parseAIResponse (openai-client.ts:520) reescreve string vazia
@@ -919,8 +1000,16 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           if (!decidedNoSend && msgText.trim()) {
             // Bloqueio determinístico de termos proibidos (caso Marina) no follow-up.
             const san = sanitizeOutbound([msgText.trim()], resolveForbiddenTerms(followUp.agent_id, config.forbidden_terms));
-            const finalMsg = san.messages.join("\n\n");
+            let finalMsg = san.messages.join("\n\n");
             if (san.redacted) console.warn("[Sanitizer/followup] Redacted:", san.hits.join(", "));
+            // Guarda de data (caso Alves Cury 2026-08-31): "hoje/amanhã" colado
+            // em horário vira absoluto/é corrigido — follow-up recicla texto de
+            // horas atrás e o rótulo relativo envelhece mal.
+            const dg = aplicarGuardaDeDataLead([finalMsg], (location.timezone as string) || "America/New_York");
+            if (dg.changed) {
+              finalMsg = dg.messages[0];
+              console.log(`[FollowUp] day-guard: ${dg.notes.join(" · ")}`);
+            }
             // Condensa pro tamanho de follow-up (curto e certeiro) antes de enviar
             // (healthcheck 2026-07-23). No-op pra follow-up já curto (o normal).
             const r = await sendFollowUpMessage(

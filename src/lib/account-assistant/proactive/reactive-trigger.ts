@@ -261,6 +261,43 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
 
     if (await alreadyFired(supabase, a.id, ev.contactId, dedupKey)) continue;
 
+    // C9 (caso Alves Cury 2026-08-31, contato YGHp2pYs): dois ContactUpdate
+    // simultâneos passavam ambos no alreadyFired (check-then-insert) → 2 rows
+    // no MESMO segundo. Claim atômico via PK de sparkbot_dedup_locks: quem
+    // perde o INSERT (23505) desiste. TTL 24h = janela do dedup de evento.
+    {
+      const { error: lockErr } = await supabase.from("sparkbot_dedup_locks").insert({
+        dedup_key: `reactive:${a.id}:${ev.contactId}:${dedupKey}`.slice(0, 250),
+        content_preview: ev.kind,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+      if (lockErr) {
+        if (lockErr.code === "23505") continue; // corrida — o gêmeo já enfileirou
+        // Falha de infra no lock não pode calar o trigger: segue (o dedup de
+        // 24h via execution_log continua valendo como 2ª camada).
+        console.warn(`[reactive-trigger] lock falhou (segue sem claim): ${lockErr.message}`);
+      }
+    }
+
+    // C6 (caso Alves Cury 2026-08-31): o turno proativo sai pelo canal em que o
+    // LEAD fala (último inbound dele), não pelo default SMS da coluna — na conta
+    // do Marcos o canal SMS passa pelo provider custom dele e duplica a timeline.
+    let leadChannel: string | null = null;
+    try {
+      const { data: lastIn } = await supabase
+        .from("message_queue")
+        .select("channel")
+        .eq("location_id", ev.locationId)
+        .eq("contact_id", ev.contactId)
+        .eq("message_direction", "inbound")
+        .order("received_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      leadChannel = (lastIn?.channel as string | null) || null;
+    } catch {
+      /* canal é best-effort — default SMS da coluna cobre */
+    }
+
     // Enfileira o trigger sintético. queue-processor detecta o prefix.
     const nowIso = new Date().toISOString();
     const { error: queueErr } = await supabase.from("message_queue").insert({
@@ -276,6 +313,7 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
       received_at: nowIso,
       process_after: nowIso,
       status: "pending",
+      ...(leadChannel ? { channel: leadChannel } : {}),
     });
 
     if (queueErr) {

@@ -1061,7 +1061,14 @@ ${generalBlock}${itemsBlock}`;
 // validation.ts (idem 8000). Antes: zod permitia 10k mas builder cortava
 // em 3k — silent loss. Subi pra 8000 (~2k tokens) tolerável no contexto
 // total do prompt (~10-15k tokens).
-const CUSTOM_INSTRUCTIONS_CAP = 8000;
+// Caso Alves Cury 2026-08-31: o cap de 8000 truncava SILENCIOSAMENTE o FINAL
+// das custom_instructions — exatamente onde moram as "REGRAS ANTI-INCIDENTE"
+// (a v3.3 da conta tinha 10,6K chars; campanha/2-tempos/anti-"hoje-amanhã"/máx
+// 2 balões nunca chegaram ao modelo, e os "vazamentos de regra" da janela
+// 26-28/08 eram na verdade regra invisível). 16000 ≈ +2K tokens no pior caso,
+// só pra quem escreve instruções desse tamanho. O warn abaixo continua sendo o
+// sinal de que alguém estourou até o novo teto.
+const CUSTOM_INSTRUCTIONS_CAP = 16000;
 const CONVERSATION_EXAMPLES_CAP = 8000;
 
 function buildCustomInstructionsSection(ctx: PromptContext): string {
@@ -1468,11 +1475,18 @@ sem ter adiado nem recusado.
 - Sem hedging longo: no máximo UMA pitada de gentileza. NÃO empilhe
   "sem pressão / se não for o momento / tudo bem também / quando puder" tudo junto.
 - USE o contexto acima: chame o lead pelo nome (se souber) e referencie o ponto onde pararam
-- Nao repita perguntas ja feitas nem peça dados ja coletados
+- REGRA DURA (caso Alves Cury 2026-08-31): NUNCA repita uma pergunta que o lead
+  já ignorou num toque anterior — nem reformulada. Pergunta feita 1x sem resposta
+  está MORTA; o toque seguinte muda de ÂNGULO.
+- Pergunta é pergunta: NUNCA justifique um pedido de dado com o que você
+  "consegue fazer" com ele ("assim consigo te passar as opções", "com isso eu
+  avanço", "para eu preparar") — soa vendedor. Peça simples ou não peça.
 - Nao mencione automacao, IA ou follow-up
-- #1: lembrete leve e curto ("oi fulano, ficou pendente o X, pode me mandar?")
-- #2-3: direto, retome o assunto especifico numa frase
-- #4+: ultimo toque educado e curto com opt-out suave
+- Escada de ÂNGULOS (um por toque, nunca o mesmo do anterior):
+  #1: retome o ASSUNTO concreto onde pararam com palavras novas (sem re-perguntar)
+  #2-3: o VALOR do próximo passo em 1 frase (o que a pessoa ganha na conversa)
+       OU convite direto com 2 janelas amplas (tarde/noite)
+  #4+: último toque educado e curto com opt-out suave (porta aberta)
 ${customInstructions}
 
 ## FORMATO

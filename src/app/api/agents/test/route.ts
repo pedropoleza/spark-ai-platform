@@ -14,6 +14,7 @@ import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { isChatMessageType } from "@/lib/ghl/message-sources";
 import { lerTokenMarina } from "@/lib/marina-lab/auth";
 import { slotWindowDays } from "@/lib/queue/slot-window";
+import { aplicarGuardaDeDataLead } from "@/lib/queue/lead-day-guard";
 
 /**
  * POST /api/agents/test
@@ -488,12 +489,28 @@ export async function POST(request: NextRequest) {
             requireContactBeforeBooking: !!config.post_booking?.require_contact_before_booking,
             collectedData: result.response?.collected_data || {},
             forbiddenTerms: resolveForbiddenTerms(agent_id, config.forbidden_terms),
+            timezone: locationTz, // paridade H66 com o processor
+            agentLabel: (config.personality as { name?: string } | null)?.name || undefined,
           });
         } catch (error) {
           console.error("[Test ExecuteActions] Falha em background:", error instanceof Error ? error.message : error);
         }
       })(),
     );
+  }
+
+  // Guarda de data lead-facing (paridade com o envio real — caso Alves Cury
+  // 2026-08-31): o texto EXIBIDO no teste passa pelo mesmo guard determinístico
+  // de dia/data do executor, senão o stress valida um texto que prod corrige.
+  if (result.response?.message) {
+    const bolhas = (Array.isArray(result.response.message)
+      ? result.response.message
+      : [String(result.response.message)]
+    ).filter((b): b is string => typeof b === "string" && !!b.trim());
+    if (bolhas.length > 0) {
+      const dg = aplicarGuardaDeDataLead(bolhas, locationTz);
+      if (dg.changed) result.response.message = dg.messages;
+    }
   }
 
   return NextResponse.json({

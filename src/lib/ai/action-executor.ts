@@ -25,6 +25,9 @@ import {
   normalizeCrmStartTime,
 } from "@/lib/ai/slot-guard";
 import { buscaBookingRecente } from "@/lib/ai/booking-recente";
+// Caso Alves Cury 2026-08-31: guardas determinísticas de data e de recap de
+// agendamento no texto lead-facing (RELATORIO-CHURN-2026-08-31.md).
+import { aplicarGuardaDeDataLead, aplicarGuardaDeRecapAgendado } from "@/lib/queue/lead-day-guard";
 
 /** Fuso + slots do turno, pra ler os horários que o Spark Leads devolve sem offset (H73). */
 function zonaDoTurno(ctx: ExecutionContext): { timeZone?: string; offeredSlotsIso?: string[] } {
@@ -134,6 +137,21 @@ interface ExecutionContext {
    * outro fuso, ex. -03:00 Brasília). Ausente = America/New_York.
    */
   timezone?: string;
+  /**
+   * Caso Alves Cury 2026-08-31: nome da persona (title default do appointment
+   * "Zoom - <agente> - <lead>") e nome do lead, quando o caller souber.
+   */
+  agentLabel?: string;
+  leadName?: string;
+}
+
+// C8 (caso Alves Cury 2026-08-31): o modelo manda title null com frequência —
+// vira rótulo legível ("Zoom - <agente> - <lead>") em vez de "Reunião agendada".
+function tituloDefaultAppointment(ctx: ExecutionContext): string {
+  const lead = (ctx.leadName || ctx.collectedData?.full_name || "").trim();
+  const agente = (ctx.agentLabel || "").trim();
+  const partes = ["Zoom", agente || null, lead || null].filter(Boolean) as string[];
+  return partes.length > 1 ? partes.join(" - ") : "Reunião agendada";
 }
 
 // Detecta um canal de contato (WhatsApp/telefone) já coletado — usado pelo gate
@@ -197,6 +215,9 @@ export async function executeActions(
   const BOOKING_ACTIONS = new Set(["book_appointment", "reschedule_appointment"]);
   let tentouAgendar = false;
   let agendouComSucesso = false;
+  // C7 (caso Alves Cury 2026-08-31): o slot REAL agendado neste turno — a
+  // narração de confirmação é validada contra ele (escola booked_label/H50).
+  let bookedStartIso: string | null = null;
 
   for (const action of dedupedActions) {
     const ehAgendamento = BOOKING_ACTIONS.has(action.type);
@@ -204,7 +225,10 @@ export async function executeActions(
     try {
       await executeAction(client, action, ctx);
       await logExecution(supabase, ctx, action.type, { ...action });
-      if (ehAgendamento) agendouComSucesso = true;
+      if (ehAgendamento) {
+        agendouComSucesso = true;
+        if (action.start_time) bookedStartIso = action.start_time;
+      }
     } catch (error) {
       actionsFailed = true;
       failedActionError = error instanceof Error ? error.message : String(error);
@@ -332,6 +356,66 @@ export async function executeActions(
         erro: failedActionError || null,
       },
     });
+  }
+
+  // Guarda de data lead-facing (caso Alves Cury 2026-08-31): pares dia↔data
+  // corrigidos pela data (H85 reuso) + "hoje/amanhã" colado em horário vira
+  // absoluto ou cai quando mente. A regra de prompt ("PROIBIDO hoje/amanhã")
+  // vazou em produção em 27/08 — determinístico agora.
+  if (messages.length > 0) {
+    const dg = aplicarGuardaDeDataLead(messages, ctx.timezone || "America/New_York");
+    if (dg.changed) {
+      messages = dg.messages;
+      console.log(`[DayGuard] ${dg.notes.join(" · ")}`);
+      await logExecution(supabase, ctx, "outbound_day_guard", { notes: dg.notes.slice(0, 6) });
+    }
+  }
+
+  // C7 (caso Alves Cury 2026-08-31): booking REAL aconteceu → a narração tem
+  // que bater com o slot. Bolha com horário/data divergente é trocada pelo
+  // rótulo determinístico; sem menção de horário, o rótulo é anexado.
+  if (agendouComSucesso && bookedStartIso && messages.length > 0 && !silentTurn) {
+    const tzConta = ctx.timezone || "America/New_York";
+    const recap = aplicarGuardaDeRecapAgendado(messages, bookedStartIso, tzConta, {
+      sufixoFuso: tzConta === "America/New_York" ? "horário do leste" : undefined,
+    });
+    if (recap.changed) {
+      messages = recap.messages;
+      console.warn(`[RecapGuard] ${recap.notes.join(" · ")}`);
+      await logExecution(supabase, ctx, "booked_recap_guard", {
+        booked_start: bookedStartIso,
+        notes: recap.notes.slice(0, 4),
+      });
+    }
+  }
+
+  // C4 (caso Alves Cury 2026-08-31, corrida Andréia): a IA foi pausada DURANTE
+  // este turno (switch da pílula GU-7, pausa manual)? O gate do início do turno
+  // não pega — o outreach do Bruno saiu 8s DEPOIS de o Marcos pausar. Re-lê o
+  // estado imediatamente antes do envio; pausado agora → suprime o envio (as
+  // actions já rodaram e ficam — quem pausou está assumindo a conversa).
+  if (!ctx.testMode && !ctx.skipSendMessage && messages.length > 0) {
+    try {
+      const { data: freshState } = await supabase
+        .from("conversation_state")
+        .select("ai_paused_at, ai_paused_reason")
+        .eq("agent_id", ctx.agentId)
+        .eq("contact_id", ctx.contactId)
+        .maybeSingle();
+      if (freshState?.ai_paused_at) {
+        await logExecution(supabase, ctx, "send_cancelled_paused_mid_turn", {
+          reason: freshState.ai_paused_reason || "manual",
+          messages_suppressed: messages.length,
+          booked_this_turn: agendouComSucesso,
+        });
+        console.warn(
+          `[ActionExecutor] IA pausada DURANTE o turno (${freshState.ai_paused_reason || "manual"}) — envio suprimido.`,
+        );
+        messages = [];
+      }
+    } catch {
+      /* re-check é rede de segurança — falha de leitura não bloqueia o envio */
+    }
   }
 
   if (!ctx.skipSendMessage && messages.length > 0) {
@@ -607,7 +691,9 @@ async function executeAction(
             locationId: ctx.locationId,
             contactId: ctx.contactId,
             startTime: action.start_time,
-            title: action.title || "Reunião agendada",
+            // C8 (caso Alves Cury 2026-08-31): title null do modelo vira rótulo
+            // legível no calendário do cliente ("Zoom - Bruna - Andréia").
+            title: action.title || tituloDefaultAppointment(ctx),
             // H65 (caso Liberty Financial 2026-08-04): aqui ia
             // `meetingLocationType:"phone"` fixo — e isso APAGAVA o local default
             // do calendário (Google Meet/Zoom configurado no membro do time). A
