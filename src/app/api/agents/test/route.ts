@@ -13,6 +13,7 @@ import { evaluateLeadSilence, stripSilenceMarker } from "@/lib/ai/lead-silence";
 import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { isChatMessageType } from "@/lib/ghl/message-sources";
 import { lerTokenMarina } from "@/lib/marina-lab/auth";
+import { lerTokenAlves } from "@/lib/alves-lab/auth";
 import { slotWindowDays } from "@/lib/queue/slot-window";
 import { aplicarGuardaDeDataLead } from "@/lib/queue/lead-day-guard";
 import { turnRepeatVerdict, stripRepeatedAsks } from "@/lib/queue/followup-repeat-guard";
@@ -54,6 +55,21 @@ export async function POST(request: NextRequest) {
         locationId: marina.location_id,
         companyId: marina.company_id,
         locationName: "Marina's Personal Account",
+        isAdmin: false,
+      } as Awaited<ReturnType<typeof getSession>>;
+    }
+  }
+  // Alves Lab (2026-08-31, temporário — teste pré-religa pós-H88): mesmo
+  // desenho do Marina Lab, com PIN. O token carrega os DOIS agentes da conta
+  // (Bruna e Bruno); qualquer outro agent_id no body continua 401.
+  if (!session) {
+    const alves = await lerTokenAlves(request);
+    if (alves && typeof body?.agent_id === "string" && alves.agent_ids.includes(body.agent_id)) {
+      session = {
+        userId: "alves-lab",
+        locationId: alves.location_id,
+        companyId: alves.company_id,
+        locationName: "Alves Cury Financial",
         isAdmin: false,
       } as Awaited<ReturnType<typeof getSession>>;
     }
