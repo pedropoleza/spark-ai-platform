@@ -95,6 +95,23 @@ const OPCOES_PARA = `NUNCA fale de "opções" de produto em NENHUMA forma (separ
 const EMOJI_DE = " Emoji proibido em TODAS as mensagens.";
 const EMOJI_PARA = "";
 
+// ─── v4.1 (pós-bateria 31/08): dois vazamentos na 1ª rodada ──────────────────
+// (a) Bruna cumprimentou e só reconheceu a frente no turno 2 — o lead da
+//     campanha errada precisa sair da PRIMEIRA resposta sabendo que o time
+//     certo segue com ele.
+const PRIMEIRA_BRUNA_DE =
+  "Lead que veio da campanha de recrutamento ou quer virar agente: reconheça em 1 frase, com naturalidade,";
+const PRIMEIRA_BRUNA_PARA =
+  "Lead que veio da campanha de recrutamento ou quer virar agente: reconheça JÁ NA PRIMEIRA RESPOSTA (nada de só cumprimentar e esperar ele escrever de novo), em 1 frase, com naturalidade,";
+const PRIMEIRA_BRUNO_DE =
+  "Lead que veio da campanha de SEGURO (não quer carreira): reconheça em 1 frase";
+const PRIMEIRA_BRUNO_PARA =
+  "Lead que veio da campanha de SEGURO (não quer carreira): reconheça JÁ NA PRIMEIRA RESPOSTA (nada de só cumprimentar e esperar ele escrever de novo), em 1 frase";
+// (b) escapou um "pro" ("pro seu caso") — o deslize mais comum; reforço no ban.
+const PRO_DE = 'PROIBIDO gíria e abreviação: vc, pra, pro (de "para o"), ta, blz, kkk';
+const PRO_PARA =
+  'PROIBIDO gíria e abreviação: vc, pra, pro (de "para o" — o deslize mais comum é "pro seu caso": escreva "para o seu caso"), ta, blz, kkk';
+
 // ─── K4/K7. ponte-pro-Zoom obrigatória ───────────────────────────────────────
 const PONTE_BRUNA_DE = `# GANCHO E PONTE PRO ZOOM
 Gancho é o que revela preocupação ou objetivo (família aqui, abrir negócio, manda dinheiro para o Brasil, aposentadoria, medo de acontecer algo). Apareceu o gancho ou o mínimo de contexto, convida. NUNCA "quer que eu veja um horário?". A ponte: (1) uma frase que ECOA algo CONCRETO que o lead disse (nunca "pelo que você me falou" sozinho), (2) por que o Zoom faz sentido para o caso dele (cada caso é diferente, um de nossos agentes mostra em uns 30 min uma opção para o perfil dele), (3) que vai ver os horários. Varie o fraseado.`;
@@ -132,6 +149,8 @@ async function main() {
         { nome: "K3 moeda de troca", de: OPCOES_DE, para: OPCOES_PARA },
         { nome: "K6 emoji (bloco nome)", de: EMOJI_DE, para: EMOJI_PARA },
         { nome: "K4/K7 ponte", de: PONTE_BRUNA_DE, para: PONTE_BRUNA_PARA },
+        { nome: "v4.1 primeira resposta", de: PRIMEIRA_BRUNA_DE, para: PRIMEIRA_BRUNA_PARA },
+        { nome: "v4.1 pro→para o", de: PRO_DE, para: PRO_PARA },
       ],
     },
     {
@@ -147,6 +166,8 @@ async function main() {
         { nome: "K3 moeda de troca", de: OPCOES_DE, para: OPCOES_PARA },
         { nome: "K6 emoji (bloco nome)", de: EMOJI_DE, para: EMOJI_PARA },
         { nome: "K4/K7 ponte", de: PONTE_BRUNO_DE, para: PONTE_BRUNO_PARA },
+        { nome: "v4.1 primeira resposta", de: PRIMEIRA_BRUNO_DE, para: PRIMEIRA_BRUNO_PARA },
+        { nome: "v4.1 pro→para o", de: PRO_DE, para: PRO_PARA },
       ],
     },
   ];
