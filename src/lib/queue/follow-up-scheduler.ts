@@ -14,6 +14,7 @@ import { withRetry } from "@/lib/utils/retry";
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
 import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
 import { reportError } from "@/lib/admin-signals/report-error";
+import { resolveIdsDeStatus, followUpDesligadoNoContato } from "@/lib/queue/ai-status-gate";
 import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import { executeReactionRules } from "@/lib/ai/reaction-engine";
 import type { FollowUpConfig, AutomationRule } from "@/types/agent";
@@ -693,6 +694,40 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       }
 
       const client = new GHLClient(location.company_id, followUp.location_id);
+
+      // "Follow Up Status: Inactive" no cadastro do contato para a sequência
+      // (fix prod 2026-09-03, caso Márcia — mesma família do gate de AI Status
+      // no processor: a equipe marca o campo achando que desliga, e o runtime
+      // nunca leu). Fail-open: location sem o campo, ou erro de leitura, segue
+      // o comportamento de antes. Ver ai-status-gate.ts.
+      {
+        const idsStatus = await resolveIdsDeStatus(client, followUp.location_id);
+        if (idsStatus.followUpStatusId) {
+          const detalhe = await client
+            .get<{ contact?: { customFields?: Array<{ id?: string; value?: unknown }> } }>(
+              `/contacts/${followUp.contact_id}`,
+            )
+            .catch(() => null);
+          if (detalhe?.contact?.customFields && followUpDesligadoNoContato(detalhe.contact.customFields, idsStatus)) {
+            await supabase
+              .from("scheduled_followups")
+              .update({ status: "cancelled" })
+              .eq("agent_id", followUp.agent_id)
+              .eq("contact_id", followUp.contact_id)
+              .in("status", ["pending", "processing"]);
+            await supabase.from("execution_log").insert({
+              agent_id: followUp.agent_id,
+              conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+              contact_id: followUp.contact_id,
+              location_id: followUp.location_id,
+              action_type: "followup_skipped",
+              action_payload: { attempt_number: followUp.attempt_number, reason: "follow_up_status_inactive" },
+              success: true,
+            });
+            continue;
+          }
+        }
+      }
 
       // GU-3/F52 (Fix bug observado em prod 2026-06-04): captura o texto enviado
       // pra LOGAR no execution_log depois. Sem esse log o follow-up fica

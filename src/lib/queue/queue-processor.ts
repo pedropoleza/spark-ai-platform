@@ -172,6 +172,7 @@ import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-hi
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
 import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
+import { resolveIdsDeStatus, iaDesligadaNoContato } from "@/lib/queue/ai-status-gate";
 import { notifyCriticalError } from "@/lib/utils/notify";
 import { withRetry } from "@/lib/utils/retry";
 import type { GHLMessage } from "@/types/ghl";
@@ -1404,6 +1405,34 @@ async function processGroup(
     }
   } else if (contactSettled.status === "rejected") {
     console.error("Erro ao buscar dados do contato:", contactSettled.reason);
+  }
+
+  // Gate "AI Status: Inactive" (fix bug observado em prod 2026-09-03, caso
+  // Márcia — "mesmo com a ia desativada, ela continuou mandando mensagem").
+  // A equipe desliga a IA de um lead marcando o picklist no cadastro; o runtime
+  // nunca lia esse campo. Medido antes do fix: 42 dos 104 contatos respondidos
+  // em 7 dias estavam Inactive (233 mensagens indevidas).
+  //
+  // Roda aqui, DEPOIS do contato já ter sido buscado e ANTES do LLM: custo
+  // extra ~zero e nenhum turno pago pra quem pediu silêncio. Fail-open: sem o
+  // campo na location, nada muda. Ver ai-status-gate.ts.
+  if (contactSettled.status === "fulfilled" && contactSettled.value?.contact?.customFields) {
+    const idsStatus = await resolveIdsDeStatus(ghlClient, group.locationId);
+    if (iaDesligadaNoContato(contactSettled.value.contact.customFields, idsStatus)) {
+      log("log", `AI Status = Inactive pra ${group.contactId} — turno descartado (a equipe desligou a IA neste contato)`);
+      try {
+        await supabase.from("execution_log").insert({
+          agent_id: agent.id,
+          conversation_id: group.conversationId,
+          contact_id: group.contactId,
+          location_id: group.locationId,
+          action_type: "ai_status_inactive_skip",
+          action_payload: { messages_swallowed: group.messages.length },
+          success: true,
+        });
+      } catch { /* observabilidade best-effort, igual ao gate de pausa */ }
+      return;
+    }
   }
 
   // 4. Mesclar com conversation_state (dados coletados pela IA têm prioridade)
