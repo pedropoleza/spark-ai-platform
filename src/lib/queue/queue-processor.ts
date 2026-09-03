@@ -172,7 +172,8 @@ import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-hi
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
 import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
-import { resolveIdsDeStatus, iaDesligadaNoContato } from "@/lib/queue/ai-status-gate";
+import { regraQueDesliga, descreveRegra } from "@/lib/queue/deactivation";
+import type { DeactivationRule } from "@/types/agent";
 import { notifyCriticalError } from "@/lib/utils/notify";
 import { withRetry } from "@/lib/utils/retry";
 import type { GHLMessage } from "@/types/ghl";
@@ -1081,6 +1082,10 @@ async function processGroup(
     address1?: string; city?: string; state?: string; postalCode?: string; country?: string;
     dateOfBirth?: string; companyName?: string; assignedTo?: string;
     customFields?: { id: string; value: string; fieldKey?: string }[];
+    // H89: tags + shape legada do custom field, pro gate de desligamento
+    // decidir sobre o MESMO GET (zero chamada extra).
+    tags?: Array<string | { name?: string }>;
+    customField?: { id: string; value: string; fieldKey?: string }[];
   } };
   type SlotsResp = Record<string, unknown>;
 
@@ -1112,6 +1117,55 @@ async function processGroup(
     ) as Promise<OppsResp>,
   ]);
   console.log(`[GHL] parallel fetch done in ${Date.now() - ghlStart}ms`);
+
+  // H89 — "Regras de desligamento" do agente (Hub → tag/campo), aplicadas AQUI
+  // além do webhook. Fix bug observado em prod 2026-09-03 (caso Márcia: "mesmo
+  // com a ia desativada, ela continuou mandando mensagem"): a conta desliga a
+  // IA por lead com o picklist "AI Status: Inactive", e a regra só valia no
+  // webhook — turno que já estava na fila, ou que entrou por outra rota,
+  // passava direto. Roda sobre o contato que o turno JÁ buscou (zero chamada
+  // extra) e ANTES do histórico, do F37/F52 e do LLM: contato que a equipe
+  // desligou não gera aviso de handoff, auto-pausa nem cobrança. Também cancela
+  // a sequência de follow-up pendente — era por ela que a IA "continuava
+  // mandando" mesmo com o campo marcado. Fail-open: sem regra, segue.
+  {
+    const regrasDesliga = (config as { deactivation_rules?: DeactivationRule[] | null }).deactivation_rules;
+    const contatoDoTurno = contactSettled.status === "fulfilled" ? contactSettled.value?.contact : null;
+    const regra = regraQueDesliga(contatoDoTurno, regrasDesliga);
+    if (regra) {
+      log("log", `IA desligada pra ${group.contactId} por regra (${descreveRegra(regra)}) — turno descartado`);
+      const { error: cancelErr } = await supabase
+        .from("scheduled_followups")
+        .update({ status: "cancelled" })
+        .eq("agent_id", agent.id)
+        .eq("contact_id", group.contactId)
+        .in("status", ["pending", "processing"]);
+      const { error: logErr } = await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        conversation_id: group.conversationId,
+        contact_id: group.contactId,
+        location_id: group.locationId,
+        action_type: "deactivated_by_rule_skip",
+        action_payload: {
+          rule: descreveRegra(regra),
+          messages_swallowed: group.messages.length,
+          followups_cancel_error: cancelErr?.message ?? null,
+        },
+        success: true,
+      });
+      // supabase-js não lança: o {error} é a única pista (anti-pattern do CLAUDE.md).
+      if (cancelErr || logErr) {
+        reportError({
+          title: "Gate de desligamento: falha ao cancelar follow-up ou auditar",
+          feature: "deactivation-gate",
+          severity: "medium",
+          error: cancelErr ?? logErr,
+          metadata: { contactId: group.contactId, agentId: agent.id, locationId: group.locationId },
+        });
+      }
+      return;
+    }
+  }
 
   // Processar mensagens como turns estruturados (formato nativo do LLM).
   // Ganhos: modelo entende turn boundaries, menos tokens (sem "LEAD:/AGENTE:"),
@@ -1405,34 +1459,6 @@ async function processGroup(
     }
   } else if (contactSettled.status === "rejected") {
     console.error("Erro ao buscar dados do contato:", contactSettled.reason);
-  }
-
-  // Gate "AI Status: Inactive" (fix bug observado em prod 2026-09-03, caso
-  // Márcia — "mesmo com a ia desativada, ela continuou mandando mensagem").
-  // A equipe desliga a IA de um lead marcando o picklist no cadastro; o runtime
-  // nunca lia esse campo. Medido antes do fix: 42 dos 104 contatos respondidos
-  // em 7 dias estavam Inactive (233 mensagens indevidas).
-  //
-  // Roda aqui, DEPOIS do contato já ter sido buscado e ANTES do LLM: custo
-  // extra ~zero e nenhum turno pago pra quem pediu silêncio. Fail-open: sem o
-  // campo na location, nada muda. Ver ai-status-gate.ts.
-  if (contactSettled.status === "fulfilled" && contactSettled.value?.contact?.customFields) {
-    const idsStatus = await resolveIdsDeStatus(ghlClient, group.locationId);
-    if (iaDesligadaNoContato(contactSettled.value.contact.customFields, idsStatus)) {
-      log("log", `AI Status = Inactive pra ${group.contactId} — turno descartado (a equipe desligou a IA neste contato)`);
-      try {
-        await supabase.from("execution_log").insert({
-          agent_id: agent.id,
-          conversation_id: group.conversationId,
-          contact_id: group.contactId,
-          location_id: group.locationId,
-          action_type: "ai_status_inactive_skip",
-          action_payload: { messages_swallowed: group.messages.length },
-          success: true,
-        });
-      } catch { /* observabilidade best-effort, igual ao gate de pausa */ }
-      return;
-    }
   }
 
   // 4. Mesclar com conversation_state (dados coletados pela IA têm prioridade)

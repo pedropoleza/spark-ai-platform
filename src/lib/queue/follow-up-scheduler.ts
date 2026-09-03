@@ -14,7 +14,8 @@ import { withRetry } from "@/lib/utils/retry";
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
 import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
 import { reportError } from "@/lib/admin-signals/report-error";
-import { resolveIdsDeStatus, followUpDesligadoNoContato } from "@/lib/queue/ai-status-gate";
+import { regraQueDesliga, descreveRegra, type ContatoParaRegras } from "@/lib/queue/deactivation";
+import type { DeactivationRule } from "@/types/agent";
 import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import { executeReactionRules } from "@/lib/ai/reaction-engine";
 import type { FollowUpConfig, AutomationRule } from "@/types/agent";
@@ -477,12 +478,16 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         .eq("location_id", followUp.location_id)
         .single();
 
+      // H89: o contato buscado pro DND é reaproveitado pelo gate de desligamento
+      // mais abaixo (mesmo GET; antes o gate fazia um 3º GET por toque).
+      let contatoDoTick: ContatoParaRegras | null = null;
       if (locData) {
         try {
           const dndClient = new GHLClient(locData.company_id, followUp.location_id);
           const contactCheck = await dndClient.get<{
-            contact: { dnd?: boolean; dndSettings?: { all?: { status?: string } } };
+            contact: { dnd?: boolean; dndSettings?: { all?: { status?: string } } } & ContatoParaRegras;
           }>(`/contacts/${followUp.contact_id}`);
+          contatoDoTick = contactCheck.contact ?? null;
 
           const isDND = contactCheck.contact?.dnd ||
             contactCheck.contact?.dndSettings?.all?.status === "active";
@@ -634,6 +639,42 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         continue;
       }
 
+      // H89 — "Regras de desligamento" do agente valem pro follow-up também.
+      // Fix bug observado em prod 2026-09-03 (caso Márcia): a regra só era
+      // honrada no webhook; a equipe marcava "AI Status: Inactive" e os toques
+      // já agendados saíam do mesmo jeito. Decide sobre o contato do DND
+      // (zero chamada extra). Fail-open: sem contato ou sem regra, segue.
+      {
+        const regra = regraQueDesliga(contatoDoTick, (config as { deactivation_rules?: DeactivationRule[] | null }).deactivation_rules);
+        if (regra) {
+          const { error: cancelErr } = await supabase
+            .from("scheduled_followups")
+            .update({ status: "cancelled" })
+            .eq("agent_id", followUp.agent_id)
+            .eq("contact_id", followUp.contact_id)
+            .in("status", ["pending", "processing"]);
+          const { error: logErr } = await supabase.from("execution_log").insert({
+            agent_id: followUp.agent_id,
+            conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+            contact_id: followUp.contact_id,
+            location_id: followUp.location_id,
+            action_type: "followup_skipped",
+            action_payload: { attempt_number: followUp.attempt_number, reason: "deactivated_by_rule", rule: descreveRegra(regra) },
+            success: true,
+          });
+          if (cancelErr || logErr) {
+            reportError({
+              title: "Follow-up: falha ao cancelar sequência desligada por regra",
+              feature: "followup-runner",
+              severity: "medium",
+              error: cancelErr ?? logErr,
+              metadata: { followUpId: followUp.id, contactId: followUp.contact_id },
+            });
+          }
+          continue;
+        }
+      }
+
       // === Canal correto + janela de sessão (Fix bug observado em prod 2026-06-16) ===
       // Antes o follow-up saía SEMPRE como type:"SMS" hardcoded — no Instagram
       // (e WhatsApp) isso quebrava: canal errado, lead sem telefone, ou o
@@ -694,40 +735,6 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       }
 
       const client = new GHLClient(location.company_id, followUp.location_id);
-
-      // "Follow Up Status: Inactive" no cadastro do contato para a sequência
-      // (fix prod 2026-09-03, caso Márcia — mesma família do gate de AI Status
-      // no processor: a equipe marca o campo achando que desliga, e o runtime
-      // nunca leu). Fail-open: location sem o campo, ou erro de leitura, segue
-      // o comportamento de antes. Ver ai-status-gate.ts.
-      {
-        const idsStatus = await resolveIdsDeStatus(client, followUp.location_id);
-        if (idsStatus.followUpStatusId) {
-          const detalhe = await client
-            .get<{ contact?: { customFields?: Array<{ id?: string; value?: unknown }> } }>(
-              `/contacts/${followUp.contact_id}`,
-            )
-            .catch(() => null);
-          if (detalhe?.contact?.customFields && followUpDesligadoNoContato(detalhe.contact.customFields, idsStatus)) {
-            await supabase
-              .from("scheduled_followups")
-              .update({ status: "cancelled" })
-              .eq("agent_id", followUp.agent_id)
-              .eq("contact_id", followUp.contact_id)
-              .in("status", ["pending", "processing"]);
-            await supabase.from("execution_log").insert({
-              agent_id: followUp.agent_id,
-              conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
-              contact_id: followUp.contact_id,
-              location_id: followUp.location_id,
-              action_type: "followup_skipped",
-              action_payload: { attempt_number: followUp.attempt_number, reason: "follow_up_status_inactive" },
-              success: true,
-            });
-            continue;
-          }
-        }
-      }
 
       // GU-3/F52 (Fix bug observado em prod 2026-06-04): captura o texto enviado
       // pra LOGAR no execution_log depois. Sem esse log o follow-up fica

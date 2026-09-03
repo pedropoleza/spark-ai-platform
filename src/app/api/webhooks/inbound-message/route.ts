@@ -80,6 +80,8 @@ async function isSparkbotHub(locationId: string | undefined): Promise<boolean> {
   }
 }
 import { GHLClient } from "@/lib/ghl/client";
+import { regraQueDesliga, descreveRegra, type ContatoParaRegras } from "@/lib/queue/deactivation";
+import type { DeactivationRule } from "@/types/agent";
 import { extractAudioUrl } from "@/lib/ai/audio-transcriber";
 import { extractMediaAttachments } from "@/lib/ai/media-extractor";
 import { processMessageQueue } from "@/lib/queue/queue-processor";
@@ -1092,48 +1094,15 @@ async function checkDeactivationRules(
 
   try {
     const client = new GHLClient(companyId, locationId);
-    const contact = await client.get<{
-      contact: {
-        tags: string[];
-        customFields: { id: string; value: string; fieldKey?: string }[];
-      };
-    }>(`/contacts/${contactId}`);
-
-    const contactData = contact.contact;
-    if (!contactData) return false;
-
-    for (const rule of rules) {
-      switch (rule.type) {
-        case "tag_added":
-          // Desligar se o contato TEM esta tag
-          if (rule.tag && contactData.tags?.includes(rule.tag)) {
-            console.log(`[Deactivation] Contact ${contactId} has tag "${rule.tag}", deactivating`);
-            return true;
-          }
-          break;
-
-        case "tag_removed":
-          // Desligar se o contato NAO TEM esta tag
-          if (rule.tag && !contactData.tags?.includes(rule.tag)) {
-            console.log(`[Deactivation] Contact ${contactId} missing tag "${rule.tag}", deactivating`);
-            return true;
-          }
-          break;
-
-        case "custom_field_equals":
-          if (rule.field_key) {
-            const field = contactData.customFields?.find(
-              (f) => f.id === rule.field_key || f.fieldKey === rule.field_key
-            );
-            if (field && field.value === rule.field_value) {
-              console.log(`[Deactivation] Contact ${contactId} field ${rule.field_key}=${rule.field_value}, deactivating`);
-              return true;
-            }
-          }
-          break;
-      }
+    const contact = await client.get<{ contact: ContatoParaRegras }>(`/contacts/${contactId}`);
+    // H89: a decisão em si vive em queue/deactivation.ts, compartilhada com o
+    // processor e o runner de follow-up — antes só este webhook aplicava a
+    // regra, e os toques já agendados saíam mesmo com a IA desligada.
+    const regra = regraQueDesliga(contact.contact, rules as DeactivationRule[]);
+    if (regra) {
+      console.log(`[Deactivation] Contact ${contactId}: ${descreveRegra(regra)} → IA desligada`);
+      return true;
     }
-
     return false;
   } catch (error) {
     console.error("[Deactivation] Error checking rules:", error);
