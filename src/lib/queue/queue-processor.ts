@@ -173,6 +173,7 @@ import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
 import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
 import { regraQueDesliga, descreveRegra } from "@/lib/queue/deactivation";
+import { deveSilenciarEntrada } from "@/lib/queue/entry-by-automation";
 import type { DeactivationRule } from "@/types/agent";
 import { notifyCriticalError } from "@/lib/utils/notify";
 import { withRetry } from "@/lib/utils/retry";
@@ -190,6 +191,8 @@ interface QueuedMessage {
   audio_url?: string | null;
   audio_mime_type?: string | null;
   media_attachments?: MediaAttachment[] | null;
+  /** H90: quando a mensagem entrou na fila — o gate de entrada conta inbounds anteriores. */
+  received_at?: string | null;
 }
 
 interface MessageGroup {
@@ -862,6 +865,73 @@ async function processGroup(
         "warn",
         `membership durável falhou (fail-soft): ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+  }
+
+  // H90 — entrada pela automação (ver entry-by-automation.ts). Roda depois do
+  // targeting/membership (só contato que o agente atende chega aqui) e ANTES do
+  // áudio, do fetch no Spark Leads e do LLM: a 1ª mensagem do lead não custa
+  // nada e não gera efeito colateral. Fail-open: flag desligada = nada muda.
+  if ((config as { entry_by_automation?: boolean | null }).entry_by_automation === true) {
+    const maisAntiga = group.messages
+      .map((m) => m.received_at)
+      .filter(Boolean)
+      .sort()[0];
+    let inboundsAnteriores = 0;
+    if (maisAntiga) {
+      const { count } = await supabase
+        .from("message_queue")
+        .select("id", { count: "exact", head: true })
+        .eq("location_id", group.locationId)
+        .eq("contact_id", group.contactId)
+        .eq("message_direction", "inbound")
+        .lt("received_at", maisAntiga);
+      inboundsAnteriores = count ?? 0;
+    }
+    const silenciar = deveSilenciarEntrada({
+      entryByAutomation: true,
+      manuallyResumed,
+      syntheticTrigger: !!group.syntheticTrigger,
+      conversationActive,
+      entrySuppressedAt: (convState as { entry_suppressed_at?: string | null } | null)?.entry_suppressed_at,
+      inboundsAnteriores,
+    });
+    if (silenciar) {
+      log("log", `entrada pela automação: 1ª mensagem de ${group.contactId} silenciada — a IA assume na resposta do lead`);
+      const agoraIso = new Date().toISOString();
+      const { error: upErr } = await supabase
+        .from("conversation_state")
+        .upsert(
+          {
+            agent_id: agent.id,
+            location_id: group.locationId,
+            contact_id: group.contactId,
+            conversation_id: group.conversationId || "",
+            status: "active",
+            entry_suppressed_at: agoraIso,
+            updated_at: agoraIso,
+          },
+          { onConflict: "agent_id,contact_id" },
+        );
+      const { error: logErr } = await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        conversation_id: group.conversationId,
+        contact_id: group.contactId,
+        location_id: group.locationId,
+        action_type: "entry_suppressed",
+        action_payload: { messages_swallowed: group.messages.length, body_preview: group.aggregatedBody.slice(0, 120) },
+        success: true,
+      });
+      if (upErr || logErr) {
+        reportError({
+          title: "Entrada pela automação: falha ao registrar o silêncio da 1ª mensagem",
+          feature: "entry-by-automation",
+          severity: "medium",
+          error: upErr ?? logErr,
+          metadata: { contactId: group.contactId, agentId: agent.id, locationId: group.locationId },
+        });
+      }
+      return;
     }
   }
 
