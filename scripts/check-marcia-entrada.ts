@@ -137,6 +137,17 @@ async function checkLeads(c: GHLClient): Promise<void> {
       } catch (e) { WARN(`E: ${cid} — não consegui ler a conversa (${(e as Error).message.slice(0, 60)})`); }
     } else if (skips.length && respostas.length === 0) {
       semTag++;
+    } else if (skips.length && respostas.length > 0 && !proativo) {
+      // Caminho 2 da entrada: o turno do clique rodou ANTES de a tag existir
+      // (targeting_skip = silêncio), a tag chegou, e a IA respondeu na
+      // resposta do lead. Conta como entrada válida (caso Magle, 04/09 07:00).
+      entraram++; responderam++;
+      const texto = ((respostas[0].action_payload as { message?: string[] } | null)?.message ?? []).join("\n");
+      const prob: string[] = [];
+      if (SE_APRESENTA.test(texto)) prob.push("SE APRESENTOU");
+      if (LISTA_4(texto)) prob.push("REPETIU A LISTA");
+      if (PROMETE_AUDIO.test(texto)) prob.push("PROMETEU ÁUDIO");
+      if (prob.length) FAIL(`C: ${cid} — 1ª resposta da IA ${prob.join(" + ")}: ${JSON.stringify(texto.slice(0, 120))}`);
     }
   }
   if (entraram === 0) WARN(`C: nenhum lead entrou pelo fluxo desde ${DESDE} — nada a validar ainda`);
