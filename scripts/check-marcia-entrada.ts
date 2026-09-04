@@ -36,6 +36,8 @@ const WORKFLOW_ENTRADA = "fa30ba26-fc18-4f09-b445-c19a510bef45";
 const AI_STATUS_FIELD = "EVbZXt7c2AM5dqI9DTcb";
 const SNAP_PATH = "_planning/five-star-ricos-2026-07-21/marcia-config-snapshot-2026-09-03.json";
 const MARCADOR_ENTRADA = "QUEM ABRE A CONVERSA É A AUTOMAÇÃO";
+/** Deploy da guarda do gatilho proativo (H90, 04/09). Antes disso o disparo era esperado. */
+const FIX_PROATIVO_EM = "2026-09-04T02:10:00Z";
 const REGRA_ANTIGA_LISTA = "Peça os 4 JUNTOS";
 
 const SE_APRESENTA = /somos a m[áa]rcia|que bom que voc[êe] chegou|n[óo]s somos|especialistas em seguro de vida/i;
@@ -100,6 +102,14 @@ async function checkLeads(c: GHLClient): Promise<void> {
     const pausas = lista.filter((e) => e.action_type === "ai_paused" && /human_message/.test(String((e.action_payload as { reason?: string } | null)?.reason ?? "")));
     if (lista.some((e) => e.action_type === "deactivated_by_rule_skip")) desligados++;
 
+    // Gatilho proativo (tag → IA age) abrindo a conversa = a IA falou em
+    // paralelo com o workflow (1º lead do fluxo, 04/09 01:15: 9 mensagens).
+    const proativo = lista.find((e) => e.action_type === "reactive_trigger_fired");
+    const proativoDescartado = lista.some((e) => e.action_type === "proactive_dropped_entry_by_automation" || e.action_type === "reactive_trigger_skipped");
+    if (proativo && !proativoDescartado && respostas.some((r) => r.created_at > proativo.created_at && r.created_at < new Date(new Date(proativo.created_at).getTime() + 3 * 60_000).toISOString())) {
+      if (proativo.created_at < FIX_PROATIVO_EM) WARN(`C: ${cid} — gatilho proativo abriu a conversa ANTES do fix de 04/09 02:10 (corrigido)`);
+      else FAIL(`C: ${cid} — gatilho proativo por tag ABRIU a conversa (IA falou em paralelo com o workflow)`);
+    }
     if (entrada) {
       entraram++;
       const primeira = respostas.find((r) => r.created_at > entrada.created_at);

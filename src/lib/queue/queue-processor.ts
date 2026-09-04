@@ -872,6 +872,32 @@ async function processGroup(
   // targeting/membership (só contato que o agente atende chega aqui) e ANTES do
   // áudio, do fetch no Spark Leads e do LLM: a 1ª mensagem do lead não custa
   // nada e não gera efeito colateral. Fail-open: flag desligada = nada muda.
+  // H90 (fix bug observado em prod 2026-09-04 01:15, 1º lead do fluxo novo):
+  // com a entrada pela automação, turno PROATIVO nosso não pode abrir a
+  // conversa. O gatilho "tag adicionada → IA age" (H82) disparou quando o
+  // workflow pôs a tag, a IA se apresentou e pediu os dados em paralelo com a
+  // saudação do workflow, e o turno do clique (que chegou depois) achou a
+  // conversa ativa e respondeu de novo: 9 mensagens pro lead. O bloqueio
+  // primário está no reactive-trigger (nem enfileira); este é o cinto.
+  if (
+    (config as { entry_by_automation?: boolean | null }).entry_by_automation === true &&
+    group.syntheticTrigger &&
+    !manuallyResumed
+  ) {
+    log("log", `entrada pela automação: turno proativo (${group.syntheticTrigger.kind}:${group.syntheticTrigger.key}) descartado — quem abre é o workflow`);
+    const { error: logErr } = await supabase.from("execution_log").insert({
+      agent_id: agent.id,
+      conversation_id: group.conversationId,
+      contact_id: group.contactId,
+      location_id: group.locationId,
+      action_type: "proactive_dropped_entry_by_automation",
+      action_payload: { kind: group.syntheticTrigger.kind, key: group.syntheticTrigger.key },
+      success: true,
+    });
+    if (logErr) console.warn("[Processor] falha ao auditar descarte de proativo:", logErr.message);
+    return;
+  }
+
   if ((config as { entry_by_automation?: boolean | null }).entry_by_automation === true) {
     const maisAntiga = group.messages
       .map((m) => m.received_at)

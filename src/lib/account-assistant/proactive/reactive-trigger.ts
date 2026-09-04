@@ -225,7 +225,7 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
   // não tem targeting nem opera por evento de tag/campo de lead).
   const { data: agents } = await supabase
     .from("agents")
-    .select("id, type, audience, agent_configs(targeting_rules, outreach_config)")
+    .select("id, type, audience, agent_configs(targeting_rules, outreach_config, entry_by_automation)")
     .eq("location_id", ev.locationId)
     .eq("status", "active")
     .in("type", ["sales_agent", "recruitment_agent", "custom_agent"]);
@@ -243,6 +243,29 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
     const dedupKey = matchedTriggerKey(rules, ev);
     if (!dedupKey) continue;
     matched++;
+
+    // H90 (fix bug observado em prod 2026-09-04 01:15, 1º lead da entrada pela
+    // automação na conta da Márcia): com `entry_by_automation`, quem ABRE a
+    // conversa é o workflow do Spark Leads, e a tag que ele adiciona serve pra
+    // LIGAR o targeting, não pra disparar abridor. Sem esta guarda, a tag
+    // disparou este gatilho, a IA se apresentou e pediu os dados em paralelo
+    // com a saudação do workflow, e o turno do clique (que chegou depois)
+    // achou a conversa ativa e respondeu de novo: 9 mensagens pro lead.
+    {
+      const cfgRow = Array.isArray(a.agent_configs) ? a.agent_configs[0] : a.agent_configs;
+      if ((cfgRow as { entry_by_automation?: boolean | null } | null | undefined)?.entry_by_automation === true) {
+        await supabase.from("execution_log").insert({
+          agent_id: a.id,
+          location_id: ev.locationId,
+          contact_id: ev.contactId,
+          conversation_id: "",
+          action_type: "reactive_trigger_skipped",
+          action_payload: { reason: "entry_by_automation", event_key: dedupKey, kind: ev.kind },
+          success: true,
+        });
+        continue;
+      }
+    }
 
     // Guarda anti-reabertura: não re-abre contato que já tem conversa com ESTE
     // agente. Vale pros dois eventos que vêm do CONTACTUPDATE — que manda o
