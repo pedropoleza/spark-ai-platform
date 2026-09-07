@@ -581,27 +581,68 @@ export async function POST(request: NextRequest) {
     //   2) Senao, iterar por ordem (sales primeiro por historico) e selecionar
     //      o primeiro agente cujas targeting_rules batem
     //   3) Se nenhum bater, skip
-    const { data: allAgents } = await supabase
+    // H89 (2026-09-07): NÃO filtra status no SQL — traz os lead-facing da location
+    // e parte em JS. Custa zero (1-3 linhas por location) e é o que permite
+    // distinguir "conta nunca teve agente" de "conta TINHA e apagaram" logo abaixo.
+    const { data: agentRows } = await supabase
       .from("agents")
-      .select("id, type, location_id, agent_configs(debounce_seconds, targeting_rules, enabled_channels, deactivation_rules, working_hours)")
+      .select("id, type, status, name, updated_at, location_id, agent_configs(debounce_seconds, targeting_rules, enabled_channels, deactivation_rules, working_hours)")
       // MC-10: sem ORDER BY a iteração do roteamento era não-determinística com
       // 2+ agentes ativos (o comentário acima promete "sales primeiro" mas nada
       // garantia). created_at ASC = agente mais antigo ganha empates, estável.
       .order("created_at", { ascending: true })
       .eq("location_id", locationId)
-      .eq("status", "active")
       .in("type", ["sales_agent", "recruitment_agent", "custom_agent"]);
 
-    if (!allAgents || allAgents.length === 0) {
+    const allAgents = (agentRows || []).filter((a) => a.status === "active");
+
+    if (allAgents.length === 0) {
       console.log(`[Webhook] Skipped: no_active_agent for location ${locationId} (contact ${contactId}, ${channel})`);
       // Loop de qualidade 2026-06-29 (iter-1, redução de ruído de observabilidade):
       // lead-facing é pago/opt-in → a MAIORIA das locations não tem agente, então
       // este caso era ESPERADO mas virava admin_signal em TODO inbound (60.812
       // ocorrências afogando o painel, sem caminho de escalação/push). Rebaixado pra
-      // console-only. O caso real "agente que DEVIA estar ativo foi pausado" não era
-      // pego por um sinal de 60k/mês — é melhor via reclamação do rep + smoke.
-      // (O sinal IRMÃO 'nenhum agente casou targeting' fica — esse TEM push em occ>=20
-      // e pega o bug F27 do agente-mudo.) Ver _planning/daily-quality-loop/PLANO.md.
+      // console-only.
+      //
+      // H89 (2026-09-07, caso Jussara): o que aquele comentário deixou passar é que
+      // "nunca teve agente" e "TINHA agente e ele foi desligado" caíam no MESMO
+      // console.log mudo. A aposta declarada era detectar o 2º caso "via reclamação
+      // do rep" — e ela falhou de forma medível: o agente da Jussara
+      // (pGl5pqLLG0QDixANpFnP) foi pra inactive em 23/08 22:11 UTC e a conta ficou
+      // 12 DIAS sem ninguém perceber, até a cliente reclamar no grupo de suporte em
+      // 04/09. Zero linha em message_queue, zero em execution_log, zero admin_signal:
+      // o silêncio era total justamente porque o descarte acontece ANTES de enfileirar.
+      //
+      // A distinção é de graça (as linhas já vieram na query) e o sinal é raro por
+      // construção: só dispara em location que TEM agente lead-facing cadastrado e
+      // nenhum ativo — 9 locations na frota hoje, contra as ~150 sem agente nenhum,
+      // que seguem console-only. O dedup do recorder é por título → 1 linha por
+      // location, com `occurrence_count` virando o contador de leads que bateram na
+      // porta fechada e `off_since` dizendo desde quando.
+      const inativos = (agentRows || []).filter((a) => a.status !== "active");
+      if (inativos.length > 0) {
+        const offSince = inativos
+          .map((a) => a.updated_at)
+          .filter(Boolean)
+          .sort()
+          .reverse()[0] as string | undefined;
+        reportError({
+          title: `Inbound: location tem agente lead-facing, mas nenhum ATIVO (${locationId})`,
+          feature: "inbound-webhook",
+          severity: "medium",
+          description:
+            "Esta conta tem agente lead-facing cadastrado e TODOS estão inactive — o inbound do lead é descartado antes de entrar na fila. " +
+            "Se a pausa foi de propósito, ignore/arquive o sinal; se não, religue o agente. " +
+            "occurrence_count = quantos leads bateram na porta fechada desde então.",
+          metadata: {
+            location_id: locationId,
+            contact_id: contactId,
+            channel,
+            off_since: offSince ?? null,
+            agentes_inativos: inativos.map((a) => ({ id: a.id, name: a.name, type: a.type })),
+          },
+        });
+      }
       return NextResponse.json({ received: true, skipped: "no_active_agent" });
     }
     console.log(`[Webhook] Found ${allAgents.length} active agent(s): ${allAgents.map(a => a.type).join(", ")}`);

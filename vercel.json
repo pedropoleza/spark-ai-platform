@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/marina-daily-appointments",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/vigia-contas-mudas",
+      "schedule": "0 13 * * *"
     }
   ]
 }
