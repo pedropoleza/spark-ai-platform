@@ -102,6 +102,21 @@ const TARGETING_NOVO: TargetingRuleSet = {
           message_operator: "contains",
           message_value: "Quero me tornar um Agente Financeiro",
         },
+        // 3) JÁ ATENDIDO por este agente. A automação `agent_activated` carimba
+        //    `origem-anuncio-ia` no 1º turno, então esta folha mantém o lead
+        //    DENTRO nas mensagens seguintes.
+        //    Por que é necessário: com `gate_ongoing` o targeting é reavaliado
+        //    a cada turno, e a folha `message` fica NEUTRA quando a conversa já
+        //    está ativa (é gatilho de ativação, não de continuidade). Sobrava só
+        //    a atribuição — e lead ORGÂNICO que entrou pela FRASE do anúncio
+        //    virava no_match no 2º turno: a IA respondia e depois abandonava o
+        //    mesmo lead. É o "responde a 1ª e morre" do H51; medidos 3 casos em
+        //    13 dias (5VYxuZF8…, JEYuAdHO…, STyoprUN…).
+        //    Optei por ISTO em vez de `trigger_once` porque o trigger_once
+        //    desliga o targeting inteiro na conversa ativa — e levaria junto o
+        //    grupo de EXCLUSÃO, fazendo a tag `ia-desligada` da Sofia parar de
+        //    funcionar no meio da conversa, que é justamente quando ela usa.
+        { id: "ent-tag-atendido", type: "tag", tag: "origem-anuncio-ia" },
         // NOTA (26/08): `ia-ligada` NÃO entra aqui de propósito. Ela liga o
         // agente de NOVOS SEGUIDORES. O roteador de inbound escolhe o agente
         // mais ANTIGO entre os que casam (created_at ASC) — se os dois
@@ -151,7 +166,7 @@ async function main() {
 
   console.log("=== FASE 0 — Bianca (Five Rings) ===");
   console.log(`agente: ${agent.name} [${agent.status}]`);
-  console.log(`\nentrada (any): atribuição 'Paid' (1º toque) · frase curta do anúncio`);
+  console.log(`\nentrada (any): atribuição 'Paid' (1º toque) · frase curta · tag origem-anuncio-ia (continuidade)`);
   console.log(`exclusão (all, negadas): ${TAGS_EXCLUIDAS.join(" · ")}`);
   console.log(`calendário: ${CALENDARIO_1ON1} · slot_window_days: 14`);
   console.log(`nome: "${agent.name}" → "${NOME_NOVO}"`);
@@ -191,7 +206,7 @@ async function main() {
   console.log(`nome: ${ag2?.name}`);
   console.log(`entrada: ${nEnt} folha(s) | exclusão: ${nExc} folha(s) negadas`);
   console.log(`calendar_id: ${check?.calendar_id || "(vazio!)"} | slot_window_days: ${check?.slot_window_days}`);
-  const ok = nEnt === 2 && nExc === TAGS_EXCLUIDAS.length && check?.calendar_id === CALENDARIO_1ON1 && check?.slot_window_days === 14;
+  const ok = nEnt === 3 && nExc === TAGS_EXCLUIDAS.length && check?.calendar_id === CALENDARIO_1ON1 && check?.slot_window_days === 14;
   console.log(ok ? "\n✅ Fase 0 aplicada." : "\n❌ Estado divergente — conferir.");
   console.log("Rollback: npx tsx scripts/apply-bianca-fase0.ts --revert");
   process.exit(ok ? 0 : 1);

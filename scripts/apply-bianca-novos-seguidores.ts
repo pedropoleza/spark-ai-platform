@@ -61,6 +61,11 @@ const TARGETING: TargetingRuleSet = {
       rules: [
         { id: "ent-tag-seguidor", type: "tag", tag: "novo seguidor" },
         { id: "ent-tag-sdr", type: "tag", tag: "ia-ligada" },
+        // JÁ ATENDIDO: a automação carimba `origem-seguidor-ia` no 1º turno.
+        // Mantém o lead dentro nos turnos seguintes mesmo se a SDR tirar a tag
+        // de entrada. Sem isto, `gate_ongoing` faria a IA abandonar no meio
+        // (mesmo defeito medido no agente A em 08/09).
+        { id: "ent-tag-atendido", type: "tag", tag: "origem-seguidor-ia" },
       ],
     },
     {
