@@ -151,7 +151,40 @@ export async function POST(req: NextRequest) {
         // devolve o ponto do counter e, se a pausa derivou dele, despausa.
         // Enviesado de propósito pra NÃO calar (na dúvida, o rep recebe).
         if (chave.startsWith("proactive:")) {
-          const repId = chave.split(":")[2] || "";
+          // Fix bug observado em prod 2026-09-09: aqui era `chave.split(":")[2]`,
+          // supondo que a dedupeKey fosse `proactive:<fonte>:<repId>:...`. Não é.
+          // O dispatcher monta `proactive:rule:<RULE_id>:<targetId>:<min>:<bolha>`
+          // e o reminder-runner `proactive:reminder:<TASK_id>:<min>:<bolha>` — o
+          // índice 2 é o id da REGRA ou da TAREFA, nunca o do rep. O SELECT em
+          // rep_identities por esse uuid não achava nada, `cur` vinha undefined e
+          // o desconto NUNCA rodava: a proteção contra silêncio fantasma existia,
+          // estava ligada (cron de 5min no OS, tokens conferidos) e era inerte.
+          //
+          // O telefone vem no payload da falha e é a chave estável — resolve por
+          // ele, e só cai no parse da chave se o telefone faltar.
+          const fone = str(f.phone).trim();
+          let repId = "";
+          if (fone) {
+            const { data: porFone } = await supabase
+              .from("rep_identities")
+              .select("id")
+              .eq("phone", fone)
+              .maybeSingle();
+            repId = (porFone as { id?: string } | null)?.id || "";
+          }
+          if (!repId) {
+            const talvez = chave.split(":")[2] || "";
+            // uuid de rep tem 36 chars; id de regra/tarefa também — só aceita se
+            // existir mesmo em rep_identities, senão o UPDATE erra o alvo.
+            if (talvez) {
+              const { data: porId } = await supabase
+                .from("rep_identities")
+                .select("id")
+                .eq("id", talvez)
+                .maybeSingle();
+              repId = (porId as { id?: string } | null)?.id || "";
+            }
+          }
           if (repId) {
             try {
               const { data: rep } = await supabase

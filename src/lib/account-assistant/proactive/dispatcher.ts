@@ -22,7 +22,7 @@ import { trackAndCharge } from "@/lib/billing/charge";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
-import { loadSilenceDecision, recordProactiveSent, appendSilenceNote } from "./silence-gate";
+import { loadSilenceDecision, recordProactiveSent, appendSilenceNote, type ProactiveKind } from "./silence-gate";
 import type { LLMMessage } from "../llm-client";
 import { type ToolContext } from "../tools";
 import { runSparkbotTurn, buildToolCtx } from "../core/run-sparkbot-turn";
@@ -294,8 +294,18 @@ export async function dispatchRule(input: DispatchInput): Promise<DispatchResult
   // poder validar regras.
   // O gate roda APÓS o claim do slot pra não afogar o cron com chamadas
   // canceladas, e ANTES do LLM (pra não desperdiçar tokens).
+  // Classificação do proativo pro silence-gate (review 2026-09-08, caso Milton).
+  // NÃO por nome da regra: o H69 já registra que comparar `rule.name` literal é
+  // uma mina (renomear no banco desliga o briefing calado) — não vamos criar a
+  // segunda. Vale a NATUREZA da regra:
+  //   scheduled = disparo por relógio, aviso informativo → broadcast (não conta)
+  //   reactive  = responde a um evento e pergunta algo   → nudge (conta)
+  // Ninguém responde "ok" pro Resumo matinal; tratar esse silêncio como
+  // desinteresse pausou 3 reps ativos.
+  const proactiveKind: ProactiveKind =
+    rule.rule_type === "scheduled" ? "broadcast" : "nudge";
   const silenceDecision = mode === "real"
-    ? await loadSilenceDecision(supabase, rep.id)
+    ? await loadSilenceDecision(supabase, rep.id, proactiveKind)
     : null;
   if (silenceDecision && !silenceDecision.canSend) {
     console.log(

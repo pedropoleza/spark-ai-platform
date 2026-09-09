@@ -157,11 +157,37 @@ async function buildRepInput(parsed: ParsedStevoMessage): Promise<RepInput | nul
       const { text } = await transcribeAudioFromBuffer(buffer, parsed.mimetype);
       return { kind: "audio", transcribed_text: text };
     } catch (err) {
-      console.warn(
-        "[stevo-handler] transcrição de áudio falhou:",
-        err instanceof Error ? err.message : err,
-      );
-      return null;
+      // Fix bug observado em prod 2026-09-09: aqui era `return null`, e o caller
+      // faz `return` — ou seja, DESCARTE TOTAL E SILENCIOSO. O rep mandava um
+      // áudio e não acontecia nada: sem resposta, sem sinal, sem rastro no
+      // histórico. Ficou assim por 3 dias quando a chave da OpenAI ficou sem
+      // crédito (06/09 15:12 em diante), e reps que só falam por áudio — a
+      // maioria — simplesmente acharam que o SparkBot tinha morrido.
+      //
+      // Agora o turno SEGUE com um texto honesto no lugar do áudio: o modelo
+      // responde que não conseguiu ouvir e pede por escrito, que é infinitamente
+      // melhor que silêncio. Mesma escola do H72 (áudio que chega íntegro não
+      // pode virar "não consegui ouvir") — aqui é o inverso: áudio que a gente
+      // REALMENTE não ouviu não pode virar nada.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[stevo-handler] transcrição de áudio falhou:", msg);
+      reportError({
+        title: "SparkBot: transcrição de áudio falhou (rep avisado)",
+        feature: "sparkbot-audio",
+        severity: "high",
+        description:
+          "O áudio do rep não pôde ser transcrito. O turno segue com aviso honesto em vez de ser descartado. " +
+          "Se o volume subir, conferir crédito/quota da API de transcrição — foi a causa em 09/2026.",
+        error: err,
+        metadata: { message_id: parsed.messageId, mimetype: parsed.mimetype },
+      });
+      return {
+        kind: "text",
+        text:
+          "[o rep mandou um ÁUDIO e a transcrição falhou — você NÃO tem o conteúdo] " +
+          "Avise que não conseguiu ouvir esse áudio agora e peça pra ele mandar por escrito " +
+          "(ou tentar o áudio de novo em instantes). Não invente o que ele disse.",
+      };
     }
   }
 

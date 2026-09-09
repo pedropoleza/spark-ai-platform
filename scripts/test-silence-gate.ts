@@ -1,82 +1,129 @@
-// Golden test do silence-gate (Onda 1 · V2).
-// Roda: npx tsx -r tsconfig-paths/register scripts/test-silence-gate.ts
-//
-// Garante: (1) NUDGE mantém o comportamento (soft@1, hard@2, pausa@3);
-// (2) lembrete REQUESTED nunca ameaça, nunca incrementa, mas respeita a pausa;
-// (3) o recado de silêncio vai DEPOIS da mensagem, nunca antes.
+/**
+ * Golden test do silence-gate (review 2026-09-08, caso Milton De Abreu).
+ * Roda: npx tsx -r tsconfig-paths/register scripts/test-silence-gate.ts
+ *
+ * O caso: o Milton agendou 2 reuniões e registrou um recrutamento nos dias 02 e
+ * 03/09 (uso pesado). Depois não respondeu ao briefing de sexta, ao de segunda e
+ * a um "como foi a reunião?" — 3 proativos → pausa automática no dia 08. No dia
+ * seguinte ele reclamou que o SparkBot tinha parado de funcionar.
+ *
+ * Duas coisas estavam erradas e as duas viraram teste aqui:
+ *   1. briefing conta como silêncio (ninguém responde "ok" pro bom-dia)
+ *   2. rep que escreveu esta semana pode ser pausado por silêncio
+ */
+import { checkSilenceGate, type SilenceState } from "@/lib/account-assistant/proactive/silence-gate";
 
-import {
-  checkSilenceGate,
-  appendSilenceNote,
-  type SilenceState,
-} from "@/lib/account-assistant/proactive/silence-gate";
-
-const st = (counter: number, paused = false, warned = false, pauseSource: string | null = null): SilenceState => ({
-  consecutive_proactive_without_reply: counter,
-  proactive_paused_at: paused ? new Date().toISOString() : null,
-  proactive_warned_at: warned ? new Date().toISOString() : null,
-  proactive_pause_source: pauseSource,
-});
-
-interface Case { name: string; ok: boolean }
-const cases: Case[] = [];
-function check(name: string, cond: boolean) { cases.push({ name, ok: cond }); }
-
-// ── NUDGE (comportamento atual preservado) ──
-const n0 = checkSilenceGate(st(0), "nudge");
-check("nudge c0 → envia, sem warning, next 1", n0.canSend === true && n0.canSend && n0.warningNote === null && n0.nextCounter === 1);
-const n1 = checkSilenceGate(st(1), "nudge");
-// Copy do H43 (humanização 2026-06-24): o tom antigo ("⚠️ Último aviso: vou
-// pausar") foi o pior ofensor de naturalidade e virou registro de colega. O
-// teste checava a copy ANTIGA e falhava desde então — agora afere o texto vivo.
-check("nudge c1 → soft warning, next 2", n1.canSend === true && !!n1.warningNote && n1.warningNote!.includes("meio sumido") && n1.nextCounter === 2);
-const n2 = checkSilenceGate(st(2), "nudge");
-check("nudge c2 → hard warning, next 3", n2.canSend === true && !!n2.warningNote && n2.warningNote!.includes("dou um tempo nos lembretes") && n2.nextCounter === 3);
-const n3 = checkSilenceGate(st(3), "nudge");
-check("nudge c3 → não envia, pausa", n3.canSend === false && n3.reason === "should_pause" && n3.shouldSetPaused === true);
-const np = checkSilenceGate(st(1, true), "nudge");
-check("nudge pausado → não envia", np.canSend === false && np.reason === "already_paused");
-const n1w = checkSilenceGate(st(1, false, true), "nudge");
-check("nudge c1 já warned → sem warning duplicado, next 2", n1w.canSend === true && n1w.warningNote === null && n1w.nextCounter === 2);
-
-// ── REQUESTED (lembrete que o rep pediu — regra de ouro) ──
-const r0 = checkSilenceGate(st(0), "requested");
-check("requested c0 → envia limpo, NÃO incrementa", r0.canSend === true && r0.warningNote === null && r0.nextCounter === 0);
-const r2 = checkSilenceGate(st(2), "requested");
-check("requested c2 → SEM warning (não ameaça), NÃO incrementa", r2.canSend === true && r2.warningNote === null && r2.nextCounter === 2 && r2.markWarned === false);
-const r3 = checkSilenceGate(st(3), "requested");
-check("requested c3 → ainda envia limpo (não pune lembrete pedido)", r3.canSend === true && r3.warningNote === null && r3.nextCounter === 3);
-// 2026-08-14: pausa de SILÊNCIO não segura mais lembrete PEDIDO (sinal de
-// 08/08: "O rep PEDIU esse lembrete e não recebeu" — task 3 dias em defer até
-// expirar como failed). Pausa de loop_guard (IA×IA) continua barrando tudo.
-const rpSil = checkSilenceGate(st(2, true), "requested");
-check(
-  "requested + pausa de SILÊNCIO → FURA (rep pediu, rep recebe)",
-  rpSil.canSend === true && rpSil.warningNote === null && rpSil.nextCounter === 2 && rpSil.markWarned === false,
-);
-const rpLoop = checkSilenceGate(st(2, true, false, "loop_guard"), "requested");
-check(
-  "requested + pausa de LOOP_GUARD → respeita (segurança dura)",
-  rpLoop.canSend === false && rpLoop.reason === "already_paused",
-);
-const npSil = checkSilenceGate(st(1, true), "nudge");
-check("nudge + pausa de silêncio → continua barrado", npSil.canSend === false && npSil.reason === "already_paused");
-
-// ── Ordem: o recado vem DEPOIS do conteúdo ──
-// Caso real (Nathalia Barbosa, 05/08): o Resumo matinal chegou abrindo com "Se
-// não rolar resposta hoje eu dou um tempo nos lembretes…" e só embaixo o
-// "☀️ Bom dia". A primeira linha do dia virava quase-cobrança.
-const briefing = "☀️ Bom dia, *Nathalia*! Dia cheio pela frente.\n\n📅 *4 reunião(ões) hoje:*";
-const comNota = appendSilenceNote(briefing, n2.canSend ? n2.warningNote : null);
-check("mensagem vem primeiro", comNota.startsWith("☀️ Bom dia"));
-check("recado vem no fim", comNota.trimEnd().endsWith("é só me chamar."));
-check("separado por linha em branco", comNota.includes("*4 reunião(ões) hoje:*\n\ndou um tempo") === false && comNota.split("\n\n").length >= 3);
-check("sem nota, a mensagem sai intacta", appendSilenceNote(briefing, null) === briefing);
-check("nota vazia não deixa rastro", appendSilenceNote(briefing, "   ") === briefing);
-check("não duplica quebra de linha", !appendSilenceNote("texto\n\n", "recado").includes("\n\n\n"));
+const AGORA = new Date("2026-09-08T12:00:00Z").getTime();
+const DIA = 24 * 60 * 60 * 1000;
+const haDias = (n: number) => new Date(AGORA - n * DIA).toISOString();
 
 let pass = 0, fail = 0;
-console.log("=== Golden test: silence-gate (Onda 1) ===\n");
-for (const c of cases) { console.log(`${c.ok ? "✅" : "❌"} ${c.name}`); if (c.ok) pass++; else fail++; }
-console.log(`\n${pass}/${pass + fail} OK`);
+function check(nome: string, ok: boolean, detalhe = "") {
+  console.log(`${ok ? "✅" : "❌"} ${nome}${ok || !detalhe ? "" : ` — ${detalhe}`}`);
+  ok ? pass++ : fail++;
+}
+
+const base = (over: Partial<SilenceState> = {}): SilenceState => ({
+  consecutive_proactive_without_reply: 0,
+  proactive_paused_at: null,
+  proactive_warned_at: null,
+  proactive_pause_source: null,
+  last_inbound_at: null,
+  ...over,
+});
+
+// ═══ 1. BRIEFING NÃO CONTA (broadcast) ═══
+console.log("1. Briefing (broadcast) não conta como silêncio");
+{
+  for (const cur of [0, 1, 2, 3, 9]) {
+    const d = checkSilenceGate(base({ consecutive_proactive_without_reply: cur }), "broadcast", AGORA);
+    check(
+      `counter=${cur} → envia e NÃO incrementa`,
+      d.canSend === true && d.nextCounter === cur && d.warningNote === null,
+      JSON.stringify(d),
+    );
+  }
+  // e não ameaça nunca
+  const d2 = checkSilenceGate(base({ consecutive_proactive_without_reply: 2 }), "broadcast", AGORA);
+  check("broadcast nunca gruda aviso de silêncio", d2.canSend === true && d2.warningNote === null);
+}
+
+// ═══ 2. BROADCAST RESPEITA A PAUSA (anti-ban) ═══
+console.log("\n2. Broadcast respeita pausa de quem sumiu de verdade");
+{
+  const d = checkSilenceGate(base({ proactive_paused_at: haDias(1) }), "broadcast", AGORA);
+  check("rep pausado NÃO recebe briefing diário", d.canSend === false, JSON.stringify(d));
+  // requested continua furando a pausa (H-anterior, regressão)
+  const r = checkSilenceGate(base({ proactive_paused_at: haDias(1) }), "requested", AGORA);
+  check("lembrete PEDIDO continua furando a pausa", r.canSend === true);
+  // loop_guard barra tudo, inclusive requested
+  const lg = checkSilenceGate(
+    base({ proactive_paused_at: haDias(1), proactive_pause_source: "loop_guard" }),
+    "requested",
+    AGORA,
+  );
+  check("pausa de loop_guard barra até o pedido", lg.canSend === false);
+}
+
+// ═══ 3. REP QUE ESCREVEU NA SEMANA NÃO É PAUSADO ═══
+console.log("\n3. Rep vivo não é pausado (janela de 7 dias)");
+{
+  // O Milton: escreveu 03/09, pausado 08/09 = 5 dias
+  const milton = base({ consecutive_proactive_without_reply: 3, last_inbound_at: haDias(5) });
+  const d = checkSilenceGate(milton, "nudge", AGORA);
+  check("PROD Milton (escreveu há 5 dias, counter=3) → NÃO pausa", d.canSend === true, JSON.stringify(d));
+  check("e segura o contador no teto em vez de subir", d.canSend === true && d.nextCounter === 3);
+
+  const sumido = base({ consecutive_proactive_without_reply: 3, last_inbound_at: haDias(30) });
+  const d2 = checkSilenceGate(sumido, "nudge", AGORA);
+  check("quem sumiu há 30 dias → PAUSA (anti-ban preservado)", d2.canSend === false && d2.reason === "should_pause");
+
+  const nunca = base({ consecutive_proactive_without_reply: 3, last_inbound_at: null });
+  const d3 = checkSilenceGate(nunca, "nudge", AGORA);
+  check("rep que nunca escreveu → PAUSA", d3.canSend === false);
+
+  // borda exata da janela
+  const borda = base({ consecutive_proactive_without_reply: 3, last_inbound_at: haDias(6.9) });
+  check("6,9 dias ainda é 'vivo'", checkSilenceGate(borda, "nudge", AGORA).canSend === true);
+  const fora = base({ consecutive_proactive_without_reply: 3, last_inbound_at: haDias(7.1) });
+  check("7,1 dias já pausa", checkSilenceGate(fora, "nudge", AGORA).canSend === false);
+
+  const lixo = base({ consecutive_proactive_without_reply: 3, last_inbound_at: "data-invalida" });
+  check("last_inbound_at inválido → trata como sumido (pausa)", checkSilenceGate(lixo, "nudge", AGORA).canSend === false);
+}
+
+// ═══ 4. NUDGE SEGUE COMO ERA (regressão) ═══
+console.log("\n4. Nudge não regrediu");
+{
+  const d0 = checkSilenceGate(base({ consecutive_proactive_without_reply: 0 }), "nudge", AGORA);
+  check("counter=0 → envia limpo, vai pra 1", d0.canSend === true && d0.nextCounter === 1 && d0.warningNote === null);
+  const d1 = checkSilenceGate(base({ consecutive_proactive_without_reply: 1 }), "nudge", AGORA);
+  check("counter=1 → aviso leve, vai pra 2", d1.canSend === true && !!d1.warningNote && d1.nextCounter === 2);
+  const d1w = checkSilenceGate(base({ consecutive_proactive_without_reply: 1, proactive_warned_at: haDias(1) }), "nudge", AGORA);
+  check("counter=1 já avisado → não repete o aviso", d1w.canSend === true && d1w.warningNote === null);
+  const d2 = checkSilenceGate(base({ consecutive_proactive_without_reply: 2 }), "nudge", AGORA);
+  check("counter=2 → aviso forte, vai pra 3", d2.canSend === true && !!d2.warningNote && d2.nextCounter === 3);
+}
+
+// ═══ 5. O CENÁRIO COMPLETO DO MILTON, PASSO A PASSO ═══
+console.log("\n5. Replay do caso Milton com a política nova");
+{
+  let st = base({ last_inbound_at: haDias(5) }); // escreveu 03/09
+  const passos: Array<[string, "broadcast" | "nudge"]> = [
+    ["briefing sexta 04/09", "broadcast"],
+    ["briefing segunda 07/09", "broadcast"],
+    ["'como foi a revisão com a Sylvia?' 08/09", "nudge"],
+  ];
+  let pausou = false;
+  for (const [nome, kind] of passos) {
+    const d = checkSilenceGate(st, kind, AGORA);
+    if (!d.canSend) { pausou = true; console.log(`   ⛔ pausou em: ${nome}`); break; }
+    st = { ...st, consecutive_proactive_without_reply: d.nextCounter };
+    console.log(`   ✔ ${nome} → enviado (counter ${d.nextCounter})`);
+  }
+  check("Milton NÃO seria pausado", !pausou);
+  check("e o contador termina em 1 (só o nudge contou)", st.consecutive_proactive_without_reply === 1, `${st.consecutive_proactive_without_reply}`);
+}
+
+console.log(`\n${pass}/${pass + fail} OK (${Math.round((pass / (pass + fail)) * 100)}%)`);
 if (fail > 0) process.exit(1);

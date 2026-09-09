@@ -199,6 +199,35 @@ async function checkRunnerHeartbeat(
 const INBOUND_SILENCE_DAY_MIN = 75;
 const INBOUND_SILENCE_NIGHT_MIN = 240;
 
+/**
+ * Pergunta ao Spark OS se a sessão de WhatsApp do SparkBot está entregando.
+ * `null` = não deu pra saber (sem env, OS fora, timeout) — nunca vira "está ok".
+ */
+async function checarSessaoNoOS(): Promise<"entregando" | "caiu" | null> {
+  const sendUrl = process.env.SPARK_OS_WA_URL?.trim();
+  const token = process.env.SPARK_OS_WA_TOKEN?.trim();
+  // A location do número do SparkBot. `ASSISTANT_HUB_LOCATION_ID` é legado mas é
+  // exatamente esse valor em prod (RBFxlEQZobaDjlF2i5px = a sessão no engine), e
+  // usá-lo evita exigir env nova só pra este alarme.
+  const loc =
+    process.env.SPARKBOT_WA_LOCATION_ID?.trim() ||
+    process.env.ASSISTANT_HUB_LOCATION_ID?.trim();
+  if (!sendUrl || !token || !loc) return null;
+  try {
+    const origin = new URL(sendUrl).origin;
+    const r = await fetch(
+      `${origin}/api/ingest/wa/session-status?location=${encodeURIComponent(loc)}`,
+      { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000) },
+    );
+    if (!r.ok) return null;
+    const j = (await r.json()) as { ok?: boolean; entregando?: boolean };
+    if (!j?.ok || typeof j.entregando !== "boolean") return null;
+    return j.entregando ? "entregando" : "caiu";
+  } catch {
+    return null;
+  }
+}
+
 /** Detecta silêncio de INBOUND (nada de rep chegando/processando). Grava signal crítico. */
 async function checkInboundSilence(
   supabase: ReturnType<typeof createAdminClient>,
@@ -227,6 +256,28 @@ async function checkInboundSilence(
   const inboundMin = Math.round((nowMs - new Date(lastMsg.created_at as string).getTime()) / 60000);
   if (inboundMin <= threshold) return { silent: false, minutes: inboundMin };
 
+  // ── PROVA de que o canal quebrou (fix 2026-09-09) ────────────────────────
+  // Até aqui, "ninguém escreveu há X min" bastava pra gritar CRITICAL. Não basta:
+  // silêncio de inbound é o estado NORMAL de madrugada, de fim de semana e de
+  // qualquer hora em que os reps estão em reunião. O sinal acumulou **9.440
+  // disparos** e virou ruído — e quando o número REALMENTE deslogou em 31/08
+  // (~20h fora do ar), ele estava no meio de milhares de falsos e ninguém olhou.
+  // Alarme que grita sempre não avisa nada.
+  //
+  // A verdade sobre "o número está de pé?" mora no engine, não aqui: quem sabe é
+  // `wa_sessions.status`, que o webhook do motor mantém. Perguntamos ao Spark OS
+  // (porta `GET /api/ingest/wa/session-status`, bearer da fonte `sparkbot`).
+  //
+  // ⚠️ NÃO use `metadata.delivery_failed` das mensagens pra isso: parece o sinal
+  // certo e não é. Medido em 09/09 — o OS notificou 204 falhas de entrega e só 2
+  // mensagens ficaram marcadas aqui (a resolução do alvo no callback erra ~99%
+  // das vezes). Um alarme apoiado nesse campo NUNCA dispararia; foi testado
+  // contra o apagão real de 31/08 e ficou mudo.
+  const saude = await checarSessaoNoOS();
+  if (saude === "entregando") return { silent: false, minutes: inboundMin };
+  // Indeterminado (OS fora, sem env, timeout) → não inventa alarme nem engole:
+  // segue pro sinal, mas a descrição diz que não deu pra confirmar.
+
   // Contexto p/ diagnóstico: o POST do webhook ainda chega, ou parou de vez?
   const { data: lastSample } = await supabase
     .from("stevo_webhook_samples")
@@ -246,7 +297,10 @@ async function checkInboundSilence(
     source: "system",
     title: "SparkBot inbound MUDO — sem mensagens de rep chegando",
     description:
-      `Nenhuma mensagem de rep PROCESSADA há ${inboundMin}min (threshold ${threshold}min, ${isDay ? "comercial" : "madrugada"} ET). ` +
+      `Nenhuma mensagem de rep PROCESSADA há ${inboundMin}min (threshold ${threshold}min, ${isDay ? "comercial" : "madrugada"} ET) ` +
+      (saude === "caiu"
+        ? `E o engine confirma que a sessão NÃO está entregando (wa_sessions.status ≠ connected) — o número caiu. `
+        : `E não deu pra confirmar a saúde da sessão com o Spark OS (porta fora/sem env) — confira à mão antes de agir. `) +
       (canalMorto
         ? `O webhook do Stevo TAMBÉM parou de chegar (último POST há ${webhookMin ?? "?"}min) → canal de inbound caiu. `
         : `O webhook AINDA chega (último POST há ${webhookMin}min) mas nada processa → rejeição por token, parser, ou hub não resolvido. `) +
@@ -259,6 +313,7 @@ async function checkInboundSilence(
       canal_morto: canalMorto,
       threshold_min: threshold,
       period: isDay ? "day" : "night",
+      saude_sessao: saude ?? "indeterminado",
     },
   });
   return { silent: true, minutes: inboundMin };

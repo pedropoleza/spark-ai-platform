@@ -25,13 +25,20 @@ function getExtensionFromUrl(url: string): string {
   }
 }
 
-function getExtensionFromMime(mime: string): string {
+/** Exportada só pro teste — a regra mime→extensão é o que quebrou em prod. */
+export function getExtensionFromMime(mime: string): string {
   const m = mime.toLowerCase().split(";")[0].trim();
   const map: Record<string, string> = {
     "audio/ogg": "ogg",
     "audio/mpeg": "mp3",
     "audio/mp3": "mp3",
-    "audio/mp4": "mp4",
+    // Fix bug observado em prod 2026-09-08 (áudios da Raquel Moura): mapear
+    // audio/mp4 → "mp4" faz o Whisper recusar com "Invalid file format", mesmo
+    // com mp4 na lista de suportados — ele valida o CONTAINER contra a extensão
+    // e um .mp4 é esperado como contêiner de vídeo. audio/mp4 É m4a (MPEG-4
+    // só-áudio), que é o que o WhatsApp manda. Com a extensão certa transcreve.
+    // video/mp4 abaixo continua "mp4" — lá o contêiner é de vídeo mesmo.
+    "audio/mp4": "m4a",
     "audio/m4a": "m4a",
     "audio/wav": "wav",
     "audio/webm": "webm",

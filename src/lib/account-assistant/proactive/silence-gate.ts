@@ -45,6 +45,31 @@ export interface SilenceState {
   proactive_warned_at: string | null;
   /** 'loop_guard' = pausa de segurança dura; null/outros = pausa de silêncio. */
   proactive_pause_source?: string | null;
+  /** Última vez que o rep ESCREVEU (qualquer canal). Ver JANELA_REP_VIVO. */
+  last_inbound_at?: string | null;
+}
+
+/**
+ * Enquanto o rep escreveu dentro desta janela, ele NÃO é pausado por silêncio
+ * (review 2026-09-08, caso Milton De Abreu).
+ *
+ * O contador conta proativo sem resposta, mas "sem resposta" não é sinônimo de
+ * "sumiu". O Milton agendou 2 reuniões e registrou um recrutamento nos dias
+ * 02 e 03/09 — uso pesado. Depois não respondeu ao briefing de sexta, ao de
+ * segunda e a um "como foi a reunião?": 3 proativos, pausa automática no dia 08.
+ * No dia seguinte ele reclamou que o SparkBot tinha parado.
+ *
+ * Não responder a aviso informativo é o comportamento NORMAL de quem está
+ * ocupado. Quem escreveu na última semana está demonstravelmente vivo, e a
+ * razão da pausa (não queimar o número com quem sumiu) não se aplica.
+ */
+const JANELA_REP_VIVO_MS = 7 * 24 * 60 * 60 * 1000;
+
+function repEscreveuRecentemente(state: SilenceState, agora: number): boolean {
+  if (!state.last_inbound_at) return false;
+  const t = new Date(state.last_inbound_at).getTime();
+  if (Number.isNaN(t)) return false;
+  return agora - t < JANELA_REP_VIVO_MS;
 }
 
 /**
@@ -59,7 +84,19 @@ export interface SilenceState {
  *      depois chamar recordProactiveSent(rep_id, decision)
  *   4. Se canSend=false: pular envio. Se shouldSetPaused, pausar.
  */
-export type ProactiveKind = "nudge" | "requested";
+/**
+ * - `nudge`     — proativo que faz uma PERGUNTA ("como foi a call?"). Conta.
+ * - `requested` — o rep agendou ("me lembra sábado 8h"). Não conta, fura a pausa.
+ * - `broadcast` — aviso informativo que não pede resposta (Resumo matinal).
+ *                 NÃO conta e NÃO avisa, mas RESPEITA a pausa: quem sumiu de
+ *                 verdade não deve seguir recebendo briefing diário (anti-ban).
+ *
+ * O `broadcast` nasceu do caso Milton (review 2026-09-08): dois briefings e um
+ * pós-reunião sem resposta pausaram um rep que tinha usado o bot pesado 4 dias
+ * antes. Ninguém responde "ok" pra um "Bom dia, você tem 2 reuniões hoje" — e
+ * tratar esse silêncio como desinteresse calou 3 reps ativos.
+ */
+export type ProactiveKind = "nudge" | "requested" | "broadcast";
 
 /**
  * Junta a mensagem com o recado de silêncio — o recado vem DEPOIS.
@@ -81,6 +118,7 @@ export function appendSilenceNote(message: string, note: string | null): string 
 export function checkSilenceGate(
   state: SilenceState,
   kind: ProactiveKind = "nudge",
+  agoraMs: number = Date.now(),
 ): SilenceDecision {
   if (state.proactive_paused_at) {
     // 2026-08-14 (sinal de 08/08: "O rep PEDIU esse lembrete e não recebeu"):
@@ -112,7 +150,18 @@ export function checkSilenceGate(
     return { canSend: true, warningNote: null, nextCounter: cur, markWarned: false };
   }
 
+  // Aviso informativo: entrega e segue a vida. Não incrementa nem ameaça.
+  if (kind === "broadcast") {
+    return { canSend: true, warningNote: null, nextCounter: cur, markWarned: false };
+  }
+
   if (cur >= 3) {
+    // Rep que escreveu na última semana está vivo — segura o contador no teto
+    // em vez de pausar. Sem isso, quem usa o bot em rajada (e ignora os avisos
+    // entre uma rajada e outra) era calado justamente quando voltava a precisar.
+    if (repEscreveuRecentemente(state, agoraMs)) {
+      return { canSend: true, warningNote: null, nextCounter: cur, markWarned: false };
+    }
     return { canSend: false, reason: "should_pause", shouldSetPaused: true };
   }
 
@@ -189,7 +238,7 @@ export async function loadSilenceDecision(
   const { data: rep, error } = await supabase
     .from("rep_identities")
     .select(
-      "consecutive_proactive_without_reply, proactive_paused_at, proactive_warned_at, proactive_pause_source",
+      "consecutive_proactive_without_reply, proactive_paused_at, proactive_warned_at, proactive_pause_source, last_inbound_at",
     )
     .eq("id", repId)
     .single();
@@ -215,5 +264,6 @@ export async function loadSilenceDecision(
     proactive_paused_at: rep.proactive_paused_at,
     proactive_warned_at: rep.proactive_warned_at,
     proactive_pause_source: rep.proactive_pause_source ?? null,
+    last_inbound_at: rep.last_inbound_at ?? null,
   }, kind);
 }
