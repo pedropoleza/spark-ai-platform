@@ -54,6 +54,24 @@ async function main() {
     ok(`${new URL(u).hostname}`, validateExternalUrl(u).ok);
   }
 
+  console.log("\n2b) Host do Spark OS (mídia do WhatsApp pela rota do OS)");
+  {
+    const antes = process.env.SPARK_OS_WA_URL;
+    process.env.SPARK_OS_WA_URL = "https://spark-os-green.vercel.app/api/ingest/wa/send";
+    const url = "https://spark-os-green.vercel.app/api/integrations/wa/media/jA6uzx6tONyTeocxw4Cj/6b98bc34.ogg";
+    ok("host do OS liberado (derivado de SPARK_OS_WA_URL)", validateExternalUrl(url).ok);
+    ok(
+      "OUTRO app .vercel.app continua bloqueado (SSRF)",
+      !validateExternalUrl("https://evil-app.vercel.app/x.ogg").ok,
+    );
+    process.env.SPARK_OS_WA_URL = "";
+    ok("sem a env configurada, o host do OS NÃO é liberado", !validateExternalUrl(url).ok);
+    process.env.SPARK_OS_WA_URL = "isto-nao-e-url";
+    ok("env com lixo não derruba nem libera nada", !validateExternalUrl(url).ok);
+    if (antes === undefined) delete process.env.SPARK_OS_WA_URL;
+    else process.env.SPARK_OS_WA_URL = antes;
+  }
+
   console.log("\n3) A defesa contra SSRF continua de pé");
   for (const [u, motivo] of [
     ["https://169.254.169.254/latest/meta-data/", "metadata da nuvem"],

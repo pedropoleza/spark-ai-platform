@@ -58,6 +58,32 @@ const ALLOWED_HOST_PATTERNS: RegExp[] = [
   /\.r2\.cloudflarestorage\.com$/i,
 ];
 
+
+/**
+ * Host do Spark OS, derivado da MESMA env que a ponte de WhatsApp já usa
+ * (`SPARK_OS_WA_URL`). O OS serve a mídia do WhatsApp por rota própria
+ * (`/api/integrations/wa/media/<location>/<uuid>`), então parte dos áudios do
+ * lead chega de lá em vez do CDN do Spark Leads.
+ *
+ * Fix bug observado em prod 2026-09-15 (caso Márcia): 2 áudios da conta dela
+ * (05/09 e 09/09) morreram em `host not in allowlist: spark-os-green.vercel.app`.
+ * Mesma classe do H73 (o CDN `filesafe.space` que faltava aqui) — quando um
+ * transporte novo entra, o host dele precisa entrar junto.
+ *
+ * Derivado da env, e não hardcoded, pra acompanhar troca de domínio do OS. E
+ * host EXATO: liberar `.vercel.app` seria um buraco de SSRF (qualquer pessoa
+ * publica um app nesse domínio).
+ */
+function hostDoSparkOs(): string | null {
+  const raw = process.env.SPARK_OS_WA_URL?.trim();
+  if (!raw) return null;
+  try {
+    return new URL(raw).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 /** Verifica se host está em range IP privado (best-effort string-based — não resolve DNS). */
 function isPrivateIpString(host: string): boolean {
   // IPv4 literal
@@ -126,6 +152,9 @@ export function validateExternalUrl(url: string): UrlValidation {
 
   // Em prod, host deve bater allowlist
   if (ALLOWED_HOST_PATTERNS.some((re) => re.test(host))) return { ok: true };
+  // Infra nossa: o Spark OS serve mídia do WhatsApp por rota própria.
+  const osHost = hostDoSparkOs();
+  if (osHost && host.toLowerCase() === osHost) return { ok: true };
 
   return { ok: false, reason: `host not in allowlist: ${host}` };
 }
