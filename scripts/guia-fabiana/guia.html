@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>As 2 configurações da IA da Fabiana</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  :root {
+    --violeta: #1675F2;
+    --violeta-escuro: #0D4FB8;
+    --violeta-suave: #EEF5FF;
+    --violeta-linha: #D4E5FF;
+    --coral: #E14B5A;
+    --coral-suave: #FFF2F3;
+    --verde: #0E9B6A;
+    --verde-suave: #E9F8F2;
+    --tinta: #1A1526;
+    --cinza: #6E6880;
+    --cinza-claro: #9A94A8;
+    --linha: #ECE9F2;
+    --painel: #FBFAFD;
+  }
+
+  body {
+    font-family: "Avenir Next", "SF Pro Text", -apple-system, "Helvetica Neue", sans-serif;
+    color: var(--tinta);
+    font-size: 10.5pt;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .pagina {
+    width: 210mm; height: 297mm;
+    position: relative; overflow: hidden;
+    page-break-after: always;
+    background: #fff;
+  }
+  .pagina:last-child { page-break-after: auto; }
+  .corpo { padding: 22mm 20mm 20mm; }
+
+  /* ── capa ─────────────────────────────────────────── */
+  .capa-fundo {
+    position: absolute; inset: 0 0 auto 0; height: 148mm;
+    background: linear-gradient(150deg, #3B8CFF 0%, #1675F2 42%, #0B4FC0 100%);
+  }
+  .capa-fundo::after {
+    content: ""; position: absolute; right: -50mm; top: -40mm;
+    width: 140mm; height: 140mm; border-radius: 50%;
+    background: rgba(255,255,255,.07);
+  }
+  .capa-fundo::before {
+    content: ""; position: absolute; left: -30mm; bottom: -55mm;
+    width: 100mm; height: 100mm; border-radius: 50%;
+    background: rgba(255,255,255,.05);
+  }
+  .capa-conteudo { position: relative; padding: 30mm 20mm 0; color: #fff; }
+  .selo {
+    display: inline-block; padding: 5px 13px; border-radius: 100px;
+    background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.24);
+    font-size: 8.5pt; letter-spacing: .09em; text-transform: uppercase; font-weight: 600;
+  }
+  .capa h1 {
+    font-size: 33pt; line-height: 1.12; font-weight: 700;
+    letter-spacing: -.022em; margin: 16mm 0 6mm; max-width: 150mm;
+  }
+  .capa .lead { font-size: 12.5pt; line-height: 1.5; opacity: .92; max-width: 132mm; font-weight: 400; }
+
+  .cartao-capa {
+    position: absolute; left: 20mm; right: 20mm; top: 128mm;
+    background: #fff; border-radius: 16px; padding: 9mm 10mm;
+    box-shadow: 0 18px 44px rgba(10,50,120,.16), 0 2px 8px rgba(10,50,120,.06);
+    display: flex; gap: 12mm;
+  }
+  .cartao-capa .col { flex: 1; }
+  .cartao-capa .rot { font-size: 8pt; letter-spacing: .1em; text-transform: uppercase; color: var(--cinza-claro); font-weight: 700; margin-bottom: 4px; }
+  .cartao-capa .val { font-size: 11.5pt; font-weight: 600; }
+
+  .capa-resumo { position: absolute; left: 20mm; right: 20mm; top: 172mm; }
+  .capa-resumo h2 { font-size: 13pt; font-weight: 700; margin-bottom: 5mm; letter-spacing: -.01em; }
+  .lista-capa { display: flex; flex-direction: column; gap: 4mm; }
+  .item-capa { display: flex; gap: 5mm; align-items: flex-start; }
+  .num {
+    flex: none; width: 24px; height: 24px; border-radius: 8px;
+    background: var(--violeta-suave); color: var(--violeta);
+    font-weight: 700; font-size: 9.5pt;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .item-capa p { font-size: 10.5pt; color: var(--tinta); }
+  .item-capa b { font-weight: 600; }
+
+  .rodape-capa {
+    position: absolute; left: 20mm; right: 20mm; bottom: 14mm;
+    display: flex; justify-content: space-between; align-items: center;
+    padding-top: 5mm; border-top: 1px solid var(--linha);
+    font-size: 8.5pt; color: var(--cinza-claro);
+  }
+
+  /* ── cabeçalho das páginas internas ───────────────── */
+  .topo { display: flex; align-items: baseline; gap: 4mm; margin-bottom: 3mm; }
+  .topo .kicker { font-size: 8pt; letter-spacing: .12em; text-transform: uppercase; color: var(--violeta); font-weight: 700; }
+  h2.titulo { font-size: 21pt; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+  .sub { font-size: 10.5pt; color: var(--cinza); margin-top: 2mm; max-width: 150mm; }
+  .regua { height: 3px; width: 46px; background: var(--violeta); border-radius: 3px; margin: 6mm 0 8mm; }
+
+  h3.secao {
+    font-size: 8.5pt; letter-spacing: .11em; text-transform: uppercase;
+    color: var(--cinza-claro); font-weight: 700; margin: 6.5mm 0 3.5mm;
+  }
+  h3.secao:first-of-type { margin-top: 0; }
+
+  /* ── antes → agora ────────────────────────────────── */
+  .par { display: flex; align-items: stretch; gap: 0; margin-bottom: 5mm; }
+  .lado {
+    flex: 1; border-radius: 13px; padding: 5mm 6mm;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .antes { background: var(--coral-suave); border: 1px solid #FBDDE0; }
+  .agora { background: var(--verde-suave); border: 1px solid #CFEEE1; }
+  .lado .rot { font-size: 7.5pt; letter-spacing: .1em; text-transform: uppercase; font-weight: 700; margin-bottom: 3px; }
+  .antes .rot { color: var(--coral); }
+  .agora .rot { color: var(--verde); }
+  .lado h4 { font-size: 10.5pt; font-weight: 700; margin-bottom: 3px; letter-spacing: -.005em; }
+  .lado p { font-size: 9.5pt; color: #453E55; line-height: 1.5; }
+  .flecha {
+    flex: none; width: 13mm; display: flex; align-items: center; justify-content: center;
+    color: var(--cinza-claro);
+  }
+
+  /* ── fluxo de decisão ─────────────────────────────── */
+  .fluxo { display: flex; flex-direction: column; align-items: center; }
+  .no {
+    width: 100%; border-radius: 12px; padding: 3.2mm 5.5mm;
+    display: flex; align-items: center; gap: 5mm;
+  }
+  .no .marca {
+    flex: none; width: 26px; height: 26px; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 10pt; color: #fff;
+  }
+  .no .txt { flex: 1; }
+  .no .q { font-size: 10.5pt; font-weight: 700; letter-spacing: -.005em; }
+  .no .nota { font-size: 9pt; color: var(--cinza); margin-top: 1px; }
+  .no .saida { font-size: 9.5pt; font-weight: 700; white-space: nowrap; }
+
+  .no.inicio { background: var(--violeta); color: #fff; justify-content: center; padding: 3.2mm; }
+  .no.inicio .q { color: #fff; font-size: 11pt; }
+  .no.bloq { background: var(--coral-suave); border: 1px solid #FBDDE0; }
+  .no.bloq .marca { background: var(--coral); }
+  .no.bloq .saida { color: var(--coral); }
+  .no.vio { background: var(--violeta-suave); border: 1px solid var(--violeta-linha); }
+  .no.vio .marca { background: var(--violeta); }
+  .no.vio .saida { color: var(--violeta); }
+  .no.ver { background: var(--verde-suave); border: 1px solid #CFEEE1; }
+  .no.ver .marca { background: var(--verde); }
+  .no.ver .saida { color: var(--verde); }
+  .no.neutro { background: var(--painel); border: 1px solid var(--linha); }
+  .no.neutro .marca { background: var(--cinza-claro); }
+  .no.neutro .saida { color: var(--cinza); }
+  .conector { width: 2px; height: 4mm; background: var(--violeta-linha); }
+
+  /* ── cartões dos agentes ──────────────────────────── */
+  .duplo { display: flex; gap: 5mm; }
+  .agente { flex: 1; border-radius: 14px; padding: 5mm 5.5mm; border: 1px solid; }
+  .agente.a { background: var(--violeta-suave); border-color: var(--violeta-linha); }
+  .agente.b { background: var(--verde-suave); border-color: #CFEEE1; }
+  .agente .cab { display: flex; align-items: center; gap: 3mm; margin-bottom: 3.2mm; }
+  .ponto { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .agente.a .ponto { background: var(--violeta); }
+  .agente.b .ponto { background: var(--verde); }
+  .agente h4 { font-size: 12pt; font-weight: 700; letter-spacing: -.012em; }
+  .agente dl { display: flex; flex-direction: column; gap: 2.8mm; }
+  .agente dt { font-size: 7.5pt; letter-spacing: .09em; text-transform: uppercase; font-weight: 700; color: var(--cinza-claro); margin-bottom: 1px; }
+  .agente dd { font-size: 9.3pt; line-height: 1.4; color: #3B3548; }
+
+  /* ── passos ───────────────────────────────────────── */
+  .passos { display: flex; flex-direction: column; gap: 2.6mm; }
+  .passo { display: flex; gap: 5mm; align-items: center; }
+  .passo .bolha {
+    flex: none; width: 28px; height: 28px; border-radius: 10px;
+    background: var(--violeta); color: #fff; font-weight: 700; font-size: 10.5pt;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .passo p { font-size: 10.5pt; }
+  .passo b { font-weight: 600; }
+
+  /* ── etiquetas ────────────────────────────────────── */
+  .etq { border-radius: 13px; padding: 4.4mm 5.5mm; margin-bottom: 3.2mm; border: 1px solid; }
+  .etq.on { background: var(--verde-suave); border-color: #CFEEE1; }
+  .etq.off { background: var(--coral-suave); border-color: #FBDDE0; }
+  .etq .cab { display: flex; align-items: center; gap: 3mm; margin-bottom: 2mm; }
+  .chip {
+    font-family: "SF Mono", Menlo, monospace; font-size: 10pt; font-weight: 600;
+    padding: 3px 10px; border-radius: 7px; color: #fff;
+  }
+  .etq.on .chip { background: var(--verde); }
+  .etq.off .chip { background: var(--coral); }
+  .etq .efeito { font-size: 10pt; font-weight: 700; }
+  .etq p { font-size: 9.5pt; color: #453E55; line-height: 1.5; }
+  .etq p + p { margin-top: 2mm; }
+
+  /* ── avisos e listas ──────────────────────────────── */
+  .aviso {
+    display: flex; gap: 4mm; border-radius: 13px; padding: 5mm 6mm;
+    background: var(--painel); border: 1px solid var(--linha);
+  }
+  .aviso.destaque { background: var(--violeta-suave); border-color: var(--violeta-linha); }
+  .aviso .ic { flex: none; margin-top: 1px; }
+  .aviso h4 { font-size: 10.5pt; font-weight: 700; margin-bottom: 2mm; }
+  .aviso p { font-size: 9.5pt; color: #453E55; line-height: 1.5; }
+
+  ul.regras { list-style: none; display: flex; flex-direction: column; gap: 3mm; }
+  ul.regras li { display: flex; gap: 4mm; align-items: flex-start; font-size: 10pt; line-height: 1.5; }
+  ul.regras .ic { flex: none; margin-top: 2px; }
+
+  .paradas { display: flex; flex-direction: column; gap: 3.5mm; }
+  .parada { border-left: 3px solid var(--violeta-linha); padding-left: 5mm; }
+  .parada h4 { font-size: 10pt; font-weight: 700; color: var(--violeta); }
+  .parada p { font-size: 9.5pt; color: var(--cinza); }
+
+  .rodape {
+    position: absolute; left: 20mm; right: 20mm; bottom: 12mm;
+    display: flex; justify-content: space-between;
+    font-size: 8pt; color: var(--cinza-claro);
+    padding-top: 4mm; border-top: 1px solid var(--linha);
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════ CAPA ══════════════ -->
+<section class="pagina capa">
+  <div class="capa-fundo"></div>
+  <div class="capa-conteudo">
+    <span class="selo">Guia rápido</span>
+    <h1>As 2 configurações<br>da sua IA</h1>
+    <p class="lead">O nome das suas assistentes nas conversas, e o que a IA faz quando o lead procura Living Trust.</p>
+  </div>
+
+  <div class="cartao-capa">
+    <div class="col"><div class="rot">Conta</div><div class="val">Fabiana Campos</div></div>
+    <div class="col"><div class="rot">Assistentes</div><div class="val">Raíssa e Nayane</div></div>
+    <div class="col"><div class="rot">Já está valendo</div><div class="val">15/09/2026</div></div>
+  </div>
+
+  <div class="capa-resumo">
+    <h2>O que mudou</h2>
+    <div class="lista-capa">
+      <div class="item-capa"><div class="num">1</div><p>A IA de <b>carreira</b> agora se apresenta como <b>Raíssa</b>. A de <b>produtos</b> (Benefício em Vida e aposentadoria) se apresenta como <b>Nayane</b>.</p></div>
+      <div class="item-capa"><div class="num">2</div><p>Quem procura <b>Living Trust</b> recebe uma resposta honesta na hora, <b>não é mais agendado</b> e sai do atendimento automático.</p></div>
+      <div class="item-capa"><div class="num">3</div><p>Esses leads ficam marcados com a etiqueta <b>nao-atendemos-living-trust</b>, então dá pra achar todos depois.</p></div>
+      <div class="item-capa"><div class="num">4</div><p>Se a pessoa mudar de ideia e quiser um produto que vocês têm, a IA <b>volta a atender normalmente</b>.</p></div>
+    </div>
+  </div>
+
+  <div class="rodape-capa"><span>Spark Leads</span><span>Guia da Fabiana · 15/09/2026</span></div>
+</section>
+
+<!-- ══════════════ PÁGINA 2 — NOMES ══════════════ -->
+<section class="pagina">
+  <div class="corpo">
+    <div class="topo"><span class="kicker">Configuração 1</span></div>
+    <h2 class="titulo">O nome das assistentes</h2>
+    <p class="sub">Já deixamos configurado. Esta página é pra você saber onde mexer se quiser trocar depois.</p>
+    <div class="regua"></div>
+
+    <div class="duplo">
+      <div class="agente a">
+        <div class="cab"><span class="ponto"></span><h4>Raíssa</h4></div>
+        <dl>
+          <dt>Atende</dt><dd>Quem quer saber da <b>carreira</b> de Life Producer</dd>
+          <dt>Gatilho</dt><dd>"Gostaria de mais informações sobre carreira"</dd>
+          <dt>Antes se chamava</dt><dd>Pedro</dd>
+        </dl>
+      </div>
+      <div class="agente b">
+        <div class="cab"><span class="ponto"></span><h4>Nayane</h4></div>
+        <dl>
+          <dt>Atende</dt><dd>Quem quer <b>Benefício em Vida</b> ou <b>aposentadoria/renda em dólar</b></dd>
+          <dt>Gatilho</dt><dd>As frases dos anúncios desses dois produtos</dd>
+          <dt>Antes se chamava</dt><dd>Gian</dd>
+        </dl>
+      </div>
+    </div>
+
+    <h3 class="secao">Onde trocar o nome</h3>
+    <div class="passos">
+      <div class="passo"><div class="bolha">1</div><p>No painel, abra <b>Agentes</b> e clique no agente que quer mudar.</p></div>
+      <div class="passo"><div class="bolha">2</div><p>No menu da esquerda, clique em <b>Identidade</b>.</p></div>
+      <div class="passo"><div class="bolha">3</div><p>Troque o campo <b>"Nome do agente"</b>.</p></div>
+      <div class="passo"><div class="bolha">4</div><p>Desça até <b>"Sobre a agência e como agir"</b> e troque o nome <b>ali também</b>.</p></div>
+      <div class="passo"><div class="bolha">5</div><p>Clique em <b>Salvar</b>.</p></div>
+    </div>
+
+    <div class="aviso destaque" style="margin-top:7mm">
+      <div class="ic">⚠️</div>
+      <div>
+        <h4>O passo 4 é o que todo mundo esquece</h4>
+        <p>O nome aparece em <b>dois lugares</b>: no campo "Nome do agente" e escrito por extenso dentro do texto "Sobre a agência e como agir" (que começa com "Você é Nayane, assistente da Fabiana Campos..."). Se você trocar só o primeiro, a IA continua se apresentando com o nome antigo — porque o texto longo é a instrução que ela mais obedece. <b>Troque nos dois e salve.</b></p>
+      </div>
+    </div>
+  </div>
+  <div class="rodape"><span>Spark Leads</span><span>2</span></div>
+</section>
+
+<!-- ══════════════ PÁGINA 3 — LIVING TRUST ══════════════ -->
+<section class="pagina">
+  <div class="corpo">
+    <div class="topo"><span class="kicker">Configuração 2</span></div>
+    <h2 class="titulo">Quem procura Living Trust</h2>
+    <p class="sub">Vocês não oferecem esse serviço. Agora a IA reconhece e desclassifica sozinha, em vez de agendar.</p>
+    <div class="regua"></div>
+
+    <h3 class="secao">O que acontecia até 13/09</h3>
+    <div class="par">
+      <div class="lado antes">
+        <div class="rot">Antes</div>
+        <h4>Agendava mesmo assim</h4>
+        <p>O lead dizia "seria um trust, podemos marcar um call?" e a IA respondia <i>"a Fabiana esclarece melhor na reunião"</i> e marcava. A pessoa ocupava um horário da sua agenda pra descobrir na hora que não era o serviço.</p>
+      </div>
+      <div class="flecha">→</div>
+      <div class="lado agora">
+        <div class="rot">Agora</div>
+        <h4>Responde a verdade na hora</h4>
+        <p>A IA diz que vocês não trabalham com Living Trust, explica que é área de advogado, e oferece o que vocês <b>de fato</b> fazem. Não agenda.</p>
+      </div>
+    </div>
+
+    <h3 class="secao">O que a IA responde (texto real do teste)</h3>
+    <div class="etq on">
+      <div class="cab"><span class="chip">Nayane</span><span class="efeito">resposta automática</span></div>
+      <p>"Sobre Living Trust a gente não trabalha, viu? Isso é área de advogado de planejamento sucessório."</p>
+      <p>"O que a Fabiana faz é proteção financeira com Benefício em Vida e aposentadoria/renda vitalícia em dólar. Se algum desses te interessa, me fala que te explico!"</p>
+    </div>
+
+    <h3 class="secao">O que a IA entende como Living Trust</h3>
+    <ul class="regras">
+      <li><span class="ic">•</span><span>trust, living trust, revocable ou irrevocable trust</span></li>
+      <li><span class="ic">•</span><span>testamento, inventário, partilha de bens, espólio, herança, "will"</span></li>
+    </ul>
+
+    <div class="aviso" style="margin-top:6mm">
+      <div class="ic">✅</div>
+      <div>
+        <h4>Quem quer um produto de verdade não é afetado</h4>
+        <p>Testamos: lead pedindo Benefício em Vida segue o atendimento normal, sem nenhuma mudança. E se alguém pedir trust e depois disser "então me fala da aposentadoria", a IA <b>volta a atender</b> e agenda normalmente.</p>
+      </div>
+    </div>
+  </div>
+  <div class="rodape"><span>Spark Leads</span><span>3</span></div>
+</section>
+
+<!-- ══════════════ PÁGINA 4 — ONDE VER / AJUSTAR ══════════════ -->
+<section class="pagina">
+  <div class="corpo">
+    <div class="topo"><span class="kicker">No dia a dia</span></div>
+    <h2 class="titulo">Onde ver e como ajustar</h2>
+    <p class="sub">O que acontece depois que a IA desclassifica, e onde mexer se quiser mudar o texto.</p>
+    <div class="regua"></div>
+
+    <h3 class="secao">O caminho do lead desclassificado</h3>
+    <div class="fluxo">
+      <div class="no inicio"><div class="q">Lead pede Living Trust</div></div>
+      <div class="conector"></div>
+      <div class="no vio"><div class="marca">1</div><div class="txt"><div class="q">A IA responde a verdade</div><div class="nota">Sem agendar, sem empurrar pra reunião</div></div></div>
+      <div class="conector"></div>
+      <div class="no vio"><div class="marca">2</div><div class="txt"><div class="q">Ganha a etiqueta <b>nao-atendemos-living-trust</b></div><div class="nota">No cadastro do contato, pra você achar todos depois</div></div></div>
+      <div class="conector"></div>
+      <div class="no bloq"><div class="marca">3</div><div class="txt"><div class="q">A IA para de atender esse contato</div><div class="nota">A conversa aparece na aba <b>Pausadas</b></div></div></div>
+    </div>
+
+    <div class="aviso destaque" style="margin-top:5mm">
+      <div class="ic">👤</div>
+      <div>
+        <h4>Se você quiser retomar alguém</h4>
+        <p>Abra a aba <b>Pausadas</b> do agente e religue a conversa em um clique. A IA volta a atender aquele contato normalmente.</p>
+      </div>
+    </div>
+
+    <h3 class="secao">Se quiser mudar alguma coisa</h3>
+    <div class="paradas">
+      <div class="parada">
+        <h4>O texto da resposta</h4>
+        <p>Agente → <b>Identidade</b> → "Sobre a agência e como agir". Procure o bloco "SERVIÇO QUE NÃO OFERECEMOS — LIVING TRUST" e edite a frase.</p>
+      </div>
+      <div class="parada">
+        <h4>A etiqueta ou a pausa automática</h4>
+        <p>Agente → <b>Automações</b>. A regra chama "Campo preenchido…" e faz duas coisas: coloca a etiqueta e pausa a IA. Dá pra tirar a pausa e deixar só a etiqueta, se preferir que a IA continue conversando.</p>
+      </div>
+      <div class="parada">
+        <h4>Incluir outro serviço que vocês não fazem</h4>
+        <p>É o mesmo caminho: descreva o serviço no bloco de "Sobre a agência e como agir". Se quiser etiqueta própria pra ele, fale com a gente que configuramos.</p>
+      </div>
+    </div>
+
+    <div class="aviso" style="margin-top:5mm">
+      <div class="ic">💬</div>
+      <div>
+        <h4>Qualquer dúvida</h4>
+        <p>Chama a gente no suporte, ou marcamos uma call rápida pra passar por essas telas juntos.</p>
+      </div>
+    </div>
+  </div>
+  <div class="rodape"><span>Spark Leads</span><span>4</span></div>
+</section>
+
+</body>
+</html>
