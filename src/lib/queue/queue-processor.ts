@@ -250,7 +250,22 @@ export async function processMessageQueue(): Promise<{
     .lt("updated_at", reaperCutoff)
     .select("id");
   if (orphans && orphans.length > 0) {
+    // H92 (2026-09-18): o reaper era console.warn — invisível. Órfã em
+    // 'processing' é a assinatura de lambda morta no meio do lote, e foi o que
+    // escondeu por semanas a cauda de leads esperando horas (p90 de 46min na
+    // Horizon). Agora vira linha de auditoria, que é o que permite responder
+    // "por que esse lead demorou" sem adivinhação.
     console.warn(`[Processor] Reaped ${orphans.length} orphan 'processing' messages`);
+    try {
+      await supabase.from("execution_log").insert({
+        agent_id: null,
+        location_id: "system",
+        contact_id: "system",
+        action_type: "queue_orphans_reaped",
+        action_payload: { count: orphans.length, cutoff_min: 5 },
+        success: true,
+      });
+    } catch { /* auditoria best-effort */ }
   }
 
   // 1. ATOMIC: Marcar como "processing" e retornar em uma operação
@@ -264,7 +279,19 @@ export async function processMessageQueue(): Promise<{
     .order("received_at", { ascending: true })
     .limit(100);
 
-  if (fetchError || !pendingMessages || pendingMessages.length === 0) {
+  // H92: o claim falhando era ENGOLIDO — `fetchError` caía no mesmo return
+  // silencioso do "não tem nada pra fazer", então fila parada e fila vazia
+  // eram indistinguíveis de fora. 4h de atraso não geraram um único alerta.
+  if (fetchError) {
+    console.error(`[Processor] CLAIM FALHOU: ${fetchError.message}`);
+    notifyCriticalError({
+      locationId: "system",
+      errorType: "queue_claim_failed",
+      message: `Claim da fila falhou: ${fetchError.message}`,
+    }).catch(() => {});
+    return { processed: 0, errors: 1 };
+  }
+  if (!pendingMessages || pendingMessages.length === 0) {
     return { processed: 0, errors: 0 };
   }
 
