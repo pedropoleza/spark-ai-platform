@@ -183,3 +183,59 @@ Quando criar nova entry: pegue próximo número disponível na categoria, adicio
 3. Add linha na tabela acima
 4. Add comment no código: `// H13 (review YYYY-MM-DD): <sumário curto>`
 5. Commit com referência: `fix(scope): <ação> (H13)`
+
+## H93 (2026-09-20) — Apagão de auth do Spark Leads virou "não achei o contato"
+
+**Incidente.** O company token do GHL venceu em **2026-09-19 06:00 UTC (02:00 ET)** e o
+refresh parou de funcionar. A integração ficou **totalmente fora por 35h**: última cobrança
+OK às 01:21 ET de 19/09, depois `0` em 78 registros de uso; 44 tentativas de `send_message`
+lead-facing, **todas com `success=false`**; `create_note`/`create_task`/`sync_*` com
+`Invalid JWT` ou `Token nao encontrado`.
+
+**Como apareceu pro cliente.** O Gustavo pediu pra agendar mensagem de aniversário pra
+"Thais Chamon". O bot respondeu **"Não achei ninguém com esse número no Spark Leads"** e
+ofereceu **CRIAR** o contato — que existia. Ele corrigiu duas vezes ("esse contato já
+existe") e o bot repetiu a mesma coisa.
+
+### Três defeitos, em camadas
+
+1. **`resolveContact` engolia a exceção da API.** `ghlGet` tinha `catch { return [] }`, e
+   lista vazia é indistinguível de "não tem ninguém". Agora devolve `{contatos, erro}`, e
+   quando **todas** as variantes falham o resultado vem `indisponivel: true` — o
+   `search_contacts` responde `status: "error"` mandando explicitamente **não afirmar que o
+   contato não existe e não oferecer criar**. Falha PARCIAL (1 variante de 3) segue normal.
+   ⚠️ Regra geral: **toda busca que engole erro de rede mente com confiança.** O caro não é
+   o erro, é a afirmação falsa em cima dele — aqui quase virou contato duplicado.
+
+2. **Nenhum sinal era emitido.** 6 buscas morreram em silêncio. Agora `indisponivel` dispara
+   `reportError` (`contact-resolver`, high) pro `/hub/admin/health`.
+
+3. **O próprio volume derrubou o banco de tokens.** `getCompanyToken` não tinha cache: toda
+   geração de location token lê o Supabase "GHL Token". Com o cache de location durando
+   20min **por lambda**, isso virou **291.731 leituras em 24h pra ler UMA linha** (pico de
+   45k/h). O projeto saturou — queries triviais em 11-14s, `could not accept SSL
+   connection`, `current transaction is aborted`, janelas de minutos sem responder. E o
+   ciclo se realimenta: com o token vencido, cada chamada lê 3-5x em vez de 1.
+   Fix: `ghl/company-token-cache.ts`, TTL 5min, **e a trava que o torna seguro** — só serve
+   do cache token que está a >3h de vencer. Token vencido/vencendo sempre relê o banco,
+   então self-heal e recuperação cross-lambda não atrasam. Invalidado no upsert do refresh.
+
+### Por que o refresh_token morreu
+
+`upsertCompanyTokens` grava o par rotacionado DEPOIS do POST ao GHL. O refresh_token do GHL
+é **de uso único**: se o GHL rotaciona e o UPSERT falha (banco saturado), o token novo se
+perde e a tabela fica com um **morto**. `invalid_grant — This refresh token is invalid`
+confirmado no 20/09. É a mesma armadilha do apagão de 2026-06-13, agora disparada pela
+saturação que a gente mesmo causou.
+
+⚠️ **Recuperação exige RE-AUTORIZAR o app** (`scripts/reauth-ghl-company-token.ts exchange
+<code> <redirect_uri>`) — nenhum retry resolve refresh_token revogado.
+
+### O alarme existia e não chegou em ninguém
+
+`Cron refresh-ghl-token: 0 tokens renovados` (critical) e `falha ao renovar token de empresa`
+(critical, 55k ocorrências) estavam no `admin_signals` desde o primeiro minuto. Sinal
+crítico que só mora numa tabela não é alarme — é registro. O que apurou o caso foi a
+reclamação de um corretor, 35h depois.
+
+Teste: `scripts/test-resolver-indisponivel.ts` (21/21).

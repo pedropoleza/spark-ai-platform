@@ -21,6 +21,7 @@
  */
 
 import { createGHLTokenClient } from "@/lib/supabase/admin";
+import { invalidateCompanyTokenCache } from "./company-token-cache";
 import { GHL_API_BASE } from "@/lib/utils/constants";
 
 /**
@@ -121,6 +122,11 @@ async function upsertCompanyTokens(
   );
 
   if (error) throw new Error(`UPSERT failed: ${error.message}`);
+
+  // H93: o cache em memória do company token tem que morrer AQUI — o
+  // `generateLocationToken` relê o meta logo depois do self-heal e precisa do
+  // par novo, não do que acabou de ser substituído.
+  invalidateCompanyTokenCache(companyId);
 }
 
 /**

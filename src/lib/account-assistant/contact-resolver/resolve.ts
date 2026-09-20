@@ -37,6 +37,15 @@ export interface ResolveResult {
   alternatives: Array<ResolvedContact & { score: number }>;
   method: "phone" | "name" | "empty";
   tried: string[];
+  /**
+   * TODAS as variantes tentadas falharam na chamada ao Spark Leads — não há
+   * evidência nenhuma sobre o contato. Diferente de `best: null`, que significa
+   * "perguntei e não tem". Quem chama TEM que tratar os dois diferente: dizer
+   * "não achei" num apagão de API é afirmar um fato que a gente não apurou.
+   */
+  indisponivel: boolean;
+  /** Mensagem do 1º erro, pra log/diagnóstico. Só preenchida com `indisponivel`. */
+  erro?: string;
 }
 
 interface RawContact {
@@ -65,12 +74,23 @@ function toResolved(c: RawContact): ResolvedContact {
   };
 }
 
-async function ghlGet(client: GHLClient, locationId: string, term: string, limit: number): Promise<RawContact[]> {
+/**
+ * Resultado de UMA variante de busca. O `erro` existe pra distinguir
+ * "o Spark Leads respondeu e não tem ninguém" de "não deu pra perguntar"
+ * (H93, apagão de auth 2026-09-19) — ver `ResolveResult.indisponivel`.
+ */
+interface GhlGetResult {
+  contatos: RawContact[];
+  erro: string | null;
+}
+
+async function ghlGet(client: GHLClient, locationId: string, term: string, limit: number): Promise<GhlGetResult> {
   try {
     const res = (await searchContactsList(client, locationId, term, limit)) as { contacts?: RawContact[] };
-    return (res.contacts || []).filter((c) => c.id);
-  } catch {
-    return [];
+    return { contatos: (res.contacts || []).filter((c) => c.id), erro: null };
+  } catch (e) {
+    // NÃO vira lista vazia: quem chama precisa saber que a pergunta não chegou.
+    return { contatos: [], erro: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -120,7 +140,9 @@ export async function resolveContact(
     // H47-F1 (2026-07-10): variantes em PARALELO (eram 3 awaits em série — latência pura;
     // os GETs são independentes e o dedup por Map preserva a prioridade pela ORDEM do add).
     const phoneResults = await Promise.all(terms.map((t) => ghlGet(client, locationId, t, cap)));
-    terms.forEach((t, i) => { tried.push(t); add(phoneResults[i]); });
+    terms.forEach((t, i) => { tried.push(t); add(phoneResults[i].contatos); });
+    const falhouTudoFone = phoneResults.length > 0 && phoneResults.every((r) => r.erro);
+    if (falhouTudoFone) return indisponivel(tried, phoneResults[0].erro!);
     const scored: Scored[] = [...byId.values()]
       .map((c) => {
         const r = toResolved(c);
@@ -136,7 +158,9 @@ export async function resolveContact(
   const variants = [...new Set([query, tokens[0], tokens[tokens.length - 1]].filter((t): t is string => !!t && t.length >= 2))];
   // H47-F1 (2026-07-10): idem ramo telefone — variantes em paralelo, ordem preservada no add.
   const nameResults = await Promise.all(variants.map((v) => ghlGet(client, locationId, v, cap)));
-  variants.forEach((v, i) => { tried.push(v); add(nameResults[i]); });
+  variants.forEach((v, i) => { tried.push(v); add(nameResults[i].contatos); });
+  const falhouTudoNome = nameResults.length > 0 && nameResults.every((r) => r.erro);
+  if (falhouTudoNome) return indisponivel(tried, nameResults[0].erro!);
 
   const scored: Scored[] = [...byId.values()]
     .map((c) => {
@@ -151,6 +175,11 @@ export async function resolveContact(
   return finalize(scored, scored.length ? "name" : "empty", tried);
 }
 
+/** Nenhuma variante conseguiu falar com o Spark Leads — zero evidência. */
+function indisponivel(tried: string[], erro: string): ResolveResult {
+  return { best: null, score: 0, gap: 0, sole: false, alternatives: [], method: "empty", tried, indisponivel: true, erro };
+}
+
 function finalize(scored: Scored[], method: ResolveResult["method"], tried: string[]): ResolveResult {
   const best = scored[0] || null;
   // gap só é evidência de dominância quando HÁ 2º colocado; com 1 só, gap=0.
@@ -163,5 +192,6 @@ function finalize(scored: Scored[], method: ResolveResult["method"], tried: stri
     alternatives: scored.slice(0, 5).map((c) => ({ id: c.id, name: c.name, email: c.email, phone: c.phone, tags: c.tags, last_activity: c.last_activity, score: c.score })),
     method: best ? method : "empty",
     tried,
+    indisponivel: false,
   };
 }

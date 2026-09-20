@@ -17,6 +17,7 @@ import { executeContactsFilter, type FilterExpression } from "../filter-engine";
 import { normalizePhone, resolveLocationDefaultCountry } from "../identity";
 // F5/F6 (contact-resolution 2026-06): resolver fuzzy + telefone + score (substitui o GET cru).
 import { resolveContact } from "../contact-resolver";
+import { reportError } from "@/lib/admin-signals/report-error";
 // H47-F1 (2026-07-10): alimenta o desempate por recência do resolver (param existia e nunca era passado).
 import { readRecentContacts } from "../contact-resolver/active-contact";
 import { phoneDigits } from "../contact-resolver/normalize";
@@ -69,6 +70,33 @@ const searchContacts: ToolEntry = {
           recentContactIds: recentIds.size > 0 ? recentIds : undefined,
           limit: Math.min(cap, 50),
         });
+        // H93 (apagão de auth 2026-09-19, caso Gustavo): "não deu pra perguntar"
+        // NÃO é "não existe". Com a integração fora, o resolver devolvia lista
+        // vazia e o bot afirmava "Não achei ninguém com esse número no Spark
+        // Leads" — e ainda oferecia CRIAR o contato, que já existia. Duas coisas
+        // ruins de uma vez: afirmar fato não apurado e induzir duplicata.
+        if (result.indisponivel) {
+          // Sobe pro /hub/admin/health: no apagão de 19/09 a busca falhou 6x em
+          // silêncio (o rep via "não achei" e nenhum sinal era emitido).
+          reportError({
+            title: "Spark Leads: busca de contato não chegou à API (integração fora?)",
+            feature: "contact-resolver",
+            severity: "high",
+            description:
+              "Todas as variantes de busca do resolver falharam na chamada ao Spark Leads. " +
+              "O bot NÃO diz mais 'não achei' nesse caso, mas a consulta está indisponível — " +
+              "checar o token de empresa / o cron refresh-ghl-token.",
+            metadata: { locationId: ctx.locationId, query, erro: result.erro, tentou: result.tried },
+          });
+          return {
+            status: "error",
+            message:
+              "não consegui consultar o Spark Leads agora (a integração não respondeu). " +
+              "NÃO afirme que o contato não existe e NÃO ofereça criar — diga que a consulta " +
+              "falhou e que você tenta de novo em instantes.",
+            retryable: true,
+          };
+        }
         if (!result.best || result.alternatives.length === 0) {
           return { status: "not_found", message: `Nenhum contato encontrado pra "${query}" (tentei variações de nome e de telefone).` };
         }

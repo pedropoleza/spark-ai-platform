@@ -1,4 +1,9 @@
 import { createGHLTokenClient } from "@/lib/supabase/admin";
+import {
+  lerCompanyTokenCache,
+  gravarCompanyTokenCache,
+  type CompanyTokenRow,
+} from "./company-token-cache";
 import { GHL_API_BASE, GHL_API_VERSION } from "@/lib/utils/constants";
 import type { GHLTokenResponse } from "@/types/ghl";
 import { refreshCompanyToken } from "./token-refresher";
@@ -34,12 +39,12 @@ const COMPANY_TOKEN_PROACTIVE_MARGIN_MS = 2 * 60 * 60 * 1000;
  * Devolve também `expires_in`/`updated_at` (já vêm no SELECT *) pra o caller
  * decidir refresh proativo — ver `isCompanyTokenNearExpiry`.
  */
-export async function getCompanyToken(companyId: string): Promise<{
-  access_token: string;
-  companyId: string;
-  expires_in: number | null;
-  updated_at: string | null;
-}> {
+export async function getCompanyToken(companyId: string): Promise<CompanyTokenRow> {
+  // H93: 291k leituras/dia pra ler 1 linha derrubaram o projeto de tokens.
+  // Só reusa token LONGE de vencer — ver company-token-cache.ts.
+  const emCache = lerCompanyTokenCache(companyId, isCompanyTokenNearExpiry);
+  if (emCache) return emCache;
+
   const supabase = createGHLTokenClient();
 
   const { data, error } = await supabase
@@ -52,12 +57,14 @@ export async function getCompanyToken(companyId: string): Promise<{
     throw new Error(`Token nao encontrado para companyId: ${companyId}`);
   }
 
-  return {
+  const meta: CompanyTokenRow = {
     access_token: data.access_token,
     companyId: data.companyId,
     expires_in: data.expires_in ?? null,
     updated_at: data.updated_at ?? null,
   };
+  gravarCompanyTokenCache(companyId, meta);
+  return meta;
 }
 
 export interface CompanyTokenMeta {
