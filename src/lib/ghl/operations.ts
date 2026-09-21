@@ -453,16 +453,32 @@ export async function resolvePipelineStage(
   pipelineRef: string,
   stageRef: string,
 ): Promise<{ pipelineId: string; stageId: string } | null> {
+  let res: Awaited<ReturnType<typeof getPipelines>>;
   try {
-    const res = await getPipelines(client, locationId);
-    return matchPipelineStage(res.pipelines || [], pipelineRef, stageRef);
+    res = await getPipelines(client, locationId);
   } catch (e) {
-    console.warn(
-      "[resolvePipelineStage] fetch de pipelines falhou:",
-      e instanceof Error ? e.message : e,
+    // H94 (2026-09-21): LER falhou não é "não existe". Este catch devolvia
+    // `null`, e os três chamadores traduzem `null` em
+    // «funil/etapa "X"/"Y" não existe na location» — uma afirmação FALSA sobre
+    // o CRM do cliente. Apareceu 15× no execution_log da Marina durante o
+    // apagão de token de 19-21/09, apontando pra um funil que existe.
+    //
+    // É a mesma classe do H93 (o resolver dizia "não achei ninguém com esse
+    // número" quando a API estava fora, e oferecia criar um contato que já
+    // existia). Falha de leitura sobe COMO falha de leitura; quem decide o que
+    // dizer ao lead é o guard H58, que já traduz erro em mensagem honesta.
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[resolvePipelineStage] fetch de pipelines falhou:", msg);
+    // A frase evita de propósito qualquer forma de "não existe": esta mensagem
+    // chega ao guard H58 e daí ao modelo, e basta a expressão aparecer — ainda
+    // que negada — pra ele repetir a conclusão errada pro lead.
+    throw new Error(
+      `funil indisponível: não consegui ler os funis da location (${msg}) — leitura falhou, não é ausência de cadastro`,
     );
-    return null;
   }
+  // Chegou aqui = a lista veio de verdade. `null` agora significa só uma coisa:
+  // procurei e não achou.
+  return matchPipelineStage(res.pipelines || [], pipelineRef, stageRef);
 }
 
 export async function searchOpportunities(
