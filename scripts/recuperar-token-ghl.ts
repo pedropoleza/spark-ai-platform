@@ -19,6 +19,7 @@
 import { config } from "dotenv";
 config({ path: "/tmp/.prodenv-stress" });
 import { createClient } from "@supabase/supabase-js";
+import { gravarTokenEspelho } from "@/lib/ghl/company-token-store";
 
 const refreshToken = process.env.REFRESH_TOKEN ?? "";
 const companyId = process.env.COMPANY_ID ?? "TdmQMjj86Y3LgppiB96K";
@@ -51,19 +52,28 @@ const main = createClient(
   const p = JSON.parse(Buffer.from(t.access_token.split(".")[1], "base64").toString());
   console.log(`par NOVO recebido. access exp=${new Date(p.exp*1000).toISOString()} (${((p.exp*1000-Date.now())/36e5).toFixed(1)}h)`);
 
-  const { error } = await main.from("ghl_company_tokens").upsert({
-    company_id: companyId,
-    access_token: t.access_token,
-    refresh_token: t.refresh_token,
-    token_type: t.token_type ?? null,
-    expires_in: t.expires_in ?? null,
-    scope: t.scope ?? null,
-    user_type: t.userType ?? "Company",
-    user_id: t.userId ?? null,
-    refresh_token_id: t.refreshTokenId ?? null,
-    is_bulk_installation: t.isBulkInstallation ? String(t.isBulkInstallation) : null,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "company_id" });
+  // H93 (2026-09-21): passa pelo store — que também invalida o cache em memória
+  // do company token. SEM `somenteSeMaisNovo`, de propósito: aqui o GHL ACABOU
+  // de emitir o par e esta variável é a ÚNICA cópia dele no mundo (refresh_token
+  // é de uso único). Recusar esta escrita destruiria a credencial; e o par é o
+  // mais novo por definição, então nem a guarda nem o trigger barram.
+  let error: { message: string } | null = null;
+  try {
+    await gravarTokenEspelho(companyId, {
+      access_token: t.access_token,
+      refresh_token: t.refresh_token,
+      token_type: t.token_type ?? null,
+      expires_in: t.expires_in ?? null,
+      scope: t.scope ?? null,
+      userType: t.userType ?? "Company",
+      userId: t.userId ?? null,
+      refreshTokenId: t.refreshTokenId ?? null,
+      isBulkInstallation: t.isBulkInstallation ? String(t.isBulkInstallation) : null,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (e: any) {
+    error = { message: e?.message ?? String(e) };
+  }
   if (error) { console.error("FALHA gravando espelho:", error.message); process.exit(1); }
 
   const { data: v } = await main.from("ghl_company_tokens").select("company_id,expires_in,updated_at").eq("company_id", companyId).maybeSingle();

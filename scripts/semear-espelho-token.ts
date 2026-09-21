@@ -13,6 +13,7 @@
 import { config } from "dotenv";
 config({ path: "/tmp/.prodenv-stress" });
 import { createClient } from "@supabase/supabase-js";
+import { gravarTokenEspelho } from "@/lib/ghl/company-token-store";
 
 const TENTATIVAS = Number(process.env.TENTATIVAS ?? 40);
 
@@ -61,19 +62,29 @@ function expDoJwt(jwt: string): number | null {
   console.log(`refresh_token: ${linha.refresh_token.length} chars`);
   console.log(`updated_at origem: ${linha.updated_at}`);
 
-  const { error } = await main.from("ghl_company_tokens").upsert({
-    company_id: companyId,
-    access_token: linha.access_token,
-    refresh_token: linha.refresh_token,
-    token_type: linha.token_type ?? null,
-    expires_in: linha.expires_in ? Number(linha.expires_in) : null,
-    scope: linha.scope ?? null,
-    user_type: linha.userType ?? linha.user_type ?? "Company",
-    user_id: linha.userId ?? linha.user_id ?? null,
-    refresh_token_id: linha.refreshTokenId ?? linha.refresh_token_id ?? null,
-    is_bulk_installation: String(linha.isBulkInstallation ?? linha.is_bulk_installation ?? ""),
-    updated_at: linha.updated_at ?? new Date().toISOString(),
-  }, { onConflict: "company_id" });
+  // H93 (2026-09-21): passa pelo store, com a guarda. Este script COPIA a linha
+  // da tabela antiga, que pode estar ATRASADA — e foi exatamente uma cópia
+  // dessas que sobrescreveu um par recém-rotacionado e queimou a rotação.
+  // A guarda compara o `iat` do access_token (assinado pelo GHL), não o
+  // updated_at da linha, porque os escritores carimbam essa coluna com
+  // semânticas diferentes. Há também um trigger no banco como última linha.
+  let error: { message: string } | null = null;
+  try {
+    await gravarTokenEspelho(companyId, {
+      access_token: linha.access_token,
+      refresh_token: linha.refresh_token,
+      token_type: linha.token_type,
+      expires_in: linha.expires_in,
+      scope: linha.scope,
+      userType: linha.userType,
+      userId: linha.userId,
+      refreshTokenId: linha.refreshTokenId,
+      isBulkInstallation: linha.isBulkInstallation ? String(linha.isBulkInstallation) : null,
+      updated_at: linha.updated_at,
+    }, { somenteSeMaisNovo: true });
+  } catch (e: any) {
+    error = { message: e?.message ?? String(e) };
+  }
 
   if (error) { console.error("FALHA ao gravar espelho:", error.message); process.exit(1); }
   const { data: v } = await main.from("ghl_company_tokens").select("company_id,expires_in,updated_at").eq("company_id", companyId).maybeSingle();
