@@ -229,13 +229,36 @@ interface MessageGroup {
  * webhook), cada msg é claimada por UM só. Workers que não conseguem
  * claimar nada retornam imediatamente com {processed:0, errors:0}.
  */
-export async function processMessageQueue(): Promise<{
+export async function processMessageQueue(opts?: {
+  /**
+   * Teto de tempo REAL do lote (H94). Sem ele o laço de grupos roda até a
+   * lambda morrer — e as mensagens que ela já tinha claimado ficam presas em
+   * 'processing' até o reaper, 5 min depois.
+   */
+  orcamentoMs?: number;
+}): Promise<{
   processed: number;
   errors: number;
+  devolvidas?: number;
 }> {
   const supabase = createAdminClient();
   let processed = 0;
   let errors = 0;
+  let devolvidas = 0;
+
+  // H94 (2026-09-21): o claim pega até 100 mensagens da FROTA INTEIRA, mas um
+  // turno custa ~6s (p90 8,4s) e a lambda tem 35s. Ou seja: claimamos dezenas
+  // de grupos sabendo que só dá pra atender uns 4. Os outros ficavam pendurados
+  // em 'processing' até o reaper — 5 min de espera por ciclo, e o ciclo se
+  // repete. Medido na conta da Marina: 567 mensagens órfãs em 3 dias e leads
+  // esperando de 3 a 5 HORAS, com a mediana da conta em 0,3 min.
+  //
+  // A correção não é claimar menos (isso quebraria a ordem FIFO entre contas):
+  // é DEVOLVER na hora o que não vai dar tempo de atender. Devolvida volta como
+  // 'pending' já elegível, então o próximo tick (10s) pega — 5 min viram 10s.
+  const fimDoLote = opts?.orcamentoMs ? Date.now() + opts.orcamentoMs : null;
+  /** Reserva pra UM turno: p95 medido é 9,5s. Abaixo disso não começa outro. */
+  const RESERVA_TURNO_MS = 12_000;
 
   // 0. Reaper: reseta msgs órfãs em "processing" > 5 min. Se o processo que
   // claimou morreu, essa janela é o teto de delay antes de a msg voltar pra
@@ -429,7 +452,45 @@ export async function processMessageQueue(): Promise<{
   // `errors > processed`, o que dava status errado quando 1 dos N grupos
   // falhava (podia marcar "completed" de grupos que falharam ou "failed" de
   // grupos que passaram). Agora rastreamos sucesso por-grupo.
-  for (const group of Array.from(groups.values())) {
+  const grupos = Array.from(groups.values());
+  for (let i = 0; i < grupos.length; i++) {
+    const group = grupos[i];
+
+    // H94: acabou o orçamento — devolve TUDO que sobrou (inclusive este grupo)
+    // pra 'pending' e sai. Sem isto, o resto morre em 'processing' com a lambda.
+    if (fimDoLote && Date.now() + RESERVA_TURNO_MS > fimDoLote) {
+      const idsSobrando = grupos.slice(i).flatMap((g) => g.messages.map((m) => m.id));
+      const { error: erroDevolver } = await supabase
+        .from("message_queue")
+        .update({ status: "pending", process_after: new Date().toISOString() })
+        .in("id", idsSobrando)
+        .eq("status", "processing");
+      if (erroDevolver) {
+        // Não conseguiu devolver: o reaper ainda cobre em 5 min, mas isso é
+        // exatamente a espera que este bloco existe pra evitar — tem que gritar.
+        console.error(`[Processor] H94: falha ao devolver ${idsSobrando.length} msg(s): ${erroDevolver.message}`);
+        notifyCriticalError({
+          locationId: "system",
+          errorType: "queue_devolucao_falhou",
+          message: `Devolução do lote falhou: ${erroDevolver.message}`,
+        }).catch(() => {});
+      } else {
+        devolvidas = idsSobrando.length;
+        console.warn(`[Processor] H94: orçamento esgotado — ${idsSobrando.length} msg(s) devolvida(s) pra fila (${grupos.length - i} grupos)`);
+        try {
+          await supabase.from("execution_log").insert({
+            agent_id: null,
+            location_id: "system",
+            contact_id: "system",
+            action_type: "queue_lote_devolvido",
+            action_payload: { mensagens: idsSobrando.length, grupos: grupos.length - i, processados: processed },
+            success: true,
+          });
+        } catch { /* auditoria best-effort */ }
+      }
+      break;
+    }
+
     const ids = group.messages.map((m) => m.id);
     let groupSucceeded = false;
     try {
@@ -495,7 +556,7 @@ export async function processMessageQueue(): Promise<{
     console.error("[Processor] Retry step failed:", retryError instanceof Error ? retryError.message : retryError);
   }
 
-  return { processed, errors };
+  return { processed, errors, devolvidas };
 }
 
 /**

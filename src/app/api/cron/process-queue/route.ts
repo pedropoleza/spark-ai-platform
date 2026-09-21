@@ -15,7 +15,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const [queueResult, followUpResult, billingResult, summaryResult] = await Promise.all([
-      processMessageQueue(),
+      // H94: teto por dentro, pra devolver o lote em vez de morrer com ele.
+      processMessageQueue({ orcamentoMs: 45_000 }),
       processScheduledFollowUps(),
       chargeUnbilledRecords(),
       processInactivitySummaries(),

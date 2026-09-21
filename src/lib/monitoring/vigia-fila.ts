@@ -78,7 +78,8 @@ export async function vigiarFilaParada(forcarDreno = true): Promise<FilaParada> 
   if (forcarDreno) {
     try {
       const { processMessageQueue } = await import("@/lib/queue/queue-processor");
-      const r = await processMessageQueue();
+      // H94: mesmo teto por dentro do dreno forçado.
+      const r = await processMessageQueue({ orcamentoMs: 40_000 });
       resultado.drenou = true;
       resultado.processadas_no_dreno = r.processed;
     } catch (e) {

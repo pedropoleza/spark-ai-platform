@@ -963,7 +963,12 @@ export async function POST(request: NextRequest) {
       sleep(debounceSeconds * 1000 + 2000).then(async () => {
         try {
           console.log("[Webhook:bg] Processing queue after debounce...");
-          const result = await processMessageQueue();
+          // H94: a lambda tem 60s no total e o debounce já comeu parte. O que
+          // sobra é o orçamento REAL do lote — sem passar isso, o laço de
+          // grupos ia até a lambda morrer e deixava o resto do claim preso em
+          // 'processing' por 5 min (era a cauda de horas da conta da Marina).
+          const orcamentoMs = Math.max(10_000, 45_000 - debounceSeconds * 1000);
+          const result = await processMessageQueue({ orcamentoMs });
           console.log(`[Webhook:bg] Done: ${result.processed} processed, ${result.errors} errors`);
         } catch (err) {
           console.error("[Webhook:bg] Processing failed:", err);

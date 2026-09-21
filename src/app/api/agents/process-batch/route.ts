@@ -21,20 +21,32 @@ const TETO_TOTAL_MS = 50_000; // margem de 10s antes do hard-limit da Vercel
 const TETO_FILA_MS = 35_000;
 const TETO_FOLLOWUP_MIN_MS = 5_000;
 
+// H94 (2026-09-21): o `withDeadline` abaixo só CORRE contra o relógio — ele
+// rejeita a promise mas não interrompe o laço lá dentro, e as mensagens já
+// claimadas continuam presas em 'processing' até o reaper. Por isso o teto vai
+// TAMBÉM por dentro: o processador precisa saber quanto tempo tem pra decidir
+// devolver o resto da fila em vez de morrer com ele na mão. Uns segundos a
+// menos que o teto de fora, pra devolução caber antes do corte.
+const ORCAMENTO_INTERNO_FILA_MS = TETO_FILA_MS - 5_000;
+
 export async function POST(request: NextRequest) {
   if (!isAuthorizedCron(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const inicio = Date.now();
-  let queueResult: { processed: number; errors: number } = { processed: 0, errors: 0 };
+  let queueResult: { processed: number; errors: number; devolvidas?: number } = { processed: 0, errors: 0 };
   let queueTimeout = false;
   let followUpResult: unknown = { skipped: "sem tempo" };
   let followUpTimeout = false;
 
   try {
     try {
-      queueResult = await withDeadline(processMessageQueue(), TETO_FILA_MS, "fila");
+      queueResult = await withDeadline(
+        processMessageQueue({ orcamentoMs: ORCAMENTO_INTERNO_FILA_MS }),
+        TETO_FILA_MS,
+        "fila",
+      );
     } catch (e) {
       queueTimeout = true;
       console.error("[process-batch] fila estourou o teto:", e instanceof Error ? e.message : e);
