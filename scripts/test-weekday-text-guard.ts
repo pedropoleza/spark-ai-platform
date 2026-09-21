@@ -38,6 +38,32 @@ const casos: Caso[] = [
     esperaTexto: "⚠️ Dia 24/09 cai numa *quinta-feira* - confirma que é isso mesmo?",
     esperaCorrecoes: 1,
   },
+  // H94 (caso Marina 2026-09-21): a Manu escreve o slot entre PARÊNTESES e o
+  // guard não enxergava o par — 3 datas erradas chegaram ao lead em 9 dias, as
+  // três batendo com o calendário de 2025. Casos colhidos do execution_log real.
+  {
+    nome: "PROD Manu 20/09 — 'segunda (22/09)' (é TERÇA, bate com 2025)",
+    texto: "Tem segunda (22/09) às 8pm ET ou quinta (24/09) às 8pm ET. Qual fica melhor pra vc?",
+    now: "2026-09-20T18:08:00Z",
+    esperaTexto: "Tem terça-feira (22/09) às 8pm ET ou quinta (24/09) às 8pm ET. Qual fica melhor pra vc?",
+    esperaCorrecoes: 1,
+    esperaAnoAnterior: true,
+  },
+  {
+    nome: "PROD Manu 12/09 — 'segunda (15/09)' e 'quinta (18/09)' (TERÇA e SEXTA)",
+    texto: "tenho segunda (15/09) ou quinta (18/09)",
+    now: "2026-09-12T19:39:00Z",
+    esperaTexto: "tenho terça-feira (15/09) ou sexta-feira (18/09)",
+    esperaCorrecoes: 2,
+    esperaAnoAnterior: true,
+  },
+  {
+    nome: "H94 — parêntese CORRETO não pode ser tocado",
+    texto: "na quinta (17/09) ou na segunda (28/09), sempre às 8pm ET",
+    now: "2026-09-16T12:00:00Z",
+    esperaTexto: "na quinta (17/09) ou na segunda (28/09), sempre às 8pm ET",
+    esperaCorrecoes: 0,
+  },
   {
     nome: "PROD Ana Gusmão 17/08 — 'domingo, 14/09/2026' (é SEGUNDA, bate com 2025)",
     texto: "Dia 14 de setembro seria *domingo, 14/09/2026* - normalmente não é dia de reunião.",

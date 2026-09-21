@@ -1,0 +1,33 @@
+{
+  "match": "any",
+  "groups": [
+    {
+      "id": "abertura",
+      "match": "any",
+      "rules": [
+        {
+          "id": "opener",
+          "type": "message",
+          "case_sensitive": false,
+          "message_values": [
+            "carreira",
+            "entender melhor"
+          ],
+          "message_operator": "in"
+        }
+      ]
+    },
+    {
+      "id": "tag",
+      "match": "any",
+      "rules": [
+        {
+          "id": "tag-atend",
+          "tag": "ia - em atendimento",
+          "type": "tag"
+        }
+      ]
+    }
+  ],
+  "version": 2
+}

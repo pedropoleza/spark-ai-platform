@@ -67,9 +67,16 @@ const ARTIGO_ALT = "um|uma|num|numa|no|na|o|a";
  * Ordem A — o dia vem ANTES da data:
  *   "quinta-feira, 24/09"  ·  "sábado 15/10"  ·  "segunda-feira, 15/09/2026"
  *   "*quarta* 26/08"       ·  "qui 16/07"     ·  "sexta-feira, dia 28/08"
+ *   "segunda (22/09)"      ← parêntese (H94, caso Marina 2026-09-21)
+ *
+ * ⚠️ O PARÊNTESE é obrigatório na alternância. A Manu (recrutamento Marina)
+ * escreve o slot como "segunda (22/09) às 8pm ET" o tempo todo, e sem o `\(?`
+ * o guard não via o par — três datas erradas chegaram ao lead em 9 dias, as
+ * três batendo com o calendário de 2025 (assinatura do H68). O grupo é
+ * reemitido verbatim na substituição, então o parêntese sobrevive.
  */
 const RE_DIA_DATA = new RegExp(
-  `(\\b)(${DIA_ALT})(\\b\\*{0,2}[,]?\\s+(?:\\*{0,2})?(?:dia\\s+)?)(\\d{1,2})[\\/.-](\\d{1,2})(?:[\\/.-](\\d{2,4}))?`,
+  `(\\b)(${DIA_ALT})(\\b\\*{0,2}[,]?\\s+(?:\\*{0,2})?(?:dia\\s+)?\\(?)(\\d{1,2})[\\/.-](\\d{1,2})(?:[\\/.-](\\d{2,4}))?`,
   "gi",
 );
 
