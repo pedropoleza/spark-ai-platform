@@ -108,6 +108,17 @@ async function main() {
   check("sem metadados de validade → serve (isCompanyTokenNearExpiry é fail-safe false)",
     lerCompanyTokenCache("CO", isCompanyTokenNearExpiry)?.access_token === "semmeta");
 
+
+  console.log("\n=== 6. A mensagem não pode conter a conclusão errada ===");
+  const { MSG_BUSCA_INDISPONIVEL } = await import("@/lib/account-assistant/tools/contacts");
+  const proibidas = ["nao existe", "não existe", "nao achei", "não achei", "not found", "inexistente"];
+  const norm = MSG_BUSCA_INDISPONIVEL.toLowerCase();
+  for (const termo of proibidas) {
+    check(`sem "${termo}" (o modelo pesca a expressão mesmo negada)`, !norm.includes(termo));
+  }
+  check("diz que foi falha de LEITURA", /falh\w+ de leitura|leitura/i.test(MSG_BUSCA_INDISPONIVEL));
+  check("proíbe oferecer criar contato", /n[ãa]o ofere[çc]a criar/i.test(MSG_BUSCA_INDISPONIVEL));
+
   console.log(`\n=== ${ok} passaram, ${fail} falharam ===`);
   process.exit(fail ? 1 : 0);
 }

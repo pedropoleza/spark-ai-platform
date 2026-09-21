@@ -22,6 +22,24 @@ import { reportError } from "@/lib/admin-signals/report-error";
 import { readRecentContacts } from "../contact-resolver/active-contact";
 import { phoneDigits } from "../contact-resolver/normalize";
 
+/**
+ * Mensagem do caminho "a consulta não chegou ao Spark Leads".
+ *
+ * ⚠️ NÃO escreva aqui nenhuma forma de "não existe" / "não achei", nem mesmo
+ * NEGADA. Este texto entra no contexto do modelo; ele pesca a expressão e
+ * repete a conclusão errada pro rep — foi o caso Gustavo, em que o bot afirmou
+ * ausência de cadastro num apagão de auth e ofereceu criar uma contato
+ * duplicado. Descreva só o que se sabe: a LEITURA falhou. (Mesmo cuidado que a
+ * sessão irmã aplicou no `resolvePipelineStage`.)
+ *
+ * Coberta por `scripts/test-resolver-indisponivel.ts`.
+ */
+export const MSG_BUSCA_INDISPONIVEL =
+  "a consulta ao Spark Leads falhou — a integração não respondeu. " +
+  "Isto é falha de LEITURA, não informação sobre o cadastro: você não tem dado nenhum " +
+  "sobre esse contato. Diga ao rep que a busca não completou e que você tenta de novo " +
+  "em instantes. NÃO ofereça criar contato.";
+
 const searchContacts: ToolEntry = {
   def: {
     name: "search_contacts",
@@ -88,14 +106,7 @@ const searchContacts: ToolEntry = {
               "checar o token de empresa / o cron refresh-ghl-token.",
             metadata: { locationId: ctx.locationId, query, erro: result.erro, tentou: result.tried },
           });
-          return {
-            status: "error",
-            message:
-              "não consegui consultar o Spark Leads agora (a integração não respondeu). " +
-              "NÃO afirme que o contato não existe e NÃO ofereça criar — diga que a consulta " +
-              "falhou e que você tenta de novo em instantes.",
-            retryable: true,
-          };
+          return { status: "error", message: MSG_BUSCA_INDISPONIVEL, retryable: true };
         }
         if (!result.best || result.alternatives.length === 0) {
           return { status: "not_found", message: `Nenhum contato encontrado pra "${query}" (tentei variações de nome e de telefone).` };
