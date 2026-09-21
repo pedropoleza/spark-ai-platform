@@ -321,3 +321,68 @@ de data achou 2 que a leitura manual tinha perdido.
   `catch → return null` e o chamador diz *"funil/etapa não existe na location"*.
   Durante o apagão de token isso apareceu 15×, afirmando algo falso sobre o CRM
   do cliente. Mesma classe do H93 — **falha de leitura não é ausência de dado**.
+
+### H93, dia 2 (2026-09-21) — o espelho não pode andar pra trás
+
+O apagão voltou de manhã com OUTRA assinatura: `Token nao encontrado para
+companyId` em vez de `Invalid JWT`. Não era token vencido — era a **leitura** do
+projeto "GHL Token" estourando timeout. O Postgres de lá morreu de vez
+(`PGRST002 Could not query the database for the schema cache`), o cron das 02:00
+nem conseguiu ler a tabela pra renovar, e o cache do dia 1 — que derrubou as
+leituras de **45.000/h para ~50-3.500/h** — não salvou: o projeto segue doente
+com 90% menos carga. Conclusão: ele sai do caminho crítico.
+
+**`ghl_company_tokens`** (banco principal) vira a fonte do caminho quente.
+Leitura: espelho primeiro, tabela antiga só como fallback com backfill. Escrita:
+**espelho primeiro** — quando o código chega no upsert o GHL JÁ rotacionou, e o
+par novo só existe naquela variável.
+
+#### O acidente que a correção causou (e o que ele ensina)
+
+Uma sessão irmã renovou o token às 16:50Z e gravou o par novo no espelho. Às
+17:27Z **o meu capturador copiou a linha da tabela antiga por cima**. O
+`access_token` velho ainda era válido, então prod continuou de pé e todo teste
+de fumaça deu verde — mas o `refresh_token` que veio junto já tinha sido
+CONSUMIDO na rotação (uso único), e o estrago só apareceria na renovação
+seguinte, 8h depois, de madrugada. Confirmado pelo `uniqueId` do refresh: o do
+espelho era exatamente o que a outra sessão queimou.
+
+⚠️ **Credencial de uso único falha em SILÊNCIO quando é sobrescrita.** A pergunta
+"está funcionando?" responde verde durante toda a janela de validade do token
+velho. Não use disponibilidade como prova de que uma escrita de credencial deu
+certo.
+
+#### Três camadas de guarda, e por que as duas primeiras não bastam
+
+1. **`somenteSeMaisNovo` em `gravarTokenEspelho`** — usado só no BACKFILL. A
+   escrita da rotação é incondicional de propósito: recusá-la destruiria a
+   única cópia de uma credencial de uso único.
+2. **O critério é o `iat` do access_token**, não o `updated_at` da linha. Os
+   escritores carimbam essa coluna com semânticas DIFERENTES (uns a hora da
+   execução, outros o carimbo da origem), então comparar a coluna faz par novo
+   parecer velho. O `iat` é assinado pelo GHL e descreve o PAR, não a escrita.
+   Sintoma de diagnóstico: `updated_at` mais VELHO que `created_at` = a linha
+   veio de cópia, não de rotação.
+3. **Trigger `trg_ghl_espelho_nao_regride`** (migration 20260921180000).
+   As duas guardas acima moram em `src/lib/ghl/*` — e **três scripts escreviam
+   direto na tabela**, incluindo um não versionado que checava só expiração
+   (expiração não ORDENA: par mais velho e ainda válido passava). Guarda na
+   aplicação protege quem passa pela porta; o que não passa pela porta é
+   justamente o script de emergência escrito às pressas durante um apagão — é
+   quando a trava mais importa que ela é mais fácil de contornar. Por isso a
+   regra desceu pro banco. Token ilegível NÃO bloqueia: a trava existe pra
+   impedir regressão comprovada, não pra atrapalhar escrita legítima.
+
+#### A frase negada também vaza
+
+A mensagem de indisponibilidade dizia *"NÃO afirme que o contato não existe"*.
+A expressão está ali, ainda que negada, e o texto entra no contexto do modelo —
+basta ele pescar a frase pra repetir a conclusão errada. Agora descreve só o que
+se sabe (a LEITURA falhou), sem nenhuma forma de "não existe"/"não achei", em
+constante exportada e coberta por assert no teste. Mesmo achado que a sessão
+irmã aplicou no `resolvePipelineStage`, que mentia pro LOG dizendo que um funil
+existente não existia — pior de rastrear, porque manda quem investiga procurar
+erro de cadastro no CRM do cliente.
+
+Testes: `test-espelho-token.ts` (12/12, com o cenário real dos dois carimbos
+discordando do `iat`) e `test-resolver-indisponivel.ts` (29/29).
