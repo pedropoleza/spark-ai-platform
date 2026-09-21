@@ -37,6 +37,44 @@ export interface TokenEmpresa {
   updated_at?: string | null;
 }
 
+
+/**
+ * Instante de EMISSÃO do par, lido do `iat` do próprio access_token.
+ *
+ * É o carimbo autoritativo: vem assinado pelo GHL e não depende de quem gravou
+ * a linha. O `updated_at` NÃO serve sozinho — quem re-semeia a partir da tabela
+ * antiga copia o carimbo da ORIGEM, então a coluna descreve o par, não a
+ * escrita, e duas fontes com convenções diferentes se comparam errado.
+ * (Crédito do achado: sessão irmã, incidente de 2026-09-21.)
+ */
+function emissaoDoPar(t: TokenEmpresa): number | null {
+  const parte = t.access_token?.split(".")[1];
+  if (!parte) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parte, "base64").toString());
+    return typeof payload?.iat === "number" ? payload.iat * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `candidato` é estritamente mais novo que `atual`?
+ * Empate = NÃO (mesmo par; reescrever não agrega e só arrisca).
+ * Sem `iat` legível dos dois lados, cai pro `updated_at`; sem nenhum dos dois,
+ * recusa — na dúvida, preserva o que já está gravado.
+ */
+function ehMaisNovo(candidato: TokenEmpresa, atual: TokenEmpresa): boolean {
+  const iatNovo = emissaoDoPar(candidato);
+  const iatAtual = emissaoDoPar(atual);
+  if (iatNovo !== null && iatAtual !== null) return iatNovo > iatAtual;
+
+  const tNovo = candidato.updated_at ? Date.parse(candidato.updated_at) : NaN;
+  const tAtual = atual.updated_at ? Date.parse(atual.updated_at) : NaN;
+  if (!Number.isNaN(tNovo) && !Number.isNaN(tAtual)) return tNovo > tAtual;
+  return false;
+}
+
 /** Lê o par do espelho. `null` = ainda não espelhado (não é erro). */
 export async function lerTokenEspelho(companyId: string): Promise<TokenEmpresa | null> {
   const sb = createAdminClient();
@@ -86,9 +124,7 @@ export async function gravarTokenEspelho(
 
   if (opts.somenteSeMaisNovo) {
     const atual = await lerTokenEspelho(companyId).catch(() => null);
-    const tAtual = atual?.updated_at ? Date.parse(atual.updated_at) : NaN;
-    const tNovo = t.updated_at ? Date.parse(t.updated_at) : Date.now();
-    if (!Number.isNaN(tAtual) && tAtual >= tNovo) {
+    if (atual && !ehMaisNovo(t, atual)) {
       console.warn(
         `[GHL] backfill ignorado (company=${companyId}): o espelho já tem par igual ou mais novo`,
       );
