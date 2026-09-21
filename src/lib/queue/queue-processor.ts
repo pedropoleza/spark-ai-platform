@@ -453,41 +453,63 @@ export async function processMessageQueue(opts?: {
   // falhava (podia marcar "completed" de grupos que falharam ou "failed" de
   // grupos que passaram). Agora rastreamos sucesso por-grupo.
   const grupos = Array.from(groups.values());
+
+  /**
+   * Devolve grupos ainda não atendidos pra 'pending' já elegíveis (H94).
+   * É o oposto de deixar morrer em 'processing': lá são 5 min até o reaper,
+   * aqui são os 10s do próximo tick.
+   */
+  const devolverGrupos = async (resto: typeof grupos): Promise<void> => {
+    const ids = resto.flatMap((g) => g.messages.map((m) => m.id));
+    if (!ids.length) return;
+    const { error } = await supabase
+      .from("message_queue")
+      .update({ status: "pending", process_after: new Date().toISOString() })
+      .in("id", ids)
+      .eq("status", "processing");
+    if (error) {
+      // Não devolveu: o reaper ainda cobre em 5 min, mas é exatamente essa
+      // espera que este bloco existe pra evitar — tem que gritar.
+      console.error(`[Processor] H94: falha ao devolver ${ids.length} msg(s): ${error.message}`);
+      notifyCriticalError({
+        locationId: "system",
+        errorType: "queue_devolucao_falhou",
+        message: `Devolução do lote falhou: ${error.message}`,
+      }).catch(() => {});
+      return;
+    }
+    devolvidas += ids.length;
+    console.warn(`[Processor] H94: ${ids.length} msg(s) devolvida(s) pra fila (${resto.length} grupos)`);
+    try {
+      await supabase.from("execution_log").insert({
+        agent_id: null,
+        location_id: "system",
+        contact_id: "system",
+        action_type: "queue_lote_devolvido",
+        action_payload: { mensagens: ids.length, grupos: resto.length, processados: processed },
+        success: true,
+      });
+    } catch { /* auditoria best-effort */ }
+  };
+
+  // H94 — trava anti-livelock. O orçamento pode nascer estourado (reaper +
+  // claim + MC-6 lentos num pico). Se nesse caso devolvêssemos TUDO, o tick
+  // seguinte reclamaria as mesmas mensagens e devolveria de novo, pra sempre —
+  // a fila nunca andaria. Então garantimos SEMPRE ao menos um turno por lote e
+  // liberamos o resto na hora: no pior caso uma única mensagem fica exposta ao
+  // reaper, em vez de o lote inteiro.
+  if (fimDoLote && grupos.length > 1 && Date.now() + RESERVA_TURNO_MS > fimDoLote) {
+    await devolverGrupos(grupos.slice(1));
+    grupos.length = 1;
+  }
+
   for (let i = 0; i < grupos.length; i++) {
     const group = grupos[i];
 
-    // H94: acabou o orçamento — devolve TUDO que sobrou (inclusive este grupo)
-    // pra 'pending' e sai. Sem isto, o resto morre em 'processing' com a lambda.
-    if (fimDoLote && Date.now() + RESERVA_TURNO_MS > fimDoLote) {
-      const idsSobrando = grupos.slice(i).flatMap((g) => g.messages.map((m) => m.id));
-      const { error: erroDevolver } = await supabase
-        .from("message_queue")
-        .update({ status: "pending", process_after: new Date().toISOString() })
-        .in("id", idsSobrando)
-        .eq("status", "processing");
-      if (erroDevolver) {
-        // Não conseguiu devolver: o reaper ainda cobre em 5 min, mas isso é
-        // exatamente a espera que este bloco existe pra evitar — tem que gritar.
-        console.error(`[Processor] H94: falha ao devolver ${idsSobrando.length} msg(s): ${erroDevolver.message}`);
-        notifyCriticalError({
-          locationId: "system",
-          errorType: "queue_devolucao_falhou",
-          message: `Devolução do lote falhou: ${erroDevolver.message}`,
-        }).catch(() => {});
-      } else {
-        devolvidas = idsSobrando.length;
-        console.warn(`[Processor] H94: orçamento esgotado — ${idsSobrando.length} msg(s) devolvida(s) pra fila (${grupos.length - i} grupos)`);
-        try {
-          await supabase.from("execution_log").insert({
-            agent_id: null,
-            location_id: "system",
-            contact_id: "system",
-            action_type: "queue_lote_devolvido",
-            action_payload: { mensagens: idsSobrando.length, grupos: grupos.length - i, processados: processed },
-            success: true,
-          });
-        } catch { /* auditoria best-effort */ }
-      }
+    // Acabou o orçamento no meio do lote: devolve o resto e sai. (i > 0 porque
+    // o primeiro grupo já foi garantido pela trava anti-livelock acima.)
+    if (i > 0 && fimDoLote && Date.now() + RESERVA_TURNO_MS > fimDoLote) {
+      await devolverGrupos(grupos.slice(i));
       break;
     }
 

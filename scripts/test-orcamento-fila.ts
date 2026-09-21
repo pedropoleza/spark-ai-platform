@@ -49,14 +49,17 @@ const limpar = () => sb.from("message_queue").delete().eq("location_id", LOC);
 
 (async () => {
   await limpar();
-  console.log("\n=== CENÁRIO 1: orçamento ESGOTADO -> tem que DEVOLVER ===");
+  console.log("\n=== CENÁRIO 1: orçamento ESGOTADO -> devolve o resto, mas ANDA UM ===");
   await semear(6);
   const r1 = await processMessageQueue({ orcamentoMs: 1 });
   const e1 = await estado();
   console.log(`  retorno: ${JSON.stringify(r1)} | estado: ${JSON.stringify(e1)}`);
-  t("nenhum grupo processado", r1.processed === 0, `processed=${r1.processed}`);
-  t("devolveu alguma coisa", (r1.devolvidas ?? 0) > 0, `devolvidas=${r1.devolvidas}`);
-  t("as 6 voltaram pra pending", (e1.pending ?? 0) === 6, JSON.stringify(e1));
+  // A trava anti-livelock garante ao menos 1 turno: devolver TUDO faria o tick
+  // seguinte reclamar as mesmas mensagens e devolver de novo, pra sempre.
+  t("processou exatamente 1 grupo (anti-livelock)", r1.processed === 1, `processed=${r1.processed}`);
+  t("devolveu os outros 5", r1.devolvidas === 5, `devolvidas=${r1.devolvidas}`);
+  t("5 voltaram pra pending", (e1.pending ?? 0) === 5, JSON.stringify(e1));
+  t("1 concluída", (e1.completed ?? 0) === 1, JSON.stringify(e1));
   t("NENHUMA ficou presa em processing", !e1.processing, JSON.stringify(e1));
 
   const { data: aud } = await sb.from("execution_log").select("action_payload,created_at")
@@ -68,7 +71,7 @@ const limpar = () => sb.from("message_queue").delete().eq("location_id", LOC);
   const r2 = await processMessageQueue({ orcamentoMs: 40_000 });
   const e2 = await estado();
   console.log(`  retorno: ${JSON.stringify(r2)} | estado: ${JSON.stringify(e2)}`);
-  t("processou os grupos de teste", r2.processed >= 6, `processed=${r2.processed}`);
+  t("processou os 5 restantes", r2.processed >= 5, `processed=${r2.processed}`);
   t("nada devolvido com folga", !r2.devolvidas, `devolvidas=${r2.devolvidas}`);
   t("todas concluídas", (e2.completed ?? 0) === 6, JSON.stringify(e2));
   t("nada preso em processing", !e2.processing, JSON.stringify(e2));
