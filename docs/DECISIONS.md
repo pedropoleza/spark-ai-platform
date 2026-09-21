@@ -239,3 +239,85 @@ crítico que só mora numa tabela não é alarme — é registro. O que apurou o
 reclamação de um corretor, 35h depois.
 
 Teste: `scripts/test-resolver-indisponivel.ts` (21/21).
+
+## H94 (2026-09-21) — Review da conta da Marina Couto: a fila devolve o que não vai dar tempo
+
+Reclamação no grupo: "a IA não está sendo ativada, não está continuando o
+atendimento". Nenhuma das duas frases descrevia a causa, e as três causas reais
+eram diferentes entre si.
+
+**Funil real da semana (13→21/09):** 308 leads escreveram · 165 atendidos ·
+27 agendados. ~15 reuniões perdidas, nenhuma por qualidade de conversa.
+
+### 1. A cauda da fila (a maior, e a que ninguém via)
+
+O claim pega **até 100 mensagens da frota inteira**, mas um turno custa ~6s
+(p90 8,4s / p99 19,2s) e a lambda tem 35s. Claimávamos dezenas de grupos
+sabendo que só dava pra atender uns 4 — o resto ficava preso em `processing`
+até o reaper, **5 min depois**, e o ciclo se repetia. Medido: **567 mensagens
+órfãs em 3 dias** e leads esperando **3 a 5 horas** numa conta cuja mediana é
+0,3 min. De 08 a 14/09 não houve UMA mensagem acima de 10 min; de 16/09 em
+diante, 6 a 15 por dia acima de 1h.
+
+⚠️ **O H92 não resolveu isso, e é importante entender por quê:** o
+`withDeadline` do `process-batch` só CORRE contra o relógio — rejeita a promise
+e o laço lá dentro continua rodando, com as linhas presas. Teto de fora não
+interrompe trabalho de dentro. O H92 deu o INSTRUMENTO (`queue_orphans_reaped`)
+que permitiu medir; a correção é outra.
+
+Agora o orçamento vai **por dentro**: antes de cada grupo o processador
+pergunta se ainda cabe um turno (reserva 12s) e, se não cabe, devolve o resto
+pra `pending` já elegível — 5 min viram os 10s do próximo tick. Não é claimar
+menos (quebraria o FIFO entre contas), é **devolver na hora**.
+
+⚠️ **Trava anti-livelock, aprendida na primeira hora em produção:** o primeiro
+`queue_lote_devolvido` real veio com `processados: 0` — o orçamento nasceu
+estourado e o lote inteiro voltou. Com 0 processados isso é um laço infinito: o
+tick seguinte reclama as mesmas mensagens e devolve de novo. **Todo mecanismo
+de "desistir e devolver" precisa garantir progresso mínimo** — aqui, um turno
+por lote sempre.
+
+### 2. A porta de entrada — a regra casava com o ANÚNCIO, não com o lead
+
+A ativação exigia "carreira" ou "entender melhor" no texto do lead. Isso é o
+que o anúncio do Instagram **pré-preenche** ("Olá Marina, queria entender
+melhor sobre essa carreira"). Quem vinha da mesma campanha e digitava a própria
+frase — "gostaria de saber mais", "acabei de receber meu work permit" — era
+barrado: **135 contatos em 14 dias, ~22 leads reais**.
+
+Afrouxar o texto seria pior: **43 dos 135 eram "Parabéns"** de amigos no
+aniversário da Marina (15/09), e a regra acertava em barrar. A separação que
+funciona não é o texto, é a **origem** (H74): medido contra os contatos reais,
+**17 de 20 leads perdidos vieram de `Paid Social` e 35 de 35 parabéns de
+`Social media`**. Folha `attribution` como 3º grupo; simulado contra os 135
+contatos ANTES de aplicar — 20 leads recuperados, 0 parabéns liberados.
+
+### 3. O parêntese que cegava o guard de data
+
+`fixWeekdayDatePairs` (H85) exige espaço entre o dia e a data, então
+**"segunda (22/09)" passava batido** — e é exatamente a forma que a Manu usa
+pra oferecer slot. Três datas erradas chegaram ao lead em 9 dias, **as três
+batendo com o calendário de 2025** (15/09/2025 = segunda, 18/09 = quinta,
+22/09 = segunda): assinatura limpa do H68. Uma letra de regex (`\(?`).
+
+### Vigia de conta (`/api/cron/vigia-conta`, job 21, 13:00 UTC)
+
+Seis detectores determinísticos por conta: entrega, cauda da fila, porta de
+entrada, par dia/data no texto ENTREGUE, "fechado" sem agendamento real, e
+volume. **Todos foram rodados contra as conversas reais de 13→21/09 antes de
+entrar** (lição do H85) — cada um reencontrou os defeitos achados na mão, e o
+de data achou 2 que a leitura manual tinha perdido.
+
+### Lições que valem fora deste caso
+
+- **Dump truncado mente com confiança.** O PostgREST corta em 1000 linhas
+  independente do `.limit()` que se peça; como a ordem é crescente, o que se
+  perde é o FIM da janela. Três auditorias concluíram "a IA parou em 16/09" —
+  era o dump, não a IA. **Sempre paginar, e conferir se o último evento bate
+  com o relógio.**
+- **A mediana esconde a cauda.** 0,3 min de mediana com 15 leads/dia esperando
+  mais de 1h é uma conta que "parece saudável" em qualquer métrica de volume.
+- **Erro do CRM traduzido em afirmação factual.** `resolvePipelineStage` faz
+  `catch → return null` e o chamador diz *"funil/etapa não existe na location"*.
+  Durante o apagão de token isso apareceu 15×, afirmando algo falso sobre o CRM
+  do cliente. Mesma classe do H93 — **falha de leitura não é ausência de dado**.
