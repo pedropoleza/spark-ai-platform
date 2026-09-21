@@ -22,6 +22,11 @@
 
 import { createGHLTokenClient } from "@/lib/supabase/admin";
 import { invalidateCompanyTokenCache } from "./company-token-cache";
+import {
+  lerTokenEspelho,
+  gravarTokenEspelho,
+  listarCompaniesEspelhadas,
+} from "./company-token-store";
 import { GHL_API_BASE } from "@/lib/utils/constants";
 
 /**
@@ -102,6 +107,26 @@ async function upsertCompanyTokens(
   companyId: string,
   tokens: GHLTokenResponse,
 ): Promise<void> {
+  // H93 (2026-09-21) — ESPELHO PRIMEIRO, e é isto que impede o bug se repetir.
+  // O refresh_token do GHL é de USO ÚNICO: quando chegamos aqui o GHL JÁ
+  // rotacionou, então o par novo só existe nesta variável. Gravar antes no banco
+  // principal (saudável) garante que a rotação não se perca se a "Token
+  // Refresher" (projeto separado, instável) estiver fora — foi exatamente assim
+  // que a tabela ficou com um refresh_token morto e a plataforma passou 36h fora.
+  await gravarTokenEspelho(companyId, {
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token,
+    token_type: tokens.token_type,
+    expires_in: tokens.expires_in,
+    scope: tokens.scope,
+    userType: tokens.userType ?? "Company",
+    userId: tokens.userId ?? null,
+    refreshTokenId: tokens.refreshTokenId ?? null,
+    isBulkInstallation: tokens.isBulkInstallation ? String(tokens.isBulkInstallation) : null,
+    updated_at: new Date().toISOString(),
+  });
+  invalidateCompanyTokenCache(companyId);
+
   const { error } = await supabase.from("Token Refresher").upsert(
     {
       companyId, // PK
@@ -121,12 +146,14 @@ async function upsertCompanyTokens(
     { onConflict: "companyId" },
   );
 
-  if (error) throw new Error(`UPSERT failed: ${error.message}`);
-
-  // H93: o cache em memória do company token tem que morrer AQUI — o
-  // `generateLocationToken` relê o meta logo depois do self-heal e precisa do
-  // par novo, não do que acabou de ser substituído.
-  invalidateCompanyTokenCache(companyId);
+  // A tabela original é BEST-EFFORT desde o H93: o par já está salvo no espelho,
+  // então uma falha aqui não pode mais derrubar o refresh (era o que perdia a
+  // rotação). Segue sendo escrita porque há outros consumidores lendo dela.
+  if (error) {
+    console.warn(
+      `[token-refresher] espelho OK, mas a "Token Refresher" recusou (company=${companyId}): ${error.message}`,
+    );
+  }
 }
 
 /**
@@ -195,18 +222,21 @@ async function doRefreshCompanyToken(
 ): Promise<GHLTokenResponse> {
   const supabase = createGHLTokenClient();
 
-  const { data, error } = await supabase
-    .from("Token Refresher")
-    .select('"companyId", refresh_token')
-    .eq("companyId", companyId)
-    .single();
-
-  const refreshToken = (data as { refresh_token?: string } | null)?.refresh_token;
-  if (error || !refreshToken) {
-    throw new Error(
-      `Token Refresher sem refresh_token pra companyId=${companyId}` +
-        (error ? `: ${error.message}` : ""),
-    );
+  // H93: espelho primeiro — com o projeto de tokens fora, esta leitura era o que
+  // impedia até o self-heal de rodar.
+  let refreshToken = (await lerTokenEspelho(companyId).catch(() => null))?.refresh_token;
+  let erroLegado = "";
+  if (!refreshToken) {
+    const { data, error } = await supabase
+      .from("Token Refresher")
+      .select('"companyId", refresh_token')
+      .eq("companyId", companyId)
+      .single();
+    refreshToken = (data as { refresh_token?: string } | null)?.refresh_token;
+    erroLegado = error ? `: ${error.message}` : "";
+  }
+  if (!refreshToken) {
+    throw new Error(`Sem refresh_token pra companyId=${companyId}${erroLegado}`);
   }
 
   const tokens = await refreshOneToken(refreshToken);
@@ -227,20 +257,25 @@ export async function refreshAllCompanyTokens(): Promise<RefreshResult> {
     failures: [],
   };
 
-  const { data: rows, error } = await supabase
-    .from("Token Refresher")
-    .select('"companyId", refresh_token');
-
-  if (error) {
-    throw new Error(`Token Refresher read failed: ${error.message}`);
+  // H93: espelho primeiro. O cron de 21/09 crashou em `Token Refresher read
+  // failed: connection timeout` e por isso o token venceu sem renovação.
+  let rows = await listarCompaniesEspelhadas().catch(() => []);
+  if (rows.length === 0) {
+    const { data, error } = await supabase
+      .from("Token Refresher")
+      .select('"companyId", refresh_token');
+    if (error) {
+      throw new Error(`Token Refresher read failed: ${error.message}`);
+    }
+    rows = (data || []) as Array<{ companyId: string; refresh_token: string }>;
   }
-  if (!rows || rows.length === 0) {
+  if (rows.length === 0) {
     return result;
   }
 
   result.total = rows.length;
 
-  for (const row of rows as Array<{ companyId: string; refresh_token: string }>) {
+  for (const row of rows) {
     try {
       const tokens = await refreshOneToken(row.refresh_token);
       await upsertCompanyTokens(supabase, row.companyId, tokens);

@@ -1,4 +1,5 @@
 import { createGHLTokenClient } from "@/lib/supabase/admin";
+import { lerTokenEspelho, gravarTokenEspelho } from "./company-token-store";
 import {
   lerCompanyTokenCache,
   gravarCompanyTokenCache,
@@ -45,6 +46,24 @@ export async function getCompanyToken(companyId: string): Promise<CompanyTokenRo
   const emCache = lerCompanyTokenCache(companyId, isCompanyTokenNearExpiry);
   if (emCache) return emCache;
 
+  // H93 (2026-09-21): o ESPELHO no banco principal é o caminho quente. O projeto
+  // "GHL Token" é separado e passou 36h derrubando a plataforma inteira com
+  // timeout de leitura. Ler daqui tira esse ponto único de falha do caminho de
+  // toda chamada ao CRM. Ver ghl/company-token-store.ts.
+  const espelho = await lerTokenEspelho(companyId).catch(() => null);
+  if (espelho?.access_token) {
+    const meta: CompanyTokenRow = {
+      access_token: espelho.access_token,
+      companyId,
+      expires_in: espelho.expires_in ?? null,
+      updated_at: espelho.updated_at ?? null,
+    };
+    gravarCompanyTokenCache(companyId, meta);
+    return meta;
+  }
+
+  // Fallback: tabela original (ainda é o que outros consumidores leem). Faz
+  // backfill do espelho na passagem, pra esta ser a ÚLTIMA leitura lenta.
   const supabase = createGHLTokenClient();
 
   const { data, error } = await supabase
@@ -56,6 +75,19 @@ export async function getCompanyToken(companyId: string): Promise<CompanyTokenRo
   if (error || !data) {
     throw new Error(`Token nao encontrado para companyId: ${companyId}`);
   }
+
+  void gravarTokenEspelho(companyId, {
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    token_type: data.token_type,
+    expires_in: data.expires_in,
+    scope: data.scope,
+    userType: data.userType,
+    userId: data.userId,
+    refreshTokenId: data.refreshTokenId,
+    isBulkInstallation: data.isBulkInstallation,
+    updated_at: data.updated_at,
+  }).catch((e) => console.warn(`[GHL] backfill do espelho falhou: ${e?.message}`));
 
   const meta: CompanyTokenRow = {
     access_token: data.access_token,
