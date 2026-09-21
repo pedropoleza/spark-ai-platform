@@ -87,7 +87,9 @@ export async function getCompanyToken(companyId: string): Promise<CompanyTokenRo
     refreshTokenId: data.refreshTokenId,
     isBulkInstallation: data.isBulkInstallation,
     updated_at: data.updated_at,
-  }).catch((e) => console.warn(`[GHL] backfill do espelho falhou: ${e?.message}`));
+    // Backfill NUNCA sobrescreve par mais novo: a tabela antiga pode estar
+    // atrasada, e o refresh_token dela já ter sido consumido. Ver store.
+  }, { somenteSeMaisNovo: true }).catch((e) => console.warn(`[GHL] backfill do espelho falhou: ${e?.message}`));
 
   const meta: CompanyTokenRow = {
     access_token: data.access_token,

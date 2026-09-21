@@ -65,9 +65,36 @@ export async function lerTokenEspelho(companyId: string): Promise<TokenEmpresa |
  * Grava o par no espelho. LANÇA em falha de propósito: este é o write que
  * protege a rotação — se ele não passou, o chamador precisa saber antes de
  * considerar o refresh concluído.
+ *
+ * `somenteSeMaisNovo` é pro BACKFILL (cópia vinda da tabela antiga): ali o par
+ * pode estar ATRASADO em relação ao que já está no espelho, e sobrescrever é
+ * destrutivo de um jeito silencioso.
+ *
+ * Incidente que criou esta trava (2026-09-21): uma sessão renovou o token e
+ * gravou o par novo direto no espelho; meia hora depois um backfill copiou a
+ * linha da tabela antiga por cima. O access_token velho ainda era válido, então
+ * NADA quebrou na hora — mas o refresh_token que veio junto já tinha sido
+ * CONSUMIDO na renovação (uso único), e o estrago só apareceria na renovação
+ * seguinte, horas depois. Espelho nunca anda pra trás.
  */
-export async function gravarTokenEspelho(companyId: string, t: TokenEmpresa): Promise<void> {
+export async function gravarTokenEspelho(
+  companyId: string,
+  t: TokenEmpresa,
+  opts: { somenteSeMaisNovo?: boolean } = {},
+): Promise<void> {
   const sb = createAdminClient();
+
+  if (opts.somenteSeMaisNovo) {
+    const atual = await lerTokenEspelho(companyId).catch(() => null);
+    const tAtual = atual?.updated_at ? Date.parse(atual.updated_at) : NaN;
+    const tNovo = t.updated_at ? Date.parse(t.updated_at) : Date.now();
+    if (!Number.isNaN(tAtual) && tAtual >= tNovo) {
+      console.warn(
+        `[GHL] backfill ignorado (company=${companyId}): o espelho já tem par igual ou mais novo`,
+      );
+      return;
+    }
+  }
   const { error } = await sb.from("ghl_company_tokens").upsert(
     {
       company_id: companyId,
