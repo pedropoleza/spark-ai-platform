@@ -386,3 +386,46 @@ erro de cadastro no CRM do cliente.
 
 Testes: `test-espelho-token.ts` (12/12, com o cenário real dos dois carimbos
 discordando do `iat`) e `test-resolver-indisponivel.ts` (29/29).
+
+### H93, causa raiz (2026-09-22) — o `client_id` do ambiente estava obsoleto
+
+Três dias de apuração e a origem era uma linha de env. O app do Marketplace
+(**N8n App**, `67cf4ed48fa066a72e313796`) teve as **chaves regeneradas** em
+algum momento; o GHL troca o SUFIXO do client_id nisso, e o nosso ambiente ficou
+com o antigo:
+
+```
+env (obsoleto) ... 67cf4ed48fa066a72e313796-mpaiivo9
+app (atual) ...... 67cf4ed48fa066a72e313796-m83kvp75
+```
+
+O `client_secret` **não** mudou — por isso o sintoma era tão enganoso.
+
+Isso explica a cadeia inteira: o cron diário falhava com
+`invalid_request / Invalid parameter: "client_id"` desde 2026-06-11 (18
+ocorrências, sempre tratadas como ruído). Enquanto o refresh de emergência ainda
+passava, o token se renovava e ninguém via. Quando a rotação finalmente se
+perdeu (18/09), não havia mais recuperação automática: **todo refresh estava
+condenado desde o começo**.
+
+⚠️ **O GHL valida o CÓDIGO antes das credenciais.** Isso inverte a leitura do
+erro e nos custou um dia:
+- `Authorization code not found` → o code é inválido/expirado, e **nada se
+  aprende sobre client_id/secret**;
+- `Invalid client credentials!` → o code é VÁLIDO e a credencial é que está
+  errada.
+
+Corolário útil: tentativa com credencial errada **não consome** o code — dá pra
+iterar. E o teste "bogus refresh_token + secret atual", que eu usei pra
+"confirmar" que o secret estava bom, **não prova nada**: a resposta
+`Invalid refresh token` vem antes da checagem de credencial.
+
+⚠️ **Ao pedir re-autorização, gere o link a partir do "Install link" da tela do
+app**, não do `GHL_CLIENT_ID` do env — se o env estiver obsoleto, o link herda o
+erro e o code volta impossível de trocar. Confira também o `redirect_uri`
+EXATO (aqui é `https://www.google.com/`, com `www` e barra final; qualquer
+variação derruba o exchange).
+
+Diagnóstico de 1 comando: o `sourceId` dentro do JWT do access_token é o
+client_id que EMITIU aquele token. Se ele não bate com `GHL_CLIENT_ID` do env, o
+refresh está condenado — mesmo com tudo funcionando naquele instante.
