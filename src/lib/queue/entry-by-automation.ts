@@ -38,3 +38,21 @@ export function deveSilenciarEntrada(i: EntradaInput): boolean {
   if (i.conversationActive || i.entrySuppressedAt) return false;
   return i.inboundsAnteriores === 0;
 }
+
+/**
+ * "Este contato já ATRAVESSOU o gate de ativação?" — usado pelo `trigger_once`
+ * pra decidir se re-avalia o targeting no turno seguinte.
+ *
+ * H96 (bug observado em prod 2026-09-24): a entrada suprimida atravessou o gate
+ * (o webhook só enfileirou porque o targeting casou), mas não deixa nenhum dos
+ * dois rastros que `conversationActive` procura — não há resposta da IA nem
+ * mensagem contada, justamente porque a IA calou de propósito. Sem contar o
+ * `entry_suppressed_at`, o turno 2 é re-avaliado contra a folha `message` e a
+ * resposta do lead ("2") nunca casa a frase do anúncio → `targeting_skip`.
+ */
+export function entradaJaPassouPeloGate(i: {
+  conversationActive: boolean;
+  entrySuppressedAt: string | null | undefined;
+}): boolean {
+  return i.conversationActive || !!i.entrySuppressedAt;
+}

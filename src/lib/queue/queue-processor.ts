@@ -173,7 +173,7 @@ import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
 import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
 import { regraQueDesliga, descreveRegra } from "@/lib/queue/deactivation";
-import { deveSilenciarEntrada } from "@/lib/queue/entry-by-automation";
+import { deveSilenciarEntrada, entradaJaPassouPeloGate } from "@/lib/queue/entry-by-automation";
 import type { DeactivationRule } from "@/types/agent";
 import { notifyCriticalError } from "@/lib/utils/notify";
 import { withRetry } from "@/lib/utils/retry";
@@ -870,7 +870,26 @@ async function processGroup(
     (config as { activation_mode?: string | null }).activation_mode === "trigger_once"
       ? "trigger_once"
       : "gate_ongoing";
-  const targetingIsTriggerOnly = activationMode === "trigger_once" && conversationActive;
+  // H96 (bug observado em prod 2026-09-24, conta da Márcia, contato
+  // S6UEuzYfkHXlkwwNBoK8): entrada SUPRIMIDA também é "passou pelo gate", e não
+  // contava. Com `entry_by_automation`, a linha de conversation_state nasce só
+  // com `entry_suppressed_at` — sem `last_ai_response_at` (a IA não respondeu de
+  // propósito) e sem `message_count` — então `conversationActive` era false, o
+  // trigger_once NÃO bypassava, e o gate re-avaliava o turno 2 contra a folha
+  // `message`. Como o turno 2 é a RESPOSTA do lead ("2", "Quais dados vc
+  // precisa?"), ela nunca casa a frase do anúncio → `targeting_skip` → silêncio.
+  // Medido: lead de anúncio de 15/09 pediu "Quais dados vc precisa?" em 16/09
+  // 20:47 e levou `targeting_skip` 49s depois; só teve resposta 9h mais tarde,
+  // quando um humano viu. É a mesma família do H51 ("responde a 1ª e morre"), na
+  // única porta que o H51 não cobriu: a que nasce calada de propósito.
+  // Deliberadamente NÃO mexo em `conversationActive` cru — ele também gateia a
+  // automação `agent_activated` (ramo 11c) e a neutralização da folha `message`;
+  // mudar o valor bruto desligaria o `ai_activated` de quem usa os dois juntos.
+  const passouPeloGate = entradaJaPassouPeloGate({
+    conversationActive,
+    entrySuppressedAt: (convState as { entry_suppressed_at?: string | null } | null)?.entry_suppressed_at,
+  });
+  const targetingIsTriggerOnly = activationMode === "trigger_once" && passouPeloGate;
   // normalizeTargeting cobre array legado E set v2 (Pedro 2026-06-17); null = sem
   // regra efetiva = responde a todos (não chama o gate).
   if (

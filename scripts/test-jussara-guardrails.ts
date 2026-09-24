@@ -17,7 +17,7 @@ import { config as env } from "dotenv";
 import { resolve } from "path";
 env({ path: resolve(__dirname, "..", ".env.local") });
 import { createAdminClient } from "../src/lib/supabase/admin";
-import { deveSilenciarEntrada } from "../src/lib/queue/entry-by-automation";
+import { deveSilenciarEntrada, entradaJaPassouPeloGate } from "../src/lib/queue/entry-by-automation";
 import { pickTriggeredDataFieldRules } from "../src/lib/ai/reaction-engine";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "../src/lib/ai/sales-prompt-builder";
 import { processWithAI, type ConversationTurn } from "../src/lib/ai/openai-client";
@@ -74,6 +74,14 @@ async function main() {
   t('"Ativar IA" no painel manda falar mesmo no 1º turno',
     deveSilenciarEntrada({ entryByAutomation: true, manuallyResumed: true, syntheticTrigger: false,
       conversationActive: false, entrySuppressedAt: null, inboundsAnteriores: 0 }) === false);
+
+  console.log("\nA1b. Turno 2 não pode ser barrado pelo targeting (H96)");
+  t("entrada suprimida conta como 'passou pelo gate' (era o bug: conta da Márcia)",
+    entradaJaPassouPeloGate({ conversationActive: false, entrySuppressedAt: "2026-09-15T03:04:08Z" }) === true);
+  t("conversa já ativa continua contando",
+    entradaJaPassouPeloGate({ conversationActive: true, entrySuppressedAt: null }) === true);
+  t("contato que nunca passou pelo gate segue fora",
+    entradaJaPassouPeloGate({ conversationActive: false, entrySuppressedAt: null }) === false);
 
   console.log("\nA2. Handoff por saúde (4a) — o gate que impede o agendamento");
   const regras = ALVO.automations as unknown as AutomationRule[];
