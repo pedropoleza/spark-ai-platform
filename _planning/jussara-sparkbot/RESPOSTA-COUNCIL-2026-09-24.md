@@ -210,11 +210,11 @@ Intacta, não toquei. Teste A4 verifica que continua lá.
 ### 4f — testes
 
 `scripts/test-jussara-guardrails.ts`. Não escreve nada: lê a config real, aplica
-o patch **em memória** e roda contra ele. **25 de 25 passando.**
+o patch **em memória** e roda contra ele. **28 de 28 passando.**
 
 Dividi em duas partes de propósito, porque o guardrail mora na primeira:
 
-**A — gates determinísticos (21 testes), rodando as funções de produção:**
+**A — gates determinísticos (24 testes), rodando as funções de produção:**
 entrada pela automação (cala no 1º, assume no 2º, não repete, respeita "Ativar
 IA"); handoff por saúde (sim / Sim / "sim, tenho diabetes" disparam; "não" e
 "assim que puder" não; campo inalterado não redispara; ordem das ações);
@@ -343,8 +343,60 @@ não fala com elas.
 
 ---
 
+**g. O guardrail 4d ia importar um bug vivo — achado e corrigido (H96).**
+Fui verificar se o turno 2 realmente chega na IA com `entry_by_automation`
+ligado. Não chegava.
+
+A linha de `conversation_state` da entrada suprimida nasce só com
+`entry_suppressed_at`: sem `last_ai_response_at` (a IA calou de propósito) e sem
+`message_count`. Mas `conversationActive` procura exatamente esses dois rastros
+→ false → `trigger_once` não bypassa → o turno 2 é re-avaliado contra a folha
+`message`. E o turno 2 é a RESPOSTA do lead, que nunca casa a frase do anúncio.
+`targeting_skip`. A IA calaria no turno 1 de propósito e seria barrada no turno 2
+por acidente.
+
+Já aconteceu, conta da Márcia, contato `S6UEuzYfkHXlkwwNBoK8`:
+
+```
+15/09 03:02  lead entra por anúncio do Facebook
+15/09 03:04  entry_suppressed                      ✓ correto
+16/09 20:47  lead: "Quais dados vc precisa ?"      ← pedindo pra ser qualificado
+16/09 20:48  targeting_skip                        ← 49 segundos depois
+17/09 00:16  mandou os dados todos assim mesmo, sem ninguém pedir
+17/09 05:36  ai_paused — um humano viu, 9h depois
+```
+
+O `conversation_state` dele ainda tem o retrato: `last_ai_response_at=null`,
+`message_count=0`, `entry_suppressed_at` preenchido.
+
+Só um agente da frota usa `entry_by_automation` hoje (o da Márcia) e ele está
+exposto. 154 `entry_suppressed` no total, 1 caso confirmado na amostra — a taxa é
+baixa porque normalmente a tag de anúncio chega a tempo e salva pelo outro
+caminho do `match: any`. Quando não chega, o lead some.
+
+Corrigido em `82a0c97` (`entradaJaPassouPeloGate`, pura e testada). **Ordem
+importa: este commit precisa estar em produção ANTES de ligar
+`entry_by_automation` na Jussara**, senão ligamos o guardrail e importamos o bug
+na conta que está sendo religada justamente por ficar muda.
+
+E é por o gatilho desta conta ser FRASE que o H96 morde aqui: se a entrada fosse
+por tag, a tag continuaria no contato no turno 2 e o gate casaria de novo. Frase
+não sobrevive ao turno seguinte.
+
+---
+
 ## Como fica, em uma linha
 
-O item 4 está pronto e testado (25/25), a config não foi gravada, o agente segue
+O item 4 está pronto e testado (28/28), a config não foi gravada, o agente segue
 `inactive`, e o conflito com o workflow que travava a religação em 07/09 acabou.
 Falta: o OK do Pedro, e de preferência rodar as 3 conversas no Sonnet antes.
+
+Sequência recomendada, agora que o H96 entrou na conta:
+
+```
+git push                                      # H95 + H96
+npx vercel ls --prod                          # até Ready — "pushed" ≠ "deployado"
+npx tsx scripts/jussara-guardrails.ts --apply # config
+npx tsx scripts/religa-jussara.ts --apply     # status=active
+bash scripts/_watch-jussara-religa.sh         # monitor 30min
+```
