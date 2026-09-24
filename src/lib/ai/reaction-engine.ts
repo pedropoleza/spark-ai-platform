@@ -13,6 +13,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { alertarAtendimento } from "@/lib/queue/alerta-atendimento";
 import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import {
@@ -33,6 +34,12 @@ interface ReactionContext {
   contactId: string;
   conversationId: string;
   channel?: string;
+  /**
+   * Config do agente — só usada pelo `pause_ai`, pra avisar um humano (H95).
+   * Opcional porque os testes montam contexto mínimo; sem ela o aviso é pulado
+   * (o alerta já é opt-in por `notifications.alerta_whatsapp`).
+   */
+  config?: Parameters<typeof alertarAtendimento>[0]["config"];
 }
 
 function fieldChanged(
@@ -313,6 +320,22 @@ async function executeOne(
           },
           { onConflict: "agent_id,contact_id" }
         );
+      // H95 (2026-09-24, caso Jussara): até aqui o `pause_ai` era a única forma
+      // de parar a IA que NÃO avisava ninguém. O `ia_pausada` do H83 só estava
+      // enganchado no loop de falha de parse, então uma automação de
+      // desqualificação (lead com doença na Jussara, "Living Trust" na Fabiana)
+      // pausava a conversa e o lead ficava esperando um humano que não sabia da
+      // existência dele. É a mesma classe do caso que originou este chamado: a
+      // IA para e a descoberta fica por conta do cliente reclamar.
+      // Opt-in continua sendo `notifications.alerta_whatsapp` — sem config, no-op.
+      void alertarAtendimento({
+        agentId: ctx.agentId,
+        locationId: ctx.locationId,
+        contactId: ctx.contactId,
+        motivo: "ia_pausada",
+        detalhe: "Uma regra de automação pausou a IA nesta conversa. O lead está esperando atendimento humano.",
+        config: ctx.config,
+      });
       break;
     }
     case "webhook": {

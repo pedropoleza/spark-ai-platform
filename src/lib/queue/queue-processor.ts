@@ -2482,6 +2482,9 @@ async function processGroup(
       contactId: group.contactId,
       conversationId: group.conversationId,
       channel: group.channel,
+      // H95 (2026-09-24): o `pause_ai` do motor de automações precisa da config
+      // pra avisar um humano — pausa que ninguém sabe que aconteceu é lead parado.
+      config,
     };
     const justExecuted: string[] = [];
 
