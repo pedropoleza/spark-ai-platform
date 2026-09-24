@@ -61,7 +61,14 @@ async function main() {
     return;
   }
 
-  const { error } = await sb.from("agents").update({ status: "active" }).eq("id", AGENT);
+  // `updated_at` explícito: não há trigger na tabela, e este carimbo É o rastro
+  // forense de "quando a conta ficou muda" — foi ele que diagnosticou o apagão de
+  // 23/08 em 07/09. Religar sem atualizá-lo deixaria o próximo a investigar lendo
+  // uma data que não aconteceu.
+  const { error } = await sb
+    .from("agents")
+    .update({ status: "active", updated_at: new Date().toISOString() })
+    .eq("id", AGENT);
   if (error) throw new Error(error.message);
 
   const { data: depois } = await sb.from("agents").select("status,updated_at").eq("id", AGENT).single();
