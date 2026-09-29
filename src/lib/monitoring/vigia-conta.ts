@@ -77,7 +77,7 @@ export async function vigiarConta(locationId: string, horas = 24): Promise<{
   interface LinhaLog {
     contact_id: string; action_type: string; created_at: string;
     success: boolean | null; error_message: string | null;
-    action_payload: { message?: string | string[] } | null;
+    action_payload: { message?: string | string[]; exclusion?: boolean } | null;
   }
   interface LinhaFila {
     contact_id: string; message_body: string | null; received_at: string;
@@ -113,7 +113,12 @@ export async function vigiarConta(locationId: string, horas = 24): Promise<{
   });
 
   // 3. PORTA DE ENTRADA — quem foi barrado parecia lead de verdade?
-  const barrados = [...new Set(logs.filter((l) => l.action_type === "targeting_skip").map((l) => l.contact_id))];
+  // H97: exclusão do público (virou cliente, contato pessoal) é barreira de
+  // propósito, não lead perdido na porta. Sem o filtro, o cliente que um dia
+  // entrou pelo anúncio ("tenho interesse...") viraria alarme de lead barrado.
+  const barrados = [...new Set(logs
+    .filter((l) => l.action_type === "targeting_skip" && l.action_payload?.exclusion !== true)
+    .map((l) => l.contact_id))];
   const primeira: Record<string, string> = {};
   for (const m of fila) if (!primeira[m.contact_id]) primeira[m.contact_id] = (m.message_body ?? "").replace(/\s+/g, " ").trim();
   const PARABENS = /parab[ée]ns|happy birth|felicidades|feliz anivers|🎂|🥳|🎉/i;

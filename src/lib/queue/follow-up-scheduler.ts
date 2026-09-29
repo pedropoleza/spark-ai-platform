@@ -15,7 +15,8 @@ import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
 import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { regraQueDesliga, descreveRegra, type ContatoParaRegras } from "@/lib/queue/deactivation";
-import type { DeactivationRule } from "@/types/agent";
+import { checkContactExclusion } from "@/lib/queue/targeting";
+import type { DeactivationRule, TargetingRules } from "@/types/agent";
 import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import { executeReactionRules } from "@/lib/ai/reaction-engine";
 import type { FollowUpConfig, AutomationRule } from "@/types/agent";
@@ -665,6 +666,66 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           if (cancelErr || logErr) {
             reportError({
               title: "Follow-up: falha ao cancelar sequência desligada por regra",
+              feature: "followup-runner",
+              severity: "medium",
+              error: cancelErr ?? logErr,
+              metadata: { followUpId: followUp.id, contactId: followUp.contact_id },
+            });
+          }
+          continue;
+        }
+      }
+
+      // H97: a EXCLUSÃO do público (folha `negate`, H81) vale pro follow-up.
+      // Fix bug observado em prod 2026-09-28 (conta da Jussara): o runner nunca
+      // olhou o targeting, então o toque agendado quando o contato ainda era
+      // lead saía depois de ele virar cliente. Decide sobre o contato do DND
+      // (zero chamada extra pra tag/campo/origem) e cancela a sequência INTEIRA,
+      // no padrão do closed-opp gate: a exclusão é do contato, não do toque. Só
+      // a exclusão é avaliada (a inclusão segue sem valer aqui, como sempre).
+      // Fail-open: sem regra, sem contato ou erro de leitura = envia como antes.
+      {
+        const exclusao = await checkContactExclusion(
+          followUp.contact_id,
+          (config as { targeting_rules?: TargetingRules | null }).targeting_rules,
+          locData?.company_id,
+          followUp.location_id,
+          { contact: contatoDoTick },
+        );
+        if (exclusao.erro) {
+          console.warn(
+            `[FollowUp] exclusão do público não avaliada pra contact=${followUp.contact_id}, segue (fail-open): ${exclusao.erro}`,
+          );
+        }
+        if (exclusao.excluded) {
+          console.log(
+            `[FollowUp] contact=${followUp.contact_id} fora do público (${exclusao.motivos.join(", ")}): cancelando sequência.`,
+          );
+          const { error: cancelErr } = await supabase
+            .from("scheduled_followups")
+            .update({ status: "cancelled" })
+            .eq("agent_id", followUp.agent_id)
+            .eq("contact_id", followUp.contact_id)
+            .in("status", ["pending", "processing"]);
+          const { error: logErr } = await supabase.from("execution_log").insert({
+            agent_id: followUp.agent_id,
+            conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+            contact_id: followUp.contact_id,
+            location_id: followUp.location_id,
+            action_type: "targeting_skip",
+            action_payload: {
+              path: "followup_runner",
+              reason: `exclusão do público: ${exclusao.motivos.join(", ")}`,
+              exclusion: true,
+              excluded_by: exclusao.motivos,
+              attempt_number: followUp.attempt_number,
+              followups_cancel_error: cancelErr?.message ?? null,
+            },
+            success: true,
+          });
+          if (cancelErr || logErr) {
+            reportError({
+              title: "Follow-up: falha ao cancelar sequência de contato fora do público",
               feature: "followup-runner",
               severity: "medium",
               error: cancelErr ?? logErr,
