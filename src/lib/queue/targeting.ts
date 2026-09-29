@@ -264,20 +264,32 @@ function evalLeafRaw(
   }
 }
 
-function evalGroup(
-  group: TargetingGroup,
-  contact: GhlContact | null,
-  opps: GhlOpp[],
-  opts: TargetingOpts,
-): LeafResult {
+/**
+ * Composição E/OU com o avaliador de folha como parâmetro. É a MESMA regra de
+ * sempre (neutro não conta; grupo só de neutras é neutro; set só de neutros
+ * passa) e existe pra que a projeção de exclusão (H97) componha a árvore com a
+ * semântica idêntica à do gate completo, sem uma segunda cópia da lógica.
+ */
+type AvaliadorDeFolha = (rule: TargetingRule) => LeafResult;
+
+function composeGroup(group: TargetingGroup, folha: AvaliadorDeFolha): LeafResult {
   const results = group.rules
-    .map((r) => evalLeaf(r, contact, opps, opts))
+    .map((r) => folha(r))
     .filter((r): r is "match" | "no_match" => r !== "neutral");
   if (results.length === 0) return "neutral"; // só folhas neutras = grupo neutro
   if (group.match === "any") {
     return results.some((r) => r === "match") ? "match" : "no_match";
   }
   return results.every((r) => r === "match") ? "match" : "no_match"; // "all"
+}
+
+function composeSet(set: TargetingRuleSet, folha: AvaliadorDeFolha): boolean {
+  const results = set.groups
+    .map((g) => composeGroup(g, folha))
+    .filter((r): r is "match" | "no_match" => r !== "neutral");
+  if (results.length === 0) return true;
+  if (set.match === "any") return results.some((r) => r === "match");
+  return results.every((r) => r === "match"); // "all"
 }
 
 /**
@@ -292,12 +304,184 @@ export function evaluateTargetingSet(
   opps: GhlOpp[],
   opts: TargetingOpts = {},
 ): boolean {
-  const results = set.groups
-    .map((g) => evalGroup(g, contact, opps, opts))
-    .filter((r): r is "match" | "no_match" => r !== "neutral");
-  if (results.length === 0) return true;
-  if (set.match === "any") return results.some((r) => r === "match");
-  return results.every((r) => r === "match"); // "all"
+  return composeSet(set, (r) => evalLeaf(r, contact, opps, opts));
+}
+
+/* ── H97: a exclusão vale mesmo quando o targeting é pulado ───────────────
+ *
+ * Fix bug observado em prod 2026-09-28 (conta da Jussara, agente a297dadc):
+ * em `trigger_once` com conversa já ativa o queue-processor pula o targeting
+ * INTEIRO (H51), e o runner de follow-up nunca olhou targeting nenhum. Então a
+ * exclusão do H81 ("não atender quem tem a tag active client") só barrava a
+ * PRIMEIRA mensagem: quem virou cliente depois de entrar seguia atendido, e a
+ * IA respondeu clientes com apólice prometendo coisas a eles.
+ *
+ * Inclusão e exclusão são coisas diferentes. A folha de inclusão é a PORTA (o
+ * trigger_once existe justamente pra não reavaliá-la a cada turno); a folha de
+ * exclusão é um atributo do CONTATO que pode passar a valer depois da entrada
+ * (virou cliente). Por isso aqui só a exclusão é avaliada.
+ */
+
+export interface ExclusaoResultado {
+  /** true = alguma folha de exclusão barra este contato. */
+  excluded: boolean;
+  /** Folhas de exclusão que casaram com o contato, legíveis (vão pro execution_log). */
+  motivos: string[];
+  /** Preenchido quando não deu pra avaliar. Fail-open: `excluded` vem false. */
+  erro?: string;
+}
+
+/** Folhas marcadas como EXCLUIR (negate) em qualquer grupo. */
+export function folhasDeExclusao(set: TargetingRuleSet): TargetingRule[] {
+  return set.groups.flatMap((g) => g.rules.filter((r) => r?.negate === true));
+}
+
+/** Descrição curta da condição de uma folha, pro execution_log. */
+export function descreveFolha(rule: TargetingRule): string {
+  switch (rule.type) {
+    case "tag":
+      return `tag "${rule.tag ?? ""}"`;
+    case "custom_field":
+      return rule.custom_field_value
+        ? `campo ${rule.custom_field_key} = "${rule.custom_field_value}"`
+        : `campo ${rule.custom_field_key} preenchido`;
+    case "pipeline_stage":
+      return `etapa ${rule.pipeline_stage_id}${rule.pipeline_id ? ` (pipeline ${rule.pipeline_id})` : ""}`;
+    case "attribution":
+      return `origem ${rule.attribution_field || "any"} ${rule.attribution_operator ?? ""} "${
+        rule.attribution_operator === "in"
+          ? (rule.attribution_values ?? []).join(", ")
+          : rule.attribution_value ?? ""
+      }"`;
+    case "message":
+      return `mensagem ${rule.message_operator ?? ""} "${rule.message_value ?? ""}"`;
+    default:
+      return String(rule.type);
+  }
+}
+
+/**
+ * Avaliador PURO da exclusão (sem I/O), exportado pra teste.
+ *
+ * Projeção sobre a MESMA árvore do gate: folha de inclusão conta como "match"
+ * (o contato já passou pela porta; reavaliá-la é o que o trigger_once evita) e
+ * folha de exclusão é avaliada de verdade pelo `evalLeaf`, que preserva o H81
+ * (neutro nunca é invertido). O contato é barrado quando a árvore não passa
+ * nem com toda a inclusão satisfeita.
+ *
+ * Duas consequências de propósito:
+ *  - Nunca barra quem o gate completo deixaria passar com as mesmas tags: a
+ *    árvore é E/OU de folhas, então virar inclusão pra "match" só pode ajudar.
+ *    Sem essa garantia, a exclusão podia recriar o "responde a 1ª e morre"
+ *    (H51/H96) numa árvore com exclusão dentro de grupo OU.
+ *  - Na forma que a frota usa (grupo só de exclusões ligado por E ao resto)
+ *    vale como veto puro: qualquer tag excluída presente barra.
+ *
+ * Folha `message` é neutra aqui (`conversationActive`): conteúdo de mensagem é
+ * gatilho de ENTRADA, igual à inclusão por frase. O que vale sempre é atributo
+ * do contato (tag, campo, etapa, origem).
+ */
+export function avaliarExclusao(
+  set: TargetingRuleSet,
+  contact: GhlContact | null,
+  opps: GhlOpp[],
+): { excluded: boolean; motivos: string[] } {
+  if (folhasDeExclusao(set).length === 0) return { excluded: false, motivos: [] };
+  const opts: TargetingOpts = { conversationActive: true };
+  const casaram: TargetingRule[] = [];
+  const passa = composeSet(set, (r) => {
+    if (!r) return "neutral"; // folha nula = malformada = neutra
+    if (!r.negate) return "match";
+    const res = evalLeaf(r, contact, opps, opts);
+    if (res === "no_match") casaram.push(r); // negada e no_match = o contato TEM a condição
+    return res;
+  });
+  if (passa) return { excluded: false, motivos: [] };
+  return { excluded: true, motivos: casaram.map(descreveFolha) };
+}
+
+function contatoDaResposta(res: unknown): GhlContact | null {
+  if (!res || typeof res !== "object") return null;
+  if ("contact" in (res as Record<string, unknown>)) {
+    return (res as { contact?: GhlContact | null }).contact ?? null;
+  }
+  return res as GhlContact;
+}
+
+function oppsDaResposta(res: unknown): GhlOpp[] {
+  if (res && typeof res === "object" && "opportunities" in (res as Record<string, unknown>)) {
+    return (res as { opportunities?: GhlOpp[] }).opportunities ?? [];
+  }
+  return Array.isArray(res) ? (res as GhlOpp[]) : [];
+}
+
+/**
+ * O contato está EXCLUÍDO do público deste agente? (H97)
+ *
+ * Pra usar onde o targeting completo NÃO roda: turno de conversa ativa em
+ * `trigger_once`, turno com retomada manual e runner de follow-up.
+ *
+ * Sem regra ou sem folha de exclusão = zero I/O (os agentes sem `negate` não
+ * pagam nada). `opts.contact` reaproveita um contato já buscado pelo caller (o
+ * runner já faz o GET pro DND); sem ele, busca `GET /contacts/{id}`.
+ *
+ * FAIL-OPEN de verdade: se o GET falhar, a resposta é "não excluído" e o erro
+ * vem em `erro`. Diferente do `checkContactMatchesTargeting`, aqui erro de
+ * fetch NÃO vira "contato sem tags" (lá o `.catch(() => null)` faria uma folha
+ * negada de origem `not_set` barrar por erro). Um problema nosso de leitura
+ * nunca cala a IA.
+ */
+export async function checkContactExclusion(
+  contactId: string,
+  rules: TargetingRules | null | undefined,
+  companyId: string | null | undefined,
+  locationId: string,
+  opts: { contact?: object | null } = {},
+): Promise<ExclusaoResultado> {
+  const naoExcluido = (erro?: string): ExclusaoResultado =>
+    erro ? { excluded: false, motivos: [], erro } : { excluded: false, motivos: [] };
+
+  const set = normalizeTargeting(rules);
+  if (!set) return naoExcluido();
+  const exclusoes = folhasDeExclusao(set);
+  if (exclusoes.length === 0) return naoExcluido();
+
+  const tipos = new Set(exclusoes.map((r) => r.type));
+  const precisaContato = tipos.has("tag") || tipos.has("custom_field") || tipos.has("attribution");
+  const precisaOpps = tipos.has("pipeline_stage");
+  // Só exclusão por mensagem (neutra aqui) ou tipo desconhecido: nada a buscar.
+  if (!precisaContato && !precisaOpps) return naoExcluido();
+
+  let contato: GhlContact | null = (opts.contact as GhlContact | null | undefined) ?? null;
+  const buscarContato = precisaContato && !contato;
+  if (!contactId || !locationId || ((buscarContato || precisaOpps) && !companyId)) {
+    return naoExcluido("sem dados pra avaliar a exclusão");
+  }
+
+  try {
+    let opps: GhlOpp[] = [];
+    if (buscarContato || precisaOpps) {
+      const client = new GHLClient(companyId as string, locationId);
+      const [contatoRes, oppsRes] = await Promise.all([
+        buscarContato ? client.get<unknown>(`/contacts/${contactId}`) : Promise.resolve(null),
+        precisaOpps
+          ? client.get<unknown>(
+              `/opportunities/search?contactId=${contactId}&locationId=${locationId}&limit=100`,
+            )
+          : Promise.resolve(null),
+      ]);
+      if (buscarContato) {
+        contato = contatoDaResposta(contatoRes);
+        if (!contato) return naoExcluido("contato veio vazio do Spark Leads");
+      }
+      opps = oppsDaResposta(oppsRes);
+    }
+    return avaliarExclusao(set, contato, opps);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message.slice(0, 200) : String(err);
+    console.warn(`[targeting] exclusão não avaliada (fail-open): ${msg}`);
+    return naoExcluido(msg);
+  }
 }
 
 /** Quais tipos de folha existem na árvore (pra decidir o fetch GHL). */

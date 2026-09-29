@@ -152,7 +152,11 @@ import { generateSummaryNote } from "@/lib/queue/summary-note-generator";
 import { trackAndCharge } from "@/lib/billing/charge";
 import { pickTriggeredDataFieldRules, executeReactionRules } from "@/lib/ai/reaction-engine";
 import { pickAgentActivatedRules } from "@/lib/queue/agent-activated-automation";
-import { checkContactMatchesTargeting, normalizeTargeting } from "@/lib/queue/targeting";
+import {
+  checkContactMatchesTargeting,
+  checkContactExclusion,
+  normalizeTargeting,
+} from "@/lib/queue/targeting";
 // H88 rodada 2 (caso Alves Cury): 3ª ocorrência da mesma pergunta no turno é
 // bloqueada — regra de prompt não segurou (juiz venda-evasiva 31/08).
 import { turnRepeatVerdict, stripRepeatedAsks } from "@/lib/queue/followup-repeat-guard";
@@ -951,6 +955,81 @@ async function processGroup(
         },
         success: true,
       });
+      return;
+    }
+  }
+
+  // H97 (fix bug observado em prod 2026-09-28, conta da Jussara, agente
+  // a297dadc): quando o bloco acima NÃO roda (trigger_once com conversa já
+  // ativa, ou retomada manual), a EXCLUSÃO do público (folha `negate`, H81)
+  // também não rodava. "Não atender quem tem a tag active client" só barrava a
+  // primeira mensagem, e quem virou cliente depois de entrar seguia atendido:
+  // em 28/09 a IA respondeu clientes com apólice e prometeu coisas a eles.
+  // Aqui só a exclusão é avaliada; a inclusão continua pulada como antes (o
+  // comportamento de ativação do trigger_once não muda). Ver `avaliarExclusao`.
+  //
+  // A retomada manual NÃO vence a exclusão, de propósito: `ai_resumed_at` nunca
+  // é limpo depois de gravado (38 conversas ativas da Jussara carregam um de
+  // julho) e o MC-5 grava o mesmo campo em recuperação AUTOMÁTICA de pausa, então
+  // ele não prova que um humano quis a IA falando com um cliente. É o mesmo que o
+  // pill do painel já mostra (`computeContactDrivingState`: exclusão = IA fora).
+  //
+  // Fail-open: erro ao buscar o contato = segue atendendo (nunca cala por erro).
+  if (
+    (manuallyResumed || targetingIsTriggerOnly) &&
+    normalizeTargeting(targetingRules) &&
+    locationForBilling?.company_id
+  ) {
+    const exclusao = await checkContactExclusion(
+      group.contactId,
+      targetingRules,
+      locationForBilling.company_id,
+      group.locationId,
+    );
+    if (exclusao.erro) {
+      log("warn", `exclusão do público não avaliada, segue atendendo (fail-open): ${exclusao.erro}`);
+    }
+    if (exclusao.excluded) {
+      log("log", `SKIP exclusão do público (${exclusao.motivos.join(", ")})`);
+      // Mesmo padrão do H89 e do closed-opp gate: contato fora do público não
+      // recebe o toque que já estava agendado.
+      const { error: cancelErr } = await supabase
+        .from("scheduled_followups")
+        .update({ status: "cancelled" })
+        .eq("agent_id", agent.id)
+        .eq("contact_id", group.contactId)
+        .in("status", ["pending", "processing"]);
+      // `targeting_skip` de propósito (e não um tipo novo): a RPC de latência
+      // (medir_latencia_resposta) e o vigia de fila já contam esse tipo como
+      // silêncio COM motivo. `exclusion: true` separa do skip de entrada.
+      const { error: logErr } = await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "targeting_skip",
+        action_payload: {
+          reason: `exclusão do público: ${exclusao.motivos.join(", ")}`,
+          exclusion: true,
+          excluded_by: exclusao.motivos,
+          path: "inbound_turn",
+          bypassed_by: targetingIsTriggerOnly ? "trigger_once" : "manual_resume",
+          proactive: !!group.syntheticTrigger,
+          messages_swallowed: group.messages.length,
+          followups_cancel_error: cancelErr?.message ?? null,
+        },
+        success: true,
+      });
+      // supabase-js não lança: o {error} é a única pista (anti-pattern do CLAUDE.md).
+      if (cancelErr || logErr) {
+        reportError({
+          title: "Exclusão do público: falha ao cancelar follow-up ou auditar",
+          feature: "targeting-exclusion",
+          severity: "medium",
+          error: cancelErr ?? logErr,
+          metadata: { contactId: group.contactId, agentId: agent.id, locationId: group.locationId },
+        });
+      }
       return;
     }
   }
