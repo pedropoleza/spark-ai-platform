@@ -33,7 +33,9 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizeTargeting } from "@/lib/queue/targeting";
-import type { TargetingRule, TargetingRules } from "@/types/agent";
+import { isWithinWorkingHours, nextWorkingHourStart } from "@/lib/queue/working-hours";
+import { recordSignal } from "@/lib/admin-signals/recorder";
+import type { TargetingRule, TargetingRules, WorkingHoursConfig } from "@/types/agent";
 
 const REACTIVE_TRIGGER_PREFIX = "__reactive_trigger__:";
 
@@ -55,22 +57,25 @@ export interface ReactiveTriggerContext {
   /** Para custom_field_changed: os customFields ATUAIS do contato {id, value}.
    *  Cada agente casa o SEU (custom_field_key + custom_field_value). */
   customFields?: Array<{ id: string; value: string }>;
+  /** H102: `opportunity_create` = o lead NASCEU na etapa (OpportunityCreate),
+   *  não foi movido pra ela. Mesmo `kind` (stage_changed) e mesma chave de dedup
+   *  da movimentação, mas com as guardas de lead novo (disjuntor de rajada,
+   *  nunca por cima de conversa, expediente do agente). */
+  origem?: "opportunity_create";
+}
+
+interface AgentConfigRow {
+  targeting_rules: TargetingRule[] | null;
+  outreach_config: Record<string, unknown> | null;
+  entry_by_automation?: boolean | null;
+  working_hours?: WorkingHoursConfig | null;
 }
 
 interface AgentRow {
   id: string;
   type: string;
   audience: string | null;
-  agent_configs:
-    | {
-        targeting_rules: TargetingRule[] | null;
-        outreach_config: Record<string, unknown> | null;
-      }
-    | {
-        targeting_rules: TargetingRule[] | null;
-        outreach_config: Record<string, unknown> | null;
-      }[]
-    | null;
+  agent_configs: AgentConfigRow | AgentConfigRow[] | null;
 }
 
 function extractConfig(agent: AgentRow) {
@@ -150,6 +155,11 @@ function eventKey(ev: ReactiveTriggerContext): string {
  */
 export function encodeTriggerBody(ev: ReactiveTriggerContext): string {
   if (ev.kind === "custom_field_changed") return `${REACTIVE_TRIGGER_PREFIX}custom_field_changed:activated`;
+  // H102: 4º segmento marca lead novo. O pipeline vai sempre (mesmo vazio) pra
+  // origem cair na posição fixa que o parseTriggerBody lê.
+  if (ev.origem === "opportunity_create") {
+    return `${REACTIVE_TRIGGER_PREFIX}${ev.kind}:${ev.key}:${ev.pipelineId ?? ""}:create`;
+  }
   return `${REACTIVE_TRIGGER_PREFIX}${eventKey(ev)}`;
 }
 
@@ -157,7 +167,9 @@ export function isReactiveTriggerBody(body: string | null | undefined): boolean 
   return !!body && body.startsWith(REACTIVE_TRIGGER_PREFIX);
 }
 
-export function parseTriggerBody(body: string): { kind: ReactiveTriggerKind; key: string; pipelineId?: string } | null {
+export function parseTriggerBody(
+  body: string,
+): { kind: ReactiveTriggerKind; key: string; pipelineId?: string; origem?: "opportunity_create" } | null {
   if (!isReactiveTriggerBody(body)) return null;
   const payload = body.slice(REACTIVE_TRIGGER_PREFIX.length);
   const parts = payload.split(":");
@@ -165,7 +177,7 @@ export function parseTriggerBody(body: string): { kind: ReactiveTriggerKind; key
   const kind = parts[0] as ReactiveTriggerKind;
   const key = parts[1];
   const pipelineId = parts[2] || undefined;
-  return { kind, key, pipelineId };
+  return parts[3] === "create" ? { kind, key, pipelineId, origem: "opportunity_create" } : { kind, key, pipelineId };
 }
 
 /**
@@ -207,6 +219,135 @@ async function hasConversation(
   return (count ?? 0) > 0;
 }
 
+async function logSkip(
+  supabase: ReturnType<typeof createAdminClient>,
+  agentId: string,
+  ev: ReactiveTriggerContext,
+  eventKey: string,
+  reason: string,
+): Promise<void> {
+  await supabase.from("execution_log").insert({
+    agent_id: agentId,
+    location_id: ev.locationId,
+    contact_id: ev.contactId,
+    conversation_id: "",
+    action_type: "reactive_trigger_skipped",
+    action_payload: { reason, event_key: eventKey, kind: ev.kind },
+    success: true,
+  });
+}
+
+/**
+ * H101 (bug observado em prod 2026-10-07 18:07 UTC, Alves Cury, contato de teste
+ * 1ajBkGersnYd9OWn9Ebh): a Bruna estava respondendo um "Olá" do lead e, 23s
+ * depois, o gatilho reativo de campo abriu o Bruno no MESMO contato — dois
+ * agentes respondendo com 21s de diferença. A guarda anti-reabertura só
+ * perguntava pelo PRÓPRIO agente. Esta pergunta por QUALQUER OUTRO agente.
+ *
+ * Duas fontes, porque existe uma janela entre elas:
+ *  - conversation_state: o outro agente já tem conversa (ativa, pausada ou
+ *    entregue a humano — em qualquer caso o contato tem dono);
+ *  - message_queue pendente: o inbound do lead já foi entregue a outro agente e
+ *    está no debounce (~15s), ANTES de virar linha de conversa. É exatamente a
+ *    janela em que o caso de hoje cairia se o evento chegasse uns segundos antes.
+ */
+export async function outroAgenteNaConversa(
+  supabase: ReturnType<typeof createAdminClient>,
+  locationId: string,
+  agentId: string,
+  contactId: string,
+): Promise<string | null> {
+  const { data: st } = await supabase
+    .from("conversation_state")
+    .select("agent_id")
+    .eq("location_id", locationId)
+    .eq("contact_id", contactId)
+    .neq("agent_id", agentId)
+    .limit(1);
+  if (st && st.length > 0) return "conversation_state";
+  const { data: fila } = await supabase
+    .from("message_queue")
+    .select("agent_id")
+    .eq("location_id", locationId)
+    .eq("contact_id", contactId)
+    .neq("agent_id", agentId)
+    .in("status", ["pending", "processing"])
+    .limit(1);
+  if (fila && fila.length > 0) return "message_queue_pendente";
+  return null;
+}
+
+/**
+ * H102 (2026-10-07, caso Vergus/Cleybart): disjuntor de importação em massa do
+ * gatilho de lead novo.
+ *
+ * Lead de formulário nasce direto na etapa (OpportunityCreate) e é exatamente o
+ * que o cliente quer que a IA aborde. Só que importar uma planilha também cria
+ * oportunidade na etapa, uma por linha, e sem trava cada linha viraria uma
+ * mensagem da IA: disparo em massa pra uma base que ninguém pediu pra abordar,
+ * pelo número do cliente. Um evento não diz se veio de formulário ou de
+ * importação (`source` vem vazio na maioria), mas o ritmo diz: a Vergus recebe
+ * ~4 leads novos por DIA (medido em 07/10); importação chega às dezenas por
+ * minuto.
+ *
+ * Então: no máximo `maxPorJanela` aberturas por location a cada `janelaMin`.
+ * Estourou → o disjuntor arma e a location para de abordar lead novo por
+ * `pausaHoras` (janela fixa sozinha vazaria 5 a cada 10 min de uma importação
+ * longa). O lead não fica sem atendimento: se escrever, o inbound segue normal.
+ *
+ * As vagas são linhas em `sparkbot_dedup_locks` (PK) e não uma contagem: contar
+ * antes de inserir deixaria 50 lambdas simultâneas de uma importação passarem
+ * juntas, todas vendo "0 até agora". Falha de banco = NÃO aborda (fail-closed):
+ * não abordar é o comportamento de antes do H102, disparar em massa não é.
+ */
+export const RAJADA_LEAD_NOVO = { janelaMin: 10, maxPorJanela: 5, pausaHoras: 6 } as const;
+
+export type VagaLeadNovo = "ok" | "disjuntor_aberto" | "disjuntor_armado_agora" | "erro";
+
+export function chaveDisjuntorLeadNovo(locationId: string): string {
+  return `rajada-lead-novo:${locationId}`;
+}
+
+export async function reservarVagaDeLeadNovo(
+  supabase: ReturnType<typeof createAdminClient>,
+  locationId: string,
+  agora: number = Date.now(),
+): Promise<VagaLeadNovo> {
+  const chaveDisjuntor = chaveDisjuntorLeadNovo(locationId);
+  const { data: aberto, error: errLeitura } = await supabase
+    .from("sparkbot_dedup_locks")
+    .select("dedup_key")
+    .eq("dedup_key", chaveDisjuntor)
+    .gt("expires_at", new Date(agora).toISOString())
+    .maybeSingle();
+  if (errLeitura) return "erro";
+  if (aberto) return "disjuntor_aberto";
+
+  const janela = Math.floor(agora / (RAJADA_LEAD_NOVO.janelaMin * 60_000));
+  const expira = new Date(agora + 24 * 60 * 60 * 1000).toISOString();
+  for (let vaga = 1; vaga <= RAJADA_LEAD_NOVO.maxPorJanela; vaga++) {
+    const { error } = await supabase.from("sparkbot_dedup_locks").insert({
+      dedup_key: `lead-novo:${locationId}:${janela}:${vaga}`,
+      content_preview: "opportunity_create",
+      expires_at: expira,
+    });
+    if (!error) return "ok";
+    if (error.code !== "23505") return "erro";
+  }
+
+  // Upsert, não insert: a linha de um disjuntor vencido pode ainda não ter sido
+  // varrida pelo cleanup (roda a cada 5 min) e o insert bateria na PK.
+  const { error: errArma } = await supabase.from("sparkbot_dedup_locks").upsert(
+    {
+      dedup_key: chaveDisjuntor,
+      content_preview: "disjuntor_lead_novo",
+      expires_at: new Date(agora + RAJADA_LEAD_NOVO.pausaHoras * 60 * 60 * 1000).toISOString(),
+    },
+    { onConflict: "dedup_key" },
+  );
+  return errArma ? "erro" : "disjuntor_armado_agora";
+}
+
 /**
  * Dispara o(s) agente(s) que devem reagir a esse evento.
  * Retorna count de triggers enfileirados.
@@ -225,10 +366,13 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
   // não tem targeting nem opera por evento de tag/campo de lead).
   const { data: agents } = await supabase
     .from("agents")
-    .select("id, type, audience, agent_configs(targeting_rules, outreach_config, entry_by_automation)")
+    .select("id, type, audience, agent_configs(targeting_rules, outreach_config, entry_by_automation, working_hours)")
     .eq("location_id", ev.locationId)
     .eq("status", "active")
-    .in("type", ["sales_agent", "recruitment_agent", "custom_agent"]);
+    .in("type", ["sales_agent", "recruitment_agent", "custom_agent"])
+    // H101: ordem estável — sem ela, quando dois agentes casam o mesmo evento,
+    // quem dispara é sorteio (mesma lição do MC-10 no webhook).
+    .order("created_at", { ascending: true });
 
   if (!agents || agents.length === 0) return { fired: 0, matched: 0 };
 
@@ -251,9 +395,9 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
     // disparou este gatilho, a IA se apresentou e pediu os dados em paralelo
     // com a saudação do workflow, e o turno do clique (que chegou depois)
     // achou a conversa ativa e respondeu de novo: 9 mensagens pro lead.
+    const cfgRow = Array.isArray(a.agent_configs) ? a.agent_configs[0] : a.agent_configs;
     {
-      const cfgRow = Array.isArray(a.agent_configs) ? a.agent_configs[0] : a.agent_configs;
-      if ((cfgRow as { entry_by_automation?: boolean | null } | null | undefined)?.entry_by_automation === true) {
+      if (cfgRow?.entry_by_automation === true) {
         await supabase.from("execution_log").insert({
           agent_id: a.id,
           location_id: ev.locationId,
@@ -263,6 +407,25 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
           action_payload: { reason: "entry_by_automation", event_key: dedupKey, kind: ev.kind },
           success: true,
         });
+        continue;
+      }
+    }
+
+    // H101: um evento abre NO MÁXIMO um agente por contato. Sem isto, um
+    // ContactUpdate que casa dois agentes abriria os dois na mesma chamada — a
+    // linha de conversa do primeiro só nasce no processor, então a guarda abaixo
+    // ainda não a veria.
+    if (fired > 0) {
+      await logSkip(supabase, a.id, ev, dedupKey, "outro_agente_ja_disparou_neste_evento");
+      continue;
+    }
+    // H101: outro agente já está nesta conversa → não abre um segundo. Vale pra
+    // TODO tipo de evento (a guarda do próprio agente, logo abaixo, segue só
+    // pros eventos do ContactUpdate, como antes).
+    {
+      const onde = await outroAgenteNaConversa(supabase, ev.locationId, a.id, ev.contactId);
+      if (onde) {
+        await logSkip(supabase, a.id, ev, dedupKey, `outro_agente_na_conversa:${onde}`);
         continue;
       }
     }
@@ -279,6 +442,15 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
       (ev.kind === "custom_field_changed" || ev.kind === "tag_added") &&
       (await hasConversation(supabase, a.id, ev.contactId))
     ) {
+      continue;
+    }
+    // H102: lead novo nunca abre por cima de conversa que já existe com este
+    // agente. Criar oportunidade pra quem já está conversando (o lead do
+    // Instagram que depois preencheu o formulário) não é motivo pra IA se
+    // apresentar de novo no meio do papo. A movimentação de etapa segue como
+    // era: ali mover o card É o pedido pra IA retomar.
+    if (ev.origem === "opportunity_create" && (await hasConversation(supabase, a.id, ev.contactId))) {
+      await logSkip(supabase, a.id, ev, dedupKey, "lead_novo_ja_tem_conversa");
       continue;
     }
 
@@ -299,6 +471,31 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
         // Falha de infra no lock não pode calar o trigger: segue (o dedup de
         // 24h via execution_log continua valendo como 2ª camada).
         console.warn(`[reactive-trigger] lock falhou (segue sem claim): ${lockErr.message}`);
+      }
+    }
+
+    // H102: disjuntor de importação em massa. Depois do lock C9 de propósito:
+    // o webhook gêmeo do MESMO evento morre no lock e não gasta vaga.
+    if (ev.origem === "opportunity_create") {
+      const vaga = await reservarVagaDeLeadNovo(supabase, ev.locationId);
+      if (vaga !== "ok") {
+        await logSkip(supabase, a.id, ev, dedupKey, `lead_novo_${vaga}`);
+        if (vaga === "disjuntor_armado_agora") {
+          await recordSignal({
+            type: "failure",
+            severity: "high",
+            source: "system",
+            title: `Lead novo: abordagem da IA pausada por rajada (possível importação) na location ${ev.locationId}`,
+            description:
+              `Mais de ${RAJADA_LEAD_NOVO.maxPorJanela} leads novos casaram o gatilho de funil em ` +
+              `${RAJADA_LEAD_NOVO.janelaMin} min. A IA parou de abordar leads novos desta conta por ` +
+              `${RAJADA_LEAD_NOVO.pausaHoras}h pra não disparar em massa numa lista importada. Quem ` +
+              `escrever continua sendo atendido. Se era tráfego real, libera apagando a linha ` +
+              `'${chaveDisjuntorLeadNovo(ev.locationId)}' de sparkbot_dedup_locks.`,
+            metadata: { location_id: ev.locationId, agent_id: a.id, contact_id: ev.contactId, stage_id: ev.key },
+          }).catch(() => {});
+        }
+        continue;
       }
     }
 
@@ -323,6 +520,18 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
 
     // Enfileira o trigger sintético. queue-processor detecta o prefix.
     const nowIso = new Date().toISOString();
+    // H102: lead novo respeita o expediente do agente, igual ao inbound do
+    // webhook. Sem isso, o lead do formulário das 23h recebia a abertura na hora
+    // e, ao responder, esperava até a manhã seguinte pela 2ª mensagem. Schedule
+    // impossível (null) = fail-open, como no webhook (H52). Os gatilhos que já
+    // existiam (tag, campo, movimentação) seguem imediatos, como sempre foram.
+    let processAfter = nowIso;
+    if (ev.origem === "opportunity_create") {
+      const wh = cfgRow?.working_hours;
+      if (wh?.enabled && !isWithinWorkingHours(wh)) {
+        processAfter = nextWorkingHourStart(wh) ?? nowIso;
+      }
+    }
     const { error: queueErr } = await supabase.from("message_queue").insert({
       agent_id: a.id,
       location_id: ev.locationId,
@@ -334,7 +543,7 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
       message_direction: "system",
       ghl_message_id: null,
       received_at: nowIso,
-      process_after: nowIso,
+      process_after: processAfter,
       status: "pending",
       ...(leadChannel ? { channel: leadChannel } : {}),
     });
@@ -350,7 +559,14 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
       location_id: ev.locationId,
       contact_id: ev.contactId,
       action_type: "reactive_trigger_fired",
-      action_payload: { event_key: dedupKey, kind: ev.kind, key: ev.key, pipeline_id: ev.pipelineId || null },
+      action_payload: {
+        event_key: dedupKey,
+        kind: ev.kind,
+        key: ev.key,
+        pipeline_id: ev.pipelineId || null,
+        ...(ev.origem ? { origem: ev.origem } : {}),
+        ...(processAfter !== nowIso ? { adiado_para: processAfter } : {}),
+      },
       success: true,
     });
 

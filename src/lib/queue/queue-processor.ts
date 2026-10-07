@@ -211,7 +211,7 @@ interface MessageGroup {
   // F27.D (Pedro 2026-05-29): se a entrada veio do reactive-trigger
   // (CONTACTTAGUPDATE / OPPORTUNITYSTAGEUPDATE), processamos como 1ª msg
   // proativa — sem histórico, sem audio, com instrução clara pro LLM.
-  syntheticTrigger?: { kind: string; key: string; pipelineId?: string };
+  syntheticTrigger?: { kind: string; key: string; pipelineId?: string; origem?: string };
   // H61 (caso Five Star/Marcia 2026-08-01): turno cujo conteúdo é SÓ a mensagem
   // de contexto de anúncio (CTWA "📢 Veio de anúncio…", composta pelo gateway
   // no clique — o lead não digitou nada). Com suppress_ad_context_turn no
@@ -427,14 +427,27 @@ export async function processMessageQueue(opts?: {
     const hasRawMedia = group.messages.some(
       (m) => !!m.audio_url || (Array.isArray(m.media_attachments) && m.media_attachments.length > 0),
     );
+    // H102: o gatilho de lead novo pode ter sido ADIADO pro expediente do agente,
+    // e o lead que escreveu nesse meio-tempo cai no MESMO grupo (o inbound dele
+    // também esperou o expediente). O gatilho não pode engolir o que ele disse:
+    // vira turno normal, respondendo à mensagem real. Só pra lead novo — os
+    // gatilhos antigos (tag/campo/movimentação) seguem como sempre foram.
+    if (group.syntheticTrigger?.origem === "opportunity_create" && (realParts > 0 || hasRawMedia)) {
+      group.syntheticTrigger = undefined;
+    }
     group.adContextOnly = adContextParts > 0 && realParts === 0 && !hasRawMedia && !group.syntheticTrigger;
     if (group.syntheticTrigger) {
       // Substitui aggregatedBody por instrução clara que o LLM lê como "primeira
       // mensagem proativa". O sales-prompt-builder usa isso como user input.
       const t = group.syntheticTrigger;
+      // H102: lead novo não leva o id da etapa (é um UUID que não diz nada ao
+      // modelo) nem a palavra "formulário" — a oportunidade pode ter sido criada
+      // à mão por alguém da equipe, e "vi que você preencheu" seria inventado.
       const eventDesc =
         t.kind === "tag_added"
           ? `O contato acabou de receber a tag "${t.key}" no Spark Leads`
+          : t.kind === "stage_changed" && t.origem === "opportunity_create"
+            ? `O contato acabou de chegar como lead novo`
           : t.kind === "stage_changed"
             ? `O contato acabou de entrar na etapa "${t.key}" do funil${t.pipelineId ? ` (pipeline ${t.pipelineId})` : ""}`
             : t.kind === "custom_field_changed"

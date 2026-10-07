@@ -40,6 +40,9 @@ const PROACTIVE_EVENT_TYPES = new Set([
   // customFields ATUAIS; parseia e dispara o agente por regra custom_field.
   "CONTACTUPDATE",
   "OPPORTUNITYSTAGEUPDATE",
+  // H102 (2026-10-07, Vergus): lead que NASCE na etapa (formulário do Facebook
+  // cai direto no "Novo Lead") não gera OpportunityStageUpdate — só este.
+  "OPPORTUNITYCREATE",
   // Etapa 4 (ainda só logados): demais eventos de OPPORTUNITY*/APPOINTMENT*/CONTACT*.
   "OPPORTUNITYSTATUSUPDATE",
   "APPOINTMENTCREATE",
@@ -150,6 +153,14 @@ export async function routeProactiveEvent(
   }
   if (type === "OPPORTUNITYSTAGEUPDATE") {
     const ev = extractOpportunityStageEvent(body);
+    if (ev) await triggerReactiveAgents(ev);
+    return;
+  }
+  // H102: lead nascido na etapa. Mesmo matcher da movimentação (a regra de
+  // funil não distingue "entrou" de "nasceu"), com as guardas de lead novo no
+  // reactive-trigger — a principal é o disjuntor contra importação em massa.
+  if (type === "OPPORTUNITYCREATE") {
+    const ev = extractOpportunityCreateEvent(body);
     if (ev) await triggerReactiveAgents(ev);
     return;
   }
@@ -270,7 +281,7 @@ export function extractContactCustomFieldEvent(body: Record<string, unknown>): R
  *  - pipelineId / pipeline_id (atual)
  *  - opportunity: { pipelineStageId, pipelineId }
  */
-function extractOpportunityStageEvent(body: Record<string, unknown>): ReactiveTriggerContext | null {
+export function extractOpportunityStageEvent(body: Record<string, unknown>): ReactiveTriggerContext | null {
   const opp = asRecord(body.opportunity ?? body.Opportunity);
   const merged = { ...opp, ...body };
 
@@ -281,4 +292,23 @@ function extractOpportunityStageEvent(body: Record<string, unknown>): ReactiveTr
 
   if (!contactId || !locationId || !stageId) return null;
   return { locationId, contactId, kind: "stage_changed", key: stageId, pipelineId };
+}
+
+/**
+ * H102 — "lead nasceu na etapa" (OpportunityCreate). Shape medido na Vergus em
+ * 07/10: igual ao do StageUpdate (`contactId`, `locationId`, `pipelineId`,
+ * `pipelineStageId`, `status`, às vezes `source: "Facebook"`).
+ *
+ * Só oportunidade ABERTA. Importar histórico de negócio fechado (won/lost) cria
+ * oportunidade também, e abordar quem já comprou ou já desistiu é o pior
+ * engano possível aqui. Sem `status` no payload = trata como aberta (é o
+ * default de criação).
+ */
+export function extractOpportunityCreateEvent(body: Record<string, unknown>): ReactiveTriggerContext | null {
+  const ev = extractOpportunityStageEvent(body);
+  if (!ev) return null;
+  const merged = { ...asRecord(body.opportunity ?? body.Opportunity), ...body };
+  const status = pickStr(merged, "status");
+  if (status && status.trim().toLowerCase() !== "open") return null;
+  return { ...ev, origem: "opportunity_create" };
 }
