@@ -24,6 +24,7 @@ import type {
   AttributionScope,
 } from "@/types/agent";
 import { GHLClient } from "@/lib/ghl/client";
+import { reportError } from "@/lib/admin-signals/report-error";
 import { matchTextOp, type TextOp } from "@/lib/account-assistant/filter-engine/text-ops";
 import { deburr } from "@/lib/account-assistant/contact-resolver/normalize";
 
@@ -464,9 +465,11 @@ export async function checkContactExclusion(
       const client = new GHLClient(companyId as string, locationId);
       const [contatoRes, oppsRes] = await Promise.all([
         buscarContato ? client.get<unknown>(`/contacts/${contactId}`) : Promise.resolve(null),
+        // H100: snake_case. Em camelCase a API devolve 422 e a exclusão por
+        // funil caía no catch de fora ("não exclui") — nunca excluiu ninguém.
         precisaOpps
           ? client.get<unknown>(
-              `/opportunities/search?contactId=${contactId}&locationId=${locationId}&limit=100`,
+              `/opportunities/search?location_id=${locationId}&contact_id=${contactId}&limit=100`,
             )
           : Promise.resolve(null),
       ]);
@@ -528,12 +531,32 @@ export async function checkContactMatchesTargeting(
       needsContact
         ? client.get(`/contacts/${contactId}`).catch(() => null)
         : Promise.resolve(null),
+      // H100 (fix bug observado em prod 2026-10-07, caso Vergus/Cleybart): a regra
+      // de FUNIL nunca casou pra ninguém. A busca ia em camelCase
+      // (contactId/locationId); a API responde 422 "property contactId should not
+      // exist… location_id should not be empty", e o .catch(() => null) virava
+      // isso em "contato sem oportunidade" → no_match → targeting_skip. O cliente
+      // via a regra salva na UI e o lead do funil sendo ignorado, sem erro em lugar
+      // nenhum. Nenhum agente da frota usava a regra: quem tentou, desistiu.
+      // Os outros 3 pontos que buscam oportunidade (lead-history, processor,
+      // follow-up) já usavam snake_case — só este arquivo estava errado.
+      // Segue devolvendo null (mesma semântica de antes), mas AVISA: busca que
+      // engole erro mente com confiança (H93).
       needsOpps
         ? client
             .get(
-              `/opportunities/search?contactId=${contactId}&locationId=${locationId}&limit=100`,
+              `/opportunities/search?location_id=${locationId}&contact_id=${contactId}&limit=100`,
             )
-            .catch(() => null)
+            .catch((err) => {
+              reportError({
+                title: "Targeting: busca de oportunidades falhou (regra de funil não avaliada)",
+                feature: "targeting",
+                severity: "high",
+                error: err,
+                metadata: { location_id: locationId, contact_id: contactId },
+              });
+              return null;
+            })
         : Promise.resolve(null),
     ]);
 
