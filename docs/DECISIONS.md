@@ -468,3 +468,26 @@ do token). Vai quebrar de novo. Pra diagnosticar em segundos, no console da pág
   e procure `firebaseToken` / `getIdToken` / `signInWithCustomToken`.
 
 ⚠️ **Nunca imprima o valor do token** em log ou console — o resolvedor loga só nomes de chave.
+
+## H99 (2026-10-07) — O switch da IA com a conta desligada, e o "Desligar" que não gravava
+
+**Caso Alves Cury.** A conta foi desligada porque a IA abordou a própria equipe, e o
+time queria marcar "não fale com esta pessoa" ANTES de religar. O ícone só aparecia
+com agente LIGADO — e, mesmo visível, o "Desligar (ninguém atende)" tinha dois furos:
+
+1. só pausava agentes ativos (conta desligada → `ok` sem gravar nada);
+2. só atualizava conversa que já existia — **contato que nunca falou com a IA ficava
+   sem pausa**. Vale pra qualquer conta: era exatamente o contato que se quer proteger
+   de antemão (alguém da equipe, um cliente).
+
+**Fix.** `contact-agents` lista agentes ligados e desligados (`accountOff`,
+`agentActive`); `contact-activate` cria a linha de pausa pra quem não tinha (upsert
+`ignoreDuplicates`). A linha basta: o processador pula pelo `ai_paused_at` e o gatilho
+reativo nem dispara (`hasConversation`). Escolher agente DESLIGADO só registra a
+escolha — não dispara automação de ativação nem re-enfileira inbound. Ícone com a conta
+desligada: vermelho = "não fala com este contato quando religar", cinza = IA desligada.
+
+⚠️ Regra que vale pra qualquer controle de "desligar": **desligar tem que funcionar
+antes da primeira conversa.** Um toggle que só pausa o que já existe protege o
+contato errado — o que já está falando — e deixa de fora quem se queria proteger.
+Teste: `scripts/test-switch-conta-desligada.ts`.
