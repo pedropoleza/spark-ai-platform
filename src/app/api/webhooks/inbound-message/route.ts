@@ -223,10 +223,16 @@ export async function POST(request: NextRequest) {
     // fire-and-forget). O fluxo de mensagem segue IDÊNTICO — o isRealMessage abaixo
     // continua descartando esses tipos. Default OFF até o smoke supervisionado.
     if (isProactiveEventsEnabled() && isProactiveEventType(messageType)) {
-      void routeProactiveEvent(body as Record<string, unknown>, messageType).catch((err) =>
-        console.warn(
-          "[proactive-router] falhou (non-fatal):",
-          err instanceof Error ? err.message : err,
+      // H102: waitUntil, não `void`. Evento que não é mensagem sai deste route
+      // logo abaixo (not_a_real_message), e uma promise solta pode ser congelada
+      // junto com a função antes de enfileirar o gatilho. O lead novo faz mais
+      // consultas (disjuntor de rajada) e alargou essa janela.
+      waitUntil(
+        routeProactiveEvent(body as Record<string, unknown>, messageType).catch((err) =>
+          console.warn(
+            "[proactive-router] falhou (non-fatal):",
+            err instanceof Error ? err.message : err,
+          ),
         ),
       );
     }
