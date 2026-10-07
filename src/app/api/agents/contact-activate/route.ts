@@ -58,17 +58,21 @@ export async function POST(request: NextRequest) {
       if (!ok) return json({ ok: false, reason: "agent_not_in_location" }, { status: 403 });
     }
 
-    // Todos os agentes lead-facing ativos da location (universo do seletor único).
+    // Todos os agentes lead-facing da location — LIGADOS E DESLIGADOS (universo
+    // do seletor único). H99: com só os ativos, "Desligar" numa conta desligada
+    // respondia ok e não gravava nada.
     const { data: agentRows } = await supabase
       .from("agents")
-      .select("id")
+      .select("id, status")
       .eq("location_id", locationId)
-      .eq("status", "active")
       .in("type", LEAD_FACING_TYPES as unknown as string[]);
-    const agentIds = (agentRows || []).map((a) => (a as { id: string }).id);
+    const rows = (agentRows || []) as { id: string; status: string }[];
+    const agentIds = rows.map((a) => a.id);
     if (agentId && !agentIds.includes(agentId)) {
       return json({ ok: false, reason: "agent_not_lead_facing" }, { status: 403 });
     }
+    // Escolher um agente DESLIGADO só registra a escolha pra quando ele voltar.
+    const chosenIsActive = !!agentId && rows.some((a) => a.id === agentId && a.status === "active");
 
     const nowIso = new Date().toISOString();
 
@@ -98,9 +102,35 @@ export async function POST(request: NextRequest) {
         .eq("contact_id", contactId)
         .in("agent_id", toPause)
         .is("ai_paused_at", null); // só os que estavam ligados (evita writes à toa)
+
+      // H99 (2026-10-07, caso Alves Cury): e CRIA a pausa pra quem não tinha linha.
+      // O UPDATE acima só alcança conversa que já existe, então "Desligar" num
+      // contato que nunca falou com a IA — um agente da própria equipe, um cliente
+      // — não gravava nada, e a IA o abordava no primeiro gatilho. Com a linha de
+      // pausa, o processador pula o contato (ai_paused_at) e o gatilho reativo
+      // nem dispara (hasConversation). ignoreDuplicates = ON CONFLICT DO NOTHING:
+      // não toca nas linhas que o UPDATE já tratou nem nas já pausadas.
+      const { error: insErr } = await supabase.from("conversation_state").upsert(
+        toPause.map((aid) => ({
+          agent_id: aid,
+          location_id: locationId,
+          contact_id: contactId,
+          conversation_id: "",
+          status: "handed_off",
+          ai_paused_at: nowIso,
+          ai_paused_reason: `manual_ui:switch:user_${userId}`,
+          ai_resumed_at: null,
+          updated_at: nowIso,
+        })),
+        { onConflict: "agent_id,contact_id", ignoreDuplicates: true },
+      );
+      if (insErr) throw insErr;
     }
 
-    if (agentId) {
+    if (agentId && chosenIsActive) {
+      // H99: só com o agente LIGADO. Escolher um agente desligado não pode
+      // disparar automação de ativação (algumas mandam mídia ao lead) nem
+      // re-enfileirar inbound — a conta está desligada, ninguém deveria falar.
       // H62: escolher este agente pro contato é "ativação" — dispara as
       // automações de trigger agent_activated (dedup no runner; fail-soft;
       // deadline blinda o budget da rota).

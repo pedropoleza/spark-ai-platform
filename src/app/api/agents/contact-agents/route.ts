@@ -47,19 +47,24 @@ export async function GET(request: NextRequest) {
     const supabase = createAdminClient();
     const locationId = token.location_id;
 
-    // 1. Todos os agentes lead-facing ativos da location.
+    // 1. Todos os agentes lead-facing da location — LIGADOS E DESLIGADOS.
+    // H99 (2026-10-07, caso Alves Cury): antes só os ativos. Com a conta toda
+    // desligada o ícone sumia, e o time não conseguia marcar "não fale com esta
+    // pessoa" ANTES de religar — que é justamente quando mais precisa (a conta
+    // tinha sido desligada porque a IA abordou a própria equipe). A pausa por
+    // contato é uma linha em conversation_state e vale com o agente desligado.
     const { data: agentRows } = await supabase
       .from("agents")
-      .select("id, name, type")
+      .select("id, name, type, status")
       .eq("location_id", locationId)
-      .eq("status", "active")
       .in("type", LEAD_FACING_TYPES as unknown as string[])
       .order("created_at");
 
-    const agents = (agentRows || []) as { id: string; name: string | null; type: string }[];
+    const agents = (agentRows || []) as { id: string; name: string | null; type: string; status: string }[];
     if (agents.length === 0) {
-      return json({ ok: true, hasAnyAgent: false, activeAgentId: null, agents: [] });
+      return json({ ok: true, hasAnyAgent: false, accountOff: false, activeAgentId: null, agents: [] });
     }
+    const accountOff = !agents.some((a) => a.status === "active");
 
     // 2. conversation_state desses agentes pra esse contato (1 query).
     const ids = agents.map((a) => a.id);
@@ -78,7 +83,7 @@ export async function GET(request: NextRequest) {
     //    no modelo seletor-único é ≤1, então no máximo 1 call.
     const ghlClient = new GHLClient(token.company_id, locationId);
     let activeAgentId: string | null = null;
-    const out: { id: string; name: string; type: string; state: "driving" | "paused" | "idle" }[] = [];
+    const out: { id: string; name: string; type: string; state: "driving" | "paused" | "idle"; agentActive: boolean }[] = [];
 
     for (const a of agents) {
       const st = stateByAgent.get(a.id);
@@ -87,6 +92,9 @@ export async function GET(request: NextRequest) {
         state = "idle";
       } else if (st.ai_paused_at) {
         state = "paused";
+      } else if (a.status !== "active") {
+        // Agente desligado na conta não "dirige" ninguém — sem check ao vivo.
+        state = "idle";
       } else {
         // Conversa ativa: confirma "quem dirige" ao vivo (humano pode ter assumido).
         const driving = await computeContactDrivingState({
@@ -104,10 +112,10 @@ export async function GET(request: NextRequest) {
           state = "paused";
         }
       }
-      out.push({ id: a.id, name: a.name || "", type: a.type, state });
+      out.push({ id: a.id, name: a.name || "", type: a.type, state, agentActive: a.status === "active" });
     }
 
-    return json({ ok: true, hasAnyAgent: true, activeAgentId, agents: out });
+    return json({ ok: true, hasAnyAgent: true, accountOff, activeAgentId, agents: out });
   } catch (err) {
     console.error("[contact-agents] erro:", err instanceof Error ? err.message : err);
     return json({ ok: false, reason: "internal_error" }, { status: 500 });

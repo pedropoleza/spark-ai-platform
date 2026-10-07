@@ -995,23 +995,35 @@ const AGENT_CONTROLS_SOURCE = `(function () {
   }
   function acAgentChip(a) {
     var t = (a && a.type) || "";
-    if (t === "sales_agent") return "Vendas";
-    if (t === "recruitment_agent") return "Recrut.";
-    return "Custom";
+    var base = t === "sales_agent" ? "Vendas" : t === "recruitment_agent" ? "Recrut." : "Custom";
+    // H99: agente desligado na conta continua escolhível (vale quando religar).
+    return a && a.agentActive === false ? base + " \u00b7 off" : base;
   }
   function acActiveAgent() {
     for (var i = 0; i < AC.agents.length; i++) { if (AC.agents[i].id === AC.activeAgentId) return AC.agents[i]; }
     return null;
   }
   function acPillTitle() {
+    if (AC.accountOff) {
+      // H99: conta desligada — o ícone responde "quando religar, fala com ele?"
+      return AC.iconState === "off"
+        ? "IA desligada pra este contato — quando a conta religar, ela NÃO fala com ele. Clique pra mudar"
+        : "IA desligada nesta conta — clique pra marcar se ela deve falar com este contato quando religar";
+    }
     if (AC.iconState === "on") { var a = acActiveAgent(); return (a ? acAgentLabelFor(a) : "Agente") + " atendendo este contato — clique pra trocar"; }
     if (AC.iconState === "off") return "Agente desligado neste contato — clique pra ligar";
     return "Nenhum agente atende este contato — clique pra escolher";
   }
   function acRecomputeIconState() {
-    if (AC.activeAgentId) { AC.iconState = "on"; return; }
-    var anyPaused = false;
-    for (var i = 0; i < AC.agents.length; i++) { if (AC.agents[i].state === "paused") { anyPaused = true; break; } }
+    var act = acActiveAgent();
+    // Verde só se quem foi escolhido está LIGADO na conta (H99).
+    if (act && act.agentActive !== false) { AC.iconState = "on"; return; }
+    var anyPaused = false, allPaused = AC.agents.length > 0;
+    for (var i = 0; i < AC.agents.length; i++) {
+      if (AC.agents[i].state === "paused") anyPaused = true; else allPaused = false;
+    }
+    // H99: com a conta desligada, vermelho = "não fale com este contato quando religar".
+    if (AC.accountOff) { AC.iconState = allPaused ? "off" : "idle"; return; }
     AC.iconState = anyPaused ? "off" : "idle";
   }
   function acEnsurePopup() {
@@ -1026,7 +1038,11 @@ const AGENT_CONTROLS_SOURCE = `(function () {
   }
   function acRenderPopup() {
     var pop = acEnsurePopup();
-    var rows = ['<div class="sap-pop-head">Quem atende este contato?</div>', '<div class="sap-pop-list">'];
+    var head = AC.accountOff
+      ? '<div class="sap-pop-head">IA desligada nesta conta</div>' +
+        '<div class="sap-pop-head" style="font-weight:400;opacity:.75;padding-top:0">O que você marcar aqui vale quando religar.</div>'
+      : '<div class="sap-pop-head">Quem atende este contato?</div>';
+    var rows = [head, '<div class="sap-pop-list">'];
     for (var i = 0; i < AC.agents.length; i++) {
       var a = AC.agents[i];
       var on = a.id === AC.activeAgentId;
@@ -1107,7 +1123,8 @@ const AGENT_CONTROLS_SOURCE = `(function () {
         else if (res.j && res.j.ok) {
           AC.activeAgentId = res.j.activeAgentId || null;
           for (var i = 0; i < AC.agents.length; i++) {
-            AC.agents[i].state = AC.agents[i].id === AC.activeAgentId ? "driving" : (AC.agents[i].state === "idle" ? "idle" : "paused");
+            // H99: o servidor agora grava a pausa até pra quem nunca falou com o contato.
+            AC.agents[i].state = AC.agents[i].id === AC.activeAgentId ? "driving" : "paused";
           }
           acRecomputeIconState();
           console.log("[spark-agent] ativado=" + (AC.activeAgentId || "(nenhum)") + " p/ contato " + AC.contactId);
@@ -1320,6 +1337,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
           AC.statusLoaded = true;
           if (st && st.ok && st.hasAnyAgent) {
             AC.hasAgent = true;
+            AC.accountOff = !!st.accountOff; // H99
             AC.agents = st.agents || [];
             AC.activeAgentId = st.activeAgentId || null;
             acRecomputeIconState();
