@@ -491,3 +491,25 @@ desligada: vermelho = "não fala com este contato quando religar", cinza = IA de
 antes da primeira conversa.** Um toggle que só pausa o que já existe protege o
 contato errado — o que já está falando — e deixa de fora quem se queria proteger.
 Teste: `scripts/test-switch-conta-desligada.ts`.
+
+## H100 (2026-10-07) — A regra de ativação por FUNIL nunca funcionou
+
+**Caso Vergus Finance (Cleybart):** "regra por tag e funil não funcionaram nos testes".
+São dois problemas diferentes:
+
+- **Funil — bug nosso, desde sempre.** A busca de oportunidades do `targeting.ts` ia em
+  camelCase (`contactId`/`locationId`). A API responde **422** ("property contactId should
+  not exist… location_id should not be empty") e o `.catch(() => null)` transformava isso
+  em "contato sem oportunidade" → `targeting_skip`. Nenhum agente da frota usava a regra:
+  quem tentou, desistiu. O mesmo erro estava no checador de exclusão do H97 (exclusão por
+  funil nunca excluiu ninguém). Os outros pontos que buscam oportunidade já usavam
+  snake_case. Teste: `scripts/test-targeting-funil.ts` (contatos reais da Vergus).
+- **Tag — não era a regra.** A tag casou. O contato de teste tinha uma mensagem de um
+  humano do time no histórico ("*Victor:* teste"); quando a IA ativou, o F52 leu isso como
+  "humano já está atendendo" e se pausou, engolindo os testes seguintes. **Testar a IA num
+  contato onde alguém do time já escreveu dá sempre esse falso negativo.**
+
+⚠️ **Funil + `gate_ongoing` = "responde a 1ª e morre".** O `gate_ongoing` re-avalia a regra
+todo turno; quando a IA agenda e o lead sai da etapa "Novo Lead", ela para de responder no
+meio da conversa (H51). Quem ativa por funil deve usar `activation_mode: trigger_once` —
+a etapa vira só a porta de entrada.
