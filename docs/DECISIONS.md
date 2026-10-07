@@ -513,3 +513,57 @@ São dois problemas diferentes:
 todo turno; quando a IA agenda e o lead sai da etapa "Novo Lead", ela para de responder no
 meio da conversa (H51). Quem ativa por funil deve usar `activation_mode: trigger_once` —
 a etapa vira só a porta de entrada.
+
+## H101 (2026-10-07) — Duas IAs no mesmo contato: o gatilho reativo só olhava o próprio agente
+
+**Caso Alves Cury, contato de teste "Spark" (`1ajBkGersnYd9OWn9Ebh`), 07/10 18:07 UTC.** A
+Bruna estava respondendo um "Olá" do lead; 23s depois um `ContactUpdate` casou a regra de
+campo do Bruno e o gatilho reativo abriu o Bruno no mesmo contato. Duas IAs respondendo
+com 21s de diferença. A guarda anti-reabertura (`hasConversation`) perguntava só "este
+agente já conversa com ele?".
+
+**Fix** (`reactive-trigger.ts`): antes de disparar, `outroAgenteNaConversa` pergunta por
+QUALQUER outro agente da location, em duas fontes: `conversation_state` (já tem dono,
+ativo, pausado ou entregue a humano) e `message_queue` pendente/processando (o inbound
+está no debounce, antes de virar linha de conversa — é a janela do caso). Um evento abre
+no máximo UM agente, e quem abre é o mais antigo (`order created_at`, mesma lição do
+MC-10). Vale pra todo tipo de evento. Todo pulo vira `reactive_trigger_skipped` com o
+motivo. Teste: `scripts/test-dois-agentes.ts` (o incidente real).
+
+## H102 (2026-10-07) — Lead que nasce na etapa do funil (OpportunityCreate)
+
+**Caso Vergus (Cleybart).** O lead do formulário do Facebook cai direto no "Novo Lead".
+Isso gera `OpportunityCreate`, nunca `OpportunityStageUpdate` — e o router só tratava o
+segundo. A regra de funil só funcionava pra lead MOVIDO de etapa. Os eventos chegam: 4
+`OpportunityCreate` em 26h na Vergus (um com `source: "Facebook"`).
+
+**O risco é a importação.** Importar planilha também cria oportunidade na etapa, uma por
+linha. Sem trava, cada linha vira uma mensagem da IA, pelo número do cliente. O payload
+não distingue formulário de importação (`source` vem vazio na maioria). O ritmo distingue:
+a Vergus tem ~4 leads novos por dia; importação chega às dezenas por minuto.
+
+**Fix:**
+- `OPPORTUNITYCREATE` entra no router → `extractOpportunityCreateEvent` (só oportunidade
+  `open`: importar histórico won/lost não aborda ninguém) → mesmo matcher e mesma chave de
+  dedup da movimentação, com `origem: "opportunity_create"`.
+- **Disjuntor** (`reservarVagaDeLeadNovo`): 5 aberturas por location a cada 10 min. A 6ª
+  arma uma pausa de 6h pra lead novo daquela conta e sobe `admin_signal`. As vagas são
+  linhas em `sparkbot_dedup_locks` (PK), não contagem: 30 eventos simultâneos de uma
+  importação passam só 5 (testado). Falha de banco = não aborda. Pra liberar uma conta
+  pausada por tráfego real: apagar `rajada-lead-novo:<locationId>` de `sparkbot_dedup_locks`.
+- Nunca abre por cima de conversa que já existe com o agente (o lead do Instagram que
+  depois preenche o formulário não ganha uma 2ª apresentação).
+- **Respeita o `working_hours` do agente**, como o inbound. Sem isso o lead das 23h
+  recebia a abertura na hora e esperava até a manhã pela 2ª mensagem. As funções de
+  expediente saíram do route do webhook pra `src/lib/queue/working-hours.ts` (cópia fiel).
+  Quando a abertura é adiada e o lead escreve antes, os dois caem no mesmo grupo do
+  processor; aí a mensagem real dele ganha e o turno vira resposta normal.
+
+⚠️ **Só vale pra lead novo.** Os gatilhos que já existiam (tag, campo, movimentação de
+etapa) seguem imediatos e sem disjuntor. Eles têm a mesma exposição a ação em massa
+(marcar 500 contatos com a tag de ativação dispara 500 aberturas), mas mudar isso altera
+fluxo que está em produção. Fica registrado aqui pra decidir à parte.
+
+Hoje nenhum agente da frota tem regra de funil, então o deploy não muda nada até alguém
+configurar uma. Teste: `TZ=UTC npx tsx scripts/test-lead-novo-create.ts` (26/26, payload
+real da Vergus, expediente da Bia, disjuntor contra o banco com location falsa).
