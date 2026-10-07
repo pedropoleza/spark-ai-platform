@@ -58,11 +58,136 @@ function buildLoaderScript(): string {
   // (provado) fica intocado; o de controles tem auth própria (/api/agents/ui-auth,
   // que aceita qualquer user válido da location, não só admin) e estado próprio.
   // Um snippet só pro Pedro colar; dois módulos servidos.
-  return (LOADER_SOURCE + "\n;\n" + AGENT_CONTROLS_SOURCE)
+  return (GHL_IDENTITY_SOURCE + "\n;\n" + LOADER_SOURCE + "\n;\n" + AGENT_CONTROLS_SOURCE)
     .replaceAll("__APP_URL__", APP_URL)
     .replaceAll("__POLL_INTERVAL_MS__", String(POLL_INTERVAL_MS))
     .replaceAll("__HEARTBEAT_INTERVAL_MS__", String(HEARTBEAT_INTERVAL_MS));
 }
+
+// H98 (2026-10-07): resolvedor ÚNICO de identidade do Spark Leads, usado pelos
+// dois módulos. Bug observado em prod: o ícone da IA sumiu da tela de contato
+// (contas Jussara e Alves Cury) e o painel do SparkBot logava
+// "tentativa N: {userId: null, companyId: null}". Causa: o Spark Leads parou de
+// gravar o refreshedToken no localStorage — no bundle atual (store._eu46I7V.js)
+// a ÚNICA ocorrência da chave é o remove() do logout. A sessão agora mora no
+// estado do app (Vuex): state.user.user.firebaseToken, o custom token que eles
+// passam pro signInWithCustomToken. Sem identidade o módulo de controles nem
+// chamava o /ui-auth, e sumia sem log nenhum.
+// Ordem: Vuex primeiro (formato atual) e localStorage depois (sessões antigas,
+// que ainda têm o token velho e continuam funcionando como antes).
+// Loga a fonte UMA vez por mudança, só com NOMES de chave — nunca valor de token.
+const GHL_IDENTITY_SOURCE = `(function () {
+  if (window.__sparkGhlIdentity) return;
+
+  function stripQuotes(t) {
+    t = String(t || "").trim();
+    if (t.charAt(0) === '"' && t.charAt(t.length - 1) === '"') { try { return JSON.parse(t); } catch (e) {} }
+    return t;
+  }
+  function b64urlJson(seg) {
+    try {
+      var b = seg.replace(/-/g, "+").replace(/_/g, "/");
+      while (b.length % 4) b += "=";
+      return JSON.parse(decodeURIComponent(escape(atob(b))));
+    } catch (e) { return null; }
+  }
+  function decodeJwt(t) {
+    if (!t || typeof t !== "string") return null;
+    var parts = stripQuotes(t).split(".");
+    return parts.length === 3 ? b64urlJson(parts[1]) : null;
+  }
+  // Formato antigo: snake_case dentro de payload.claims. Novo: camelCase.
+  function norm(c) {
+    if (!c || typeof c !== "object") return null;
+    var inner = (c.claims && typeof c.claims === "object") ? c.claims : c;
+    function pick() {
+      for (var i = 0; i < arguments.length; i++) {
+        var k = arguments[i];
+        var v = inner[k] != null ? inner[k] : c[k];
+        if (typeof v === "string" && v) return v;
+      }
+      return null;
+    }
+    return { user_id: pick("user_id", "userId", "uid", "sub"), company_id: pick("company_id", "companyId"), keys: Object.keys(inner) };
+  }
+  function findStore() {
+    var cands = [document.getElementById("app"), document.querySelector("[data-v-app]")];
+    for (var i = 0; i < cands.length; i++) {
+      try {
+        var el = cands[i];
+        var gp = el && el.__vue_app__ && el.__vue_app__.config && el.__vue_app__.config.globalProperties;
+        if (gp && gp.$store && gp.$store.state) return gp.$store;
+      } catch (e) {}
+    }
+    return null;
+  }
+  function storeUser(st) {
+    try {
+      var s = st.state;
+      if (s.user && s.user.user && typeof s.user.user === "object") return s.user.user;
+      for (var k in s) {
+        var m = s[k];
+        if (!m || typeof m !== "object") continue;
+        if (m.firebaseToken) return m;
+        for (var k2 in m) { var v = m[k2]; if (v && typeof v === "object" && v.firebaseToken) return v; }
+      }
+    } catch (e) {}
+    return null;
+  }
+  function storeCompanyId(st) {
+    try { var c = st.state.company && st.state.company.company; if (c) return c.id || c._id || null; } catch (e) {}
+    return null;
+  }
+  function fromLocalStorage() {
+    var keys = ["refreshedToken", "token-id", "ghl_user_token"];
+    for (var i = 0; i < keys.length; i++) {
+      var raw = null;
+      try { raw = localStorage.getItem(keys[i]); } catch (e) {}
+      if (!raw) continue;
+      var claims = null, token = null;
+      try {
+        var p = JSON.parse(raw);
+        if (p && typeof p === "object") {
+          if (p.refreshedToken && p.refreshedToken.claims) claims = p.refreshedToken.claims;
+          else if (p.claims) claims = p.claims;
+        } else if (typeof p === "string") { token = p; }
+      } catch (e) {}
+      if (!token && raw.split(".").length === 3) token = stripQuotes(raw);
+      if (!claims && token) { var pl = decodeJwt(token); if (pl) claims = pl.claims || pl; }
+      var n = norm(claims);
+      if (n && n.user_id && n.company_id) {
+        // Mantém o que ia pro servidor antes: no refreshedToken, o valor cru (sem aspas).
+        return { key: keys[i], token: keys[i] === "refreshedToken" ? (token || stripQuotes(raw)) : token, n: n };
+      }
+    }
+    return null;
+  }
+
+  var lastLogged = null;
+  window.__sparkGhlIdentity = function () {
+    var out = { source: "none", userId: null, companyId: null, idToken: null, claimKeys: [] };
+    var st = findStore();
+    if (st) {
+      var u = storeUser(st);
+      var tok = u && u.firebaseToken ? stripQuotes(u.firebaseToken) : null;
+      var n = tok ? norm(decodeJwt(tok)) : null;
+      var uid = (n && n.user_id) || (u && (u.userId || u.id)) || null;
+      var cid = (n && n.company_id) || (u && u.companyId) || storeCompanyId(st) || null;
+      if (uid && cid) out = { source: "vuex", userId: uid, companyId: cid, idToken: tok, claimKeys: n ? n.keys : [] };
+    }
+    if (out.source === "none") {
+      var l = fromLocalStorage();
+      if (l) out = { source: "localStorage:" + l.key, userId: l.n.user_id, companyId: l.n.company_id, idToken: l.token, claimKeys: l.n.keys };
+    }
+    if (lastLogged !== out.source) {
+      lastLogged = out.source;
+      console.log("[spark-identity] fonte=" + out.source +
+        " user=" + (out.userId ? "ok" : "-") + " company=" + (out.companyId ? "ok" : "-") +
+        " token=" + (out.idToken ? "ok" : "-") + " chaves=" + (out.claimKeys || []).join(","));
+    }
+    return out;
+  };
+})();`;
 
 const LOADER_SOURCE = `(function () {
   // Reentrância: snippet do GHL Custom JS pode setar __sparkbotInjected
@@ -137,6 +262,8 @@ const LOADER_SOURCE = `(function () {
   }
 
   function detectCompanyId() {
+    // H98: fonte atual do Spark Leads (Vuex) primeiro.
+    try { var gid = window.__sparkGhlIdentity && window.__sparkGhlIdentity(); if (gid && gid.companyId) return gid.companyId; } catch (e) {}
     var c = getGhlClaims();
     if (c) {
       if (c.company_id) return c.company_id;
@@ -151,6 +278,8 @@ const LOADER_SOURCE = `(function () {
   }
 
   function detectUserId() {
+    // H98: fonte atual do Spark Leads (Vuex) primeiro.
+    try { var gid = window.__sparkGhlIdentity && window.__sparkGhlIdentity(); if (gid && gid.userId) return gid.userId; } catch (e) {}
     var c = getGhlClaims();
     if (c) {
       if (c.user_id) return c.user_id;
@@ -185,7 +314,9 @@ const LOADER_SOURCE = `(function () {
     // refreshedToken pode estar JSON-stringified (com aspas extras) no
     // localStorage do GHL/sparkleads. Tenta parse, fallback pro raw.
     var idToken = null;
-    try {
+    // H98: o token atual vem do Vuex (state.user.user.firebaseToken).
+    try { var gidt = window.__sparkGhlIdentity && window.__sparkGhlIdentity(); if (gidt && gidt.idToken) idToken = gidt.idToken; } catch (e) {}
+    if (!idToken) try {
       var raw = localStorage.getItem("refreshedToken");
       if (raw) {
         if (raw.startsWith('"')) {
@@ -687,9 +818,15 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     }
     return null;
   }
-  function acCompany() { var c = acClaims(); if (c) { if (c.company_id) return c.company_id; if (c.companyId) return c.companyId; } return null; }
-  function acUser() { var c = acClaims(); if (c) { if (c.user_id) return c.user_id; if (c.userId) return c.userId; if (c.uid) return c.uid; if (c.sub) return c.sub; } return null; }
+  function acCompany() {
+    // H98: fonte atual do Spark Leads (Vuex) primeiro.
+    try { var gid = window.__sparkGhlIdentity && window.__sparkGhlIdentity(); if (gid && gid.companyId) return gid.companyId; } catch (e) {}
+    var c = acClaims(); if (c) { if (c.company_id) return c.company_id; if (c.companyId) return c.companyId; } return null; }
+  function acUser() {
+    try { var gid = window.__sparkGhlIdentity && window.__sparkGhlIdentity(); if (gid && gid.userId) return gid.userId; } catch (e) {}
+    var c = acClaims(); if (c) { if (c.user_id) return c.user_id; if (c.userId) return c.userId; if (c.uid) return c.uid; if (c.sub) return c.sub; } return null; }
   function acIdToken() {
+    try { var gid = window.__sparkGhlIdentity && window.__sparkGhlIdentity(); if (gid && gid.idToken) return gid.idToken; } catch (e) {}
     try {
       var raw = localStorage.getItem("refreshedToken");
       if (!raw) return null;
@@ -704,7 +841,14 @@ const AGENT_CONTROLS_SOURCE = `(function () {
     if (AC.token && AC.authedLocation === loc) return Promise.resolve(true);
     if (AC.authPromise) return AC.authPromise;
     var co = acCompany(), usr = acUser(), idt = acIdToken();
-    if (!loc || !co || !usr) return Promise.resolve(false);
+    if (!loc || !co || !usr) {
+      // H98: era aqui que o ícone sumia sem deixar rastro. Avisa uma vez por location.
+      if (AC.warnedNoIdentity !== loc) {
+        AC.warnedNoIdentity = loc;
+        console.warn("[spark-agent] sem identidade do Spark Leads — controles não aparecem", { loc: loc, company: !!co, user: !!usr });
+      }
+      return Promise.resolve(false);
+    }
     AC.locationId = loc; AC.companyId = co; AC.userId = usr;
     AC.authPromise = fetch(APP_URL + "/api/agents/ui-auth", {
       method: "POST",
@@ -1197,6 +1341,7 @@ const AGENT_CONTROLS_SOURCE = `(function () {
       agents: AC.agents ? AC.agents.length : 0, activeAgentId: AC.activeAgentId, iconState: AC.iconState,
       pill: !!document.getElementById("spark-agent-pill"),
       kill_switch: !!window.__SPARK_AGENT_CONTROLS_OFF,
+      identity: (function () { try { var g = window.__sparkGhlIdentity(); return { source: g.source, user: !!g.userId, company: !!g.companyId, token: !!g.idToken, claimKeys: g.claimKeys }; } catch (e) { return null; } })(),
       ai_texts: AC.aiTexts ? AC.aiTexts.length : 0,
       feedback_bars: document.querySelectorAll(".sap-fb").length,
       detected: { loc: acLoc(), contact: acContact(), conv: acConvId(), resolved: AC.resolvedContactId, company: acCompany(), user: acUser(), hasIdToken: !!acIdToken() },

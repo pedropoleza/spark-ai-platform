@@ -25,7 +25,7 @@ import { validateGHLUser, upsertLocation } from "@/lib/auth/sso";
 import { identifyRepByGhlUser } from "@/lib/account-assistant/identity";
 import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
-import { verifyFirebaseIdToken, isAdminClaims } from "@/lib/auth/ghl-idtoken";
+import { verifyFirebaseIdToken, isAdminClaims, tokenMatchesRequest } from "@/lib/auth/ghl-idtoken";
 import { isLocationSparkbotEnabled } from "@/lib/account-assistant/hub-resolver";
 import { reportError } from "@/lib/admin-signals/report-error";
 
@@ -109,9 +109,8 @@ export async function POST(request: NextRequest) {
       const result = await verifyFirebaseIdToken(idToken);
       if (result.claims) {
         const claims = result.claims;
-        const matchesUser = claims.user_id === userId;
-        const matchesCompany = claims.company_id === companyId;
-        if (matchesUser && matchesCompany) {
+        // H98: claims normalizadas (snake/camel) + location do token vale como prova de conta.
+        if (tokenMatchesRequest(claims, { userId, companyId, locationId })) {
           if (isAdminClaims(claims)) {
             isAdmin = true;
             adminSource = `firebase_jwt_verified (role=${claims.role || "?"}, type=${claims.type || "?"})`;

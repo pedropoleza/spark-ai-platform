@@ -68,7 +68,65 @@ export interface FirebaseClaims {
   company_id?: string;
   role?: string;
   type?: string;
-  locations?: string[];
+  /** Lista de location ids OU objeto chaveado por location id (formato novo). */
+  locations?: string[] | Record<string, unknown>;
+  /** Nomes das chaves que vieram no token — só os NOMES, pra diagnóstico. */
+  _keys?: string[];
+}
+
+/**
+ * H98 (2026-10-07): o Spark Leads trocou o formato das claims do custom token.
+ * O formato antigo (refreshedToken no localStorage) trazia snake_case dentro de
+ * `payload.claims`: { user_id, company_id, role, type, locations[] }. O novo
+ * (state.user.user.firebaseToken no Vuex, usado no signInWithCustomToken) traz
+ * camelCase — o próprio bundle deles lê `claims.userId` e `claims.region`.
+ * Comparar `claims.user_id === userId` com o token novo dá undefined e recusa
+ * um token com assinatura VÁLIDA. Normaliza os dois formatos num só.
+ */
+export function normalizeClaims(payload: Record<string, unknown> | null | undefined): FirebaseClaims | null {
+  if (!payload) return null;
+  const inner = (payload.claims && typeof payload.claims === "object" ? payload.claims : payload) as Record<string, unknown>;
+  const pick = (...keys: string[]): string | undefined => {
+    for (const k of keys) {
+      const v = inner[k] ?? payload[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    return undefined;
+  };
+  const locations = (inner.locations ?? payload.locations) as FirebaseClaims["locations"];
+  return {
+    user_id: pick("user_id", "userId", "uid"),
+    company_id: pick("company_id", "companyId"),
+    role: pick("role"),
+    type: pick("type"),
+    locations: Array.isArray(locations) || (locations && typeof locations === "object") ? locations : undefined,
+    _keys: Object.keys(inner).sort(),
+  };
+}
+
+/**
+ * O token verificado pertence a quem está pedindo, nesta conta?
+ *
+ * O usuário tem que bater sempre. Da conta, basta UMA das duas: a company bater,
+ * ou o token listar a location pedida. A segunda é a mais forte das duas — prova
+ * acesso àquela sub-account específica — e é a que sobra quando o token novo não
+ * traz company_id (H98).
+ */
+export function tokenMatchesRequest(
+  claims: FirebaseClaims,
+  req: { userId: string; companyId: string; locationId?: string },
+): boolean {
+  if (!claims.user_id || claims.user_id !== req.userId) return false;
+  if (claims.company_id && claims.company_id === req.companyId) return true;
+  return !!req.locationId && tokenCoversLocation(claims, req.locationId);
+}
+
+/** O token autoriza esta location? Aceita lista ou objeto chaveado por id. */
+export function tokenCoversLocation(claims: FirebaseClaims, locationId: string): boolean {
+  const l = claims.locations;
+  if (!l || !locationId) return false;
+  if (Array.isArray(l)) return l.includes(locationId);
+  return Object.prototype.hasOwnProperty.call(l, locationId);
 }
 
 export interface VerifyResult {
@@ -120,8 +178,8 @@ export async function verifyFirebaseIdToken(idToken: string): Promise<VerifyResu
       try {
         const key = await importJWK(jwk, jwk.alg || "RS256");
         const { payload } = await jwtVerify(token, key, { issuer });
-        const claims = (payload as { claims?: FirebaseClaims }).claims;
-        return { claims: claims || null, lastError: null };
+        // H98: os dois formatos de claim (snake_case antigo, camelCase novo).
+        return { claims: normalizeClaims(payload as Record<string, unknown>), lastError: null };
       } catch (err) {
         const e = err as { code?: string; message?: string };
         lastError = { code: e.code, message: e.message };

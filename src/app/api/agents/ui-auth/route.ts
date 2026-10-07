@@ -26,7 +26,7 @@ import { validateGHLUser, upsertLocation } from "@/lib/auth/sso";
 import { identifyRepByGhlUser } from "@/lib/account-assistant/identity";
 import { signSparkbotWebToken } from "@/lib/account-assistant/web-auth";
 import { corsHeadersFor } from "@/lib/utils/cors";
-import { verifyFirebaseIdToken, isAdminClaims } from "@/lib/auth/ghl-idtoken";
+import { verifyFirebaseIdToken, isAdminClaims, tokenMatchesRequest } from "@/lib/auth/ghl-idtoken";
 import { reportError } from "@/lib/admin-signals/report-error";
 
 export const maxDuration = 30;
@@ -69,12 +69,16 @@ export async function POST(request: NextRequest) {
       const result = await verifyFirebaseIdToken(idToken);
       if (result.claims) {
         const claims = result.claims;
-        if (claims.user_id === userId && claims.company_id === companyId) {
+        // H98: claims normalizadas (snake/camel) + location do token vale como prova de conta.
+        if (tokenMatchesRequest(claims, { userId, companyId, locationId })) {
           isValidUser = true;
           isAdmin = isAdminClaims(claims);
           source = `firebase_jwt (role=${claims.role || "?"}, type=${claims.type || "?"})`;
         } else {
           jwtClaimsMismatch = { jwtUser: claims.user_id, jwtCompany: claims.company_id };
+          // H98: deixa no log QUAIS chaves o token trouxe (só nomes, nunca valores) —
+          // é o que diz se o formato mudou de novo.
+          console.warn(`[ui-auth] token válido mas não bateu (user/company/location). chaves do token: ${(claims._keys || []).join(",")}`);
         }
       } else {
         jwtVerifyError = { code: result.errorCode, message: result.errorMessage };
