@@ -430,3 +430,41 @@ variação derruba o exchange).
 Diagnóstico de 1 comando: o `sourceId` dentro do JWT do access_token é o
 client_id que EMITIU aquele token. Se ele não bate com `GHL_CLIENT_ID` do env, o
 refresh está condenado — mesmo com tudo funcionando naquele instante.
+
+## H98 (2026-10-07) — O Spark Leads mudou onde guarda a sessão e o loader ficou cego
+
+**Sintoma.** O ícone da IA (liga/desliga + 👍/👎) sumiu da tela de contato. O console
+mostrava `[Sparkbot] tentativa N: {userId: null, companyId: null}` e nada do módulo de
+controles — ele desistia CALADO no `if (!loc || !co || !usr) return false`.
+
+**Causa.** Os dois módulos do loader liam a identidade de três chaves do localStorage
+(`refreshedToken`, `token-id`, `ghl_user_token`). O Spark Leads parou de gravar a
+principal: no bundle atual (`store._eu46I7V.js`, app 1962) a ÚNICA ocorrência de
+`refreshedToken` é o `remove()` do logout. A sessão foi pro estado do app (Vuex):
+`state.user.user.firebaseToken`, o custom token que eles passam pro
+`signInWithCustomToken`. As claims viraram camelCase (`claims.userId`).
+
+**Por que os logs do servidor enganavam.** Em 7 dias, 48 `/ui-auth` com 200 e
+**nenhum** pelo token — todos `ERR_JWS_SIGNATURE_VERIFICATION_FAILED`. Eram sessões
+antigas com um `refreshedToken` velho, assinado por chave que saiu de rotação. Usuário
+de location entrava pelo fallback da API; **usuário de agência não tem fallback** e
+ficava de fora. "200 no endpoint" escondia "o caminho principal morreu".
+
+**Fix.**
+- `GHL_IDENTITY_SOURCE` no loader: resolvedor único (`window.__sparkGhlIdentity`),
+  Vuex primeiro, localStorage depois. Os dois módulos chamam ele antes do caminho antigo.
+- `normalizeClaims` + `tokenMatchesRequest` em `ghl-idtoken.ts`: aceita snake e camel;
+  exige o usuário sempre e, da conta, company OU location listada no token.
+- Teste: `scripts/test-ghl-identity.ts` — inclui `node --check` do script EXATAMENTE
+  como é servido.
+
+⚠️ **O loader depende de detalhe interno do Spark Leads** (nome do módulo Vuex, forma
+do token). Vai quebrar de novo. Pra diagnosticar em segundos, no console da página:
+- `[spark-identity] fonte=...` aparece sozinho na carga: `vuex` (formato atual),
+  `localStorage:<chave>` (sessão antiga) ou `none` (quebrou — o Spark Leads mudou de novo).
+- `__sparkAgentDebug().identity` mostra fonte, o que foi achado e os NOMES das chaves do token.
+- Pra achar o lugar novo: baixe o manifest (`production.app-manifest.leadconnectorhq.com/latest/manifest.json`
+  → `mainAppVersion`) → `static.leadconnectorhq.com/<versão>/app.js` → o chunk `store.*.js`,
+  e procure `firebaseToken` / `getIdToken` / `signInWithCustomToken`.
+
+⚠️ **Nunca imprima o valor do token** em log ou console — o resolvedor loga só nomes de chave.
