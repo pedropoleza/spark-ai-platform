@@ -16,8 +16,14 @@ const APPLY = process.argv.includes("--apply");
 const CANCEL = process.argv.includes("--cancel");
 const MARCA = "aviso_correcao_2026_10_07";
 
-const AVISOS = [
+// ⚠️ O aviso do Willian foi CANCELADO em 07/10 pelo General OS: ele NÃO é da
+// Alves Cury (é da conta VKJITQwWwWVRzce0dbSb, com a Sofia), e o aviso certo dele
+// sai pelo OS. "Não reagendem." O `--apply` deste script só pula duplicata
+// PENDENTE, então rodá-lo de novo recriaria o aviso cancelado. Por isso o item
+// dele fica com `naoEnviar` e o loop pula.
+const AVISOS: Array<{ phone: string; tz: string; texto: string; naoEnviar?: string }> = [
   {
+    naoEnviar: "cancelado em 07/10 (Willian não é da Alves Cury); o aviso dele sai pelo OS",
     phone: "+12062096191",
     tz: "America/Chicago",
     texto:
@@ -63,6 +69,7 @@ function amanhaAs(hora: number, tz: string): Date {
     return;
   }
   for (const a of AVISOS) {
+    if (a.naoEnviar) { console.log(`\n⏭️  ${a.phone}: não envia (${a.naoEnviar})`); continue; }
     const { data: rep } = await sb.from("rep_identities").select("id,display_name,active_location_id,proactive_paused_at,terms_accepted_at").eq("phone", a.phone).single();
     const r = rep as { id: string; display_name: string; active_location_id: string; proactive_paused_at: string | null; terms_accepted_at: string | null };
     const quando = amanhaAs(9, a.tz);
@@ -71,8 +78,9 @@ function amanhaAs(hora: number, tz: string): Date {
     console.log(`termos: ${r.terms_accepted_at ? "ok" : "NÃO"} | pausado: ${r.proactive_paused_at ? "SIM" : "não"}`);
     console.log(`travessões no texto: ${(a.texto.match(/—|–/g) || []).length}\n${"-".repeat(64)}\n🔔 Atualização da Spark\n\n${a.texto}`);
     if (!APPLY) continue;
-    const { data: ja } = await sb.from("assistant_scheduled_tasks").select("id").eq("rep_id", r.id).eq("status", "pending").contains("task_payload", { marca: MARCA });
-    if ((ja || []).length) { console.log("→ já agendado antes, não duplico"); continue; }
+    // Qualquer status: aviso já ENVIADO (completed) ou CANCELADO também não volta.
+    const { data: ja } = await sb.from("assistant_scheduled_tasks").select("id,status").eq("rep_id", r.id).contains("task_payload", { marca: MARCA });
+    if ((ja || []).length) { console.log(`→ já existe (${(ja || []).map((x) => x.status).join(", ")}), não duplico`); continue; }
     const { error } = await sb.from("assistant_scheduled_tasks").insert({
       rep_id: r.id, location_id: r.active_location_id, task_type: "reminder", status: "pending",
       next_run_at: quando.toISOString(), cron_expr: null, delivery_channel: "whatsapp",
