@@ -143,6 +143,24 @@ interface ExecutionContext {
    */
   agentLabel?: string;
   leadName?: string;
+  /**
+   * H103 (2026-10-09): turno do modo remarcação, numa conversa que a equipe
+   * assumiu. A conversa ENTRA pausada, então: (a) o re-check C4 só suprime o
+   * envio se aparecer uma pausa NOVA durante o turno (instante diferente deste);
+   * (b) o estado gravado no fim não mexe em status nem em pausa (o segment reset
+   * zerava `ai_paused_at` de conversa com nota de resumo e religaria a IA).
+   */
+  remarcacao?: { pausaPreexistenteEm: string | null };
+}
+
+/** Desfecho do turno, pra quem chamou decidir o que vem depois (H103). */
+export interface ResultadoExecucao {
+  /** Alguma bolha saiu pro lead. */
+  enviou: boolean;
+  /** book/reschedule executou com sucesso neste turno. */
+  agendouComSucesso: boolean;
+  /** start_time efetivamente gravado (já com offset corrigido). */
+  bookedStartIso: string | null;
 }
 
 // C8 (caso Alves Cury 2026-08-31): o modelo manda title null com frequência —
@@ -171,7 +189,7 @@ function hasCollectedContact(data?: Record<string, string>): boolean {
 export async function executeActions(
   response: AIResponse,
   ctx: ExecutionContext
-): Promise<void> {
+): Promise<ResultadoExecucao> {
   const client = new GHLClient(ctx.companyId, ctx.locationId);
   const supabase = createAdminClient();
 
@@ -238,6 +256,7 @@ export async function executeActions(
 
   // 2. Enviar mensagem(ns) pelo mesmo canal (pula no modo teste)
   let messages = normalizeMessages(response.message);
+  let enviou = false;
 
   // MC-9 (review Marcia 2026-07-28): gate de silêncio determinístico. Silêncio
   // SÓ com sinal EXPLÍCITO do modelo (should_send_message:false ou marcador
@@ -402,7 +421,13 @@ export async function executeActions(
         .eq("agent_id", ctx.agentId)
         .eq("contact_id", ctx.contactId)
         .maybeSingle();
-      if (freshState?.ai_paused_at) {
+      // H103: no modo remarcação a conversa já entra pausada pela equipe. Só uma
+      // pausa NOVA (instante diferente do que o turno viu no início) suprime.
+      const pausaDoInicioDoTurno =
+        !!ctx.remarcacao &&
+        !!freshState?.ai_paused_at &&
+        Date.parse(String(freshState.ai_paused_at)) === Date.parse(String(ctx.remarcacao.pausaPreexistenteEm));
+      if (freshState?.ai_paused_at && !pausaDoInicioDoTurno) {
         await logExecution(supabase, ctx, "send_cancelled_paused_mid_turn", {
           reason: freshState.ai_paused_reason || "manual",
           messages_suppressed: messages.length,
@@ -436,6 +461,7 @@ export async function executeActions(
           contactId: ctx.contactId,
           message: askMsg,
         });
+        enviou = true;
         await logExecution(supabase, ctx, "book_blocked_no_contact", {
           message: askMsg,
           ...(sentAsk?.messageId ? { message_ids: [sentAsk.messageId] } : {}),
@@ -447,6 +473,7 @@ export async function executeActions(
           contactId: ctx.contactId,
           message: errorMsg,
         });
+        enviou = true;
         await logExecution(supabase, ctx, "send_error_message", {
           message: errorMsg,
           ...(sentErr?.messageId ? { message_ids: [sentErr.messageId] } : {}),
@@ -472,6 +499,7 @@ export async function executeActions(
             message: msg,
           });
           if (sent?.messageId) messageIds.push(sent.messageId);
+          enviou = true;
         }
 
         await logExecution(supabase, ctx, "send_message", {
@@ -542,6 +570,7 @@ export async function executeActions(
   if (!ctx.testMode) {
     await updateConversationState(supabase, ctx, response);
   }
+  return { enviou, agendouComSucesso, bookedStartIso };
 }
 
 async function executeAction(
@@ -993,7 +1022,8 @@ export async function moveAppointment(
   return "reschedule_recreate";
 }
 
-async function findExistingAppointment(
+/** Exportada pro H103 (remarcação pós-handoff): mesma busca do reagendamento. */
+export async function findExistingAppointment(
   client: GHLClient,
   contactId: string,
   locationId: string,
@@ -1076,6 +1106,23 @@ async function updateConversationState(
 
   const previousData = (existing?.collected_data as Record<string, string>) || {};
   const mergedData = { ...previousData, ...response.collected_data };
+
+  // H103: turno de remarcação numa conversa da equipe. Registra que a IA falou
+  // (contagem e horário) e NADA mais: status, segmento e pausa são da equipe. O
+  // segment reset abaixo zeraria `ai_paused_at` (a conversa tem nota de resumo
+  // desde o agendamento) e a IA voltaria a responder tudo.
+  if (ctx.remarcacao) {
+    await supabase
+      .from("conversation_state")
+      .update({
+        message_count: (existing?.message_count || 0) + 1,
+        last_ai_response_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("agent_id", ctx.agentId)
+      .eq("contact_id", ctx.contactId);
+    return;
+  }
 
   // Se conversa tinha nota de resumo, iniciar novo segmento
   const existingFull = existing as Record<string, unknown> | null;

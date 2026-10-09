@@ -501,3 +501,111 @@ export async function notifyLlmHandoffToRep(args: {
     return { notified: false, reason: "error" };
   }
 }
+
+/**
+ * H103 (2026-10-09, ticket #434 da Alves Cury): a IA voltou SÓ pra remarcar a
+ * reunião de uma conversa que a equipe tinha assumido. O dono do contato fica
+ * sabendo na hora, em 3 momentos: o pedido (a IA ofereceu horários), a
+ * remarcação feita, e o lead que não quis remarcar (a reunião fica na agenda e a
+ * decisão é da equipe).
+ *
+ * O pedido e o "não quis" respeitam o cooldown de 4h por contato (rajada de
+ * mensagens do mesmo pedido não vira 3 avisos). A remarcação feita NÃO: cada uma
+ * muda a agenda de verdade e a equipe precisa saber de todas. Mesmo assim a nota
+ * interna no contato (escrita pelo processor) é o registro garantido: este aviso
+ * pelo WhatsApp pode falhar (número do SparkBot fora, rep sem SparkBot).
+ */
+export async function notifyRescheduleToRep(args: {
+  agentId: string;
+  locationId: string;
+  contactId: string;
+  evento: "pedido" | "remarcada" | "desmarcar";
+  contactName?: string | null;
+  contactPhone?: string | null;
+  assignedUserId?: string | null;
+  rotuloAntes: string;
+  rotuloDepois?: string | null;
+  fuso: string;
+  leadMessage?: string | null;
+}): Promise<{ notified: boolean; reason: string }> {
+  const { agentId, locationId, contactId, assignedUserId, evento } = args;
+  const reason = `reschedule_${evento}`;
+  try {
+    const supabase = createAdminClient();
+    const rep = await resolveOwnerRep(supabase, locationId, {
+      contact: { assignedUserId: assignedUserId || undefined, name: args.contactName || undefined },
+    } as unknown as LeadContext);
+    if (!rep) return { notified: false, reason: "no_owner_resolved" };
+    if (evento !== "remarcada" && (await alreadyNotified(supabase, locationId, contactId, reason))) {
+      return { notified: false, reason: "cooldown" };
+    }
+
+    const quem = args.contactName
+      ? `*${args.contactName}*${args.contactPhone ? ` (${args.contactPhone})` : ""}`
+      : args.contactPhone
+        ? `o contato ${args.contactPhone}`
+        : "um contato";
+    const fala = (args.leadMessage || "").trim();
+    const disse = fala ? `\n\nMensagem do lead:\n"${fala.length > 220 ? fala.slice(0, 220).trim() + "…" : fala}"` : "";
+
+    const message =
+      evento === "remarcada"
+        ? `✅ Remarquei a reunião com ${quem}.\nEra: ${args.rotuloAntes} (${args.fuso})\nAgora: ${args.rotuloDepois} (${args.fuso})\n\nA conversa continua com você; voltei a ficar em silêncio.`
+        : evento === "desmarcar"
+          ? `⚠️ ${quem} não vai à reunião de ${args.rotuloAntes} (${args.fuso}) e não quis remarcar agora.${disse}\n\nA reunião continua na agenda: cancelar ou retomar fica com você.`
+          : `📅 ${quem} pediu pra remarcar a reunião de ${args.rotuloAntes} (${args.fuso}).${disse}\n\nComo você tinha assumido a conversa, voltei só pra isso e ofereci novos horários. Te aviso quando remarcar.`;
+
+    const { deliverProactiveMessage } = await import("@/lib/account-assistant/proactive/whatsapp-delivery");
+    const delivery = await deliverProactiveMessage(
+      { id: rep.id, phone: rep.phone || "", last_inbound_at: null },
+      message,
+      {
+        activeLocationId: rep.active_location_id || locationId,
+        source: "lead_handoff_notification",
+        kind: "reschedule_after_handoff",
+        // Curta de propósito (H67: o id vira stanza id no WhatsApp). Inclui o
+        // evento pra pedido e remarcação do mesmo minuto não se fundirem.
+        dedupeKey: `remarc:${evento.slice(0, 3)}:${contactId}:${Math.floor(Date.now() / 60_000)}`,
+        extraMetadata: {
+          handoff_reason: reason,
+          lead_contact_id: contactId,
+          lead_name: args.contactName || null,
+          agent_id: agentId,
+        },
+      },
+    );
+
+    // `dr.ok` mente quando o WhatsApp falha (H71): a verdade está em `via`.
+    const entregou = delivery.ok && delivery.via === "whatsapp";
+
+    await supabase.from("execution_log").insert({
+      agent_id: agentId,
+      location_id: locationId,
+      contact_id: contactId,
+      action_type: "handoff_notification",
+      action_payload: { rep_id: rep.id, reason, delivery_via: delivery.via, delivery_ok: delivery.ok },
+      success: entregou,
+      error_message: delivery.error || null,
+    });
+    try {
+      await supabase.from("handoff_notifications").insert({
+        agent_id: agentId,
+        location_id: locationId,
+        contact_id: contactId,
+        rep_id: rep.id,
+        reason,
+        trigger_message: (args.leadMessage || "").slice(0, 1000),
+        metadata: { delivery_via: delivery.via },
+      });
+    } catch {
+      // tabela ausente: execution_log já cobre
+    }
+
+    return { notified: entregou, reason: entregou ? "sent" : `delivery:${delivery.via || "?"}` };
+  } catch (err) {
+    console.warn(
+      `[reschedule-notify] falhou (não-bloqueante): ${err instanceof Error ? err.message.slice(0, 200) : err}`,
+    );
+    return { notified: false, reason: "error" };
+  }
+}

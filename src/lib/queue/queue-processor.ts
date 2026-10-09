@@ -8,7 +8,30 @@ import { assembleSystemPrompt, isUnifiedMotorEnabled, templateKeyForAgentType } 
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ImageInput, ConversationTurn } from "@/lib/ai/openai-client";
 import { compressHistory } from "@/lib/ai/history-compressor";
-import { executeActions } from "@/lib/ai/action-executor";
+import { executeActions, findExistingAppointment } from "@/lib/ai/action-executor";
+// H103 (2026-10-09): remarcação depois que a equipe assume.
+import {
+  remarcacaoHabilitada,
+  detectarPedidoDeRemarcacao,
+  avaliarPreGate,
+  confirmarEntrada,
+  separarTextoDoLead,
+  falaDaReuniao,
+  reuniaoEmBreve,
+  restringirAcoes,
+  rotuloReuniao,
+  rotuloFuso,
+  ultimaSaidaHumanaEm,
+  ultimasSaidas,
+  prepararRespostaDaRemarcacao,
+  type ModoRemarcacao,
+  type PedidoDeRemarcacao,
+} from "@/lib/queue/remarcacao-pos-handoff";
+import {
+  abrirJanelaDeRemarcacao,
+  fecharJanelaDeRemarcacao,
+  avisarEquipeDaRemarcacao,
+} from "@/lib/queue/remarcacao-io";
 import { evaluateLeadSilence } from "@/lib/ai/lead-silence";
 import { resolveForbiddenTerms } from "@/lib/ai/outbound-sanitizer";
 import { transcribeAudioFromUrlVerbose } from "@/lib/ai/audio-transcriber";
@@ -740,7 +763,40 @@ async function processGroup(
     .eq("contact_id", group.contactId)
     .maybeSingle();
 
-  if (convState?.ai_paused_at) {
+  // H103 (2026-10-09, ticket #434 Alves Cury): a equipe assumiu, mas o lead pode
+  // estar pedindo pra remarcar/desmarcar a reunião. Com o agente opt-in
+  // (`reschedule_after_handoff`), esse turno segue em MODO REMARCAÇÃO em vez de
+  // ser engolido; a pausa continua gravada e só esse assunto é tratado. A
+  // confirmação (reunião futura neste calendário, humano não conduzindo agora)
+  // vem depois do fetch do CRM, mais abaixo.
+  let candidatoRemarcacao: {
+    via: "pedido" | "janela";
+    pedido: PedidoDeRemarcacao | null;
+    pausaEm: string | null;
+  } | null = null;
+  const remarcacaoLigada = remarcacaoHabilitada(
+    config as { reschedule_after_handoff?: boolean | null },
+  );
+  let motivoSemRemarcacao: string | null = null;
+
+  if (convState?.ai_paused_at && remarcacaoLigada && !group.syntheticTrigger) {
+    const pedido = detectarPedidoDeRemarcacao(group.aggregatedBody || "");
+    const pre = avaliarPreGate({
+      habilitado: true,
+      motivoPausa: convState.ai_paused_reason,
+      pedido,
+      janelaAte: (convState as { reschedule_window_until?: string | null }).reschedule_window_until,
+      agora: new Date(),
+    });
+    if (pre.candidato && pre.via) {
+      candidatoRemarcacao = { via: pre.via, pedido, pausaEm: convState.ai_paused_at };
+      log("log", `H103 candidato a remarcação (${pre.motivo}) na pausa ${convState.ai_paused_reason}`);
+    } else {
+      motivoSemRemarcacao = pre.motivo;
+    }
+  }
+
+  if (convState?.ai_paused_at && !candidatoRemarcacao) {
     log("log", `SKIP IA pausada (${convState.ai_paused_reason || "manual"})`);
     // Observabilidade (Fix bug observado em prod 2026-06-18, caso Marina): esse
     // gate era o ÚNICO skip pré-targeting que NÃO logava — "agente mudo durante
@@ -761,6 +817,7 @@ async function processGroup(
         action_payload: {
           reason: convState.ai_paused_reason || "manual",
           messages_swallowed: group.messages.length,
+          ...(motivoSemRemarcacao ? { reschedule_check: motivoSemRemarcacao } : {}),
         },
         success: true,
       });
@@ -1743,7 +1800,24 @@ async function processGroup(
           contactPhone: pausedContact?.phone || undefined,
           assignedUserId: pausedContact?.assignedTo,
         });
-        return; // não responde — humano está conduzindo
+        // H103: a equipe acabou de assumir (detectado pelo histórico), mas esta
+        // mensagem pode ser o pedido de remarcar. Mesma regra do gate de pausa;
+        // a pausa recém-gravada fica, e a confirmação roda logo abaixo.
+        if (remarcacaoLigada && !group.syntheticTrigger) {
+          const pedidoF52 = detectarPedidoDeRemarcacao(group.aggregatedBody || "");
+          const preF52 = avaliarPreGate({
+            habilitado: true,
+            motivoPausa: "auto_pause:human_message:history",
+            pedido: pedidoF52,
+            janelaAte: null,
+            agora: new Date(),
+          });
+          if (preF52.candidato) {
+            candidatoRemarcacao = { via: "pedido", pedido: pedidoF52, pausaEm: nowIso };
+            log("log", `H103 candidato a remarcação logo após o F52 (${preF52.motivo})`);
+          }
+        }
+        if (!candidatoRemarcacao) return; // não responde — humano está conduzindo
       }
     }
   }
@@ -1776,6 +1850,86 @@ async function processGroup(
     }
   } else if (contactSettled.status === "rejected") {
     console.error("Erro ao buscar dados do contato:", contactSettled.reason);
+  }
+
+  // H103: confirma o modo remarcação com o que o CRM devolveu. A IA só entra se
+  // o contato tem reunião FUTURA no calendário deste agente e se ninguém da
+  // equipe escreveu dentro da janela de "humano conduzindo" do agente. Pedido
+  // solto ("não vou conseguir") ainda precisa de contexto: o lembrete citado,
+  // as últimas saídas falando da reunião, ou a reunião nas próximas 36h.
+  let modoRemarcacao: ModoRemarcacao | null = null;
+  if (candidatoRemarcacao) {
+    const tzRemarcacao = location.timezone || "America/New_York";
+    const agoraRemarcacao = new Date();
+    const reuniao = await findExistingAppointment(ghlClient, group.contactId, group.locationId, undefined, {
+      timeZone: tzRemarcacao,
+    }).catch(() => null);
+    const histRemarcacao =
+      messagesSettled.status === "fulfilled" && messagesSettled.value
+        ? messagesSettled.value.messages?.messages || []
+        : [];
+    const { data: enviosDaIa } = await supabase
+      .from("execution_log")
+      .select("action_payload, created_at")
+      .eq("location_id", group.locationId)
+      .eq("contact_id", group.contactId)
+      .in("action_type", ["send_message", "send_error_message", "book_blocked_no_contact"])
+      .eq("success", true)
+      .order("created_at", { ascending: false })
+      .limit(30);
+    const humanoEm = ultimaSaidaHumanaEm(histRemarcacao, {
+      textos: extractAiSentTexts(enviosDaIa),
+      ids: extractAiSentIds(enviosDaIa),
+    });
+    const { citado } = separarTextoDoLead(group.aggregatedBody || "");
+    const contexto =
+      falaDaReuniao(citado) ||
+      ultimasSaidas(histRemarcacao, agoraRemarcacao).some(falaDaReuniao) ||
+      reuniaoEmBreve(reuniao, agoraRemarcacao);
+    const decisao = confirmarEntrada({
+      via: candidatoRemarcacao.via,
+      pedido: candidatoRemarcacao.pedido,
+      reuniao,
+      calendarioDoAgente: config.calendar_id || null,
+      ultimaSaidaHumanaEm: humanoEm,
+      janelaAbertaEm: (convState as { reschedule_window_opened_at?: string | null } | null)
+        ?.reschedule_window_opened_at,
+      humanoAtivoMin: getHandoffPolicy(
+        config as { handoff_policy?: import("@/types/agent").HandoffPolicy | null },
+      ).skip_if_human_replied_within_minutes,
+      contextoFalaDaReuniao: contexto,
+      agora: agoraRemarcacao,
+    });
+    if (decisao.fecharJanela) await fecharJanelaDeRemarcacao(supabase, agent.id, group.contactId);
+    await supabase.from("execution_log").insert({
+      agent_id: agent.id,
+      location_id: group.locationId,
+      contact_id: group.contactId,
+      conversation_id: group.conversationId,
+      action_type: decisao.entra ? "reschedule_mode_turn" : "reschedule_skip",
+      action_payload: {
+        via: candidatoRemarcacao.via,
+        regra: candidatoRemarcacao.pedido?.regra ?? null,
+        motivo: decisao.motivo,
+        appointment_id: reuniao?.id ?? null,
+        appointment_start: reuniao?.startTime ?? null,
+        ultima_saida_humana_em: humanoEm,
+        messages_swallowed: decisao.entra ? 0 : group.messages.length,
+      },
+      success: true,
+    });
+    if (!decisao.entra || !reuniao) {
+      log("log", `H103 SKIP remarcação (${decisao.motivo}) — conversa segue com a equipe`);
+      return;
+    }
+    modoRemarcacao = {
+      via: candidatoRemarcacao.via,
+      tipo: candidatoRemarcacao.pedido?.tipo ?? null,
+      reuniao,
+      rotulo: rotuloReuniao(reuniao.startTime, tzRemarcacao),
+      fuso: rotuloFuso(tzRemarcacao),
+    };
+    log("log", `H103 MODO REMARCAÇÃO: reunião ${reuniao.id} (${modoRemarcacao.rotulo})`);
   }
 
   // 4. Mesclar com conversation_state (dados coletados pela IA têm prioridade)
@@ -1947,7 +2101,13 @@ async function processGroup(
   // Handoff gate: avalia DEPOIS de carregar histórico (precisa contexto).
   if (handoffPol.enabled && leadHistory) {
     const decision = evaluateShouldRespond(leadHistory, group.aggregatedBody, handoffPol);
-    if (decision.decision === "skip") {
+    // H103: no modo remarcação a janela de "humano conduzindo" já foi aplicada
+    // na confirmação (mesmo `skip_if_human_replied_within_minutes`), e o humano
+    // que pausou a conversa É o motivo de a IA estar aqui. "Lead pediu humano"
+    // continua barrando.
+    const humanoJaAvaliado =
+      !!modoRemarcacao && decision.decision === "skip" && decision.reason.startsWith("human_replied_recently");
+    if (decision.decision === "skip" && !humanoJaAvaliado) {
       log("log", `SKIP por handoff policy: ${decision.reason}`);
       await supabase.from("execution_log").insert({
         agent_id: agent.id,
@@ -2011,6 +2171,8 @@ async function processGroup(
     // (lead history + carrier RAG) do system e joga no runtime → system estável.
     retrievedKnowledge: cacheOptimized ? retrievedKnowledge : undefined,
     cacheOptimized,
+    // H103: turno de remarcação numa conversa da equipe (ausente = prompt igual).
+    modoRemarcacao: modoRemarcacao ?? undefined,
   };
   // Plataforma Modular (Fase 2): roteia a montagem do prompt pelo motor unificado
   // quando AGENT_MOTOR_UNIFIED tá ON. Como o assembler delega pro mesmo
@@ -2377,8 +2539,28 @@ async function processGroup(
     allowSilence: (config as { allow_silent_turns?: boolean }).allow_silent_turns === true,
   });
 
+  // H103: no modo remarcação a IA só move a reunião que existe, não grava dado
+  // nenhum no CRM e fica em silêncio se o modelo julgou que a mensagem não era
+  // sobre a reunião (o vazio não vira "Pode me contar mais?" aqui).
+  let silenceDecisionDoTurno = silenceDecision;
+  if (modoRemarcacao) {
+    const preparada = prepararRespostaDaRemarcacao(aiResult.response, modoRemarcacao.reuniao);
+    aiResult.response.message = preparada.message;
+    aiResult.response.actions = preparada.actions;
+    aiResult.response.collected_data = {};
+    if (preparada.descartadas.length > 0) {
+      log("warn", `H103 ações fora do modo remarcação descartadas: ${preparada.descartadas.join(", ")}`);
+    }
+    silenceDecisionDoTurno = {
+      silent: preparada.silencio,
+      via: preparada.silencio ? "flag" : null,
+      overridden: null,
+      gateOn: true,
+    };
+  }
+
   // 8. Executar acoes (enviar mensagem, atualizar campos, etc.)
-  await executeActions(aiResult.response, {
+  const resultadoExecucao = await executeActions(aiResult.response, {
     companyId: location.company_id,
     locationId: group.locationId,
     contactId: group.contactId,
@@ -2392,13 +2574,63 @@ async function processGroup(
     requireContactBeforeBooking: !!config.post_booking?.require_contact_before_booking,
     collectedData: { ...collectedData, ...(aiResult.response.collected_data || {}) },
     forbiddenTerms: resolveForbiddenTerms(agent.id, config.forbidden_terms),
-    silenceDecision,
+    silenceDecision: silenceDecisionDoTurno,
     offeredSlotsIso, // H58: gate de slot real no book/reschedule
     timezone: locationTz, // H66: corrige offset do start_time pro fuso da conta
     // C8 (caso Alves Cury 2026-08-31): title default do appointment legível.
     agentLabel: ((config as { personality?: { name?: string } | null }).personality)?.name || undefined,
     leadName: contactName && contactName !== group.contactId ? contactName : undefined,
+    // H103: a conversa entrou pausada pela equipe; só uma pausa NOVA suprime.
+    remarcacao: modoRemarcacao ? { pausaPreexistenteEm: candidatoRemarcacao?.pausaEm ?? null } : undefined,
   });
+
+  // H103: o turno de remarcação termina aqui. Sem follow-up, sem nota de resumo,
+  // sem automação e sem mexer na pausa: a conversa continua com a equipe. O que
+  // sobra é a janela (abre no pedido, fecha quando resolve) e o aviso à equipe.
+  if (modoRemarcacao) {
+    const contatoR = contactSettled.status === "fulfilled" ? contactSettled.value?.contact : undefined;
+    const tzR = location.timezone || "America/New_York";
+    const avisoBase = {
+      supabase,
+      ghlClient,
+      agentId: agent.id,
+      agenteNome:
+        (config as { personality?: { name?: string } | null }).personality?.name || agent.name || "IA",
+      locationId: group.locationId,
+      contactId: group.contactId,
+      conversationId: group.conversationId,
+      rotuloAntes: modoRemarcacao.rotulo,
+      fuso: modoRemarcacao.fuso,
+      mensagemDoLead: separarTextoDoLead(group.aggregatedBody || "").proprio,
+      contato: {
+        name: contatoR?.name || contatoR?.firstName || null,
+        phone: contatoR?.phone || null,
+        assignedTo: contatoR?.assignedTo || null,
+      },
+    };
+    if (resultadoExecucao.agendouComSucesso) {
+      await fecharJanelaDeRemarcacao(supabase, agent.id, group.contactId);
+      await avisarEquipeDaRemarcacao({
+        ...avisoBase,
+        evento: "remarcada",
+        rotuloDepois: resultadoExecucao.bookedStartIso
+          ? rotuloReuniao(resultadoExecucao.bookedStartIso, tzR)
+          : null,
+      });
+      log("log", "H103 reunião remarcada; janela fechada e equipe avisada");
+    } else if (resultadoExecucao.enviou && aiResult.response.conversation_status === "handed_off") {
+      await fecharJanelaDeRemarcacao(supabase, agent.id, group.contactId);
+      await avisarEquipeDaRemarcacao({ ...avisoBase, evento: "desmarcar" });
+      log("log", "H103 lead não quis remarcar; janela fechada e equipe avisada");
+    } else if (resultadoExecucao.enviou && modoRemarcacao.via === "pedido") {
+      await abrirJanelaDeRemarcacao(supabase, agent.id, group.contactId);
+      await avisarEquipeDaRemarcacao({ ...avisoBase, evento: "pedido" });
+      log("log", "H103 horários oferecidos; janela de 24h aberta e equipe avisada");
+    } else if (!resultadoExecucao.enviou) {
+      log("log", "H103 o modelo ficou em silêncio: a mensagem não era sobre a reunião");
+    }
+    return;
+  }
 
   // 8b. H85 (2026-08-26, caso Marina): a IA fechou o turno em `handed_off` —
   // ou seja, ela DISSE ao lead que alguém retorna. Até aqui isso não avisava

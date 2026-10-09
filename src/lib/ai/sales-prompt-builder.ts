@@ -3,6 +3,11 @@ import { getTimezoneFromState, getCurrentTimeInTimezone } from "@/lib/utils/time
 import { buildCalendarGrounding } from "@/lib/account-assistant/calendar-grounding";
 import { composePersonalityProfile } from "@/lib/ai/behavior-blocks";
 import { isHumanOutboundSource } from "@/lib/ghl/message-sources";
+import {
+  secaoModoRemarcacao,
+  REGRA_FORMATO_MODO_REMARCACAO,
+  type ModoRemarcacao,
+} from "@/lib/queue/remarcacao-pos-handoff";
 
 /**
  * Sanitiza texto para prevenir prompt injection.
@@ -107,6 +112,11 @@ export interface PromptContext {
    * Flag OFF (default) = comportamento byte-idêntico ao de hoje (paridade).
    */
   cacheOptimized?: boolean;
+  /**
+   * H103 (2026-10-09): turno do modo remarcação (a equipe assumiu e o lead pediu
+   * pra remarcar/desmarcar). Ausente = prompt byte-idêntico ao de sempre.
+   */
+  modoRemarcacao?: ModoRemarcacao;
 }
 
 /**
@@ -345,6 +355,9 @@ NÃO inclua action book_appointment neste turno.`);
     const rk = buildRetrievedKnowledgeSection(ctx);
     if (rk) parts.push(rk);
   }
+
+  // H103: por último, perto da mensagem do lead. É o que manda neste turno.
+  if (ctx.modoRemarcacao) parts.push(secaoModoRemarcacao(ctx.modoRemarcacao));
 
   return parts.join("\n\n");
 }
@@ -1168,7 +1181,21 @@ Os exemplos abaixo mostram o tom e fluxo desejado pelo administrador:
 ${raw.substring(0, CONVERSATION_EXAMPLES_CAP)}`;
 }
 
+/**
+ * H103: no turno de remarcação as regras 1 e 2 (mensagem nunca vazia, sempre
+ * responder) trocam pelas do modo, onde o silêncio é a resposta certa quando o
+ * lead não fala da reunião. Fora desse turno o texto é o da função base, intacto.
+ */
 function buildResponseFormatSection(ctx: PromptContext): string {
+  const texto = buildResponseFormatSectionBase(ctx);
+  if (!ctx.modoRemarcacao) return texto;
+  const i = texto.indexOf('1. "message":');
+  const j = texto.indexOf('3. "actions":');
+  if (i < 0 || j < 0) return texto;
+  return texto.slice(0, i) + REGRA_FORMATO_MODO_REMARCACAO + "\n" + texto.slice(j);
+}
+
+function buildResponseFormatSectionBase(ctx: PromptContext): string {
   const exampleKeys = ctx.config.data_fields.slice(0, 3).map((f) => `"${f.key}": "valor"`).join(", ");
 
   return `## FORMATO DE RESPOSTA (OBRIGATORIO)

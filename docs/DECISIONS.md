@@ -567,3 +567,50 @@ fluxo que está em produção. Fica registrado aqui pra decidir à parte.
 Hoje nenhum agente da frota tem regra de funil, então o deploy não muda nada até alguém
 configurar uma. Teste: `TZ=UTC npx tsx scripts/test-lead-novo-create.ts` (26/26, payload
 real da Vergus, expediente da Bia, disjuntor contra o banco com location falsa).
+
+## H103 (2026-10-09) — Remarcação depois que a equipe assume a conversa
+
+**Caso Alves Cury, ticket #434 (aprovado pelo Marcos em 08/10).** "A pessoa agendou, passou pro
+humano, aí ela manda que quer remarcar ou que não vai poder aparecer: o ideal seria a IA fazer
+essa remarcação. Se tiver passado pra humana, ela não volta, né?" Não voltava: pausa da equipe
+engole toda mensagem do lead (`ai_paused_skip`).
+
+**Regra:** com a equipe no controle, a IA volta SÓ se o lead pedir pra remarcar ou desmarcar a
+reunião; move a reunião na agenda e avisa a equipe na hora (nota interna no contato + SparkBot
+pro dono). Fora disso continua quieta, e a pausa nunca é desfeita.
+
+- **Opt-in por agente** (`agent_configs.reschedule_after_handoff`, default false; migration
+  `20261009200000`). Kill-switch: `REMARCACAO_POS_HANDOFF_DISABLED=1`. Coluna própria, não
+  dentro de `handoff_policy`: o PUT de config da UI valida com zod e estripa chave desconhecida
+  de JSON.
+- **Só pausa da equipe** abre a exceção (`auto_pause:human_message:*` e
+  `post_booking:stop_and_handoff`). Switch manual, automação, opt-out e teto de mensagens não:
+  desligar tem que valer (H99).
+- **Duas travas.** A barata, no gate de pausa: pedido no texto (detector em
+  `queue/remarcacao-pos-handoff.ts`) ou janela aberta. A segunda, depois do fetch do CRM:
+  reunião FUTURA no calendário deste agente, e nenhum humano escrevendo dentro de
+  `skip_if_human_replied_within_minutes` (padrão 60). Também cobre o F52, quando a pausa nasce
+  no próprio turno.
+- **Janela de 24h** (`conversation_state.reschedule_window_*`): a troca leva 2 turnos e o 2º
+  ("pode ser terça") não tem a palavra remarcar. Fecha ao remarcar, quando o lead desiste, quando
+  a reunião some ou quando um humano volta a escrever.
+- **Só move a que existe.** `book_appointment` vira `reschedule_appointment` da reunião certa;
+  qualquer outra ação é descartada e nada vai pro CRM. Desmarcar sem remarcar: a IA oferece
+  remarcar 1 vez e, se o lead insistir, devolve pra equipe (`handed_off` + aviso). Ela NÃO cancela
+  na agenda: o texto aprovado fala em tratar a remarcação.
+- **O silêncio fecha a precisão.** No turno do modo, as regras 1 e 2 do formato trocam ("pode
+  ficar quieto se não for sobre a reunião") e o vazio não vira "Pode me contar mais?". O detector
+  erra pra mais de propósito.
+
+⚠️ **Três armadilhas que o modo precisa contornar, e que valem pra qualquer turno futuro numa
+conversa pausada:** (1) o re-check C4 do executor suprime o envio se a conversa estiver pausada,
+então ele só pode suprimir pausa NOVA; (2) o `updateConversationState` abre segmento novo e ZERA
+`ai_paused_at` quando a conversa tem nota de resumo (toda conversa agendada tem): religaria a IA;
+(3) o histórico entra pro modelo sem rótulo de quem é da equipe.
+
+**Medição:** detector rodado contra as 30.020 mensagens de lead da frota: casa 329 (1,1%). Os falsos
+que a primeira versão pegou ("não posso falar agora", cancelar o seguro, "não consigo entrar,
+endereço inválido", lembrete citado na resposta) viraram casos negativos do teste. Testes:
+`scripts/test-remarcacao-pos-handoff.ts` (106/106, sem rede) e `scripts/test-remarcacao-llm.ts`
+(40/40 no Sonnet com a config real da Bruna e do Bruno: oferece 2 horários, move no escolhido,
+silêncio pra preço e formato, desmarcar devolve pra equipe).
