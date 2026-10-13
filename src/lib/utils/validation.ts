@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CUSTOM_INSTRUCTIONS_CAP, CONVERSATION_EXAMPLES_CAP } from "@/lib/ai/prompt-caps";
 
 // SSO
 // company_id é OPCIONAL (Pedro 2026-06-02 — fix custom menu link tela branca):
@@ -154,6 +155,21 @@ const personalitySchema = z.object({
   persona_description: z.string().max(2000),
 });
 
+/**
+ * Array de itens com `id` que pode faltar: aceita sem id e GERA um. Quem cria
+ * regra/automação por script ou SQL não põe id, e o painel usa o id pra editar e
+ * remover — sem ele, o save inteiro do agente caía com "expected string, received
+ * undefined" (fix bug observado em prod 2026-10-13).
+ */
+function comIdGerado<T extends z.ZodRawShape>(item: z.ZodObject<T>) {
+  return z.array(item).transform((itens) =>
+    itens.map((it) => {
+      const atual = (it as { id?: string }).id;
+      return { ...it, id: atual && atual.trim() ? atual : Math.random().toString(36).slice(2, 10) };
+    }),
+  );
+}
+
 export const updateAgentConfigSchema = z.object({
   personality: personalitySchema.nullable().optional(),
   targeting_rules: targetingRulesUnion.nullable().optional(),
@@ -166,12 +182,12 @@ export const updateAgentConfigSchema = z.object({
   objective: z.enum(["qualification_only", "qualification_and_booking", "booking_only"]).nullable().optional(),
   data_fields: z.array(dataFieldSchema).nullable().optional(),
   ai_model: z.string().min(1).max(100).nullable().optional(),
-  // F31 (Pedro 2026-05-28): caps alinhados com sales-prompt-builder (8000 chars
-  // = ~2000 tokens). Antes zod permitia 10k/20k mas builder truncava em 3k/2k
-  // — silent data loss. Agora UI/zod/runtime concordam em 8000. Se rep precisar
-  // mais, é sinal de mover knowledge_base_instructions ou KB upload.
-  custom_instructions: z.string().max(8000).nullable().optional(),
-  conversation_examples: z.string().max(8000).nullable().optional(),
+  // F31 (Pedro 2026-05-28): caps alinhados com o sales-prompt-builder. Fix bug
+  // observado em prod 2026-10-13: o runtime subiu pra 16000 em 31/08 e este zod
+  // ficou em 8000 — todo agente com instrução maior parou de salvar pelo painel.
+  // Agora os três (UI, zod, runtime) leem de prompt-caps.ts.
+  custom_instructions: z.string().max(CUSTOM_INSTRUCTIONS_CAP).nullable().optional(),
+  conversation_examples: z.string().max(CONVERSATION_EXAMPLES_CAP).nullable().optional(),
   knowledge_base_instructions: z.string().max(10000).nullable().optional(),
   system_prompt_override: z.string().max(20000).nullable().optional(),
   debounce_seconds: z.number().min(5).max(60).nullable().optional(),
@@ -227,8 +243,8 @@ export const updateAgentConfigSchema = z.object({
     })
     .nullable()
     .optional(),
-  automations: z.array(z.object({
-    id: z.string(),
+  automations: comIdGerado(z.object({
+    id: z.string().min(1).optional(),
     event: z.string().optional(),
     event_label: z.string().optional(),
     trigger: z
@@ -256,6 +272,11 @@ export const updateAgentConfigSchema = z.object({
           "add_tag",
           "remove_tag",
           "move_pipeline",
+          // Fix bug observado em prod 2026-10-13: o reaction-engine executa
+          // create_opportunity, mas o enum não tinha → 5 automações em uso
+          // (Agente de Carreira da Márcia e outro agente) travavam o save do
+          // painel inteiro.
+          "create_opportunity",
           "update_field",
           "send_media",
           "send_text_fixed",
@@ -265,6 +286,9 @@ export const updateAgentConfigSchema = z.object({
         tag: z.string().optional(),
         pipeline_id: z.string().optional(),
         stage_id: z.string().optional(),
+        // create_opportunity: sem esta linha o z.object() estriparia o nome e
+        // salvar pelo painel trocaria "Lead Carreira" pelo default "Novo lead".
+        opportunity_name: z.string().optional(),
         field_key: z.string().optional(),
         field_value: z.string().optional(),
         media_id: z.string().optional(),
@@ -279,15 +303,17 @@ export const updateAgentConfigSchema = z.object({
   specialist_role: z.string().nullable().optional(),
   check_legal_docs: z.boolean().nullable().optional(),
   preferred_time_slot: z.string().nullable().optional(),
-  deactivation_rules: z.array(z.object({
-    id: z.string(),
+  // id opcional + gerado: regra criada fora do painel (script/SQL) não tem id, e
+  // exigir travava o save do agente inteiro (caso Alves Cury/Márcia, 2026-10-13).
+  deactivation_rules: comIdGerado(z.object({
+    id: z.string().min(1).optional(),
     type: z.enum(["tag_added", "tag_removed", "custom_field_equals"]),
     tag: z.string().optional(),
     field_key: z.string().optional(),
     field_value: z.string().optional(),
   })).nullable().optional(),
-  handoff_messages: z.array(z.object({
-    id: z.string(),
+  handoff_messages: comIdGerado(z.object({
+    id: z.string().min(1).optional(),
     label: z.string().min(1).max(100),
     text: z.string().min(1).max(2000),
     auto_deactivate: z.boolean(),

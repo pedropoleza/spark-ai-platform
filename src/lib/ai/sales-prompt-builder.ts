@@ -8,6 +8,7 @@ import {
   REGRA_FORMATO_MODO_REMARCACAO,
   type ModoRemarcacao,
 } from "@/lib/queue/remarcacao-pos-handoff";
+import { CUSTOM_INSTRUCTIONS_CAP, CONVERSATION_EXAMPLES_CAP } from "@/lib/ai/prompt-caps";
 
 /**
  * Sanitiza texto para prevenir prompt injection.
@@ -1081,8 +1082,7 @@ ${generalBlock}${itemsBlock}`;
 // 26-28/08 eram na verdade regra invisível). 16000 ≈ +2K tokens no pior caso,
 // só pra quem escreve instruções desse tamanho. O warn abaixo continua sendo o
 // sinal de que alguém estourou até o novo teto.
-const CUSTOM_INSTRUCTIONS_CAP = 16000;
-const CONVERSATION_EXAMPLES_CAP = 8000;
+// Os tetos moram em prompt-caps.ts desde 2026-10-13 (UI e zod do PUT leem de lá).
 
 function buildCustomInstructionsSection(ctx: PromptContext): string {
   if (!ctx.config.custom_instructions) return "";

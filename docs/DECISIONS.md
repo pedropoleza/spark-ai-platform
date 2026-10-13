@@ -614,3 +614,33 @@ endereço inválido", lembrete citado na resposta) viraram casos negativos do te
 `scripts/test-remarcacao-pos-handoff.ts` (106/106, sem rede) e `scripts/test-remarcacao-llm.ts`
 (40/40 no Sonnet com a config real da Bruna e do Bruno: oferece 2 horários, move no escolhido,
 silêncio pra preço e formato, desmarcar devolve pra equipe).
+
+## H104 (2026-10-13) — O "Salvar" do painel do agente travava ou apagava config
+
+**Sintoma:** "Não consegui salvar. custom_instructions: Too big: expected string to have
+<=8000 characters; deactivation_rules.0.id: Invalid input: expected string, received undefined".
+
+Simulando o "Salvar" de todos os 34 agentes reais (config do banco → `makeSeed` →
+`buildConfigPayload` → zod do PUT), **7 não salvavam e 1 perdia config**:
+- **Teto desalinhado.** O runtime subiu `custom_instructions` pra 16000 em 31/08 (caso Alves
+  Cury), o zod do PUT ficou em 8000 e o textarea do painel em 10000. Quem passou de 8000
+  (Bruna, Bruno, Jussara, Raíssa, Maria) não salvava, e acima de 10000 nem digitava.
+- **Regra de desligamento sem `id`.** Criada por script/SQL, não tem id; o zod exigia → 4 agentes
+  travados. O painel também edita e remove por id, então dois itens sem id viravam o "mesmo".
+- **`create_opportunity` fora do enum.** O `reaction-engine` executa, o zod não aceitava →
+  5 automações travavam o save. E `opportunity_name` seria estripado (o nome voltaria pro
+  default "Novo lead").
+- **H85 apagado no save.** O `makeSeed` reconstrói `handoff_policy` campo a campo e não
+  carregava `notify_rep_on_llm_handoff` → salvar o "Pós-Atendimento Marina" desligava o aviso
+  em silêncio. Mesma classe do H72/H83.
+
+**Fix:** tetos num lugar só (`src/lib/ai/prompt-caps.ts`) lido por runtime, zod e textarea;
+`id` opcional e gerado (zod `comIdGerado` + `comId` no painel) em automações, regras de
+desligamento e mensagens de handoff; `create_opportunity` + `opportunity_name` no zod; H85
+carregado quando existe (sem inventar o campo). A montagem do payload saiu do componente pra
+`src/app/hub/agents/[agentId]/config-payload.ts` (puro, sem mudança de lógica) pra ser testável.
+
+⚠️ **Mexeu no painel do agente, no `makeSeed` ou no `updateAgentConfigSchema`? Rode
+`npx tsx scripts/test-salvar-config-agentes.ts`.** Ele faz o "Salvar" de cada agente real sem
+gravar nada e acusa save bloqueado e campo que sumiria do banco. Campo novo no `agent_configs`
+precisa entrar nos DOIS lugares (`makeSeed` e zod); faltar em um deles é perda silenciosa.
