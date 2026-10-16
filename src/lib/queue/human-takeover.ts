@@ -19,7 +19,7 @@
  * dirige a conversa" (contact-controls, read-only) — assim o pill conclui sempre
  * o MESMO que o runtime, sem cópias divergindo.
  */
-import { AUTOMATION_SOURCES } from "@/lib/ghl/message-sources";
+import { AUTOMATION_SOURCES, isChatMessageType } from "@/lib/ghl/message-sources";
 
 /** Normaliza pra comparação tolerante (colapsa espaços, lower-case). */
 function normalize(s: string): string {
@@ -249,4 +249,199 @@ export function classifyLastOutbound(args: {
     isHuman = true; // texto, IA já falou, não bate eco → OUTRO assumiu → recua
   }
   return { isHuman };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// H105 (2026-10-16, ticket #445, caso Jussara/Thiago): quem conduz a conversa
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Fix bug observado em prod 2026-10-16: a IA seguiu falando com o Thiago depois
+// que a Thamires (equipe) ligou, mandou a ficha e MARCOU a reunião (15/10 22:50
+// a 22:53 UTC), e no dia seguinte o follow-up perguntou "posso te mandar uma
+// cotação hoje?" com a reunião marcada pra 12pm. Três furos, todos medidos no
+// histórico dele:
+//  1. Só a ÚLTIMA saída era classificada. A reunião marcada dispara o fluxo de
+//     confirmação (source "workflow"), que vira a última saída e esconde a
+//     mensagem da equipe logo antes dela. O lembrete do Zoom fez o mesmo com o
+//     "não sei por que o robô te mandou essa mensagem" das 13:10.
+//  2. O guarda de eco (≤120s depois de um envio nosso) engolia a equipe que
+//     entra pra corrigir o robô, que é exatamente quando ela escreve rápido:
+//     "Pode desconsiderar essas mensagens, elas estão sendo mandadas pelo robô"
+//     saiu 1s depois da IA e foi lido como eco da própria IA.
+//  3. A equipe da Jussara responde pelo CELULAR. O Spark OS espelha essa
+//     mensagem no Spark Leads como saída `api` SEM userId (postOutbound do
+//     spark-os/src/lib/wa/ghl.ts), e o webhook F51 descarta toda saída `api`.
+
+/** Campos que as funções de histórico abaixo leem de cada mensagem do Spark Leads. */
+export interface MensagemDoHistoricoGhl extends LastOutboundForClassify {
+  direction?: string;
+  messageType?: string;
+}
+
+/** Ligação (feita ou recebida). Não é mensagem de chat, mas é contato humano. */
+function ehLigacao(messageType?: string | null): boolean {
+  const mt = String(messageType || "").toUpperCase();
+  return mt.includes("CALL");
+}
+
+/**
+ * A saída é de AUTOMAÇÃO (não diz nada sobre quem conduz a conversa)?
+ * Fluxo/campanha do Spark Leads, merge field quebrado (automação com campo
+ * vazio) e a mídia que a nossa própria automação mandou (±10min).
+ */
+export function ehSaidaAutomatica(m: MensagemDoHistoricoGhl, ourMediaAtIso?: string[]): boolean {
+  if (AUTOMATION_SOURCES.has(String(m.source || "").toLowerCase())) return true;
+  const body = (m.body || "").trim();
+  if (body && hasUnfilledMergeField(body)) return true;
+  if (!body && !!m.dateAdded && ehNossaMidia(m.dateAdded, ourMediaAtIso)) return true;
+  return false;
+}
+
+/**
+ * A saída que DECIDE quem conduz agora: a mais recente saída de CHAT que não é
+ * automação. É ela que vai pra `classifyLastOutbound` (furo 1 acima). Atividade
+ * do CRM e ligação ficam de fora, como já era (`isChatMessageType`).
+ */
+export function saidaQueDecide<T extends MensagemDoHistoricoGhl>(
+  mensagens: T[],
+  opts?: { ourMediaAtIso?: string[] },
+): T | undefined {
+  return [...mensagens]
+    .filter((m) => m.direction === "outbound" && isChatMessageType(m.messageType))
+    .sort((a, b) => Date.parse(String(b.dateAdded)) - Date.parse(String(a.dateAdded)))
+    .find((m) => !ehSaidaAutomatica(m, opts?.ourMediaAtIso));
+}
+
+/** Janela em que uma saída logo depois de um envio nosso pode ser o eco dele. */
+export const JANELA_ECO_DO_ENVIO_MS = 120_000;
+
+/**
+ * A saída chegou logo depois de um envio nosso: dá pra presumir que é o eco
+ * dele? (guarda do F52, Fix review 2026-06-18)
+ *
+ * O guarda existe pro eco que o classificador não reconhece (canal que mexe no
+ * corpo, envio sem id no log). Quando a saída TEM texto e o nosso último envio
+ * gravou os ids, não há o que presumir: se fosse eco, o id teria batido (o
+ * classificador confere id antes de tudo). Id diferente é outra pessoa
+ * escrevendo, e foi assim que a equipe da Jussara ficou invisível (furo 2).
+ * Sem texto (mídia) ou sem ids no log, o guarda segue como era.
+ */
+export function pareceEcoDoEnvio(args: {
+  saida: { id?: string | null; body?: string | null; dateAdded?: string | null };
+  ultimoEnvioEmMs: number;
+  idsDoUltimoEnvio: string[];
+  janelaMs?: number;
+}): boolean {
+  const { saida, ultimoEnvioEmMs, idsDoUltimoEnvio } = args;
+  if (!ultimoEnvioEmMs) return false;
+  const t = Date.parse(String(saida.dateAdded));
+  if (Number.isNaN(t)) return false;
+  const delta = t - ultimoEnvioEmMs;
+  if (delta > (args.janelaMs ?? JANELA_ECO_DO_ENVIO_MS) || delta < -5_000) return false;
+  if (!(saida.body || "").trim()) return true;
+  if (saida.id && idsDoUltimoEnvio.length > 0) return false;
+  return true;
+}
+
+/**
+ * Modo "equipe falou, a IA não entra" (`agent_configs.skip_if_team_contacted`,
+ * opt-in por agente): existe QUALQUER contato da equipe no histórico visível?
+ *
+ * Mais duro que o F52 de propósito, porque é o combinado com a conta (Jussara,
+ * 16/10: "ficou acordado que ela não iria mais entrar em conversas que já
+ * tiveram interação nossa"):
+ *  - vale ANTES de a IA falar (o F52 não pausa quando a IA nunca falou, pra não
+ *    confundir a boas-vindas de automação com humano);
+ *  - não tem prazo de validade (o F52 ignora humano com mais de 72h);
+ *  - conta ligação feita por alguém da equipe (o F52 não conta, a IA é dona do
+ *    texto e ligação não cala ela).
+ * Fica de fora: automação (`ehSaidaAutomatica`), atividade do CRM e o que é
+ * nosso (id ou texto de um envio que a IA registrou).
+ */
+export function contatoDaEquipe<T extends MensagemDoHistoricoGhl>(
+  mensagens: T[],
+  ia: { textos: string[]; ids: string[]; midiaNossaEm?: string[] },
+): T | null {
+  const saidas = [...mensagens]
+    .filter((m) => m.direction === "outbound")
+    .sort((a, b) => Date.parse(String(b.dateAdded)) - Date.parse(String(a.dateAdded)));
+  for (const m of saidas) {
+    if (ehLigacao(m.messageType)) {
+      if (m.userId) return m;
+      continue;
+    }
+    if (!isChatMessageType(m.messageType)) continue;
+    if (ehSaidaAutomatica(m, ia.midiaNossaEm)) continue;
+    if (m.id && ia.ids.includes(String(m.id))) continue;
+    const body = (m.body || "").trim();
+    if (body && isAiEcho(body, ia.textos)) continue;
+    return m;
+  }
+  return null;
+}
+
+/** MC-7 (caso Geralda, 2026-07-28): humano com mais de 72h não pausa no F52. */
+export const HUMANO_VELHO_MS = 72 * 60 * 60 * 1000;
+
+export interface DecisaoDePausa {
+  /** `ai_paused_reason` a gravar; null = a IA segue. */
+  motivo: string | null;
+  gatilho: "H105_team_contact" | "F52_history_fallback" | null;
+  detalhe: Record<string, unknown>;
+  /** F52 achou humano mas velho demais (MC-7): o processor só registra. */
+  humanoVelhoEm: string | null;
+}
+
+/**
+ * Decisão PURA da pausa pelo histórico, antes de gastar tokens (F52 + H105).
+ * O queue-processor busca os dados e grava; a decisão mora aqui pra o teste
+ * rodar o mesmo código da produção (scripts/test-equipe-assumiu.ts).
+ *
+ * `enviosDaIa` em ordem decrescente (o 1º é o envio mais recente), com
+ * `created_at`: é dele que sai a janela do guarda de eco.
+ */
+export function decidirPausaPeloHistorico(args: {
+  mensagens: MensagemDoHistoricoGhl[];
+  enviosDaIa: Array<{ action_payload: unknown; created_at?: string | null }>;
+  autoPause: boolean;
+  estrito: boolean;
+  /** `ai_resumed_at` em ms (0 = nunca religada à mão). GU-6: religou depois, a IA fala. */
+  retomadaManualEmMs: number;
+  agoraMs: number;
+}): DecisaoDePausa {
+  const { mensagens, enviosDaIa, autoPause, estrito, retomadaManualEmMs, agoraMs } = args;
+  const segue: DecisaoDePausa = { motivo: null, gatilho: null, detalhe: {}, humanoVelhoEm: null };
+  const textos = extractAiSentTexts(enviosDaIa);
+  const ids = extractAiSentIds(enviosDaIa);
+  const religadaDepois = (iso?: string | null) =>
+    retomadaManualEmMs > 0 && Date.parse(String(iso)) <= retomadaManualEmMs;
+
+  if (estrito) {
+    const equipe = contatoDaEquipe(mensagens, { textos, ids });
+    if (equipe && !religadaDepois(equipe.dateAdded)) {
+      return {
+        motivo: "auto_pause:human_message:team_contact",
+        gatilho: "H105_team_contact",
+        detalhe: { team_contact_at: equipe.dateAdded, team_contact_kind: String(equipe.messageType || "") },
+        humanoVelhoEm: null,
+      };
+    }
+  }
+
+  if (!autoPause) return segue;
+  const saida = saidaQueDecide(mensagens);
+  if (!saida) return segue;
+  const { isHuman } = classifyLastOutbound({ lastOutbound: saida, aiTexts: textos, sentIds: ids });
+  if (!isHuman) return segue;
+  const ultimoEnvioEmMs = enviosDaIa[0]?.created_at ? Date.parse(String(enviosDaIa[0].created_at)) : 0;
+  const eco = pareceEcoDoEnvio({
+    saida,
+    ultimoEnvioEmMs: Number.isNaN(ultimoEnvioEmMs) ? 0 : ultimoEnvioEmMs,
+    idsDoUltimoEnvio: extractAiSentIds(enviosDaIa.slice(0, 1)),
+  });
+  if (eco || religadaDepois(saida.dateAdded)) return segue;
+  if (agoraMs - Date.parse(String(saida.dateAdded)) > HUMANO_VELHO_MS) {
+    return { ...segue, humanoVelhoEm: saida.dateAdded ? String(saida.dateAdded) : null };
+  }
+  return { motivo: "auto_pause:human_message:history", gatilho: "F52_history_fallback", detalhe: {}, humanoVelhoEm: null };
 }

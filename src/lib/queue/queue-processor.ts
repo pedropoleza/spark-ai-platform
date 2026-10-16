@@ -3,7 +3,7 @@ import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
 import { formatAvailableSlots, filterSlotsToBusinessHours } from "@/lib/ai/slots-format";
 import { extractSlotIsoList } from "@/lib/ai/slot-guard";
-import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
+import { extractAiSentTexts, extractAiSentIds, decidirPausaPeloHistorico } from "@/lib/queue/human-takeover";
 import { assembleSystemPrompt, isUnifiedMotorEnabled, templateKeyForAgentType } from "@/lib/agent-platform/assembler";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ImageInput, ConversationTurn } from "@/lib/ai/openai-client";
@@ -1651,145 +1651,133 @@ async function processGroup(
   // mesmo sem o webhook em tempo real.
   //   - outbound sem texto (áudio/mídia) → humano (a IA só manda texto).
   //   - outbound com texto → anti-eco contra o que a IA registrou ter enviado.
+  // H105 (2026-10-16, ticket #445): a decisão saiu pra `decidirPausaPeloHistorico`
+  // (pura, testada com a linha do tempo real do Thiago) e ganhou o modo "equipe
+  // falou, a IA não entra" (`skip_if_team_contacted`, opt-in), que pausa por
+  // QUALQUER contato da equipe no histórico, inclusive antes de a IA falar.
+  const autoPauseLigado =
+    (config as { auto_pause_on_human_message?: boolean }).auto_pause_on_human_message === true;
+  const equipeTiraIa =
+    (config as { skip_if_team_contacted?: boolean | null }).skip_if_team_contacted === true;
   if (
-    (config as { auto_pause_on_human_message?: boolean }).auto_pause_on_human_message === true &&
+    (autoPauseLigado || equipeTiraIa) &&
     !convState?.ai_paused_at &&
     messagesSettled.status === "fulfilled" &&
     messagesSettled.value
   ) {
-    const histMsgs = (messagesSettled.value.messages?.messages || [])
-      .slice()
-      .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime());
-    // Fix prod 2026-07-28 (Alves Cury): atividade do CRM ("Opportunity created")
-    // e ligação NÃO são outbound de conversa — entravam aqui como "último
-    // outbound" e a ladder do F52 as lia como handoff humano. Ver isChatMessageType.
-    const lastOutbound = [...histMsgs]
-      .reverse()
-      .find(
-        (m) =>
-          m.direction === "outbound" &&
-          isChatMessageType((m as { messageType?: string }).messageType),
-      );
-    if (lastOutbound) {
-      // Ladder de discriminação F52 (+ fixes Marcela Lana 2026-06-05 / Alves Cury
-      // F56 2026-06-10). FONTE ÚNICA em human-takeover.ts: o pill "quem dirige a
-      // conversa" (contact-controls) chama a MESMA classifyLastOutbound, então
-      // conclui igual a este runtime — sem cópias divergindo. Detalhe de cada
-      // discriminador no docstring da função. lastOutbound (GHLMessage) carrega
-      // userId/source em runtime mesmo sem o tipo declará-los; a função lê via
-      // campos opcionais.
-      // Ultra-review 2026-08-03: inclui os 2 send-paths de erro/gate — antes o
-      // "posso sugerir outro?" do PRÓPRIO bot não entrava aqui e o F52 pausava a
-      // IA lendo a resposta do lead como handoff humano.
-      const { data: aiSends } = await supabase
-        .from("execution_log")
-        .select("action_payload, created_at")
-        .eq("location_id", group.locationId)
+    const histMsgs = messagesSettled.value.messages?.messages || [];
+    // Ultra-review 2026-08-03: inclui os 2 send-paths de erro/gate — antes o
+    // "posso sugerir outro?" do PRÓPRIO bot não entrava aqui e o F52 pausava a
+    // IA lendo a resposta do lead como handoff humano.
+    const { data: aiSends } = await supabase
+      .from("execution_log")
+      .select("action_payload, created_at")
+      .eq("location_id", group.locationId)
+      .eq("contact_id", group.contactId)
+      .in("action_type", ["send_message", "send_error_message", "book_blocked_no_contact"])
+      .eq("success", true)
+      .order("created_at", { ascending: false })
+      .limit(30);
+
+    // GU-6 (Pedro 2026-06-04): override "passa a bola pra IA". Se o rep LIGOU
+    // o agente manualmente (pill na UI) DEPOIS dessa resposta humana, a IA
+    // assume mesmo assim — não re-pausa. Só re-pausa se o humano respondeu
+    // MAIS RECENTE que o ai_resumed_at.
+    // Race GU-6×F52 (review 2026-06-05): o convState foi lido lá no início
+    // (:303), mas áudio/imagem/LLM levam SEGUNDOS. Se o rep clicou "passa a
+    // bola pra IA" (GU-6) DURANTE o processamento, o convState em memória tá
+    // stale (ai_resumed_at antigo/null) → re-pausaríamos e desfaríamos o
+    // resume manual silenciosamente. Re-lê ai_resumed_at FRESCO agora, no
+    // último instante antes de decidir. Read único indexado, fail-soft.
+    let freshResumedAt: string | null =
+      (convState as { ai_resumed_at?: string | null })?.ai_resumed_at ?? null;
+    try {
+      const { data: freshState } = await supabase
+        .from("conversation_state")
+        .select("ai_resumed_at")
+        .eq("agent_id", agent.id)
         .eq("contact_id", group.contactId)
-        .in("action_type", ["send_message", "send_error_message", "book_blocked_no_contact"])
-        .eq("success", true)
-        .order("created_at", { ascending: false })
-        .limit(30);
-      const { isHuman } = classifyLastOutbound({
-        lastOutbound,
-        aiTexts: extractAiSentTexts(aiSends),
-        // 2026-07-23 (caso Marina): casa por ID de mensagem (determinístico) —
-        // em IG o anti-eco por texto falha e a IA se auto-pausava achando handoff.
-        sentIds: extractAiSentIds(aiSends),
+        .maybeSingle();
+      if (freshState) freshResumedAt = (freshState as { ai_resumed_at?: string | null }).ai_resumed_at ?? null;
+    } catch {
+      /* re-read best-effort: cai pro valor do convState inicial */
+    }
+
+    // Ladder de discriminação F52 (+ fixes Marcela Lana 2026-06-05 / Alves Cury
+    // F56 2026-06-10) e guardas (eco do próprio envio, MC-7 humano velho, GU-6)
+    // moram em decidirPausaPeloHistorico. FONTE ÚNICA em human-takeover.ts: o
+    // pill "quem dirige a conversa" (contact-controls) usa as mesmas peças.
+    const decisao = decidirPausaPeloHistorico({
+      mensagens: histMsgs,
+      enviosDaIa: aiSends || [],
+      autoPause: autoPauseLigado,
+      estrito: equipeTiraIa,
+      retomadaManualEmMs: freshResumedAt ? new Date(freshResumedAt).getTime() : 0,
+      agoraMs: Date.now(),
+    });
+
+    // MC-7 (caso Geralda, review Marcia 2026-07-28): humano com mais de 72h não
+    // pausa (a Geralda foi pausada em 27/07 por uma msg humana de 30/06). Só registra.
+    if (decisao.humanoVelhoEm) {
+      log(
+        "log",
+        `F52: outbound humano de ${decisao.humanoVelhoEm} — velho demais pra takeover, seguindo sem pausar (contato=${group.contactId})`,
+      );
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        conversation_id: group.conversationId || convId || "",
+        contact_id: group.contactId,
+        location_id: group.locationId,
+        action_type: "stale_human_outbound_ignored",
+        action_payload: { last_human_outbound_at: decisao.humanoVelhoEm, threshold_hours: 72 },
+        success: true,
       });
-      // Guarda de recência espelhando o webhook F51 (Fix review 2026-06-18): o
-      // anti-eco por TEXTO pode falhar se o canal mangleou o corpo OU se o envio
-      // da IA não estiver logado. Se a última outbound saiu LOGO APÓS um send
-      // nosso (≤120s), é quase certo o eco do próprio envio — NÃO é handoff. Sem
-      // isso, o F52 pausava a IA sozinha na cauda de eco perdido (qualquer canal).
-      const lastAiSendMs = aiSends?.[0]?.created_at ? new Date(aiSends[0].created_at as string).getTime() : 0;
-      const lastOutboundTs = new Date(lastOutbound.dateAdded).getTime();
-      const looksLikeOwnEcho =
-        lastAiSendMs > 0 && lastOutboundTs - lastAiSendMs <= 120_000 && lastOutboundTs - lastAiSendMs >= -5_000;
+    }
 
-      // GU-6 (Pedro 2026-06-04): override "passa a bola pra IA". Se o rep LIGOU
-      // o agente manualmente (pill na UI) DEPOIS dessa resposta humana, a IA
-      // assume mesmo assim — não re-pausa. Só re-pausa se o humano respondeu
-      // MAIS RECENTE que o ai_resumed_at.
-      // Race GU-6×F52 (review 2026-06-05): o convState foi lido lá no início
-      // (:303), mas áudio/imagem/LLM levam SEGUNDOS. Se o rep clicou "passa a
-      // bola pra IA" (GU-6) DURANTE o processamento, o convState em memória tá
-      // stale (ai_resumed_at antigo/null) → re-pausaríamos e desfaríamos o
-      // resume manual silenciosamente. Re-lê ai_resumed_at FRESCO agora, no
-      // último instante antes de decidir. Read único indexado, fail-soft.
-      let freshResumedAt: string | null =
-        (convState as { ai_resumed_at?: string | null })?.ai_resumed_at ?? null;
-      try {
-        const { data: freshState } = await supabase
-          .from("conversation_state")
-          .select("ai_resumed_at")
-          .eq("agent_id", agent.id)
-          .eq("contact_id", group.contactId)
-          .maybeSingle();
-        if (freshState) freshResumedAt = (freshState as { ai_resumed_at?: string | null }).ai_resumed_at ?? null;
-      } catch {
-        /* re-read best-effort: cai pro valor do convState inicial */
-      }
-      const resumedAtMs = freshResumedAt ? new Date(freshResumedAt).getTime() : 0;
-      const lastOutboundMs = new Date(lastOutbound.dateAdded).getTime();
-      const overriddenByManualResume = resumedAtMs > 0 && lastOutboundMs <= resumedAtMs;
-
-      // MC-7 (caso Geralda, review Marcia 2026-07-28): o F52 pausava com base em
-      // outbound humano ARBITRARIAMENTE velho — a Geralda foi pausada em 27/07
-      // por uma msg humana de 30/06 (27 dias!). Lead que reengaja semanas depois
-      // (anúncio novo) caía em pausa permanente e ficava mudo. Takeover ativo
-      // REAL sempre tem outbound recente; 72h cobre o fim de semana do humano.
-      const HUMAN_TAKEOVER_STALE_MS = 72 * 60 * 60 * 1000;
-      const humanOutboundIsStale = Date.now() - lastOutboundMs > HUMAN_TAKEOVER_STALE_MS;
-      if (isHuman && humanOutboundIsStale && !overriddenByManualResume && !looksLikeOwnEcho) {
-        log(
-          "log",
-          `F52: outbound humano tem ${Math.round((Date.now() - lastOutboundMs) / 3600_000)}h — velho demais pra takeover, seguindo sem pausar (contato=${group.contactId})`,
-        );
-        await supabase.from("execution_log").insert({
+    if (decisao.motivo) {
+      const motivoPausa = decisao.motivo;
+      log("log", `${decisao.gatilho}: a equipe assumiu a conversa — pausando contato=${group.contactId}`);
+      const nowIso = new Date().toISOString();
+      await supabase.from("conversation_state").upsert(
+        {
           agent_id: agent.id,
-          conversation_id: group.conversationId || convId || "",
-          contact_id: group.contactId,
           location_id: group.locationId,
-          action_type: "stale_human_outbound_ignored",
-          action_payload: { last_human_outbound_at: lastOutbound.dateAdded, threshold_hours: 72 },
-          success: true,
-        });
-      }
-
-      if (isHuman && !humanOutboundIsStale && !overriddenByManualResume && !looksLikeOwnEcho) {
-        log("log", `F52 handoff: última outbound não é da IA — humano assumiu, pausando contato=${group.contactId}`);
-        const nowIso = new Date().toISOString();
-        await supabase.from("conversation_state").upsert(
-          {
-            agent_id: agent.id,
-            location_id: group.locationId,
-            contact_id: group.contactId,
-            conversation_id: group.conversationId || convId || "",
-            status: "handed_off",
-            ai_paused_at: nowIso,
-            ai_paused_reason: "auto_pause:human_message:history",
-            updated_at: nowIso,
-          },
-          { onConflict: "agent_id,contact_id" },
-        );
-        await supabase.from("execution_log").insert({
-          agent_id: agent.id,
-          conversation_id: group.conversationId || convId || "",
           contact_id: group.contactId,
-          location_id: group.locationId,
-          action_type: "ai_paused",
-          action_payload: { reason: "auto_pause:human_message:history", trigger: "F52_history_fallback" },
-          success: true,
-        });
-        // Fix caso Jussara 2026-07-16: tira o auto-pause do SILÊNCIO. Numa conta
-        // Stevo (tudo source="api") esse fallback às vezes pausa por engano e
-        // engolia o lead sem a rep saber. Avisa a dona (cooldown 4h por contato,
-        // reusa o dedup do handoff). Fail-soft: nunca quebra o pause.
-        // 2026-08-14: `.name` sozinho vinha vazio pra lead de anúncio (só tem
-        // firstName) → a rep recebia "Pausei a IA na conversa com um contato"
-        // sem saber QUAL (Jussara ~20×, Priscila ~30× em 2 semanas). Mesmo
-        // fallback do resto do arquivo (linha ~1229) + telefone.
+          conversation_id: group.conversationId || convId || "",
+          status: "handed_off",
+          ai_paused_at: nowIso,
+          ai_paused_reason: motivoPausa,
+          updated_at: nowIso,
+        },
+        { onConflict: "agent_id,contact_id" },
+      );
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        conversation_id: group.conversationId || convId || "",
+        contact_id: group.contactId,
+        location_id: group.locationId,
+        action_type: "ai_paused",
+        action_payload: {
+          reason: motivoPausa,
+          trigger: decisao.gatilho,
+          ...decisao.detalhe,
+          messages_swallowed: group.messages.length,
+        },
+        success: true,
+      });
+      // Fix caso Jussara 2026-07-16: tira o auto-pause do SILÊNCIO. Numa conta
+      // Stevo (tudo source="api") esse fallback às vezes pausa por engano e
+      // engolia o lead sem a rep saber. Avisa a dona (cooldown 4h por contato,
+      // reusa o dedup do handoff). Fail-soft: nunca quebra o pause.
+      // 2026-08-14: `.name` sozinho vinha vazio pra lead de anúncio (só tem
+      // firstName) → a rep recebia "Pausei a IA na conversa com um contato"
+      // sem saber QUAL (Jussara ~20×, Priscila ~30× em 2 semanas). Mesmo
+      // fallback do resto do arquivo (linha ~1229) + telefone.
+      // H105: o modo estrito NÃO avisa. O aviso existe pra pausa por engano
+      // ("parece de outra pessoa, se foi engano responde retoma"); no modo
+      // estrito a pausa é o combinado com a conta e quem dispara é a própria
+      // equipe escrevendo pro lead, então ela já sabe da conversa.
+      if (decisao.gatilho === "F52_history_fallback") {
         const pausedContact =
           contactSettled.status === "fulfilled" ? contactSettled.value?.contact : undefined;
         await notifyAutoPauseToRep({
@@ -1800,25 +1788,25 @@ async function processGroup(
           contactPhone: pausedContact?.phone || undefined,
           assignedUserId: pausedContact?.assignedTo,
         });
-        // H103: a equipe acabou de assumir (detectado pelo histórico), mas esta
-        // mensagem pode ser o pedido de remarcar. Mesma regra do gate de pausa;
-        // a pausa recém-gravada fica, e a confirmação roda logo abaixo.
-        if (remarcacaoLigada && !group.syntheticTrigger) {
-          const pedidoF52 = detectarPedidoDeRemarcacao(group.aggregatedBody || "");
-          const preF52 = avaliarPreGate({
-            habilitado: true,
-            motivoPausa: "auto_pause:human_message:history",
-            pedido: pedidoF52,
-            janelaAte: null,
-            agora: new Date(),
-          });
-          if (preF52.candidato) {
-            candidatoRemarcacao = { via: "pedido", pedido: pedidoF52, pausaEm: nowIso };
-            log("log", `H103 candidato a remarcação logo após o F52 (${preF52.motivo})`);
-          }
-        }
-        if (!candidatoRemarcacao) return; // não responde — humano está conduzindo
       }
+      // H103: a equipe acabou de assumir (detectado pelo histórico), mas esta
+      // mensagem pode ser o pedido de remarcar. Mesma regra do gate de pausa;
+      // a pausa recém-gravada fica, e a confirmação roda logo abaixo.
+      if (remarcacaoLigada && !group.syntheticTrigger) {
+        const pedidoF52 = detectarPedidoDeRemarcacao(group.aggregatedBody || "");
+        const preF52 = avaliarPreGate({
+          habilitado: true,
+          motivoPausa,
+          pedido: pedidoF52,
+          janelaAte: null,
+          agora: new Date(),
+        });
+        if (preF52.candidato) {
+          candidatoRemarcacao = { via: "pedido", pedido: pedidoF52, pausaEm: nowIso };
+          log("log", `H103 candidato a remarcação logo após o F52 (${preF52.motivo})`);
+        }
+      }
+      if (!candidatoRemarcacao) return; // não responde — humano está conduzindo
     }
   }
 

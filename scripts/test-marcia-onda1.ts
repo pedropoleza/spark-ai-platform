@@ -59,9 +59,13 @@ check("grupo in-flight devolvido pra pending +30s", qp.includes("30_000") && qp.
 check("exclui as próprias rows claimadas", qp.includes("claimedIds.has(row.id)"));
 
 console.log("\nMC-7 — F52 staleness guard (caso Geralda)");
-check("constante 72h", qp.includes("HUMAN_TAKEOVER_STALE_MS = 72 * 60 * 60 * 1000"));
-check("outbound humano velho NÃO pausa + audit", qp.includes("stale_human_outbound_ignored"));
-check("pausa exige !humanOutboundIsStale", qp.includes("isHuman && !humanOutboundIsStale"));
+// H105 (2026-10-16): a decisão do F52 saiu pra decidirPausaPeloHistorico
+// (human-takeover.ts, pura). Comportamento coberto em scripts/test-equipe-assumiu.ts
+// ("F52: humano de 15 dias → não pausa (MC-7)").
+const htMc7 = read("src/lib/queue/human-takeover.ts");
+check("constante 72h", htMc7.includes("HUMANO_VELHO_MS = 72 * 60 * 60 * 1000") && qp.includes("decidirPausaPeloHistorico("));
+check("outbound humano velho NÃO pausa + audit", qp.includes("stale_human_outbound_ignored") && qp.includes("decisao.humanoVelhoEm"));
+check("pausa exige !humanOutboundIsStale", /> HUMANO_VELHO_MS\) \{\s*return \{ \.\.\.segue, humanoVelhoEm/.test(htMc7));
 
 console.log("\nMC-10 — hardening");
 const ae = read("src/lib/ai/action-executor.ts");

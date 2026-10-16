@@ -25,6 +25,7 @@ Quando criar nova entry: pegue próximo número disponível na categoria, adicio
 
 | Code | File:line | Data | Sumário | Ref |
 |------|-----------|------|---------|-----|
+| **H105** | `lib/queue/human-takeover.ts` (`saidaQueDecide`/`pareceEcoDoEnvio`/`contatoDaEquipe`/`decidirPausaPeloHistorico`) + `queue-processor.ts` (F52) + `follow-up-scheduler.ts` (gate de dono + reunião futura) + `agents/contact-controls.ts` (pill) + migration `20261016200000_skip_if_team_contacted.sql` + teste `scripts/test-equipe-assumiu.ts` | 2026-10-16 | **A IA atravessava a equipe da Jussara (ticket #445, caso Thiago).** A Thamires ligou, mandou a ficha e marcou a reunião; a IA seguiu conversando e no dia seguinte o follow-up perguntou "posso te mandar uma cotação hoje?" com a reunião às 12pm. Três furos no detector + follow-up cego pra reunião marcada pela equipe + modo estrito opt-in. Detalhe na seção H105. | bug em prod 2026-10-16 (Jussara) |
 | **H97** | `lib/queue/targeting.ts` (`avaliarExclusao`/`checkContactExclusion`) + `queue-processor.ts` + `follow-up-scheduler.ts` + `monitoring/vigia-conta.ts` + teste `scripts/test-targeting-exclusao-ativa.ts` | 2026-09-28 | **A exclusão do público (H81) só barrava a 1ª mensagem.** Em `trigger_once` com conversa ativa o processor pula o targeting INTEIRO (H51/H96) e o runner de follow-up nunca olhou targeting, então "não atender quem tem a tag active client" não valia pra quem virou cliente DEPOIS de entrar. Conta da Jussara (agente `a297dadc`, 28/09): a IA respondeu clientes com apólice e prometeu coisas a eles. **Fix:** onde o targeting é pulado (conversa ativa em trigger_once, retomada manual) e antes de cada toque de follow-up, avalia SÓ as folhas `negate`; a inclusão segue pulada, o comportamento de ativação não muda. **Semântica:** projeção da MESMA árvore com inclusão = match e exclusão avaliada de verdade. Consequências: (a) nunca barra quem o gate completo deixaria passar com as mesmas tags (a árvore é E/OU de folhas, virar inclusão pra match só ajuda), então não recria o "responde a 1ª e morre"; conferido em 9.216 combinações; (b) na forma que a frota usa (grupo só de exclusões ligado por E) é veto puro. Folha `message` negada fica neutra (conteúdo é gatilho de entrada). Neutro nunca inverte (H81). **Retomada manual não vence a exclusão:** `ai_resumed_at` nunca é limpo (38 conversas ativas da Jussara carregam um de julho) e o MC-5 grava o mesmo campo em recuperação automática. **Fail-open de verdade:** erro no GET do contato = não excluído (diferente do `.catch(() => null)` do gate completo, que leria erro como "sem tags"). Audit: `targeting_skip` com `exclusion: true` + `path` (`inbound_turn`/`followup_runner`), tipo antigo de propósito porque a RPC `medir_latencia_resposta` já o conta como silêncio com motivo; o `vigia-conta` não trata exclusão como lead barrado. Turno e runner cancelam a sequência de follow-up (padrão H89/MC-8). Custo: zero I/O pra agente sem `negate`; no runner reusa o GET do DND. Frota em 28/09: 3 agentes com `negate`, todos no formato grupo-de-exclusão-por-E: Jussara (trigger_once, ativo) e os 2 da Bianca (gate_ongoing, inativos). Teste 76/76, incluindo ponta a ponta de `processMessageQueue` e `processScheduledFollowUps` com Supabase falso; 12 checks falham sem o fix. | bug em prod 2026-09-28 (Jussara) |
 | **H78** | `core/coherence-gate.ts` (`GENERIC_WRITE_VERB_REGEX` + família `proactivity_off`) · `scripts/test-coherence-gate.ts` | 2026-08-14 | **"Tudo certo, parei" com `tools: []` — o opt-out de proativos era uma frase, não um estado.** Ticket #95 (Precious Planning): a rep Bianca Soares mandou **"Stop"** (05/08 02:16) depois de um aviso pós-reunião; o bot confirmou *"Tudo certo, parei. Qualquer coisa é só chamar!"* **sem chamar tool nenhuma** (registro da mensagem: `tools: []`) e os avisos continuaram (05/08 15:02, 06/08 12:00, 06/08 23:39) até o cliente abrir ticket. A pref persistida seguia `post_meeting: enabled=true` — o dispatcher LÊ a pref certinho a cada disparo; o estado é que nunca foi ESCRITO. Classe H73 (comportamento que só vive no texto). O coherence-gate (H43) existia exatamente pra isso mas tinha DOIS buracos: (a) o catch-all genérico de verbos-de-escrita não incluía **parei/desativei/desliguei/silenciei** — "Tudo certo, parei" não casava família nenhuma NEM o genérico; (b) a promessa em FUTURO ("não vou mais te mandar/lembrar") escapa de qualquer catch-all de pretérito. **Fix**: (a) 4 verbos novos no `GENERIC_WRITE_VERB_REGEX` — qualquer write de verdade (set_proactivity/pause_*/cancel_*) satisfaz o genérico, então FP ~zero; (b) família `proactivity_off` (\"não vou mais mandar/enviar/avisar/lembrar/incomodar/cobrar\") satisfeita por set_proactivity/set_daily_briefing/cancel_reminder/cancel_scheduled_message/cancel_followup/pause_followup/pause_bulk_job/cancel_bulk_job/cancel_guided_outreach — **o \"mais\" é obrigatório** (antes ou depois do verbo): \"não vou mandar nada agora\" fala de um envio específico, não de desligar, e sem essa exigência o FP seria constante. Violação sem write no turno → re-run com diretiva corretiva (o LLM executa a tool de verdade); com write → reescrita honesta (regra de ouro do gate, nada duplica). **Dado corrigido junto (OK do Pedro)**: prefs da Bianca desligadas como ela pediu dia 05 (`post_meeting`/`task_reminder` off + briefing off) e a pausa-por-silêncio do Luciano (ticket #150) limpa — o contador dele subiu porque o inbound estava MORTO na queda de 14/08, não porque ele silenciou. test-coherence-gate 26/26 (7 casos novos, incluindo a frase literal do flagrante + FP guards) · tsc verde. | ticket #95 Precious Planning · queda WhatsApp 2026-08-14 |
 | **H92** | `api/agents/process-batch/route.ts` · `queue/queue-processor.ts` (claim+reaper) · `monitoring/vigia-fila.ts` (novo) · `api/cron/vigia-fila` · RPC `medir_latencia_resposta` · crons `vigia-fila-3min`/`vigia-latencia-diario` | 2026-09-18 | **A IA respondia certo, mas tarde — e "tarde" não aparecia em métrica nenhuma.** Duas reclamações no mesmo dia ("a IA não tá respondendo" na Marina, "o bot não tá agendando" na Horizon) e nenhuma era o que parecia: na Horizon os 23 silêncios do dia tinham TODOS motivo legítimo (`ai_paused` por humano, `targeting_skip`, `deactivated_by_rule_skip`, `entry_suppressed`) e a lead do print foi agendada em **36s**; a resposta que o cliente achou que era da IA tinha sido digitada por um humano. O problema real é a **CAUDA**: p50 de segundos nas duas contas, mas Horizon com p90 de 46min e 13,5% acima de 10min, Marina com 32 casos acima de 1h em 7 dias. O H89 (vigia de contas mudas) não pega isso — conta que responde em 4h está "funcionando" por volume, e é justamente a que gera reclamação. **Fixes:** (1) `process-batch` rodava `processMessageQueue` e `processScheduledFollowUps` em `Promise.all` sob 60s — quando o loop de follow-up estourava (sinal real: "24 órfãs encerradas pelo reaper, lambda morreu no meio do loop de follow-up"), a lambda morria inteira e levava junto as mensagens já marcadas `processing`, que só voltavam pelo reaper 5min depois; agora a fila roda PRIMEIRO e sozinha (teto 35s) e o follow-up com o que sobra. (2) `fetchError` do claim era engolido no mesmo `return {processed:0}` do "nada a fazer" — fila parada e fila vazia eram indistinguíveis de fora; agora vira signal. (3) reaper de órfãs era `console.warn`; agora audita `queue_orphans_reaped`. (4) `vigiarFilaParada` (3min) força dreno e só alerta se sobrar — auto-cura, porque a causa exata da cauda ainda não está isolada e o lead não paga a conta da investigação. (5) `vigiarLatencia` (diário) mede p50/p90/% lentas por conta; silêncio COM motivo não conta como falha. ⚠️ **Lição de método:** a primeira medição, feita à mão com `row_number`, pareava mensagem com resposta por ORDEM e inflou o atraso da Marina de ~0 pra 133min — quase levou a corrigir o lugar errado. O pareamento certo é "a primeira resposta DEPOIS desta mensagem", e por isso virou RPC: o cálculo tem que ser um só. Testes: `_test-vigia-fila.ts` 5/5 (detecta presa, calcula idade, aciona dreno, limpa). |
@@ -644,3 +645,65 @@ carregado quando existe (sem inventar o campo). A montagem do payload saiu do co
 `npx tsx scripts/test-salvar-config-agentes.ts`.** Ele faz o "Salvar" de cada agente real sem
 gravar nada e acusa save bloqueado e campo que sumiria do banco. Campo novo no `agent_configs`
 precisa entrar nos DOIS lugares (`makeSeed` e zod); faltar em um deles é perda silenciosa.
+
+## H105 (2026-10-16) — A equipe assumiu e a IA não viu (ticket #445, Jussara)
+
+**Caso Thiago (`vaGTKuibHHf4gnurDXv0`, agente `a297dadc`).** Lead antigo (importado do Kommo)
+mandou a frase do anúncio em 15/10 22:48 UTC. A IA respondeu às 22:49; às 22:50 a Thamires
+ligou, às 22:52 mandou a ficha e às 22:53 marcou a reunião (sexta 12pm). A IA voltou às 23:03
+como se nada tivesse acontecido, respondeu por cima de "pode desconsiderar essas mensagens,
+elas estão sendo mandadas pelo robô" às 00:11, e o follow-up saiu às 12:02 e 15:02 do dia
+seguinte ("posso te mandar uma cotação hoje?", "ficou de segunda pra gente conversar"). A
+conta já tinha pedido, mais de uma vez, que a IA só atendesse o lead do patrocinado e saísse
+quando a equipe interagisse.
+
+**Furos, todos medidos no histórico real:**
+1. **Só a ÚLTIMA saída era classificada.** A reunião marcada dispara o fluxo de confirmação
+   (`source: "workflow"`), que virava a última saída e escondia a ficha da Thamires. O lembrete
+   do Zoom fez o mesmo com o "não sei por que o robô te mandou essa mensagem" das 13:10.
+   **Fix:** `saidaQueDecide` pula automação (fluxo/campanha, merge field quebrado, mídia nossa)
+   e classifica a saída de chat mais recente que sobra.
+2. **O guarda de eco (≤120s depois de um envio nosso) engolia a equipe corrigindo o robô.**
+   "Até amanhã" saiu 38s depois da IA e "Boa viagem!!" 79s depois; os dois passaram por eco.
+   **Fix:** `pareceEcoDoEnvio` só presume eco quando não dá pra saber pelo id: com texto e com
+   os `message_ids` do nosso último envio no log, id diferente é outra pessoa. Sem texto (mídia)
+   ou sem ids, o guarda segue como era. Medido: 136/137 mensagens da IA no histórico da Jussara
+   têm o id no log (frota: 1276/1301).
+3. **A equipe responde pelo celular.** O Spark OS espelha a mensagem do aparelho no Spark Leads
+   como saída `api` SEM `userId` (`postOutbound` em `spark-os/src/lib/wa/ghl.ts`). O webhook F51
+   descarta toda saída `api`, então a pausa em tempo real nunca vê o celular. **Não mexido**:
+   o F52 do turno e o gate do follow-up leem o histórico antes de qualquer envio e cobrem.
+
+**Follow-up com reunião futura:** quando a IA agenda, o status `booked` cancela a sequência;
+quando é a EQUIPE que marca, nada avisava. Agora o runner consulta `findExistingAppointment`
+antes de gerar o toque e, se há reunião futura, cancela a sequência (`followup_skipped`,
+`reason: "upcoming_appointment"`). Fail-open. Vale pra frota.
+
+**Modo estrito (`agent_configs.skip_if_team_contacted`, opt-in, default false):** qualquer
+contato da equipe no histórico visível tira a IA da conversa. Mais duro que o F52 de propósito:
+vale ANTES de a IA falar (o F52 não pausa quando a IA nunca falou, pra não confundir boas-vindas
+de automação com humano), não tem prazo (o F52 ignora humano com mais de 72h) e conta ligação
+feita por usuário da equipe. Pausa com `auto_pause:human_message:team_contact` (o H103 e a aba
+"Pausadas" já reconhecem o prefixo), cancela a sequência de follow-up (`reason: "team_contact"`)
+e o pill conclui igual. **Não avisa a dona** (o aviso do F52 existe pra pausa por engano; aqui a
+pausa é o combinado e quem dispara é a própria equipe). Retomada manual depois do contato da
+equipe continua valendo (GU-6). Ligado só na Jussara.
+
+**Medição antes de ligar:** replay das conversas ativas (`scripts/_replay-h105.ts`). Frota, 14
+dias, 256 conversas: o F52 corrigido pausa 34 (hoje 23), +11 e nenhuma a menos; 10 das 11 são
+equipe de verdade da Jussara e 1 é um lembrete com `source: app` sem usuário no agente de teste
+da Marina, classe que o F52 antigo já tratava como humano. Jussara, 30 dias, 86 conversas: o
+modo estrito acha contato da equipe em 73, todos conferidos à mão (áudio e vídeo do celular, a
+ficha digitada, "aqui quem fala é Thamires", mensagens-modelo com erro de digitação, ligações);
+nenhuma mensagem da IA classificada como equipe.
+
+⚠️ **Mensagem da equipe pelo celular é `api` sem `userId`, a da IA é `api` COM o `userId` do
+dono do contato.** Não use `source === "api"` como sinônimo de "foi a IA": o que prova que foi
+a IA é o id no `execution_log`. E não classifique só a última saída: automação dispara em
+cascata depois de toda ação humana (reunião marcada, etiqueta), então ela quase sempre é a
+última.
+
+Testes: `scripts/test-equipe-assumiu.ts` (47/47, linha do tempo real do Thiago com a regra
+antiga lado a lado), `test-human-takeover` 44/44, `test-activity-not-human` 27/27,
+`test-remarcacao-pos-handoff` 106/106, `test-lead-awareness` 36/36, `test-salvar-config-agentes`
+(34 salvam limpo).

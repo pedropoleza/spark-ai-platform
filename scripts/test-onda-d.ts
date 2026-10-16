@@ -114,7 +114,13 @@ check(
   /sentMessageId\s*=\s*\w+\.messageId/.test(read("src/lib/queue/follow-up-scheduler.ts")) &&
     read("src/lib/queue/follow-up-scheduler.ts").includes("message_ids: [sentMessageId]"),
 );
-check("queue-processor passa sentIds no F52", read("src/lib/queue/queue-processor.ts").includes("sentIds: extractAiSentIds(aiSends)"));
+// H105 (2026-10-16): o F52 do processor passa os envios pra decidirPausaPeloHistorico,
+// que extrai os ids e os entrega à ladder.
+check(
+  "queue-processor passa sentIds no F52",
+  read("src/lib/queue/queue-processor.ts").includes("enviosDaIa: aiSends || []") &&
+    /classifyLastOutbound\(\{ lastOutbound: saida, aiTexts: textos, sentIds: ids \}\)/.test(read("src/lib/queue/human-takeover.ts")),
+);
 check("D1a: sweepNotifyBlockedOwners existe", read("src/lib/billing/wallet-block.ts").includes("export async function sweepNotifyBlockedOwners"));
 check("D1a: cron billing-retry chama o sweep", read("src/app/api/cron/billing-retry/route.ts").includes("sweepNotifyBlockedOwners()"));
 

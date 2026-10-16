@@ -12,7 +12,13 @@ import { withRetry } from "@/lib/utils/retry";
 // queue-processor — se o histórico do Spark Leads falhar, o follow-up não pode
 // virar uma re-apresentação fria. Reconstrói do nosso DB.
 import { reconstructHistoryFromDb } from "@/lib/queue/history-fallback";
-import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
+import {
+  classifyLastOutbound,
+  extractAiSentTexts,
+  extractAiSentIds,
+  saidaQueDecide,
+  contatoDaEquipe,
+} from "@/lib/queue/human-takeover";
 import { reportError } from "@/lib/admin-signals/report-error";
 import { regraQueDesliga, descreveRegra, type ContatoParaRegras } from "@/lib/queue/deactivation";
 import { checkContactExclusion } from "@/lib/queue/targeting";
@@ -889,67 +895,119 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         // GLOBAL + FAIL-OPEN: pra agente SEM sistema concorrente, o último outbound é
         // sempre o nosso → o anti-eco bate → isHuman=false → NUNCA pula. Se o histórico
         // do Spark Leads não carregar, segue normal (não silencia à toa).
+        // H105 (2026-10-16, ticket #445): a saída que decide pula a automação. O
+        // 2º toque do Thiago saiu 2min depois do lembrete do Zoom (source
+        // "workflow"), que escondia o "não sei por que o robô te mandou essa
+        // mensagem" da equipe. E atividade do CRM/ligação ficam de fora, igual ao
+        // gate do inbound (antes "Opportunity created" cancelava a sequência).
         if (historyResult.status === "fulfilled" && historyResult.value) {
           const ghlMsgs = historyResult.value.messages?.messages || [];
-          const lastOutbound = ghlMsgs
-            .filter((m) => m.direction === "outbound")
-            .sort((a, b) => new Date(b.dateAdded).getTime() - new Date(a.dateAdded).getTime())[0];
-          if (lastOutbound) {
-            const { data: sentRows } = await supabase
-              .from("execution_log")
-              .select("action_payload")
-              .eq("location_id", followUp.location_id)
-              .eq("contact_id", followUp.contact_id)
-              .eq("action_type", "send_message")
-              .order("created_at", { ascending: false })
-              .limit(15);
-            const aiTexts = extractAiSentTexts(sentRows);
-            // H73 (caso Márcia): as automações NOSSAS que mandam mídia (áudio de
-            // abertura, PDF) chegam ao histórico como outbound de corpo vazio e
-            // eram lidas como "humano assumiu" — o que CANCELAVA a sequência
-            // inteira no 1º toque, justamente nas contas que abrem com áudio.
-            const { data: midiaRows } = await supabase
-              .from("execution_log")
-              .select("created_at")
-              .eq("location_id", followUp.location_id)
-              .eq("contact_id", followUp.contact_id)
-              .in("action_type", ["agent_activated_automation", "send_media", "reaction_executed"])
-              .order("created_at", { ascending: false })
-              .limit(10);
-            const ourMediaAtIso = (midiaRows ?? []).map((r) => String(r.created_at));
-            const { isHuman } = classifyLastOutbound({
-              ourMediaAtIso,
-              // 2026-07-23 (caso Marina): +id no lastOutbound e sentIds → o gate de
-              // "humano assumiu" antes de mandar follow-up também casa por ID (não
-              // cancela a sequência achando falso-handoff em IG).
-              lastOutbound: {
-                id: lastOutbound.id,
-                body: lastOutbound.body,
-                userId: lastOutbound.userId,
-                source: lastOutbound.source,
-                dateAdded: lastOutbound.dateAdded,
-              },
-              aiTexts,
-              sentIds: extractAiSentIds(sentRows),
-            });
-            if (isHuman) {
-              await supabase
-                .from("scheduled_followups")
-                .update({ status: "cancelled" })
-                .eq("agent_id", followUp.agent_id)
-                .eq("contact_id", followUp.contact_id)
-                .in("status", ["pending", "processing"]);
-              await supabase.from("execution_log").insert({
-                agent_id: followUp.agent_id,
-                conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
-                contact_id: followUp.contact_id,
-                location_id: followUp.location_id,
-                action_type: "followup_skipped",
-                action_payload: { attempt_number: followUp.attempt_number, reason: "another_owner_active" },
-                success: true,
+          const { data: sentRows } = await supabase
+            .from("execution_log")
+            .select("action_payload")
+            .eq("location_id", followUp.location_id)
+            .eq("contact_id", followUp.contact_id)
+            .in("action_type", ["send_message", "send_error_message", "book_blocked_no_contact"])
+            .eq("success", true)
+            .order("created_at", { ascending: false })
+            .limit(30);
+          const aiTexts = extractAiSentTexts(sentRows);
+          const sentIds = extractAiSentIds(sentRows);
+          // H73 (caso Márcia): as automações NOSSAS que mandam mídia (áudio de
+          // abertura, PDF) chegam ao histórico como outbound de corpo vazio e
+          // eram lidas como "humano assumiu" — o que CANCELAVA a sequência
+          // inteira no 1º toque, justamente nas contas que abrem com áudio.
+          const { data: midiaRows } = await supabase
+            .from("execution_log")
+            .select("created_at")
+            .eq("location_id", followUp.location_id)
+            .eq("contact_id", followUp.contact_id)
+            .in("action_type", ["agent_activated_automation", "send_media", "reaction_executed"])
+            .order("created_at", { ascending: false })
+            .limit(10);
+          const ourMediaAtIso = (midiaRows ?? []).map((r) => String(r.created_at));
+
+          let motivoDoPulo: string | null = null;
+          // H105: modo "equipe falou, a IA não entra" — qualquer contato da equipe
+          // no histórico encerra a sequência (o F52 do turno pausa a conversa).
+          if ((config as { skip_if_team_contacted?: boolean | null }).skip_if_team_contacted === true) {
+            const equipe = contatoDaEquipe(ghlMsgs, { textos: aiTexts, ids: sentIds, midiaNossaEm: ourMediaAtIso });
+            if (equipe) motivoDoPulo = "team_contact";
+          }
+          if (!motivoDoPulo) {
+            const lastOutbound = saidaQueDecide(ghlMsgs, { ourMediaAtIso });
+            if (lastOutbound) {
+              const { isHuman } = classifyLastOutbound({
+                ourMediaAtIso,
+                // 2026-07-23 (caso Marina): +id no lastOutbound e sentIds → o gate de
+                // "humano assumiu" antes de mandar follow-up também casa por ID (não
+                // cancela a sequência achando falso-handoff em IG).
+                lastOutbound: {
+                  id: lastOutbound.id,
+                  body: lastOutbound.body,
+                  userId: lastOutbound.userId,
+                  source: lastOutbound.source,
+                  dateAdded: lastOutbound.dateAdded,
+                },
+                aiTexts,
+                sentIds,
               });
-              continue;
+              if (isHuman) motivoDoPulo = "another_owner_active";
             }
+          }
+          if (motivoDoPulo) {
+            await supabase
+              .from("scheduled_followups")
+              .update({ status: "cancelled" })
+              .eq("agent_id", followUp.agent_id)
+              .eq("contact_id", followUp.contact_id)
+              .in("status", ["pending", "processing"]);
+            await supabase.from("execution_log").insert({
+              agent_id: followUp.agent_id,
+              conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+              contact_id: followUp.contact_id,
+              location_id: followUp.location_id,
+              action_type: "followup_skipped",
+              action_payload: { attempt_number: followUp.attempt_number, reason: motivoDoPulo },
+              success: true,
+            });
+            continue;
+          }
+        }
+
+        // H105 (2026-10-16, ticket #445): lead com reunião FUTURA não recebe
+        // follow-up. Quando a IA agenda, o status "booked" já cancela a sequência;
+        // quando é a EQUIPE que marca, nada avisava o follow-up — o Thiago, com
+        // reunião às 12pm, recebeu "posso te mandar uma cotação hoje?" às 8am.
+        // Fail-open: se a agenda não responder, segue (perder o toque é pior que
+        // travar o runner).
+        {
+          const { findExistingAppointment } = await import("@/lib/ai/action-executor");
+          const reuniao = await findExistingAppointment(client, followUp.contact_id, followUp.location_id, undefined, {
+            timeZone: location.timezone || "America/New_York",
+          }).catch(() => null);
+          if (reuniao) {
+            await supabase
+              .from("scheduled_followups")
+              .update({ status: "cancelled" })
+              .eq("agent_id", followUp.agent_id)
+              .eq("contact_id", followUp.contact_id)
+              .in("status", ["pending", "processing"]);
+            await supabase.from("execution_log").insert({
+              agent_id: followUp.agent_id,
+              conversation_id: (convState as { conversation_id?: string } | null)?.conversation_id || "",
+              contact_id: followUp.contact_id,
+              location_id: followUp.location_id,
+              action_type: "followup_skipped",
+              action_payload: {
+                attempt_number: followUp.attempt_number,
+                reason: "upcoming_appointment",
+                appointment_id: reuniao.id,
+                appointment_start: reuniao.startTime,
+              },
+              success: true,
+            });
+            continue;
           }
         }
 

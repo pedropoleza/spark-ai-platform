@@ -6,8 +6,13 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GHLClient } from "@/lib/ghl/client";
-import { classifyLastOutbound, extractAiSentTexts, extractAiSentIds } from "@/lib/queue/human-takeover";
-import { isChatMessageType } from "@/lib/ghl/message-sources";
+import {
+  classifyLastOutbound,
+  extractAiSentTexts,
+  extractAiSentIds,
+  saidaQueDecide,
+  contatoDaEquipe,
+} from "@/lib/queue/human-takeover";
 import { checkContactMatchesTargeting, normalizeTargeting } from "@/lib/queue/targeting";
 import type { TargetingRules } from "@/types/agent";
 
@@ -149,15 +154,17 @@ export async function computeContactDrivingState(args: {
   // 2. Config (auto_pause + targeting).
   const { data: cfg } = await supabase
     .from("agent_configs")
-    .select("auto_pause_on_human_message, targeting_rules")
+    .select("auto_pause_on_human_message, skip_if_team_contacted, targeting_rules")
     .eq("agent_id", agentId)
     .maybeSingle();
   const autoPause = (cfg as { auto_pause_on_human_message?: boolean } | null)?.auto_pause_on_human_message === true;
+  // H105: modo "equipe falou, a IA não entra" — o pill conclui igual ao runtime.
+  const estrito = (cfg as { skip_if_team_contacted?: boolean | null } | null)?.skip_if_team_contacted === true;
   const targetingRules = (cfg as { targeting_rules?: TargetingRules } | null)?.targeting_rules ?? null;
 
   // 3. Humano assumiu? (última outbound do GHL não é da IA, mais recente que o
   //    "ligar manual"). Só quando a conta quer auto-pause-on-human. Fail-open.
-  if (autoPause) {
+  if (autoPause || estrito) {
     try {
       const human = await lastOutboundIsHuman({
         supabase,
@@ -165,6 +172,7 @@ export async function computeContactDrivingState(args: {
         contactId,
         locationId,
         conversationId: convState?.conversation_id || null,
+        estrito,
       });
       if (human?.isHuman) {
         const resumedAt = convState?.ai_resumed_at ? new Date(convState.ai_resumed_at).getTime() : 0;
@@ -204,6 +212,8 @@ async function lastOutboundIsHuman(args: {
   contactId: string;
   locationId: string;
   conversationId: string | null;
+  /** H105: `skip_if_team_contacted` — qualquer contato da equipe no histórico conta. */
+  estrito?: boolean;
 }): Promise<{ isHuman: boolean; at: string | null } | null> {
   const { supabase, ghlClient, contactId, locationId } = args;
   let convId = args.conversationId;
@@ -215,18 +225,16 @@ async function lastOutboundIsHuman(args: {
   }
   if (!convId) return null;
   const resp = await ghlClient
-    .get<{ messages?: { messages?: Array<{ direction: string; body?: string; dateAdded: string; userId?: string; source?: string }> } }>(
+    .get<{ messages?: { messages?: Array<{ id?: string; direction: string; body?: string; dateAdded: string; userId?: string; source?: string; messageType?: string }> } }>(
       `/conversations/${convId}/messages`,
       { locationId },
     )
     .catch(() => null);
   const msgs = resp?.messages?.messages || [];
-  const lastOutbound = [...msgs]
-    .sort((a, b) => new Date(a.dateAdded).getTime() - new Date(b.dateAdded).getTime())
-    .reverse()
-    // Fix prod 2026-07-28: atividade do CRM/ligação não é outbound de conversa.
-    .find((m) => m.direction === "outbound" && isChatMessageType((m as { messageType?: string }).messageType));
-  if (!lastOutbound) return null;
+  // Fix prod 2026-07-28: atividade do CRM/ligação não é outbound de conversa.
+  // H105: e a automação não esconde a equipe (mesma `saidaQueDecide` do runtime).
+  const lastOutbound = saidaQueDecide(msgs);
+  if (!lastOutbound && !args.estrito) return null;
   // Anti-eco precisa dos textos que a IA enviou — busca SEMPRE (mesmo sem body,
   // mídia/áudio), igual ao runtime: a ladder decide via aiTexts, não o !body cru.
   const { data: aiSends } = await supabase
@@ -241,11 +249,18 @@ async function lastOutboundIsHuman(args: {
     .eq("success", true)
     .order("created_at", { ascending: false })
     .limit(30);
+  const aiTexts = extractAiSentTexts(aiSends || []);
+  const sentIds = extractAiSentIds(aiSends || []);
+  if (args.estrito) {
+    const equipe = contatoDaEquipe(msgs, { textos: aiTexts, ids: sentIds });
+    if (equipe) return { isHuman: true, at: equipe.dateAdded };
+  }
+  if (!lastOutbound) return null;
   const { isHuman } = classifyLastOutbound({
     lastOutbound,
-    aiTexts: extractAiSentTexts(aiSends || []),
+    aiTexts,
     // H56: paridade com o runtime — id do nosso envio nunca é "humano".
-    sentIds: extractAiSentIds(aiSends || []),
+    sentIds,
   });
   return { isHuman, at: lastOutbound.dateAdded };
 }

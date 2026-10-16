@@ -212,6 +212,26 @@ Wire em `queue-processor.ts` após targeting check, antes do prompt build. Promp
 
 Tests: `scripts/test-lead-awareness.ts` (12 cenários cobrindo decisões should-respond, defaults, edge cases).
 
+### A equipe assumiu: quem conduz a conversa (H105, ticket #445, 2026-10-16) — no ar
+
+A IA da Jussara atravessava a equipe: a Thamires ligou, mandou a ficha e marcou a reunião do
+Thiago, e a IA seguiu falando e mandou follow-up de "cotação" no dia da reunião. Peças em
+`src/lib/queue/human-takeover.ts`, usadas pelo F52 do turno, pelo gate do follow-up e pelo pill:
+- **Classifique a saída que DECIDE, não a última** (`saidaQueDecide`): automação dispara em
+  cascata depois de toda ação humana (reunião marcada → confirmação, lembrete do Zoom) e quase
+  sempre é a última saída. Ela não diz nada sobre quem conduz.
+- **`source: "api"` não é sinônimo de "foi a IA".** Mensagem da equipe pelo CELULAR chega como
+  `api` SEM `userId` (o Spark OS espelha o aparelho); a da IA é `api` COM o `userId` do dono do
+  contato. Quem prova que foi a IA é o id no `execution_log` (`message_ids`). Por isso o guarda de
+  eco por tempo (`pareceEcoDoEnvio`) só presume eco quando não dá pra saber pelo id.
+- **Follow-up não sai com reunião futura**, marcada por quem for (`upcoming_appointment`).
+- **Modo estrito opt-in** `agent_configs.skip_if_team_contacted` (sem UI, ligado por script, só
+  na Jussara): qualquer contato da equipe no histórico tira a IA, inclusive antes de ela falar e
+  sem o prazo de 72h do F52. Pausa com `auto_pause:human_message:team_contact`, sem aviso à dona.
+- O webhook F51 continua ignorando saída `api` (o histórico cobre antes de qualquer envio).
+- Mexeu no detector? Rode `scripts/test-equipe-assumiu.ts` e o replay `scripts/_replay-h105.ts
+  <locationId|all>` contra conversas reais antes de dar como pronto.
+
 ### Campanhas em Grupo de WhatsApp (H40, Pedro 2026-06-18) — flag OFF
 SparkBot posta em GRUPOS de WhatsApp via API Stevo (caso Matheus "2 posts/dia 7:30"). **Tudo atrás de `GROUP_CAMPAIGNS_ENABLED` (default OFF / log-first)** — gateia o REGISTRO das tools em `tools/index.ts`. Reusa o motor Bulk V2 (NÃO criou tabelas novas). Plano: `_planning/group-campaigns-whatsapp/PLANO.md`; copy aprovada: `COPY.md`.
 

@@ -111,7 +111,13 @@ console.log("\nWiring: TODOS os consumidores de mensagem filtram atividade");
 import { readFileSync } from "fs";
 import { resolve } from "path";
 const qp = readFileSync(resolve(__dirname, "..", "src/lib/queue/queue-processor.ts"), "utf8");
-check("lastOutbound filtra por isChatMessageType", qp.includes("isChatMessageType((m as { messageType?: string }).messageType)"));
+// H105 (2026-10-16): a escolha da saída que decide saiu pro saidaQueDecide
+// (human-takeover.ts), que filtra atividade/ligação com o mesmo helper. O
+// processor (decidirPausaPeloHistorico) e o pill passam por ela.
+const ht = readFileSync(resolve(__dirname, "..", "src/lib/queue/human-takeover.ts"), "utf8");
+const saidaQueDecideFiltra = /export function saidaQueDecide[\s\S]{0,600}isChatMessageType\(m\.messageType\)/.test(ht);
+check("saidaQueDecide filtra por isChatMessageType", saidaQueDecideFiltra);
+check("lastOutbound do F52 passa pela saidaQueDecide", qp.includes("decidirPausaPeloHistorico(") && /export function decidirPausaPeloHistorico[\s\S]{0,2500}saidaQueDecide\(mensagens\)/.test(ht));
 const lh = readFileSync(resolve(__dirname, "..", "src/lib/queue/lead-history.ts"), "utf8");
 check("lead-history passa aiIds", lh.includes("isHumanOutboundMessage(m, aiTexts, aiIds)"));
 check("recent_messages carrega id", lh.includes("id: typeof m.id === \"string\" ? m.id : undefined"));
@@ -123,8 +129,8 @@ const fu = readFileSync(resolve(__dirname, "..", "src/lib/queue/follow-up-schedu
 const sn = readFileSync(resolve(__dirname, "..", "src/lib/queue/summary-note-generator.ts"), "utf8");
 const tr = readFileSync(resolve(__dirname, "..", "src/app/api/agents/test/route.ts"), "utf8");
 check("histórico do LLM filtra atividade", qp.includes("filter((m) => isChatMessageType(m.messageType))"));
-check("pill 'quem dirige' filtra atividade", cc.includes("isChatMessageType"));
-check("pill tem paridade H56 (sentIds)", cc.includes("sentIds: extractAiSentIds(aiSends || [])"));
+check("pill 'quem dirige' filtra atividade", cc.includes("saidaQueDecide(msgs)") && saidaQueDecideFiltra);
+check("pill tem paridade H56 (sentIds)", cc.includes("const sentIds = extractAiSentIds(aiSends || [])") && cc.includes("    sentIds,\n"));
 check("prompt de follow-up filtra atividade", fu.includes("isChatMessageType(m.messageType)"));
 check("resumo da conversa filtra atividade", sn.includes("isChatMessageType(m.messageType)"));
 check("test chat tem paridade com prod", tr.includes("isChatMessageType(m.messageType)"));
