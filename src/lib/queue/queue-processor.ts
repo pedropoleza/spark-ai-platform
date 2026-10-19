@@ -756,12 +756,22 @@ async function processGroup(
   }
 
   // Gate de handoff manual + fetch full convState for later use (conversationId cache, collected_data)
-  const { data: convState } = await supabase
+  const { data: convState, error: convStateErr } = await supabase
     .from("conversation_state")
     .select("*")
     .eq("agent_id", agent.id)
     .eq("contact_id", group.contactId)
     .maybeSingle();
+  // H106 (bug observado em prod 2026-10-17, Alves Cury, lead Mara): o 3º turno
+  // de uma conversa ativa em `trigger_once` gravou `targeting_skip` no mesmo
+  // minuto de um timeout do banco (15:41:42 UTC, `queue_claim_failed`). O único
+  // caminho no código pra isso é esta leitura voltar `data: null`: o supabase-js
+  // não lança, o turno segue como 1º contato, o gate re-avalia "Por conta
+  // propria" contra a frase do anúncio e a IA cala. Caso C8 do teste reproduz. Sem o estado não dá pra decidir nada (pausa, gate, contagem): o turno
+  // falha e a fila tenta de novo (1, 5 e 15 min), como qualquer erro de turno.
+  if (convStateErr) {
+    throw new Error(`leitura do conversation_state falhou: ${convStateErr.message}`);
+  }
 
   // H103 (2026-10-09, ticket #434 Alves Cury): a equipe assumiu, mas o lead pode
   // estar pedindo pra remarcar/desmarcar a reunião. Com o agente opt-in

@@ -358,6 +358,8 @@ async function main() {
   type Req = { method: string; table: string; q: URLSearchParams; body: Record<string, unknown> | null; accept: string; prefer: string };
   let reqs: Req[] = [];
   let rota: (r: Req) => unknown[] = () => [];
+  // H106: tabela cuja leitura volta 503, como no timeout do banco de 17/10.
+  let leituraFalha: string | null = null;
   (globalThis as { fetch: typeof fetch }).fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     if (url.host !== "sb.fake") throw new Error(`rede real bloqueada no teste: ${url.href}`);
@@ -378,6 +380,9 @@ async function main() {
     reqs.push(req);
     const rows = rota(req) ?? [];
     const json = { "content-type": "application/json" };
+    if (method === "GET" && req.table === leituraFalha) {
+      return new Response(JSON.stringify({ message: "upstream connect error or disconnect/reset before headers. reset reason: connection timeout" }), { status: 503, headers: json });
+    }
     if (method === "HEAD") return new Response(null, { status: 200, headers: { "content-range": `0-0/${rows.length}` } });
     if (req.accept.includes("vnd.pgrst.object+json")) {
       if (rows.length !== 1) {
@@ -561,6 +566,31 @@ async function main() {
   });
   t("seguiu pro pipeline", logsDe("targeting_skip").length === 0 && seguiuProPipeline());
   t("zero GET no gate", ghlChamadas.length === 0, JSON.stringify(ghlChamadas));
+
+  h("C8. H106: leitura do estado da conversa falha → o turno falha e volta pra fila (caso Mara, Alves Cury)");
+  // 17/10 15:41 UTC: timeout do banco no meio do 3º turno. O supabase-js devolveu
+  // data null sem lançar, o trigger_once achou que era 1º contato, re-avaliou a
+  // frase do anúncio contra "Por conta propria" e gravou targeting_skip.
+  leituraFalha = "conversation_state";
+  const r8 = await turno({
+    config: { activation_mode: "trigger_once", targeting_rules: JUSSARA },
+    conv: conversaAtiva,
+    ghl: async (p) => (p.startsWith("/contacts/") ? { contact: contato([]) } : null),
+    corpo: "Por conta propria",
+  });
+  leituraFalha = null;
+  t("nenhum targeting_skip (não calou o lead por erro de leitura)", logsDe("targeting_skip").length === 0);
+  t("não seguiu pro pipeline sem o estado", !seguiuProPipeline());
+  t("turno contado como erro", r8.errors === 1, JSON.stringify(r8));
+  t("linha da fila marcada failed (entra no retry 1/5/15 min)",
+    reqs.some((q) => q.table === "message_queue" && q.method === "PATCH" && q.body?.status === "failed"));
+  await turno({
+    config: { activation_mode: "trigger_once", targeting_rules: JUSSARA },
+    conv: conversaAtiva,
+    ghl: async (p) => (p.startsWith("/contacts/") ? { contact: contato([]) } : null),
+    corpo: "Por conta propria",
+  });
+  t("com a leitura de volta, o mesmo turno responde", logsDe("targeting_skip").length === 0 && seguiuProPipeline());
 
   /* ═══ D. runner de follow-up ══════════════════════════════════════════ */
   async function toque(cenario: { config: Record<string, unknown>; tags: string[] }) {
