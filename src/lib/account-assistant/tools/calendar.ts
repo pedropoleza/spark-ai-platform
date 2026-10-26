@@ -20,8 +20,11 @@ import {
   deleteAppointment as ghlDeleteAppointment,
   getCalendarDetails,
   getContactAppointments as ghlGetContactAppointments,
+  type CalendarDetails,
 } from "@/lib/ghl/operations";
 import type { ToolResult } from "@/types/account-assistant";
+// H108: comparação de nome de calendário sem acento/caixa.
+import { deburr } from "../contact-resolver/normalize";
 import { recordSignalAsync } from "@/lib/admin-signals/recorder";
 import { updateRepById } from "@/lib/repositories/rep-identities.repo";
 // H48 (2026-07-10): compromissos do Google Calendar / bloqueios na agenda.
@@ -125,6 +128,123 @@ export function resolveCalendarChoice(
     return { resolved_calendar_id: calendarIds[0], resolution: "only_calendar" };
   }
   return { resolution: "ambiguous" };
+}
+
+/** Chave de comparação de calendário: sem acento, caixa nem pontuação. */
+function chaveCalendario(s: unknown): string {
+  return deburr(s).replace(/[^a-z0-9]+/g, "");
+}
+
+/** O modelo disse "o calendário padrão" em vez do id. */
+const CALENDARIO_PADRAO_RE = /^(default|padrao|default_calendar|memory:default_calendar)$/i;
+
+/**
+ * H108 (caso Ana Gusmão #456, 2026-10-26): o calendário vai pro Spark Leads por ID.
+ *
+ * O modelo passava o NOME ("Consultoria de Seguros (Produtos)"), o slug
+ * ("agenda_rm_strong_financial") ou "default", e a tool só dizia "calendar_id
+ * inválido". Medido: 41 de 196 create_appointment em 60 dias morreram assim,
+ * cada um custando mais uma volta (list_calendars + nova tentativa) ou o
+ * agendamento inteiro.
+ *
+ * Ordem: id válido passa direto; "default" e afins = calendário padrão salvo do
+ * rep (ou o único utilizável da conta); nome ou slug que bate com UM calendário =
+ * o id dele. O resto (inclusive placeholder inventado tipo "your_calendar_id")
+ * volta erro com a lista de calendários, pra o modelo corrigir sem adivinhar.
+ */
+export async function resolverCalendarioId(
+  ctx: ToolContext,
+  raw: string,
+): Promise<{ ok: true; id: string; resolvidoDe?: string } | { ok: false; error: ToolResult }> {
+  const bruto = String(raw || "").trim();
+  const invalido = validateGhlId(bruto, "calendar");
+  if (!invalido) return { ok: true, id: bruto };
+
+  const pref = getSchedulingPref(ctx);
+  const querPadrao = CALENDARIO_PADRAO_RE.test(deburr(bruto));
+  if (querPadrao && pref.default_calendar_id && !validateGhlId(pref.default_calendar_id, "calendar")) {
+    return { ok: true, id: pref.default_calendar_id, resolvidoDe: bruto };
+  }
+
+  let calendarios: Array<{ id: string; name?: string; widgetSlug?: string; isActive?: boolean; teamMembers?: unknown[] }> = [];
+  try {
+    const res = await ghlListCalendars(ctx.ghlClient, ctx.locationId);
+    calendarios = (res.calendars || []).filter((c) => !!c.id);
+  } catch {
+    // Sem a lista não dá pra resolver: devolve o erro de sempre.
+    return { ok: false, error: invalido };
+  }
+
+  if (querPadrao) {
+    const usaveis = calendarios.filter((c) => c.isActive !== false && (c.teamMembers?.length ?? 0) > 0);
+    if (usaveis.length === 1) return { ok: true, id: usaveis[0].id, resolvidoDe: bruto };
+  } else {
+    const k = chaveCalendario(bruto);
+    const achados = k
+      ? calendarios.filter((c) => chaveCalendario(c.name) === k || chaveCalendario(c.widgetSlug) === k)
+      : [];
+    if (achados.length === 1) return { ok: true, id: achados[0].id, resolvidoDe: bruto };
+  }
+
+  const lista = calendarios
+    .slice(0, 12)
+    .map((c) => `"${c.name || "(sem nome)"}" = ${c.id}`)
+    .join("; ");
+  return {
+    ok: false,
+    error: {
+      status: "error",
+      // O modelo corrige com a lista abaixo; não é erro do sistema.
+      retryable: true,
+      message:
+        `calendar_id precisa ser o ID do calendário, e "${bruto}" não identifica um calendário desta conta ` +
+        `sem dúvida. Calendários: ${lista || "nenhum encontrado"}. Re-chame com o ID certo do calendário ` +
+        `que o rep escolheu; se não souber qual, pergunte.`,
+    },
+  };
+}
+
+/** Uma opção de duração do calendário, em minutos. */
+function opcaoEmMinutos(o: { duration?: number; durationUnit?: string } | null | undefined): number | null {
+  const n = Number(o?.duration);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const unidade = String(o?.durationUnit || "mins").toLowerCase();
+  return Math.round(unidade.startsWith("h") ? n * 60 : n);
+}
+
+/**
+ * H108 (caso Ana Gusmão #456, 2026-10-26): a duração vem do calendário, não do modelo.
+ *
+ * O bot mandou 17:30 a 18:00 (30 min, chute dele) num calendário que só aceita
+ * 60, e o Spark Leads recusou com "Selected slot duration is not a valid duration
+ * option for this calendar". Quem sabe a duração é o `durationOptions` do
+ * calendário. Se a duração pedida está entre as aceitas, nada muda; se não está,
+ * o fim vira início + a opção padrão (ou a primeira). Calendário sem
+ * `durationOptions` fica como está: não há regra pra aplicar e o Spark Leads não
+ * recusa. Puro, testado em scripts/test-sparkbot-contato-agenda-h108.ts.
+ */
+export function ajustarDuracaoAoCalendario(
+  cal: NonNullable<CalendarDetails["calendar"]> | null | undefined,
+  startIso: string,
+  endIso: string,
+): { endIso: string; pedidoMin: number; usadoMin: number; ajustado: boolean; aceitasMin: number[] } {
+  const startMs = new Date(startIso).getTime();
+  const pedidoMin = Math.round((new Date(endIso).getTime() - startMs) / 60_000);
+  const opcoes = (cal?.durationOptions || [])
+    .map((o) => ({ min: opcaoEmMinutos(o), padrao: o?.isDefault === true }))
+    .filter((o): o is { min: number; padrao: boolean } => o.min !== null);
+  const aceitasMin = [...new Set(opcoes.map((o) => o.min))];
+  if (aceitasMin.length === 0 || aceitasMin.includes(pedidoMin)) {
+    return { endIso, pedidoMin, usadoMin: pedidoMin, ajustado: false, aceitasMin };
+  }
+  const usadoMin = opcoes.find((o) => o.padrao)?.min ?? aceitasMin[0];
+  return {
+    endIso: new Date(startMs + usadoMin * 60_000).toISOString(),
+    pedidoMin,
+    usadoMin,
+    ajustado: true,
+    aceitasMin,
+  };
 }
 
 /**
@@ -1338,10 +1458,13 @@ const createAppointment: ToolEntry = {
     },
   },
   handler: async (ctx, args) => {
-    const calendarId = String(args.calendar_id || "");
     const contactId = String(args.contact_id || "");
-    const invalid = validateGhlId(calendarId, "calendar") || validateGhlId(contactId, "contact");
-    if (invalid) return invalid;
+    const contactInvalid = validateGhlId(contactId, "contact");
+    if (contactInvalid) return contactInvalid;
+    // H108: nome, slug ou "default" no lugar do id vira o id (ou erro com a lista).
+    const calResolvido = await resolverCalendarioId(ctx, String(args.calendar_id || ""));
+    if (!calResolvido.ok) return calResolvido.error;
+    const calendarId = calResolvido.id;
     const startInvalid = validateIso8601(String(args.start_time || ""), "start_time");
     if (startInvalid) return startInvalid;
     const endInvalid = validateIso8601(String(args.end_time || ""), "end_time");
@@ -1366,6 +1489,20 @@ const createAppointment: ToolEntry = {
     // H26 (review 2026-05-14): gate admin pras 3 flags destrutivas.
     const overrideResult = buildOverridePayload(ctx, args);
     if (!overrideResult.ok) return overrideResult.error;
+
+    // H108: a duração é a que o calendário aceita. A configuração é lida uma vez
+    // (best-effort) e reaproveitada na resolução de assignee abaixo.
+    let calDetalhe: CalendarDetails | null = null;
+    try {
+      calDetalhe = await getCalendarDetails(ctx.ghlClient, calendarId);
+    } catch {
+      calDetalhe = null;
+    }
+    const duracao = ajustarDuracaoAoCalendario(
+      calDetalhe?.calendar,
+      String(args.start_time),
+      String(args.end_time),
+    );
 
     // Fix bug "self" literal observado em prod 2026-05-11 (signal HIGH 2 hits):
     // LLM mandava `assigned_user_id: "self"` como string em vez de resolver
@@ -1433,7 +1570,7 @@ const createAppointment: ToolEntry = {
     // override (agenda de outro user, toNotify) continuam admin-only intactos.
     if (willAssignRep) {
       try {
-        const calDet = await getCalendarDetails(ctx.ghlClient, calendarId);
+        const calDet = calDetalhe ?? (await getCalendarDetails(ctx.ghlClient, calendarId));
         const members = (calDet.calendar?.teamMembers || [])
           .map((tm) => tm.userId)
           .filter((id): id is string => !!id);
@@ -1510,7 +1647,8 @@ const createAppointment: ToolEntry = {
         contactId,
         locationId: ctx.locationId,
         startTime: new Date(String(args.start_time)).toISOString(),
-        endTime: new Date(String(args.end_time)).toISOString(),
+        // H108: fim = início + duração aceita pelo calendário (ver ajustarDuracaoAoCalendario).
+        endTime: new Date(duracao.endIso).toISOString(),
         ...(args.title ? { title: String(args.title) } : {}),
         ...(args.meeting_location_type ? { meetingLocationType: String(args.meeting_location_type) } : {}),
         ...(args.meeting_location ? { address: String(args.meeting_location) } : {}),
@@ -1630,6 +1768,22 @@ const createAppointment: ToolEntry = {
           // FATO. Narrar daqui — não de memória. Ausente = omitir na resposta.
           calendar_id: calendarId,
           ...(calName ? { calendar_name: calName } : {}),
+          ...(calResolvido.resolvidoDe ? { calendar_resolved_from: calResolvido.resolvidoDe } : {}),
+          // H108: duração que entrou de FATO. Quando o calendário obrigou outra,
+          // o bot avisa o rep (mesma escola do booked_label: dado do estado real).
+          duration_min: duracao.usadoMin,
+          ...(duracao.ajustado
+            ? {
+                duration_adjusted: {
+                  requested_min: duracao.pedidoMin,
+                  used_min: duracao.usadoMin,
+                  accepted_min: duracao.aceitasMin,
+                },
+                note:
+                  `A duração foi ajustada de ${duracao.pedidoMin} para ${duracao.usadoMin} min porque esse ` +
+                  `calendário só aceita ${duracao.aceitasMin.join(" ou ")} min. Avise o rep na confirmação.`,
+              }
+            : {}),
           // Quando setado, o bot deve avisar o rep que vai usar esse calendário
           // por padrão daqui pra frente (e que dá pra trocar). 1ª vez só.
           learned_default_calendar: learnedDefaultCalendar,

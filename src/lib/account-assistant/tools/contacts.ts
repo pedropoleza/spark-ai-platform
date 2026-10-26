@@ -2,8 +2,9 @@
  * Tools de Contatos. CRUD + busca + acessórios (notes/tasks/appointments do contato).
  */
 
-import type { ToolEntry } from "./types";
-import { validateGhlId, ghlErrorToResult, getRepGhlUserId } from "./types";
+import type { ToolContext, ToolEntry } from "./types";
+import { validateGhlId, ghlErrorToResult, getRepGhlUserId, resolveAssignedUserId } from "./types";
+import type { ToolResult } from "@/types/account-assistant";
 import {
   getContact as ghlGetContact,
   createContact as ghlCreateContact,
@@ -12,7 +13,10 @@ import {
   getContactAppointments as ghlGetContactAppointments,
   listNotesOnContact,
   listTasksOnContact,
+  searchDuplicateContact,
 } from "@/lib/ghl/operations";
+// H108 (caso Ana Gusmão #456): telefone/e-mail que o rep digitou vence o de contato do CRM.
+import { extractTypedPhones, extractTypedEmails, mesmoTelefone } from "../contact-resolver/typed-data";
 import { executeContactsFilter, type FilterExpression } from "../filter-engine";
 import { normalizePhone, resolveLocationDefaultCountry } from "../identity";
 // F5/F6 (contact-resolution 2026-06): resolver fuzzy + telefone + score (substitui o GET cru).
@@ -291,6 +295,98 @@ const getContact: ToolEntry = {
   },
 };
 
+/**
+ * H108 (caso Ana Gusmão #456, 2026-10-26): o telefone ou e-mail que o rep DIGITOU
+ * vence o que veio de um contato que já existe no CRM.
+ *
+ * A busca por "Filipe Sonoplasta" voltou candidatos de confiança baixa, a Ana
+ * mandou o telefone dele, e o bot chamou create_contact com o telefone do 1º
+ * candidato (outra pessoa). Só não deu estrago porque o assigned_to "self" deu 404
+ * antes: sem isso, o Spark Leads recusaria como duplicata do outro Filipe e
+ * devolveria o id dele, o caminho pra marcar a reunião com a pessoa errada.
+ *
+ * Recusa quando as três coisas valem juntas (a chamada ao CRM só acontece no caso
+ * estreito):
+ *  1. o rep digitou telefone (ou e-mail) nas últimas falas;
+ *  2. o dado que veio na tool não é nenhum dos digitados;
+ *  3. esse dado já pertence a OUTRO contato no Spark Leads.
+ * Sem (1) nada muda (foto de cartão, áudio, conversa antiga). Sem (3) também: o
+ * modelo pode ter lido o número de uma imagem. Falha na consulta = segue o fluxo.
+ *
+ * Replay em prod antes de ligar (60 dias, 57 chamadas de create_contact): recusaria
+ * 2 casos, os 2 com telefone de outra pessoa (Ana 26/10 e Sam Newell 12/10), e
+ * nenhum caso legítimo. Teste: scripts/test-sparkbot-contato-agenda-h108.ts.
+ */
+export async function conferirDadoDigitado(
+  ctx: ToolContext,
+  dados: { phone?: string; email?: string },
+  defaultCountry: "US" | "BR" = "US",
+): Promise<ToolResult | null> {
+  const fala = ctx.repMessage || "";
+  if (!fala.trim()) return null;
+
+  // Exibição do digitado em E.164. 11 dígitos começando com 1 sem "+" é US com
+  // DDI (o normalizePhone colaria outro +1); celular BR tem 9 no 3º dígito.
+  const exibir = (t: string): string =>
+    t.startsWith("+")
+      ? t
+      : t.length === 11 && t.startsWith("1") && t[2] !== "9"
+        ? `+${t}`
+        : normalizePhone(t, defaultCountry);
+
+  const pendentes: Array<{ tipo: "telefone" | "e-mail"; valor: string; digitados: string[]; busca: { number?: string; email?: string } }> = [];
+  if (dados.phone) {
+    const digitados = extractTypedPhones(fala);
+    if (digitados.length > 0 && !digitados.some((t) => mesmoTelefone(t, dados.phone))) {
+      pendentes.push({
+        tipo: "telefone",
+        valor: dados.phone,
+        digitados: digitados.map(exibir),
+        busca: { number: dados.phone },
+      });
+    }
+  }
+  if (dados.email) {
+    const digitados = extractTypedEmails(fala);
+    if (digitados.length > 0 && !digitados.includes(dados.email.trim().toLowerCase())) {
+      pendentes.push({ tipo: "e-mail", valor: dados.email, digitados, busca: { email: dados.email } });
+    }
+  }
+
+  for (const p of pendentes) {
+    let dono: { id: string; nome: string } | null = null;
+    try {
+      const r = await searchDuplicateContact(ctx.ghlClient, ctx.locationId, p.busca);
+      const c = r?.contact;
+      if (c?.id) {
+        dono = {
+          id: c.id,
+          nome: c.contactName || [c.firstName, c.lastName].filter(Boolean).join(" ") || "sem nome",
+        };
+      }
+    } catch (err) {
+      console.warn(
+        "[create_contact] H108: conferência do dado digitado falhou (segue o fluxo):",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    if (!dono) continue;
+    return {
+      status: "error",
+      // retryable: é o modelo que corrige (re-chama com o dado do rep), não erro do sistema.
+      retryable: true,
+      code: "data_from_other_contact",
+      message:
+        `O ${p.tipo} ${p.valor} NÃO foi o que o rep passou na conversa: ele já pertence a outro ` +
+        `contato do Spark Leads ("${dono.nome}", id ${dono.id}), provavelmente tirado de um resultado ` +
+        `de busca. Nunca crie contato com ${p.tipo} de outra pessoa. O rep digitou: ${p.digitados.join(", ")}. ` +
+        `Se for o ${p.tipo} da pessoa que ele pediu, chame create_contact de novo com ele. Se houver ` +
+        `dúvida, pergunte ao rep.`,
+    };
+  }
+  return null;
+}
+
 const createContact: ToolEntry = {
   def: {
     name: "create_contact",
@@ -310,8 +406,8 @@ const createContact: ToolEntry = {
         assigned_to: {
           type: "string",
           description:
-            "User ID do Spark Leads pra dono/owner. Se o rep pedir 'me coloca como owner', " +
-            "use o ghl_user_id dele na location ativa.",
+            "Dono do contato. 'self' = o próprio rep (o servidor traduz pro usuário dele nesta conta). " +
+            "Pra outra pessoa da equipe, o ID do usuário do Spark Leads (list_users). Omita se o rep não pediu dono.",
         },
       },
     },
@@ -325,13 +421,25 @@ const createContact: ToolEntry = {
       return { status: "error", message: "Pelo menos um de: first_name, last_name, email, phone", retryable: false };
     }
 
+    // H108 (caso Ana Gusmão #456, provado em prod 2026-10-26): o assigned_to ia CRU
+    // pro POST /contacts/. O modelo manda "self", o Spark Leads procura um usuário
+    // chamado "self" (GET /users/self = 404 "The user does not exist") e a criação
+    // volta 404 "Request failed with status code 404". A/B com o mesmo corpo: "self"
+    // = 404, id real da Ana = passa da validação. Foram 7 de 7 chamadas com "self"
+    // em 30 dias, todas 404. Mesmo resolvedor do create_appointment.
+    const resolvedOwner = resolveAssignedUserId(ctx, args.assigned_to);
+    if (!resolvedOwner.ok) return resolvedOwner.error;
+
     // Normaliza phone BR-aware (paridade c/ import tabular): operação é US mas
     // mercado é BR — número BR de 10/11 dígitos sem `+` default-a pra +1 no GHL,
     // gerando phone errado, falha de dedup e outbound (SMS/WhatsApp) que não
     // entrega silenciosamente. normalizePhone preserva quem já veio em E.164.
-    const phone = phoneRaw
-      ? normalizePhone(phoneRaw, await resolveLocationDefaultCountry(ctx.locationId))
-      : undefined;
+    const defaultCountry = phoneRaw ? await resolveLocationDefaultCountry(ctx.locationId) : "US";
+    const phone = phoneRaw ? normalizePhone(phoneRaw, defaultCountry) : undefined;
+
+    // H108: telefone/e-mail de outro contato do CRM não entra se o rep digitou outro.
+    const conflito = await conferirDadoDigitado(ctx, { phone, email }, defaultCountry);
+    if (conflito) return conflito;
 
     try {
       const body: Record<string, unknown> = { locationId: ctx.locationId };
@@ -342,7 +450,7 @@ const createContact: ToolEntry = {
       if (args.company_name) body.companyName = String(args.company_name);
       if (Array.isArray(args.tags)) body.tags = args.tags;
       if (args.source) body.source = String(args.source);
-      if (args.assigned_to) body.assignedTo = String(args.assigned_to);
+      if (resolvedOwner.user_id) body.assignedTo = resolvedOwner.user_id;
 
       const res = await ghlCreateContact(ctx.ghlClient, body);
       return { status: "ok", data: { contact_id: res.contact?.id } };
@@ -378,8 +486,8 @@ const updateContact: ToolEntry = {
         assigned_to: {
           type: "string",
           description:
-            "User ID do Spark Leads pra dono/owner do contato (campo `assignedTo` na API). " +
-            "Se o rep pedir 'me coloca como owner', use ctx.rep.ghl_users[active].ghl_user_id.",
+            "Dono do contato. 'self' = o próprio rep (o servidor traduz pro usuário dele nesta conta). " +
+            "Pra outra pessoa da equipe, o ID do usuário do Spark Leads (list_users).",
         },
         custom_fields: {
           type: "array",
@@ -411,7 +519,12 @@ const updateContact: ToolEntry = {
     }
     if (args.company_name) body.companyName = String(args.company_name);
     if (args.date_of_birth) body.dateOfBirth = String(args.date_of_birth);
-    if (args.assigned_to) body.assignedTo = String(args.assigned_to);
+    // H108: mesmo defeito do create_contact ("self" cru vira 404 no Spark Leads).
+    if (args.assigned_to !== undefined) {
+      const resolvedOwner = resolveAssignedUserId(ctx, args.assigned_to);
+      if (!resolvedOwner.ok) return resolvedOwner.error;
+      if (resolvedOwner.user_id) body.assignedTo = resolvedOwner.user_id;
+    }
     if (args.address && typeof args.address === "object") {
       const a = args.address as Record<string, unknown>;
       if (a.line1) body.address1 = String(a.line1);

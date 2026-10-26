@@ -85,13 +85,25 @@ export function extractPendingSubject(toolCalls: unknown, when?: string): Pendin
       const n =
         str(input.name) ||
         [str(input.first_name), str(input.last_name)].filter(Boolean).join(" ").trim();
-      const tel = str(input.phone) || acharTelefone(JSON.stringify(input));
+      // H108 (caso Ana Gusmão #456): tentativa recusada porque o telefone era de
+      // OUTRO contato não pode levar esse telefone pro próximo turno como se fosse
+      // da pessoa em jogo. O nome segue valendo.
+      const recusadaH108 = /data_from_other_contact/.test(preview);
+      const tel = recusadaH108 ? "" : str(input.phone) || acharTelefone(JSON.stringify(input));
       if (n || tel) return { name: n || undefined, phone: tel || undefined, when, via: "create_attempt" };
     }
 
     if (nome === "search_contacts" && !doBusca && buscaVazia(preview)) {
       const termo = str(input.query) || str(input.name) || str(input.search) || str(input.term);
-      const tel = str(input.phone) || acharTelefone(termo, preview);
+      // Fix bug observado em prod 2026-10-26 (H108, caso Ana Gusmão #456): o
+      // telefone também era procurado no PREVIEW do resultado. Numa busca de
+      // confiança baixa o preview traz os candidatos, que são OUTRAS pessoas, e
+      // o 1º telefone dele virava "o telefone de quem o rep apresentou". O bot
+      // leu "Filipe Sonoplasta (+19548189811)" no contexto, ignorou o número que
+      // a Ana tinha acabado de digitar e criou o contato com o do outro Filipe.
+      // Medido: 192 de 213 assuntos com telefone em 60 dias saíram do preview
+      // (17 reps). O telefone só pode vir do que foi BUSCADO.
+      const tel = str(input.phone) || acharTelefone(termo);
       // Termo que é só telefone não vira "nome".
       const ehSoTelefone = termo && termo.replace(/[\d\s+().-]/g, "").length === 0;
       if (termo || tel) {

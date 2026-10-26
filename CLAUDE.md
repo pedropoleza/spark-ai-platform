@@ -232,6 +232,21 @@ Thiago, e a IA seguiu falando e mandou follow-up de "cotação" no dia da reuni�
 - Mexeu no detector? Rode `scripts/test-equipe-assumiu.ts` e o replay `scripts/_replay-h105.ts
   <locationId|all>` contra conversas reais antes de dar como pronto.
 
+### Cadastro e agendamento pelo SparkBot (H108, caso Ana Gusmão #456, 2026-10-26): no ar
+
+O bot tentou cadastrar o contato com o telefone de OUTRA pessoa e não conseguiu marcar. Regras:
+- **`assigned_to` nunca vai cru pro Spark Leads.** "self" vira 404 (`GET /users/self` não existe).
+  Toda tool que grava dono passa pelo `resolveAssignedUserId` (`tools/types.ts`).
+- **Telefone do "assunto pendente" (H59) sai só do termo BUSCADO**, nunca do preview do resultado:
+  numa busca de confiança baixa o preview traz candidatos, que são outras pessoas.
+- **O dado que o rep digitou vence o de contato do CRM** (`conferirDadoDigitado` no
+  `create_contact`). Não decida "é outra pessoa" pelo NOME: no replay, a duplicata real quase
+  sempre era a mesma pessoa com outro nome no CRM. O que separa é a origem do dado.
+- **Calendário vai por id** (`resolverCalendarioId`: nome, slug e "default" viram id) e **a
+  duração é a que o calendário aceita** (`ajustarDuracaoAoCalendario`, lê `durationOptions`).
+- Teste: `scripts/test-sparkbot-contato-agenda-h108.ts`. Pendências (confirmação dupla, opções no
+  erro de horário, lote/reagendamento, `buscaVazia`) na seção H108 do `docs/DECISIONS.md`.
+
 ### Campanhas em Grupo de WhatsApp (H40, Pedro 2026-06-18) — flag OFF
 SparkBot posta em GRUPOS de WhatsApp via API Stevo (caso Matheus "2 posts/dia 7:30"). **Tudo atrás de `GROUP_CAMPAIGNS_ENABLED` (default OFF / log-first)** — gateia o REGISTRO das tools em `tools/index.ts`. Reusa o motor Bulk V2 (NÃO criou tabelas novas). Plano: `_planning/group-campaigns-whatsapp/PLANO.md`; copy aprovada: `COPY.md`.
 

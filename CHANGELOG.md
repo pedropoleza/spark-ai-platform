@@ -4,6 +4,19 @@ Histórico organizado por feature/bugfix. Versionamento semântico informal — 
 
 ---
 
+## [2026-10-26] SparkBot: cadastro e agendamento (caso Ana Gusmão, #456)
+
+### Fixed
+- **Cadastro com dono "self" dava 404** (H108): `create_contact` e `update_contact` mandavam
+  `assigned_to: "self"` cru pro Spark Leads, que procura um usuário chamado "self". Agora passam pelo
+  `resolveAssignedUserId` (o usuário do rep na conta). As 7 chamadas com "self" em 30 dias deram 404.
+- **Telefone de outra pessoa no cadastro** (H108): o "assunto pendente" do H59 tirava o telefone do 1º
+  candidato da busca (192 turnos em 60 dias); agora só do termo buscado. E o `create_contact` recusa
+  telefone ou e-mail de outro contato do CRM quando o rep digitou outro.
+- **Reunião recusada pela duração ou pelo nome do calendário** (H108): o `create_appointment` usa a
+  duração que o calendário aceita (`durationOptions`) e resolve nome, slug e "default" pro id do
+  calendário (41 de 196 agendamentos em 60 dias morriam com "calendar_id inválido").
+
 ## [2026-10-26] Follow-up da Márcia e vigia da Alves Cury
 
 ### Fixed

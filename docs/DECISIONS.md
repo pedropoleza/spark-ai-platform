@@ -28,6 +28,7 @@ Quando criar nova entry: pegue próximo número disponível na categoria, adicio
 | **H105** | `lib/queue/human-takeover.ts` (`saidaQueDecide`/`pareceEcoDoEnvio`/`contatoDaEquipe`/`decidirPausaPeloHistorico`) + `queue-processor.ts` (F52) + `follow-up-scheduler.ts` (gate de dono + reunião futura) + `agents/contact-controls.ts` (pill) + migration `20261016200000_skip_if_team_contacted.sql` + teste `scripts/test-equipe-assumiu.ts` | 2026-10-16 | **A IA atravessava a equipe da Jussara (ticket #445, caso Thiago).** A Thamires ligou, mandou a ficha e marcou a reunião; a IA seguiu conversando e no dia seguinte o follow-up perguntou "posso te mandar uma cotação hoje?" com a reunião às 12pm. Três furos no detector + follow-up cego pra reunião marcada pela equipe + modo estrito opt-in. Detalhe na seção H105. | bug em prod 2026-10-16 (Jussara) |
 | **H106** | `lib/queue/queue-processor.ts` (leitura do `conversation_state` no início do turno) + caso C8 em `scripts/test-targeting-exclusao-ativa.ts` | 2026-10-19 | **A IA calou no 3º turno de um lead ativo por causa de um timeout do banco (Alves Cury, lead Mara, 17/10).** O supabase-js devolveu `data: null` sem lançar; o `trigger_once` achou que era 1º contato, re-avaliou a frase do anúncio contra "Por conta propria" e gravou `targeting_skip`. Agora erro na leitura do estado faz o turno falhar e voltar pra fila (retry 1, 5 e 15 min). | bug em prod 2026-10-17 (Alves Cury) |
 | **H107** | `lib/queue/followup-repeat-guard.ts` (`isRepeatedAsk` ganha `textoDoAdmin`) + `lib/queue/follow-up-scheduler.ts` (passa o `custom_message` do toque) + teste `scripts/test-followup-repeat-guard.ts` + replay `scripts/_replay-h107.ts` | 2026-10-26 | **O 3º toque de follow-up da Márcia não saía desde 31/08 (chamado #455).** O guarda de pergunta repetida do H88 lia o passo 3 escrito pelo admin ("na hora do aperto... me diz quando podemos conversar") como repetição do passo 2 ("Vamos marcar um horário"), pela família `horario`, e cancelava o toque. Agora pedido que vem do texto do admin pra aquele toque não conta como repetição; pedido que o modelo acrescenta continua julgado. Replay: 42 de 42 pulos reais deixam de vetar o literal do passo. | bug em prod 2026-10-26 (Márcia/Horizon) |
+| **H108** | `tools/contacts.ts` (`create_contact`/`update_contact` pelo `resolveAssignedUserId` + `conferirDadoDigitado`) + `contact-resolver/typed-data.ts` + `contact-resolver/pending-subject.ts` (telefone só do termo buscado) + `tools/calendar.ts` (`resolverCalendarioId`, `ajustarDuracaoAoCalendario`) + `tools/types.ts` (dica de id por entidade) + `ghl/operations.ts` (`searchDuplicateContact`) + teste `scripts/test-sparkbot-contato-agenda-h108.ts` | 2026-10-26 | **O SparkBot tentou cadastrar o contato com o telefone de OUTRA pessoa e não conseguiu marcar a reunião (caso Ana Gusmão, #456).** Quatro defeitos na mesma conversa: `assigned_to: "self"` ia cru pro Spark Leads (404, 7 de 7 em 30 dias); o "assunto pendente" do H59 pegava o telefone do 1º candidato da busca (192 turnos em 60 dias); 30 min fixos num calendário que só aceita 60; calendário passado pelo nome (41 de 196 `create_appointment` em 60 dias). Detalhe na seção H108. | bug em prod 2026-10-26 (Vergus Finance) |
 | **H109** | `vercel.json` (cron `/api/cron/vigia-conta?loc=YuR0LCZomFzrfkDK2ezo,siRf2qA6jkuWNYZXSgay`, 14:00 UTC) | 2026-10-26 | **Vigia diário da Alves Cury, temporário: uma semana, revisar em 02/11/2026.** Promessa do Pedro à cliente em 22/10 (análise diária das conversas por alguns dias). O `vigia-conta` do pg_cron roda sem `?loc=` e só cobre as contas da Marina. | promessa à cliente 2026-10-22 |
 | **H97** | `lib/queue/targeting.ts` (`avaliarExclusao`/`checkContactExclusion`) + `queue-processor.ts` + `follow-up-scheduler.ts` + `monitoring/vigia-conta.ts` + teste `scripts/test-targeting-exclusao-ativa.ts` | 2026-09-28 | **A exclusão do público (H81) só barrava a 1ª mensagem.** Em `trigger_once` com conversa ativa o processor pula o targeting INTEIRO (H51/H96) e o runner de follow-up nunca olhou targeting, então "não atender quem tem a tag active client" não valia pra quem virou cliente DEPOIS de entrar. Conta da Jussara (agente `a297dadc`, 28/09): a IA respondeu clientes com apólice e prometeu coisas a eles. **Fix:** onde o targeting é pulado (conversa ativa em trigger_once, retomada manual) e antes de cada toque de follow-up, avalia SÓ as folhas `negate`; a inclusão segue pulada, o comportamento de ativação não muda. **Semântica:** projeção da MESMA árvore com inclusão = match e exclusão avaliada de verdade. Consequências: (a) nunca barra quem o gate completo deixaria passar com as mesmas tags (a árvore é E/OU de folhas, virar inclusão pra match só ajuda), então não recria o "responde a 1ª e morre"; conferido em 9.216 combinações; (b) na forma que a frota usa (grupo só de exclusões ligado por E) é veto puro. Folha `message` negada fica neutra (conteúdo é gatilho de entrada). Neutro nunca inverte (H81). **Retomada manual não vence a exclusão:** `ai_resumed_at` nunca é limpo (38 conversas ativas da Jussara carregam um de julho) e o MC-5 grava o mesmo campo em recuperação automática. **Fail-open de verdade:** erro no GET do contato = não excluído (diferente do `.catch(() => null)` do gate completo, que leria erro como "sem tags"). Audit: `targeting_skip` com `exclusion: true` + `path` (`inbound_turn`/`followup_runner`), tipo antigo de propósito porque a RPC `medir_latencia_resposta` já o conta como silêncio com motivo; o `vigia-conta` não trata exclusão como lead barrado. Turno e runner cancelam a sequência de follow-up (padrão H89/MC-8). Custo: zero I/O pra agente sem `negate`; no runner reusa o GET do DND. Frota em 28/09: 3 agentes com `negate`, todos no formato grupo-de-exclusão-por-E: Jussara (trigger_once, ativo) e os 2 da Bianca (gate_ongoing, inativos). Teste 76/76, incluindo ponta a ponta de `processMessageQueue` e `processScheduledFollowUps` com Supabase falso; 12 checks falham sem o fix. | bug em prod 2026-09-28 (Jussara) |
 | **H78** | `core/coherence-gate.ts` (`GENERIC_WRITE_VERB_REGEX` + família `proactivity_off`) · `scripts/test-coherence-gate.ts` | 2026-08-14 | **"Tudo certo, parei" com `tools: []` — o opt-out de proativos era uma frase, não um estado.** Ticket #95 (Precious Planning): a rep Bianca Soares mandou **"Stop"** (05/08 02:16) depois de um aviso pós-reunião; o bot confirmou *"Tudo certo, parei. Qualquer coisa é só chamar!"* **sem chamar tool nenhuma** (registro da mensagem: `tools: []`) e os avisos continuaram (05/08 15:02, 06/08 12:00, 06/08 23:39) até o cliente abrir ticket. A pref persistida seguia `post_meeting: enabled=true` — o dispatcher LÊ a pref certinho a cada disparo; o estado é que nunca foi ESCRITO. Classe H73 (comportamento que só vive no texto). O coherence-gate (H43) existia exatamente pra isso mas tinha DOIS buracos: (a) o catch-all genérico de verbos-de-escrita não incluía **parei/desativei/desliguei/silenciei** — "Tudo certo, parei" não casava família nenhuma NEM o genérico; (b) a promessa em FUTURO ("não vou mais te mandar/lembrar") escapa de qualquer catch-all de pretérito. **Fix**: (a) 4 verbos novos no `GENERIC_WRITE_VERB_REGEX` — qualquer write de verdade (set_proactivity/pause_*/cancel_*) satisfaz o genérico, então FP ~zero; (b) família `proactivity_off` (\"não vou mais mandar/enviar/avisar/lembrar/incomodar/cobrar\") satisfeita por set_proactivity/set_daily_briefing/cancel_reminder/cancel_scheduled_message/cancel_followup/pause_followup/pause_bulk_job/cancel_bulk_job/cancel_guided_outreach — **o \"mais\" é obrigatório** (antes ou depois do verbo): \"não vou mandar nada agora\" fala de um envio específico, não de desligar, e sem essa exigência o FP seria constante. Violação sem write no turno → re-run com diretiva corretiva (o LLM executa a tool de verdade); com write → reescrita honesta (regra de ouro do gate, nada duplica). **Dado corrigido junto (OK do Pedro)**: prefs da Bianca desligadas como ela pediu dia 05 (`post_meeting`/`task_reminder` off + briefing off) e a pausa-por-silêncio do Luciano (ticket #150) limpa — o contador dele subiu porque o inbound estava MORTO na queda de 14/08, não porque ele silenciou. test-coherence-gate 26/26 (7 casos novos, incluindo a frase literal do flagrante + FP guards) · tsc verde. | ticket #95 Precious Planning · queda WhatsApp 2026-08-14 |
@@ -747,6 +748,67 @@ aguardando seus dados", "te liguei para passar a cotação", áudio pelo celular
 
 **Fica pra depois.** A diretiva de regeneração do H88 cita "conversa rápida de ~30 min no Zoom com
 especialista", que é a oferta da Alves Cury, e vale pra frota inteira.
+
+## H108 (2026-10-26): Cadastro e agendamento pelo SparkBot (caso Ana Gusmão, #456)
+
+**Caso.** Ana Gusmão (Vergus Finance, `lUSGtKw9OWla97QEqtrh`) pediu por áudio às 9:24 ET:
+"marcar pra terça, amanhã, às cinco e meia da tarde, com o Filipe Sonoplasta". A busca voltou 3
+candidatos com confiança baixa; ela respondeu com o telefone dele. Às 9:24:55 o bot chamou
+`create_contact` com o telefone do 1º candidato (outra pessoa) e `assigned_to: "self"` (404).
+Depois criou o contato certo, pediu confirmação duas vezes, passou o NOME do calendário como id,
+mandou 30 min num calendário que só aceita 60 e, às 9:28, voltou a dar 404 no cadastro. A
+reunião foi marcada pela operação (`Jx1H2Hj71shMTqTheyeg`, 27/10 17:30 a 18:30 ET).
+
+**Causas, todas provadas com dado de produção:**
+1. **404 do cadastro.** `create_contact` e `update_contact` repassavam `assigned_to` cru. O Spark
+   Leads procura um usuário chamado "self" (`GET /users/self` = 404 "The user does not exist") e
+   o `POST /contacts/` volta 404 "Request failed with status code 404". A/B com o corpo exato das
+   9:28: "self" = 404; id real da Ana = passa da validação (cai na recusa de duplicata, a resposta
+   certa); sem o campo = duplicata. Quando nome e telefone batem EXATAMENTE com um contato existente
+   a recusa de duplicata vem antes e o 404 some, por isso o sinal parecia intermitente (estava
+   `wontfix` como "fóssil"). 7 de 7 chamadas com "self" em 30 dias deram 404. **Fix:** os dois
+   passam pelo `resolveAssignedUserId`, o mesmo do `create_appointment`.
+2. **Telefone de outra pessoa.** O bloco "PESSOA EM JOGO AGORA" do H59 (`pending-subject.ts`)
+   procurava o telefone também no PREVIEW do resultado da busca. Em busca de confiança baixa o
+   preview traz os candidatos, que são outras pessoas, e o 1º telefone virava "o telefone de quem
+   o rep apresentou". O contexto das 9:24:55 dizia "Filipe Sonoplasta (+19548189811)", número do
+   outro Filipe, e o bot seguiu isso em vez do que a Ana tinha digitado. Medido: 192 de 213
+   assuntos com telefone em 60 dias saíram do preview, 17 reps (um deles com uma DATA no lugar do
+   telefone). **Fix:** telefone só do termo buscado; tentativa de criação recusada pelo item 3 não
+   leva o telefone adiante.
+3. **Defesa no próprio cadastro** (`conferirDadoDigitado`): o telefone ou e-mail que o rep
+   DIGITOU vence o que já pertence a outro contato. Recusa (retryable, código
+   `data_from_other_contact`) só quando valem juntas: o rep digitou telefone nas últimas falas, o
+   da tool não é nenhum deles, e o da tool já é de OUTRO contato (`GET /contacts/search/duplicate`).
+   Replay com o código real, 60 dias: 53 cadastros com telefone, 41 com telefone digitado, 2
+   chegariam a consultar o CRM e os 2 recusariam com razão (Ana 26/10; Sam Newell 12/10, em que o
+   rep compartilhou o cartão do "Sammy" e o bot usou o número do "Sam").
+   ⚠️ **Decidir pelo NOME foi testado e derrubado no replay:** nas duplicatas reais o contato
+   existente quase sempre é a MESMA pessoa com outro nome no CRM ("Maria" e "Maria Luz", "Tony" e
+   "EZ Flooring & Remodel", "Samuel" e "Sammy"). Uma regra por nome bloquearia o caso legítimo. O
+   que separa é a ORIGEM do dado.
+4. **Calendário pelo nome.** `create_appointment` agora resolve nome, slug e "default" pro id
+   (`resolverCalendarioId`): chave sem acento, caixa e pontuação contra nome e slug; "default" =
+   padrão salvo do rep ou o único calendário utilizável. Placeholder inventado
+   ("your_calendar_id") continua erro, agora com a lista de calendários e IDs. Medido: 41 de 196
+   `create_appointment` em 60 dias morreram com "calendar_id inválido" (nomes como "Consulta
+   Inicial" e "2 - Reuniao com Cliente", "default", slugs). A dica de id inválido deixou de mandar
+   usar `search_contacts` pra calendário.
+5. **Duração.** O fim da reunião passa a ser início + a duração que o calendário ACEITA
+   (`durationOptions`, padrão primeiro), e o retorno traz `duration_min` e, quando ajustou,
+   `duration_adjusted` + `note` pro bot avisar o rep. Calendário sem `durationOptions` fica como o
+   modelo mandou. A leitura do calendário é a mesma usada na resolução de assignee (uma só).
+
+**Não feito (pendências):** (a) pedir confirmação de novo depois do "Confirmo" (o modelo re-chamou
+com `confirmed_by_rep: false`): corrigir de forma determinística mexe na trava H8 e precisa de
+discussão; medido 1 caso em 60 dias. (b) Quando o horário não cabe, oferecer as opções do dia no
+próprio erro (hoje a mensagem manda usar `get_free_slots`). (c) Lote (`create_appointments_batch`),
+reagendamento e `get_free_slots` ainda não resolvem nome nem ajustam duração (0, 0 e 1 falha em 60
+dias). (d) O `buscaVazia` do H59 trata `"tags":[]` como busca vazia: 65 buscas com confiança HIGH
+viraram "não está no Spark Leads" em 60 dias. Muda quando o bloco aparece, então precisa de replay
+de comportamento antes.
+
+Teste: `scripts/test-sparkbot-contato-agenda-h108.ts` (58/58).
 
 ## H109 (2026-10-26): vigia diário da Alves Cury, por uma semana (revisar em 02/11)
 

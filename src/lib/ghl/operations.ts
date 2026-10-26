@@ -311,6 +311,26 @@ export async function createContact(
   return client.post<{ contact?: { id: string } }>("/contacts/", body);
 }
 
+/**
+ * Contato que o Spark Leads consideraria duplicata pra esse telefone OU e-mail
+ * (a mesma regra que ele usa pra recusar criação). `contact` vem null quando
+ * ninguém tem o dado. Formato conferido em prod 2026-10-26 (H108): aceita o
+ * telefone com ou sem +1 e devolve `matchingField`.
+ */
+export async function searchDuplicateContact(
+  client: GHLClient,
+  locationId: string,
+  by: { number?: string; email?: string },
+): Promise<{
+  contact?: { id: string; firstName?: string; lastName?: string; contactName?: string; phone?: string; email?: string } | null;
+  matchingField?: string;
+}> {
+  const params: Record<string, string> = { locationId };
+  if (by.number) params.number = by.number;
+  if (by.email) params.email = by.email;
+  return client.get("/contacts/search/duplicate", params);
+}
+
 export async function updateContact(
   client: GHLClient,
   contactId: string,
@@ -722,13 +742,22 @@ export async function deleteAppointment(
   await client.delete(`/calendars/events/appointments/${encodeURIComponent(appointmentId)}`);
 }
 
+/** Detalhe do calendário. `durationOptions` = durações que ele ACEITA (H108). */
+export type CalendarDetails = {
+  calendar?: {
+    name?: string;
+    teamMembers?: Array<{ userId?: string; isPrimary?: boolean }>;
+    slotDuration?: number;
+    slotDurationUnit?: string;
+    durationOptions?: Array<{ duration?: number; durationUnit?: string; isDefault?: boolean }>;
+  };
+};
+
 export async function getCalendarDetails(
   client: GHLClient,
   calendarId: string,
-): Promise<{ calendar?: { name?: string; teamMembers?: Array<{ userId?: string; isPrimary?: boolean }> } }> {
-  return client.get<{ calendar?: { name?: string; teamMembers?: Array<{ userId?: string; isPrimary?: boolean }> } }>(
-    `/calendars/${encodeURIComponent(calendarId)}`,
-  );
+): Promise<CalendarDetails> {
+  return client.get<CalendarDetails>(`/calendars/${encodeURIComponent(calendarId)}`);
 }
 
 // =====================================================

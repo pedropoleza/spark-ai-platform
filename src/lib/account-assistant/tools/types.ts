@@ -82,9 +82,18 @@ export function validateGhlId(id: string, entityName: string): ToolResult | null
     /^[0-9]+$/.test(id) ||                   // tudo numérico = phone, não ID
     /^(.)\1+$/.test(id);                     // todos chars iguais (aaaaaa…)
   if (isInvalid) {
+    // H108 (caso Ana Gusmão, 2026-10-26): a dica era a mesma pra toda entidade e
+    // mandava o modelo usar search_contacts quando o que estava errado era o
+    // calendário (ele tinha passado o NOME "Consultoria de Seguros (Produtos)").
+    const dica =
+      entityName === "calendar"
+        ? "Passe o ID do calendário, não o nome: use list_calendars pra obter o ID real."
+        : entityName === "contact"
+          ? "Use search_contacts ou get_contact pra obter o ID real antes de chamar esta tool."
+          : "Use a tool de listagem correspondente pra obter o ID real antes de chamar esta tool.";
     return {
       status: "error",
-      message: `${entityName}_id inválido: "${id}". IDs do Spark Leads têm ~20 chars alfanuméricos misturados (ex: 'ErpM2X8vR1U4IrRTZnKX'). Use search_contacts ou get_contact pra obter o ID real antes de chamar esta tool.`,
+      message: `${entityName}_id inválido: "${id}". IDs do Spark Leads têm ~20 chars alfanuméricos misturados (ex: 'ErpM2X8vR1U4IrRTZnKX'). ${dica}`,
       retryable: false,
     };
   }
