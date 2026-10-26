@@ -123,13 +123,49 @@ export interface RepeatVerdict {
 }
 
 /**
+ * H107 (2026-10-26, caso Márcia, chamado #455): o pedido do candidato veio do
+ * texto que o ADMIN escreveu pra este toque? Vale a mesma régua do veredito
+ * (família de dado ou Dice), só que basta 1 token em comum: o admin escreve
+ * frases curtas ("Oie, tudo bem?") e o modelo acrescenta o nome do lead.
+ */
+function ehPedidoDoAdmin(cand: string, adminAsks: string[], threshold: number): boolean {
+  const cTokens = contentTokens(cand);
+  const cSet = new Set(cTokens);
+  const cFams = familiesOf(cTokens);
+  for (const adm of adminAsks) {
+    const aTokens = contentTokens(adm);
+    const aFams = familiesOf(aTokens);
+    for (const f of cFams) if (aFams.has(f)) return true;
+    const aSet = new Set(aTokens);
+    let shared = 0;
+    for (const t of cSet) if (aSet.has(t)) shared++;
+    if (shared >= 1 && dice(cSet, aSet) >= threshold) return true;
+  }
+  return false;
+}
+
+/**
  * O texto candidato de follow-up repete algum pedido que a IA já fez?
  * `priorAiTexts` = textos outbound anteriores da IA nesta conversa (ordem livre).
+ *
+ * `textoDoAdmin` (H107) = a mensagem que o admin escreveu pra ESTE toque
+ * (`scheduled_followups.custom_message`, modo manual). Os pedidos do candidato
+ * que vêm desse texto não contam como repetição: o roteiro é do admin, e o
+ * guard existe pra segurar o MODELO quando ele repete pergunta ignorada, não
+ * pra vetar o passo que o admin escreveu. Pedido que o modelo ACRESCENTA por
+ * conta própria segue julgado como sempre. Sem `textoDoAdmin` (modo ai_auto),
+ * nada muda.
+ *
+ * Fix bug observado em prod 2026-10-26: o passo 3 da Márcia ("...na hora do
+ * aperto..., só me diz quando podemos conversar") caía na família "horario"
+ * por causa do "hora" e era lido como repetição do passo 2 dela ("Vamos marcar
+ * um horário..."). Desde o H88 (31/08), 36 de 37 terceiros toques da conta
+ * foram cancelados assim e nenhum saiu; em agosto saíam 9 a 55 por semana.
  */
 export function isRepeatedAsk(
   candidate: string,
   priorAiTexts: string[],
-  opts: { diceThreshold?: number; minShared?: number } = {},
+  opts: { diceThreshold?: number; minShared?: number; textoDoAdmin?: string | null } = {},
 ): RepeatVerdict {
   const threshold = opts.diceThreshold ?? 0.55;
   const minShared = opts.minShared ?? 2;
@@ -141,7 +177,11 @@ export function isRepeatedAsk(
   for (const t of priorAiTexts) priorAsks.push(...extractAsks(t));
   if (priorAsks.length === 0) return { repeated: false };
 
+  const adminAsks = opts.textoDoAdmin ? extractAsks(opts.textoDoAdmin) : [];
+
   for (const cand of candAsks) {
+    // H107: pedido que veio do roteiro do admin não é repetição do modelo.
+    if (adminAsks.length > 0 && ehPedidoDoAdmin(cand, adminAsks, threshold)) continue;
     const cTokens = contentTokens(cand);
     const cSet = new Set(cTokens);
     const cFams = familiesOf(cTokens);

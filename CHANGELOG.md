@@ -4,6 +4,16 @@ Histórico organizado por feature/bugfix. Versionamento semântico informal — 
 
 ---
 
+## [2026-10-26] Follow-up da Márcia e vigia da Alves Cury
+
+### Fixed
+- **3º toque de follow-up vetado pelo próprio roteiro do admin** (H107, chamado #455): o guarda de
+  pergunta repetida do H88 lia o passo 3 da Márcia como repetição do passo 2 (família `horario`, por
+  causa do "na hora do aperto") e cancelava o toque. Desde 31/08 nenhum 3º toque saiu na conta.
+  Pedido que vem do texto do admin pra aquele toque não conta mais como repetição.
+
+---
+
 ## [Em desenvolvimento] — 2026-05-03+
 
 - Documentação fundacional: README real, CLAUDE.md, docs/DECISIONS, docs/RUNBOOK, CHANGELOG.

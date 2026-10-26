@@ -132,6 +132,62 @@ console.log("— elipse do PT (re-teste 31/08: 'Você mora em qual?' furava a co
   caso("3ª pergunta de trabalho ainda flaga", v5.repeated, true, `occ=${v5.occurrences}`);
 }
 
+console.log("[H107] o roteiro do admin não é vetado por ele mesmo (caso Márcia, 26/10)");
+{
+  // Os 3 passos reais do Agente de Vendas da Horizon (follow_up_config manual).
+  const p1 = "Oie! Vi que chegou pelo vídeo do Matheus 🙂 Me manda seus dados rapidinho?";
+  const p2 =
+    "Oie... Ficar parado meses por um acidente é o medo de todo brasileiro que trabalha pesado. Vamos marcar um horário pra eu te explicar como se proteger disso?";
+  const p3 =
+    "Oie, tudo bem? Quer que eu pause por aqui ou prefere me enviar os dados quando puder? Ninguém quer descobrir na hora do aperto quem paga as contas, só me diz quando podemos conversar.";
+  // Histórico real (contato SYlJ40Chnc6VINe8ddjb, 21-22/10): resposta da IA + passos 1 e 2.
+  const prior = [
+    "É um seguro de vida que pode te dar acesso a parte do valor ainda em vida, em situações como doença grave ou acidente.",
+    p1,
+    p2,
+  ];
+  // O bug: sem o texto do admin, o passo 3 LITERAL cai como repetição do passo 2
+  // ("hora" do "na hora do aperto" ∈ família horario). Era o que cancelava o toque.
+  const antes = isRepeatedAsk(p3, prior);
+  caso("sem textoDoAdmin, passo 3 literal ainda flaga (reproduz prod)", antes.repeated, true, antes.via);
+  caso("o pedido casado é o do passo 2", (antes.matched || "").startsWith("Vamos marcar um horário"), true);
+
+  const lit = isRepeatedAsk(p3, prior, { textoDoAdmin: p3 });
+  caso("passo 3 literal com textoDoAdmin passa", lit.repeated, false);
+
+  // O modelo costuma pôr o nome do lead e trocar uma palavra (prompt manda copiar).
+  const comNome =
+    "Oie Ka, tudo bem? Quer que eu pause por aqui ou prefere me mandar os dados quando puder? Ninguém quer descobrir na hora do aperto quem paga as contas, me diz quando a gente pode conversar.";
+  caso("passo 3 com nome do lead passa", isRepeatedAsk(comNome, prior, { textoDoAdmin: p3 }).repeated, false);
+
+  // Proteção preservada: pedido que o MODELO acrescenta e que já foi ignorado
+  // continua barrado (o "estado" foi pedido no turno e o passo 3 não pede estado).
+  const priorEstado = [
+    "Me passa nome completo, data de nascimento, estado onde mora e se é fumante que a gente já prepara sua cotação.",
+    p1,
+    p2,
+  ];
+  const drift = p3 + " E em qual estado você mora?";
+  const vd = isRepeatedAsk(drift, priorEstado, { textoDoAdmin: p3 });
+  caso("pedido acrescentado pelo modelo segue barrado", vd.repeated, true, vd.via);
+  caso("o casado é o pedido de estado", /estado/.test(vd.matched || ""), true);
+
+  // O passo 2 julgado contra o 1 nunca foi problema e continua passando.
+  caso("passo 2 vs passo 1 segue sem flag", isRepeatedAsk(p2, [p1], { textoDoAdmin: p2 }).repeated, false);
+
+  // textoDoAdmin vazio/nulo = comportamento de antes (modo ai_auto).
+  caso("textoDoAdmin nulo não muda nada", isRepeatedAsk(p3, prior, { textoDoAdmin: null }).repeated, true);
+  caso("textoDoAdmin vazio não muda nada", isRepeatedAsk(p3, prior, { textoDoAdmin: "" }).repeated, true);
+
+  // O texto do admin de OUTRO passo não autoriza o pedido deste.
+  const cleidmar = "Cleidmar, quando tiver um minutinho, me conta em qual estado você está para eu conseguir te ajudar com o seguro de vida.";
+  caso(
+    "texto do admin sem o pedido não libera a repetição",
+    isRepeatedAsk(cleidmar, ["Você mora em qual estado?"], { textoDoAdmin: p3 }).repeated,
+    true,
+  );
+}
+
 console.log("— helpers —");
 {
   const hist = "LEAD: Moro nos EUA\nAGENTE: Que bom!\nAGENTE: Você mora em qual estado?\nLEAD: Flórida";

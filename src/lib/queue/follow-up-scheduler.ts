@@ -1084,7 +1084,12 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
           // explícita; repetiu de novo → cancela o toque (silêncio > robô).
           if (msgText.trim() && !/\[\[\s*NAO_ENVIAR\s*\]\]/i.test(msgText)) {
             const priorAi = agentLinesFromHistory(recentHistory);
-            const veredito = isRepeatedAsk(msgText, priorAi);
+            // H107 (2026-10-26, caso Márcia, chamado #455): o texto que o admin
+            // escreveu pra este toque não pode ser vetado como "pergunta
+            // repetida" pelo próprio roteiro dele. O passo 3 dela era lido como
+            // repetição do passo 2 e o 3º toque não saía desde 31/08.
+            const textoDoAdmin = (followUp.custom_message as string | null) || null;
+            const veredito = isRepeatedAsk(msgText, priorAi, { textoDoAdmin });
             if (veredito.repeated) {
               const constraint =
                 `\n\n## PERGUNTA JÁ FEITA (PROIBIDO REPETIR — regra dura)\n` +
@@ -1122,7 +1127,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
               const retryOk =
                 retryText.trim() &&
                 !/\[\[\s*NAO_ENVIAR\s*\]\]/i.test(retryText) &&
-                !isRepeatedAsk(retryText, priorAi).repeated;
+                !isRepeatedAsk(retryText, priorAi, { textoDoAdmin }).repeated;
               if (retryOk) {
                 msgText = retryText;
                 console.log(
