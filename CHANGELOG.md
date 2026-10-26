@@ -12,6 +12,11 @@ Histórico organizado por feature/bugfix. Versionamento semântico informal — 
   causa do "na hora do aperto") e cancelava o toque. Desde 31/08 nenhum 3º toque saiu na conta.
   Pedido que vem do texto do admin pra aquele toque não conta mais como repetição.
 
+### Added
+- **Vigia diário da Alves Cury** (H109): cron da Vercel às 14:00 UTC em
+  `/api/cron/vigia-conta?loc=YuR0LCZomFzrfkDK2ezo,siRf2qA6jkuWNYZXSgay`. Temporário, por uma semana:
+  revisar em 02/11/2026 e tirar a linha do `vercel.json` se o acompanhamento acabar.
+
 ---
 
 ## [Em desenvolvimento] — 2026-05-03+

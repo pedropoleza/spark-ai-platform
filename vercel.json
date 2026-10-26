@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/vigia-contas-mudas",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/vigia-conta?loc=YuR0LCZomFzrfkDK2ezo,siRf2qA6jkuWNYZXSgay",
+      "schedule": "0 14 * * *"
     }
   ]
 }
