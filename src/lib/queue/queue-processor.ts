@@ -200,7 +200,8 @@ import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
 import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
 import { regraQueDesliga, descreveRegra } from "@/lib/queue/deactivation";
-import { deveSilenciarEntrada, entradaJaPassouPeloGate } from "@/lib/queue/entry-by-automation";
+import { deveIniciarFollowUpsNaEntrada, deveSilenciarEntrada, entradaJaPassouPeloGate } from "@/lib/queue/entry-by-automation";
+import type { FollowUpConfig } from "@/types/agent";
 import type { DeactivationRule } from "@/types/agent";
 import { notifyCriticalError } from "@/lib/utils/notify";
 import { withRetry } from "@/lib/utils/retry";
@@ -1244,6 +1245,28 @@ async function processGroup(
           error: upErr ?? logErr,
           metadata: { contactId: group.contactId, agentId: agent.id, locationId: group.locationId },
         });
+      }
+      // H110: a entrada silenciada abre a sequência de follow-ups (opt-in por
+      // agente). Sem isso, o lead que não responde à boas-vindas nunca recebe toque.
+      const fuCfg = (config as { follow_up_config?: FollowUpConfig | null }).follow_up_config;
+      if (!upErr && deveIniciarFollowUpsNaEntrada(fuCfg)) {
+        await scheduleFollowUps({
+          agentId: agent.id,
+          locationId: group.locationId,
+          contactId: group.contactId,
+          conversationId: group.conversationId || "",
+          followUpConfig: fuCfg,
+        });
+        const { error: fuLogErr } = await supabase.from("execution_log").insert({
+          agent_id: agent.id,
+          conversation_id: group.conversationId,
+          contact_id: group.contactId,
+          location_id: group.locationId,
+          action_type: "followups_scheduled_on_entry",
+          action_payload: { mode: fuCfg.mode, steps: fuCfg.mode === "manual" ? fuCfg.manual_steps.length : fuCfg.max_attempts },
+          success: true,
+        });
+        if (fuLogErr) console.warn("[Processor] falha ao auditar follow-up na entrada:", fuLogErr.message);
       }
       return;
     }

@@ -1,3 +1,5 @@
+import type { FollowUpConfig } from "@/types/agent";
+
 /**
  * Entrada pela automação: a IA cala na PRIMEIRA mensagem do lead e assume da
  * segunda em diante.
@@ -55,4 +57,20 @@ export function entradaJaPassouPeloGate(i: {
   entrySuppressedAt: string | null | undefined;
 }): boolean {
   return i.conversationActive || !!i.entrySuppressedAt;
+}
+
+/**
+ * H110 (caso Márcia, 29/10/2026): a entrada silenciada também abre a sequência
+ * de follow-ups? Sem isso, quem não responde à boas-vindas do workflow nunca
+ * entra na cadeia: `scheduleFollowUps` só roda depois de um turno da IA, e na
+ * entrada pela automação esse turno não existe de propósito. Medido na conta:
+ * dos leads de 27 e 28/10 que não responderam, 20 de 20 ficaram sem toque.
+ * Opt-in por agente (`follow_up_config.start_on_entry`), com o follow-up ligado.
+ * As travas de sempre continuam no runner (lead respondeu, equipe assumiu,
+ * regra de desativação, janela de envio).
+ */
+export function deveIniciarFollowUpsNaEntrada(
+  cfg: FollowUpConfig | null | undefined,
+): cfg is FollowUpConfig {
+  return !!cfg && cfg.enabled === true && cfg.start_on_entry === true;
 }
