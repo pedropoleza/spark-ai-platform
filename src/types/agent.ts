@@ -142,6 +142,12 @@ export interface FollowUpConfig {
   // "disqualified" (tag / mover no funil). Default OFF (opt-in por agente): não
   // muda o comportamento de quem não pediu. Ver disqualifyAfterFinalFollowUp.
   disqualify_after_final?: boolean;
+  // H110 (caso Márcia, 29/10/2026): com `entry_by_automation` a IA cala na 1ª
+  // mensagem e o follow-up só era agendado depois de um turno dela. Quem nunca
+  // respondia à boas-vindas do workflow ficava sem toque nenhum (36 leads em 9
+  // dias). Com true, a sequência começa na própria entrada silenciada.
+  // Default OFF (opt-in por agente).
+  start_on_entry?: boolean;
 }
 
 export interface Agent {
