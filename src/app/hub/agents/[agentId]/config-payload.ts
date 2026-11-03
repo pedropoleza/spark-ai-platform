@@ -171,6 +171,10 @@ export function makeSeed(c: Record<string, any>): Editable {
       intensity: clampNum(fu.intensity, 1, 10, 5), max_attempts: clampNum(fu.max_attempts, 1, 20, 3),
       min_delay_minutes: Math.max(1, num(fu.min_delay_minutes, 10)), max_delay_minutes: Math.max(1, num(fu.max_delay_minutes, 10080)),
       custom_prompt: str(fu.custom_prompt), manual_steps: Array.isArray(fu.manual_steps) ? fu.manual_steps : [],
+      // H110/H111: opt-in da Márcia (follow-up abre na entrada pela automação). Sem
+      // carregar aqui, o 1º Salvar do painel apagava a chave e os toques voltavam a
+      // nunca começar pra quem não responde a boas-vindas.
+      ...(fu.start_on_entry === true ? { start_on_entry: true } : {}),
     },
     post_booking: { behavior: pb.behavior === "continue_until_appointment" ? "continue_until_appointment" : "stop_and_handoff", handoff_message: str(pb.handoff_message), allow_reschedule: bool(pb.allow_reschedule, true), require_contact_before_booking: pb.require_contact_before_booking === true },
     specialist_name: str(c.specialist_name),

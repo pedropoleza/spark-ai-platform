@@ -63,6 +63,12 @@ export interface PromptContext {
   config: AgentConfig;
   agentType?: "sales_agent" | "recruitment_agent" | "custom_agent";
   contactName: string;
+  /**
+   * H111 (Alves Cury, 03/11/2026): id do contato no Spark Leads, para o
+   * `{contact.id}` das instruções do admin (link personalizado da landing, que
+   * mede quanto do vídeo o lead assistiu). Opcional: sem ele vira vazio.
+   */
+  contactId?: string;
   collectedData: Record<string, string>;
   locationName: string;
   currentDate: string;
@@ -1099,6 +1105,9 @@ function buildCustomInstructionsSection(ctx: PromptContext): string {
   const contactNameSafe = ctx.contactName?.trim() || "o lead";
   instructions = instructions
     .replace(/\{contact\.name\}/g, contactNameSafe)
+    // H111: link da landing por contato (?cid={contact.id}). Sem id, vazio: a
+    // landing ignora cid vazio e abre normal, sem medir (nunca vaza o literal).
+    .replace(/\{contact\.id\}/g, (ctx.contactId ?? "").trim())
     .replace(/\{agent\.name\}/g, ctx.config.personality?.name || "Agente")
     .replace(/\{location\.name\}/g, ctx.locationName)
     .replace(/\{agent\.specialist\}/g, ctx.config.specialist_name || "especialista");

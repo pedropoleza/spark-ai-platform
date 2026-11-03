@@ -108,6 +108,9 @@ const followUpConfigSchema = z.object({
   max_delay_minutes: z.number().min(1).optional(),
   custom_prompt: z.string().optional(),
   manual_steps: z.array(followUpStepSchema),
+  // H110: follow-up abre na entrada pela automação (opt-in). Fora do zod, o PUT
+  // descartava a chave no Salvar (achado do test-salvar-config-agentes em 03/11).
+  start_on_entry: z.boolean().optional(),
 });
 
 // Working hours
