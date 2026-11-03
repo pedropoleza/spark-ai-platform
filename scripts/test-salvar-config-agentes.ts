@@ -22,6 +22,7 @@ config({ path: resolve(__dirname, "..", ".env.local") });
 import { createAdminClient } from "../src/lib/supabase/admin";
 import { makeSeed, buildConfigPayload } from "../src/app/hub/agents/[agentId]/config-payload";
 import { updateAgentConfigSchema } from "../src/lib/utils/validation";
+import { CUSTOM_INSTRUCTIONS_CAP } from "../src/lib/ai/prompt-caps";
 
 type Json = unknown;
 const ehObj = (v: Json): v is Record<string, Json> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -101,9 +102,10 @@ function modulosLigados(cfg: Record<string, Json>): Set<string> {
   let falhaCaso = 0;
   const caso = (nome: string, cond: boolean) => { console.log(`  ${cond ? "✅" : "❌"} ${nome}`); if (!cond) falhaCaso++; };
   const base = (extra: Record<string, Json>) => buildConfigPayload(makeSeed({ ...extra }), new Set()) as Record<string, Json>;
-  const p1 = updateAgentConfigSchema.safeParse(base({ custom_instructions: "x".repeat(16000) }));
-  caso("instrução com 16000 chars salva", p1.success);
-  caso("instrução com 16001 chars é recusada", !updateAgentConfigSchema.safeParse(base({ custom_instructions: "x".repeat(16001) })).success);
+  // H111: o teto vem do prompt-caps (era 16000 fixo aqui; subiu pra 20000).
+  const p1 = updateAgentConfigSchema.safeParse(base({ custom_instructions: "x".repeat(CUSTOM_INSTRUCTIONS_CAP) }));
+  caso(`instrução com ${CUSTOM_INSTRUCTIONS_CAP} chars salva`, p1.success);
+  caso(`instrução com ${CUSTOM_INSTRUCTIONS_CAP + 1} chars é recusada`, !updateAgentConfigSchema.safeParse(base({ custom_instructions: "x".repeat(CUSTOM_INSTRUCTIONS_CAP + 1) })).success);
   const p2 = updateAgentConfigSchema.safeParse(base({ deactivation_rules: [{ type: "custom_field_equals", field_key: "AI", field_value: "Off" }] }));
   const idGerado = p2.success ? (p2.data.deactivation_rules?.[0] as { id?: string } | undefined)?.id : undefined;
   caso("regra de desligamento sem id salva e ganha id", p2.success && typeof idGerado === "string" && idGerado.length > 0);
