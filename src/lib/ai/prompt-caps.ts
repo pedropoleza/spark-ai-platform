@@ -12,8 +12,10 @@
  * pelo painel, e acima de 10000 nem dava pra digitar.
  */
 
-/** Instruções do administrador (`custom_instructions`). */
-export const CUSTOM_INSTRUCTIONS_CAP = 16000;
+/** Instruções do administrador (`custom_instructions`).
+ *  H111 (2026-11-03): 16000 → 20000. O Bruno (Alves Cury) estava a 219 caracteres do
+ *  teto, e o corte é no FIM, onde moram as regras anti-incidente. */
+export const CUSTOM_INSTRUCTIONS_CAP = 20000;
 
 /** Exemplos de conversa (`conversation_examples`). */
 export const CONVERSATION_EXAMPLES_CAP = 8000;
