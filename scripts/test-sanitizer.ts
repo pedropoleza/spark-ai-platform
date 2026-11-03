@@ -70,6 +70,17 @@ for (const c of dashCases) {
   expect(`Case`, c, out, () => !out.includes("—") && !out.includes("–") && !out.includes("..."));
 }
 
+console.log("\n=== LINK SOZINHO NO BALÃO NÃO VIRA \"Https\" (H111) ===\n");
+for (const c of [
+  "https://career.alvescuryfinancial.com/?cid=2KbCIHtmUooI1KtrMWXq#video",
+  "www.alvescuryfinancial.com",
+]) {
+  for (const turno of [0, 2]) {
+    const out = sanitizeAgentMessage(c, turno) as string;
+    expect(`Case turno=${turno}`, c, out, () => out === c);
+  }
+}
+
 console.log(`\n====== RESULTADO ======`);
 console.log(`Passaram: ${passCount}`);
 console.log(`Falharam: ${failCount}`);
