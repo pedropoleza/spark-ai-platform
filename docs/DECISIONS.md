@@ -827,3 +827,28 @@ no `vercel.json`: `/api/cron/vigia-conta?loc=YuR0LCZomFzrfkDK2ezo,siRf2qA6jkuWNY
   acompanhamento acabar (ou mover a conta pro `VIGIA_CONTAS`, que alimenta o job do pg_cron).
 - Achado "alto" ou "critico" vira sinal de admin com título estável; o retrato completo de cada dia
   fica em `execution_log` (`action_type = 'vigia_conta_diario'`, `location_id` da conta).
+
+## H111 (2026-11-03): entrada pela automação por etiqueta e {contact.id} (Alves Cury, landing de carreira)
+
+O lead do formulário de carreira da Alves Cury passa a receber a saudação pela automação do Spark
+Leads, com o link da landing que mede o vídeo (`?cid={{contact.id}}`). O Bruno entra só na resposta do
+lead e agenda só depois de 70% do vídeo (etiqueta `lp carreira - 70%`, que o endpoint de landing do OS
+põe). Desenho do Pedro: "a saudação sai da automação, a pessoa responde e aí que o Bruno entra".
+
+- **Por que não o `entry_by_automation` puro (H90):** na Márcia todo lead novo passa pela saudação. No
+  Bruno não. Medido nos 30 dias até 03/11: 24 conversas, a maioria do formulário, mas também anúncio
+  direto no WhatsApp ("A profissão que ninguém fala"), Messenger e um lote ligado à mão pelo campo
+  "AI". Com a flag pura, a 1ª mensagem desses leads seria engolida sem ninguém saudar.
+- **`agent_configs.entry_by_automation_tag`** (migration `20261103210000`): preenchida, o silêncio da
+  1ª mensagem e o descarte do turno proativo valem SÓ pro contato com a etiqueta. O workflow põe a
+  etiqueta antes de ligar o campo "AI". As etiquetas são lidas do contato na hora do turno
+  (`entradaValeAqui` no processor), uma vez, só quando um gate ia agir. Falha de leitura = a IA atende.
+  O reactive-trigger não descarta mais quando há etiqueta configurada (o evento do campo não traz
+  etiqueta): enfileira e o processor decide. Auditoria: `entry_not_by_automation` no execution_log.
+- **`{contact.id}` nas instruções do admin** (mesmo padrão de `{contact.name}`): a IA reenvia o link da
+  landing com o id do contato. Sem id vira vazio, nunca o literal (a landing ignora cid vazio).
+- **Teste (`/api/agents/test`)** passa a carregar o histórico do lead como a produção (etiquetas
+  incluídas). Sem isso a regra dos 70% não tinha como ser testada no laboratório.
+- Campo fora do painel de propósito, como o `entry_by_automation`: a rota de config grava só as colunas
+  do formulário, então coluna que o painel não conhece não é apagada no Salvar.
+- Testes: `scripts/test-entry-by-automation.ts` (18/18).

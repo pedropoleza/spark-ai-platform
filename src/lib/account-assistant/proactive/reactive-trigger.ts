@@ -68,6 +68,7 @@ interface AgentConfigRow {
   targeting_rules: TargetingRule[] | null;
   outreach_config: Record<string, unknown> | null;
   entry_by_automation?: boolean | null;
+  entry_by_automation_tag?: string | null;
   working_hours?: WorkingHoursConfig | null;
 }
 
@@ -366,7 +367,7 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
   // não tem targeting nem opera por evento de tag/campo de lead).
   const { data: agents } = await supabase
     .from("agents")
-    .select("id, type, audience, agent_configs(targeting_rules, outreach_config, entry_by_automation, working_hours)")
+    .select("id, type, audience, agent_configs(targeting_rules, outreach_config, entry_by_automation, entry_by_automation_tag, working_hours)")
     .eq("location_id", ev.locationId)
     .eq("status", "active")
     .in("type", ["sales_agent", "recruitment_agent", "custom_agent"])
@@ -396,8 +397,13 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
     // com a saudação do workflow, e o turno do clique (que chegou depois)
     // achou a conversa ativa e respondeu de novo: 9 mensagens pro lead.
     const cfgRow = Array.isArray(a.agent_configs) ? a.agent_configs[0] : a.agent_configs;
+    // H111: com etiqueta configurada (entry_by_automation_tag) a regra vale só
+    // pra quem tem a etiqueta, e o evento do campo não traz etiqueta nenhuma.
+    // Então aqui não descarta: enfileira e o processor decide na hora do turno,
+    // com as etiquetas lidas do contato (o workflow põe a etiqueta ANTES de ligar
+    // o campo, e o debounce cobre a ordem dos eventos).
     {
-      if (cfgRow?.entry_by_automation === true) {
+      if (cfgRow?.entry_by_automation === true && !(cfgRow.entry_by_automation_tag ?? "").trim()) {
         await supabase.from("execution_log").insert({
           agent_id: a.id,
           location_id: ev.locationId,

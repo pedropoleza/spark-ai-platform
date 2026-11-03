@@ -17,6 +17,8 @@ import { lerTokenAlves } from "@/lib/alves-lab/auth";
 import { slotWindowDays } from "@/lib/queue/slot-window";
 import { aplicarGuardaDeDataLead } from "@/lib/queue/lead-day-guard";
 import { turnRepeatVerdict, stripRepeatedAsks } from "@/lib/queue/followup-repeat-guard";
+import { loadLeadHistory } from "@/lib/queue/lead-history";
+import { getLeadHistoryConfig } from "@/types/agent";
 
 /**
  * POST /api/agents/test
@@ -389,6 +391,18 @@ export async function POST(request: NextRequest) {
     : 0;
   const effectivePriorTurnCount = Math.max(conversationTurns.length, ghlRealTurnCount);
 
+  // H111 (2026-11-03): paridade com o queue-processor. Sem o histórico do lead,
+  // o teste não via as etiquetas do contato, e a regra "só agenda com a etiqueta
+  // de 70% do vídeo" (Alves Cury) não tinha como ser testada aqui.
+  const leadHistoryCfgTeste = getLeadHistoryConfig(
+    config as { lead_history_config?: import("@/types/agent").LeadHistoryConfig | null },
+  );
+  const leadHistoryTeste =
+    leadHistoryCfgTeste.enabled && sessionContactId
+      ? await loadLeadHistory(sessionContactId, session.companyId, session.locationId, leadHistoryCfgTeste).catch(() => undefined)
+      : undefined;
+  const cacheOptimizedTeste = process.env.LEAD_CACHE_OPTIMIZED === "1";
+
   const promptCtx = {
     config,
     // custom_agent testa no caminho de lead provado, com framing NEUTRO (C2-4) —
@@ -399,6 +413,7 @@ export async function POST(request: NextRequest) {
         ? "custom_agent"
         : "sales_agent") as "sales_agent" | "recruitment_agent" | "custom_agent",
     contactName: resolvedContactName,
+    contactId: sessionContactId ?? undefined,
     collectedData: mergedCollectedData,
     locationName: location?.location_name || "Minha Empresa",
     currentDate: `${currentDateInTz}, ${currentTimeInTz}`,
@@ -408,6 +423,8 @@ export async function POST(request: NextRequest) {
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     priorTurnCount: effectivePriorTurnCount,
+    leadHistory: leadHistoryTeste,
+    cacheOptimized: cacheOptimizedTeste,
   };
   const systemPrompt = buildSystemPrompt(promptCtx);
   const runtimeContext = buildRuntimeContext(promptCtx);

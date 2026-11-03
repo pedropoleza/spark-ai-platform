@@ -200,7 +200,13 @@ import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
 import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
 import { regraQueDesliga, descreveRegra } from "@/lib/queue/deactivation";
-import { deveIniciarFollowUpsNaEntrada, deveSilenciarEntrada, entradaJaPassouPeloGate } from "@/lib/queue/entry-by-automation";
+import {
+  deveIniciarFollowUpsNaEntrada,
+  deveSilenciarEntrada,
+  entradaJaPassouPeloGate,
+  entradaVaiPelaAutomacao,
+  etiquetaDaEntrada,
+} from "@/lib/queue/entry-by-automation";
 import type { FollowUpConfig } from "@/types/agent";
 import type { DeactivationRule } from "@/types/agent";
 import { notifyCriticalError } from "@/lib/utils/notify";
@@ -1168,10 +1174,53 @@ async function processGroup(
   // saudação do workflow, e o turno do clique (que chegou depois) achou a
   // conversa ativa e respondeu de novo: 9 mensagens pro lead. O bloqueio
   // primário está no reactive-trigger (nem enfileira); este é o cinto.
+  // H111: com `entry_by_automation_tag`, os dois gates abaixo só valem pro
+  // contato que tem a etiqueta. As etiquetas são lidas UMA vez, só quando um
+  // gate de fato ia agir (turno proativo ou 1ª mensagem), e lidas na hora do
+  // processamento: o workflow põe a etiqueta antes de ligar a IA, e o debounce
+  // dá folga pro evento do campo chegar antes da etiqueta sem errar.
+  const etiquetaEntrada = etiquetaDaEntrada(config as { entry_by_automation_tag?: string | null });
+  let etiquetasLidas: string[] | null | undefined;
+  const entradaValeAqui = async (): Promise<boolean> => {
+    if (!etiquetaEntrada) return true;
+    if (etiquetasLidas === undefined) {
+      etiquetasLidas = null;
+      if (locationForBilling?.company_id) {
+        try {
+          const r = await new GHLClient(locationForBilling.company_id, group.locationId).get<{
+            contact?: { tags?: string[] };
+          }>(`/contacts/${group.contactId}`);
+          etiquetasLidas = Array.isArray(r?.contact?.tags) ? r.contact!.tags! : [];
+        } catch (err) {
+          log("warn", `entrada pela automação: não li as etiquetas de ${group.contactId} (a IA atende): ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+    const vale = entradaVaiPelaAutomacao(etiquetaEntrada, etiquetasLidas);
+    if (!vale) {
+      const { error: logErr } = await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        conversation_id: group.conversationId,
+        contact_id: group.contactId,
+        location_id: group.locationId,
+        action_type: "entry_not_by_automation",
+        action_payload: {
+          etiqueta: etiquetaEntrada,
+          motivo: etiquetasLidas === null ? "etiquetas_ilegiveis" : "contato_sem_etiqueta",
+          proativo: !!group.syntheticTrigger,
+        },
+        success: true,
+      });
+      if (logErr) console.warn("[Processor] falha ao auditar entrada sem etiqueta:", logErr.message);
+    }
+    return vale;
+  };
+
   if (
     (config as { entry_by_automation?: boolean | null }).entry_by_automation === true &&
     group.syntheticTrigger &&
-    !manuallyResumed
+    !manuallyResumed &&
+    (await entradaValeAqui())
   ) {
     log("log", `entrada pela automação: turno proativo (${group.syntheticTrigger.kind}:${group.syntheticTrigger.key}) descartado — quem abre é o workflow`);
     const { error: logErr } = await supabase.from("execution_log").insert({
@@ -1203,7 +1252,7 @@ async function processGroup(
         .lt("received_at", maisAntiga);
       inboundsAnteriores = count ?? 0;
     }
-    const silenciar = deveSilenciarEntrada({
+    let silenciar = deveSilenciarEntrada({
       entryByAutomation: true,
       manuallyResumed,
       syntheticTrigger: !!group.syntheticTrigger,
@@ -1211,6 +1260,11 @@ async function processGroup(
       entrySuppressedAt: (convState as { entry_suppressed_at?: string | null } | null)?.entry_suppressed_at,
       inboundsAnteriores,
     });
+    // H111: só cala quem a automação vai saudar (tem a etiqueta configurada).
+    if (silenciar && !(await entradaValeAqui())) {
+      log("log", `entrada pela automação: ${group.contactId} sem a etiqueta "${etiquetaEntrada}", a IA atende a 1ª mensagem`);
+      silenciar = false;
+    }
     if (silenciar) {
       log("log", `entrada pela automação: 1ª mensagem de ${group.contactId} silenciada — a IA assume na resposta do lead`);
       const agoraIso = new Date().toISOString();
@@ -2172,6 +2226,7 @@ async function processGroup(
         ? "custom_agent"
         : "sales_agent") as "sales_agent" | "recruitment_agent" | "custom_agent",
     contactName,
+    contactId: group.contactId,
     collectedData,
     locationName: location.location_name || "Nossa empresa",
     currentDate: `${currentDateInTz}, ${currentTimeInTz}`,

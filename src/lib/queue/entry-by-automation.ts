@@ -74,3 +74,42 @@ export function deveIniciarFollowUpsNaEntrada(
 ): cfg is FollowUpConfig {
   return !!cfg && cfg.enabled === true && cfg.start_on_entry === true;
 }
+
+/**
+ * H111 (Alves Cury, 03/11/2026): entrada pela automação POR ETIQUETA.
+ *
+ * Na Márcia todo lead novo passa pela saudação do workflow, então a regra vale
+ * pra todos. No Bruno não: só o lead do formulário de carreira é saudado pela
+ * automação (com o link do vídeo da landing). Quem chega por anúncio direto no
+ * WhatsApp, pelo Instagram, ou é ligado à mão pelo campo "AI" continua sendo
+ * aberto pela IA, como antes. Com `agent_configs.entry_by_automation_tag`
+ * preenchido, o silêncio da 1ª mensagem e o descarte do turno proativo valem SÓ
+ * pro contato que tem a etiqueta (o workflow põe a etiqueta antes de ligar a IA).
+ *
+ *  - sem etiqueta configurada: vale pra todos (comportamento do H90);
+ *  - etiqueta configurada e o contato tem: a automação abre, a IA cala;
+ *  - etiqueta configurada e o contato não tem: a IA atende normal;
+ *  - não deu pra ler as etiquetas: a IA atende (lead sem resposta é pior que
+ *    uma mensagem a mais).
+ *
+ * Comparação sem caixa e sem espaço nas pontas: o Spark Leads guarda etiqueta
+ * em minúsculas, mas quem digita a config pode não guardar.
+ */
+export function entradaVaiPelaAutomacao(
+  etiquetaConfigurada: string | null | undefined,
+  etiquetasDoContato: readonly string[] | null | undefined,
+): boolean {
+  const alvo = normalizarEtiqueta(etiquetaConfigurada);
+  if (!alvo) return true;
+  if (!etiquetasDoContato) return false;
+  return etiquetasDoContato.some((t) => normalizarEtiqueta(t) === alvo);
+}
+
+/** Etiqueta da entrada pela automação na config (vazia/espaços = null). */
+export function etiquetaDaEntrada(config: { entry_by_automation_tag?: string | null } | null | undefined): string | null {
+  return normalizarEtiqueta(config?.entry_by_automation_tag) || null;
+}
+
+function normalizarEtiqueta(t: string | null | undefined): string {
+  return (t ?? "").trim().toLowerCase();
+}
