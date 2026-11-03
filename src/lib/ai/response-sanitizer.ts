@@ -94,8 +94,10 @@ export function stripLeadingGreetings(msg: string): string {
   const emojiLeadRe = new RegExp("^[" + GREETING_EMOJI_CHARSET + "]+[\\s,.!?;:]*");
   result = result.replace(emojiLeadRe, "").trim();
 
-  // Capitalizar primeira letra se virou minúscula após stripping
-  if (result.length > 0 && /[a-záéíóúâêîôûãõç]/.test(result[0])) {
+  // Capitalizar primeira letra se virou minúscula após stripping. Nunca num link:
+  // H111 (2026-11-03, laboratório do Bruno): o link da landing sozinho num balão
+  // saía "Https://career...", e esquema em maiúscula nem sempre vira link no celular.
+  if (result.length > 0 && /[a-záéíóúâêîôûãõç]/.test(result[0]) && !/^(https?:\/\/|www\.)/i.test(result)) {
     result = result[0].toUpperCase() + result.slice(1);
   }
 
