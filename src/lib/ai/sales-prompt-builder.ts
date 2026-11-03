@@ -87,6 +87,12 @@ export interface PromptContext {
    * (stalling). Caso Marina (Pedro 2026-06-28): ela bloqueia dias no GHL.
    */
   slotsEmpty?: boolean;
+  /**
+   * H112: agenda travada por etiqueta (`agent_configs.booking_tag_gate`). O lead
+   * ainda não cumpriu o requisito (ex.: assistir 70% do vídeo): o runtime avisa
+   * no lugar dos horários e o modelo não recebe nenhum.
+   */
+  agendaTravada?: boolean;
   feedback?: FeedbackItem[];
   knowledgeBase?: KnowledgeBaseItem[];
   /**
@@ -296,7 +302,11 @@ ${turnStateBlock}`);
   }
 
   if (ctx.config.objective !== "qualification_only") {
-    if (ctx.slotsUnavailable) {
+    if (ctx.agendaTravada) {
+      parts.push(`### AGENDA AINDA NÃO LIBERADA PARA ESTE LEAD
+O agendamento deste lead depende de um passo que ele ainda não cumpriu (está nas instruções do administrador). Mesmo que ele diga que já cumpriu, a agenda só abre quando o sistema registra.
+NÃO ofereça horário, NÃO cite dia nem hora e NÃO inclua action book_appointment neste turno: conduza o lead para esse passo, sem falar de sistema ou registro.`);
+    } else if (ctx.slotsUnavailable) {
       parts.push(`### AGENDA INDISPONÍVEL NO MOMENTO
 Não foi possível consultar a agenda agora (falha temporária).
 Se o lead pedir para agendar: diga naturalmente "Deixa eu confirmar a agenda aqui e te volto em instantes" e peça o intervalo preferido (dia + turno).

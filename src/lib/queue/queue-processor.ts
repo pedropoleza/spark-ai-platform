@@ -207,6 +207,7 @@ import {
   entradaVaiPelaAutomacao,
   etiquetaDaEntrada,
 } from "@/lib/queue/entry-by-automation";
+import { agendaLiberadaPorEtiqueta, etiquetasDoContato } from "@/lib/queue/booking-tag-gate";
 import type { FollowUpConfig } from "@/types/agent";
 import type { DeactivationRule } from "@/types/agent";
 import { notifyCriticalError } from "@/lib/utils/notify";
@@ -2055,6 +2056,33 @@ async function processGroup(
     console.log(`[FreeSlots] Skipped: calendar_id=${config.calendar_id || "NONE"} objective=${config.objective}`);
   }
 
+  // H112: agenda travada por etiqueta (ver booking-tag-gate.ts). Sem a etiqueta
+  // exigida, o modelo não recebe horário e a lista do turno fica vazia, o que faz
+  // o slot-guard do H58 recusar qualquer book_appointment. Sem config, nada muda.
+  let agendaTravada = false;
+  {
+    const veredito = agendaLiberadaPorEtiqueta(
+      (config as { booking_tag_gate?: unknown }).booking_tag_gate,
+      etiquetasDoContato(contactSettled.status === "fulfilled" ? contactSettled.value?.contact : null),
+    );
+    if (!veredito.liberada && shouldFetchSlots) {
+      agendaTravada = true;
+      availableSlots = "";
+      offeredSlotsIso = [];
+      log("log", `agenda travada por etiqueta (${veredito.motivo}): horários fora do turno de ${group.contactId}`);
+      const { error: gateLogErr } = await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "booking_gate_blocked",
+        action_payload: { motivo: veredito.motivo },
+        success: true,
+      });
+      if (gateLogErr) console.warn("[Processor] falha ao auditar agenda travada:", gateLogErr.message);
+    }
+  }
+
   // 7. Construir prompt (data/hora no timezone da location, NAO em UTC)
   const locationTz = location.timezone || "America/New_York";
   const currentDateInTz = new Date().toLocaleDateString("en-US", {
@@ -2235,7 +2263,9 @@ async function processGroup(
     slotsUnavailable: slotsFetchFailed,
     // Agenda consultada OK porém sem dias livres (cheia/bloqueada) → branch
     // anti-stalling no buildRuntimeContext (Pedro 2026-06-28).
-    slotsEmpty: shouldFetchSlots && !slotsFetchFailed && availableSlots.trim() === "",
+    slotsEmpty: shouldFetchSlots && !slotsFetchFailed && !agendaTravada && availableSlots.trim() === "",
+    // H112: agenda travada por etiqueta (o runtime avisa no lugar dos horários).
+    agendaTravada,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     priorTurnCount: conversationTurns.length,

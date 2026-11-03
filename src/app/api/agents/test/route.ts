@@ -19,6 +19,7 @@ import { aplicarGuardaDeDataLead } from "@/lib/queue/lead-day-guard";
 import { turnRepeatVerdict, stripRepeatedAsks } from "@/lib/queue/followup-repeat-guard";
 import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
 import { getLeadHistoryConfig } from "@/types/agent";
+import { agendaLiberadaPorEtiqueta, etiquetasDoContato } from "@/lib/queue/booking-tag-gate";
 
 /**
  * POST /api/agents/test
@@ -210,6 +211,8 @@ export async function POST(request: NextRequest) {
     address1?: string; city?: string; state?: string; postalCode?: string; country?: string;
     dateOfBirth?: string; companyName?: string;
     customFields?: { id: string; value: string; fieldKey?: string }[];
+    // H112: etiquetas pra trava de agenda (mesmo GET, zero chamada extra).
+    tags?: Array<string | { name?: string }>;
   } };
 
   const slotsNow = new Date();
@@ -302,6 +305,20 @@ export async function POST(request: NextRequest) {
           ? (slotsSettled.reason instanceof Error ? slotsSettled.reason.message : slotsSettled.reason)
           : "unknown",
       );
+    }
+  }
+
+  // H112: paridade com o processor. Sem a etiqueta exigida pela trava de agenda,
+  // o teste também não entrega horário ao modelo.
+  let agendaTravadaTeste = false;
+  if (sessionContactId && shouldFetchSlots) {
+    const veredito = agendaLiberadaPorEtiqueta(
+      (config as { booking_tag_gate?: unknown }).booking_tag_gate,
+      etiquetasDoContato(contactSettled.status === "fulfilled" ? contactSettled.value?.contact : null),
+    );
+    if (!veredito.liberada) {
+      agendaTravadaTeste = true;
+      availableSlots = "";
     }
   }
 
@@ -424,6 +441,7 @@ export async function POST(request: NextRequest) {
     timezone: locationTz,
     availableSlots,
     slotsUnavailable: slotsFetchFailed,
+    agendaTravada: agendaTravadaTeste,
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     priorTurnCount: effectivePriorTurnCount,
