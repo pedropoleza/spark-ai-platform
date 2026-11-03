@@ -17,7 +17,7 @@ import { lerTokenAlves } from "@/lib/alves-lab/auth";
 import { slotWindowDays } from "@/lib/queue/slot-window";
 import { aplicarGuardaDeDataLead } from "@/lib/queue/lead-day-guard";
 import { turnRepeatVerdict, stripRepeatedAsks } from "@/lib/queue/followup-repeat-guard";
-import { loadLeadHistory } from "@/lib/queue/lead-history";
+import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
 import { getLeadHistoryConfig } from "@/types/agent";
 
 /**
@@ -397,6 +397,10 @@ export async function POST(request: NextRequest) {
   const leadHistoryCfgTeste = getLeadHistoryConfig(
     config as { lead_history_config?: import("@/types/agent").LeadHistoryConfig | null },
   );
+  // Paridade com o processor (P1, review 2026-06-05): invalida o cache de 5 min a
+  // cada turno. Sem isso o teste via etiqueta velha depois de alguém mexer no
+  // contato (medido em 03/11: tirei "video completo" e o Bruno seguiu vendo).
+  if (sessionContactId) invalidateLeadHistoryCache(sessionContactId);
   const leadHistoryTeste =
     leadHistoryCfgTeste.enabled && sessionContactId
       ? await loadLeadHistory(sessionContactId, session.companyId, session.locationId, leadHistoryCfgTeste).catch(() => undefined)
