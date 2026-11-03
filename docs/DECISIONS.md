@@ -852,3 +852,23 @@ põe). Desenho do Pedro: "a saudação sai da automação, a pessoa responde e a
 - Campo fora do painel de propósito, como o `entry_by_automation`: a rota de config grava só as colunas
   do formulário, então coluna que o painel não conhece não é apagada no Salvar.
 - Testes: `scripts/test-entry-by-automation.ts` (18/18).
+
+## H112 (2026-11-03): agenda travada por etiqueta (Bruno só agenda com 70% do vídeo)
+
+Regra do Pedro para a Alves Cury: o Bruno só marca o Zoom com a Taciana depois que o lead assistiu
+pelo menos 70% do vídeo da landing. A landing (endpoint do OS) põe `lp carreira - 70%`, e quem vai até o
+fim ganha também `lp carreira - video completo`.
+
+- **Por que mecânico:** no laboratório de produção (03/11), com a regra só no prompt (v6.3), o lead
+  que dizia "já assisti o vídeo todo" recebia horário em 3 de 3 rodadas. O modelo acredita no lead.
+- **`agent_configs.booking_tag_gate`** (`{requires_any, except_any}`, migration `20261103230000`):
+  - sem etiqueta de `requires_any` nem de `except_any`, o processor tira os horários do turno, e o modelo
+    não tem o que oferecer;
+  - a lista `offeredSlotsIso` vai vazia, então o slot-guard do H58 recusa qualquer `book_appointment`;
+  - o runtime troca os horários pelo aviso "AGENDA AINDA NÃO LIBERADA";
+  - cada turno travado vira `booking_gate_blocked` no execution_log.
+- **Exceção:** `interesse-seguro` (virada para cliente, que não tem a ver com o vídeo de carreira).
+- **Leitura das etiquetas:** usa o mesmo GET do contato que o processor já faz, sem chamada extra. Se
+  falhar, libera (fail-open, a regra continua no prompt). O laboratório (`/api/agents/test`) aplica igual.
+- **Escopo:** sem config, nada muda para a frota.
+- **Testes:** `scripts/test-booking-tag-gate.ts` (17/17); paridades 5/5, 10/10 e 7/7; salvar-config 36 limpos.
