@@ -309,7 +309,38 @@ export function saidaQueDecide<T extends MensagemDoHistoricoGhl>(
   return [...mensagens]
     .filter((m) => m.direction === "outbound" && isChatMessageType(m.messageType))
     .sort((a, b) => Date.parse(String(b.dateAdded)) - Date.parse(String(a.dateAdded)))
-    .find((m) => !ehSaidaAutomatica(m, opts?.ourMediaAtIso));
+    .find((m) => !ehSaidaAutomatica(m, opts?.ourMediaAtIso) && !ehEspelhoDeEnvio(m, mensagens));
+}
+
+/** Janela em que a cópia do provedor custom chega depois do envio original. */
+export const JANELA_ESPELHO_MS = 180_000;
+
+function textoNormal(s?: string | null): string {
+  return String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+/**
+ * H117 (casos Ma e Antonio, Alves Cury): a saída é a CÓPIA que o provedor de SMS
+ * custom da conta faz no WhatsApp? Na Alves Cury o canal "SMS" é um app que
+ * entrega pelo WhatsApp e registra uma 2ª mensagem (WHATSAPP, source "app", sem
+ * user) com o MESMO texto. Quando o original é da automação do CRM (a
+ * confirmação do agendamento), a cópia passava por "a equipe escreveu" e a IA se
+ * pausava logo depois de agendar, engolindo o "Perfeito" do lead. Cópia = mesmo
+ * texto de uma saída de automação ou da API até 3 min antes.
+ */
+export function ehEspelhoDeEnvio<T extends MensagemDoHistoricoGhl>(m: T, mensagens: T[]): boolean {
+  const corpo = textoNormal(m.body);
+  if (!corpo || corpo.length < 12) return false;
+  const t = Date.parse(String(m.dateAdded));
+  if (Number.isNaN(t)) return false;
+  return mensagens.some((o) => {
+    if (o === m || o.direction !== "outbound") return false;
+    const fonte = String(o.source || "").toLowerCase();
+    if (!AUTOMATION_SOURCES.has(fonte) && fonte !== "api") return false;
+    if (textoNormal(o.body) !== corpo) return false;
+    const to = Date.parse(String(o.dateAdded));
+    return !Number.isNaN(to) && to <= t + 5_000 && t - to <= JANELA_ESPELHO_MS;
+  });
 }
 
 /** Janela em que uma saída logo depois de um envio nosso pode ser o eco dele. */
@@ -370,6 +401,7 @@ export function contatoDaEquipe<T extends MensagemDoHistoricoGhl>(
       if (m.userId) return m;
       continue;
     }
+    if (ehEspelhoDeEnvio(m, mensagens)) continue; // H117: cópia do provedor custom
     if (!isChatMessageType(m.messageType)) continue;
     if (ehSaidaAutomatica(m, ia.midiaNossaEm)) continue;
     if (m.id && ia.ids.includes(String(m.id))) continue;

@@ -183,7 +183,7 @@ import {
 // H88 rodada 2 (caso Alves Cury): 3ª ocorrência da mesma pergunta no turno é
 // bloqueada — regra de prompt não segurou (juiz venda-evasiva 31/08).
 import { turnRepeatVerdict, stripRepeatedAsks } from "@/lib/queue/followup-repeat-guard";
-import { isChatMessageType } from "@/lib/ghl/message-sources";
+import { isChatMessageType, isHumanOutboundSource } from "@/lib/ghl/message-sources";
 import type { TargetingRules } from "@/types/agent";
 // F27.D (Pedro 2026-05-29): detecção de trigger reativo (msg sintética
 // enfileirada pelo reactive-trigger.ts quando tag/stage muda no GHL).
@@ -2283,6 +2283,7 @@ async function processGroup(
       locationForBilling.company_id,
       group.locationId,
       loadHistoryCfg,
+      locationTz,
     );
     if (leadHistoryCfg.enabled) {
       log("log", `lead_history loaded: msgs=${leadHistory.recent_messages.length} notes=${leadHistory.notes.length} opps=${leadHistory.opportunities.length} (${leadHistory.fetch_ms}ms)`);
@@ -2300,6 +2301,44 @@ async function processGroup(
         },
         success: true,
       });
+    }
+  }
+
+  // H116 (casos Ricardo, Jorginho, Selis, Walter, Vanide: ativação em lote de
+  // 02/11 na Alves Cury). Turno PROATIVO de gatilho em contato que já tem
+  // história:
+  //  - reunião FUTURA marcada: a IA não entra. O papel dela (qualificar e marcar)
+  //    já foi cumprido; abordar só confunde (Ricardo ouviu "conseguiu
+  //    participar?" 4 h antes do Zoom).
+  //  - conversa anterior com a equipe: o turno é RETOMADA, não 1º contato. Sem
+  //    isto a instrução proativa ("cumprimente, mencione o motivo, qualifique")
+  //    fazia a IA se reapresentar e perguntar de novo o estado já respondido.
+  if (group.syntheticTrigger && leadHistory) {
+    const agoraMs = Date.now();
+    const futura = (leadHistory.reunioes || []).find((r) => {
+      const t = Date.parse(r.inicioIso);
+      return t > agoraMs && t - agoraMs < 21 * 86400_000;
+    });
+    if (futura) {
+      log("log", `H116: turno proativo descartado, o lead já tem reunião futura (${futura.inicioIso})`);
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "proactive_skipped_future_appointment",
+        action_payload: { reuniao: futura.inicioIso, titulo: futura.titulo ?? null, kind: group.syntheticTrigger.kind },
+        success: true,
+      });
+      return;
+    }
+    const conversaAnterior = leadHistory.recent_messages.some(
+      (m) => m.direction === "inbound" || isHumanOutboundSource(m.source),
+    );
+    if (conversaAnterior) {
+      group.aggregatedBody +=
+        "\n[RETOMADA: este contato JÁ conversou com a nossa equipe (veja o HISTÓRICO). NÃO é primeiro contato: não se apresente como se fosse a primeira vez, não pergunte o que ele já respondeu (estado, profissão, objetivo) e não cobre nada. Retome a partir da ÚLTIMA mensagem da conversa, com naturalidade, e conduza para o próximo passo que ainda falta.]";
+      log("log", "H116: turno proativo em contato com histórico, vira retomada");
     }
   }
 

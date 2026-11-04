@@ -23,6 +23,7 @@ import { isAiEcho, extractAiSentTexts, extractAiSentIds, hasUnfilledMergeField }
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { LeadContext, LeadHistoryConfig } from "@/types/agent";
 import { extrairFormularioDoLead } from "@/lib/queue/lead-form";
+import { normalizeCrmStartTime } from "@/lib/ai/slot-guard";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -252,6 +253,8 @@ export async function loadLeadHistory(
   companyId: string,
   locationId: string,
   config: LeadHistoryConfig,
+  /** H116: fuso da conta, para ler o horário das reuniões (o CRM devolve sem offset). */
+  fusoConta: string = "America/New_York",
 ): Promise<LeadContext> {
   if (!contactId || !companyId || !locationId) {
     return EMPTY_CONTEXT(contactId || "", 0);
@@ -269,10 +272,18 @@ export async function loadLeadHistory(
 
   try {
     // Paralelo: contato + conversations
-    const [contactRes, convRes] = await Promise.all([
+    const [contactRes, convRes, apptRes] = await Promise.all([
       client.get<GhlContactResp>(`/contacts/${contactId}`).catch(() => null),
       client
         .get<GhlConvSearchResp>(`/conversations/search?locationId=${locationId}&contactId=${contactId}&limit=5`)
+        .catch(() => null),
+      // H116 (caso Ricardo, Alves Cury 02/11): reuniões do contato. A ativação em
+      // lote perguntou "conseguiu participar?" 4 h ANTES do Zoom: a IA não sabia
+      // que a reunião existia nem quando era.
+      client
+        .get<{ events?: Array<{ startTime?: string; title?: string; appointmentStatus?: string }> }>(
+          `/contacts/${contactId}/appointments`,
+        )
         .catch(() => null),
     ]);
 
@@ -447,6 +458,16 @@ export async function loadLeadHistory(
       has_closed_opp,
       fetch_ms: Date.now() - start,
       formulario,
+      reunioes: (apptRes?.events || [])
+        .filter((e) => e?.startTime && !/cancel|invalid|noshow|no_show/i.test(String(e.appointmentStatus || "")))
+        .map((e) => ({
+          inicioIso: normalizeCrmStartTime(e.startTime, fusoConta),
+          titulo: e.title ? String(e.title).slice(0, 80) : undefined,
+          status: e.appointmentStatus || undefined,
+        }))
+        .filter((r) => !Number.isNaN(Date.parse(r.inicioIso)))
+        .sort((a, b) => Date.parse(a.inicioIso) - Date.parse(b.inicioIso))
+        .slice(-4),
     };
 
     cache.set(cacheKey, { value: result, expiresAt: Date.now() + CACHE_TTL_MS });
