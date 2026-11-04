@@ -21,7 +21,12 @@ function norm(s: string): string {
 }
 
 const INTERJEICAO =
-  /^(perfeito|otimo|ótimo|boa|que bom|legal|show|maravilha|excelente|bacana|entendi|certo|beleza|top|massa|que otimo|que ótimo|lindo|interessante)\b/i;
+  /^(perfeito|otimo|ótimo|boa|que bom|legal|show|maravilha|excelente|bacana|entendi|certo|beleza|top|massa|que otimo|que ótimo|lindo|interessante|anotado|anotada|combinado)\b/i;
+
+// Bolha que é SÓ "<palavra>, <interjeição>!" ("Massachusetts, anotado!"): é eco
+// mesmo quando a mensagem do lead era longa. Sai inteira (se houver outra bolha).
+const BOLHA_SO_ECO =
+  /^\s*[\p{L}][\p{L} .'-]{1,28},\s*(perfeito|[óo]timo|boa|que bom|legal|show|maravilha|excelente|bacana|entendi|certo|beleza|anotad[oa]|combinado)\s*[!.]*\s*(😊|🙌)?\s*$/iu;
 
 export interface EcoGuardResult {
   messages: string[];
@@ -29,6 +34,9 @@ export interface EcoGuardResult {
 }
 
 export function tirarEcoDoInicio(bolhas: string[], mensagemDoLead: string): EcoGuardResult {
+  if (bolhas.length > 1 && BOLHA_SO_ECO.test(bolhas[0])) {
+    return { messages: bolhas.slice(1), removido: bolhas[0].trim() };
+  }
   const lead = norm(mensagemDoLead || "");
   if (!lead || lead.split(" ").length > 4 || bolhas.length === 0) return { messages: bolhas, removido: null };
   const primeira = bolhas[0];

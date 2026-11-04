@@ -15,6 +15,9 @@ ok("reação com conteúdo fica ('Texas tem muita gente da comunidade')", tirarE
 ok("mensagem longa do lead: não mexe", tirarEcoDoInicio(["Entendi, faz sentido."], "eu trabalho como motorista há cinco anos").removido === null);
 ok("começo que não é eco: não mexe", tirarEcoDoInicio(["Perfeito. E hoje, você trabalha com o quê?"], "Florida").removido === null);
 
+ok("bolha solta 'Massachusetts, anotado!' sai mesmo com mensagem longa", JSON.stringify(tirarEcoDoInicio(["Massachusetts, anotado!", "O valor depende de alguns fatores."], "Moro em MA. Quanto custa um seguro de 500 mil?").messages) === JSON.stringify(["O valor depende de alguns fatores."]));
+ok("bolha única 'Texas, anotado!' fica (nunca deixa sem resposta)", tirarEcoDoInicio(["Texas, anotado!"], "moro no Texas, e você?").removido === null);
+
 console.log("\n2) 'Você é robô?' mantém a apresentação");
 ok("detecta a pergunta", leadPerguntouIdentidade("você é um robô?") && leadPerguntouIdentidade("é IA?") && leadPerguntouIdentidade("estou falando com uma pessoa de verdade?"));
 ok("não detecta pergunta comum", !leadPerguntouIdentidade("quanto custa?") && !leadPerguntouIdentidade("moro na Flórida"));
