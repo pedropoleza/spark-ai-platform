@@ -140,6 +140,8 @@ interface ExecutionContext {
   timezone?: string;
   /** H115: fuso do lead, quando conhecido e diferente: a confirmação sai no horário dele. */
   fusoLead?: string;
+  /** H119: teto de bolhas do agente (`personality.max_bubbles`). */
+  maxBolhas?: number | null;
   /**
    * Caso Alves Cury 2026-08-31: nome da persona (title default do appointment
    * "Zoom - <agente> - <lead>") e nome do lead, quando o caller souber.
@@ -328,8 +330,8 @@ export async function executeActions(
   // ANTES de enviar. Roda DEPOIS do sanitizer (o texto redigido também é
   // limitado) e é no-op pra mensagem já curta. Loop de envio abaixo já entrega
   // cada bolha como uma mensagem separada com delay.
-  const split = splitLeadOutbound(messages);
-  if (split.didSplit) {
+  const split = splitLeadOutbound(messages, ctx.maxBolhas);
+  if (split.didSplit || split.messages.length !== messages.length) {
     messages = split.messages;
     console.log(`[Splitter] Bolha longa quebrada → ${messages.length} bolhas`);
     await logExecution(supabase, ctx, "outbound_split", { parts: messages.length });

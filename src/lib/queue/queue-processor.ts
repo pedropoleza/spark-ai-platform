@@ -198,6 +198,7 @@ import { normalizePhone, resolveLocationDefaultCountry } from "@/lib/account-ass
 import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
 import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
+import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
 import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
@@ -2942,6 +2943,29 @@ async function processGroup(
     }
   }
 
+  // H119: eco robótico no começo da resposta ("Florida, ótimo." / "Orlando, boa!").
+  if (!group.syntheticTrigger) {
+    const bolhasEco = Array.isArray(aiResult.response.message)
+      ? aiResult.response.message.filter((m): m is string => typeof m === "string")
+      : aiResult.response.message
+        ? [String(aiResult.response.message)]
+        : [];
+    const eco = tirarEcoDoInicio(bolhasEco, separarTextoDoLead(group.aggregatedBody || "").proprio);
+    if (eco.removido) {
+      aiResult.response.message = eco.messages;
+      log("log", `H119: eco removido do começo ("${eco.removido.slice(0, 40)}")`);
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "echo_removed",
+        action_payload: { removido: eco.removido.slice(0, 80) },
+        success: true,
+      });
+    }
+  }
+
   // 8. Executar acoes (enviar mensagem, atualizar campos, etc.)
   const resultadoExecucao = await executeActions(aiResult.response, {
     companyId: location.company_id,
@@ -2962,6 +2986,8 @@ async function processGroup(
     timezone: locationTz, // H66: corrige offset do start_time pro fuso da conta
     // H115: confirmação do agendamento no horário do lead (com o da conta entre parênteses).
     fusoLead: fusoLead?.tz ?? undefined,
+    // H119: teto de bolhas do agente.
+    maxBolhas: (config as { personality?: { max_bubbles?: number | null } | null }).personality?.max_bubbles ?? null,
     // C8 (caso Alves Cury 2026-08-31): title default do appointment legível.
     agentLabel: ((config as { personality?: { name?: string } | null }).personality)?.name || undefined,
     leadName: contactName && contactName !== group.contactId ? contactName : undefined,

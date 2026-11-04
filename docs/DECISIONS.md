@@ -991,3 +991,19 @@ A IA não recebia as reuniões do contato.
 **Laboratório (`/api/agents/test`):** `config_override` de texto (instruções, exemplos, saudação). Vale só
 na chamada, nunca é persistido, e só para o laboratório da conta ou admin. Serve para testar instrução
 nova antes de gravar.
+
+## H119 (2026-11-04): eco no começo, teto de bolhas por agente e apresentação no "é robô?" (Alves Cury)
+
+Achados da bateria de laboratório e da revisão adversarial (NAT-20, NAT-08, NEG-15).
+
+- **Eco:** "Florida, perfeito!" saiu em 14 de 14 conversas, e o próprio prompt ensinava com "Orlando,
+  ótimo!". `tirarEcoDoInicio` tira o prefixo "<palavra do lead>, <interjeição>" da 1ª bolha quando a
+  mensagem do lead é curta (até 4 palavras). Reação com conteúdo fica. Auditoria: `echo_removed`.
+- **Teto de bolhas por agente:** `personality.max_bubbles` (jsonb, sem migração). O excedente é fundido
+  na última bolha (H52, sem perda). Na Alves Cury o teto é 2, regra do dono. O divisor sozinho criava a
+  3ª bolha.
+- **"É robô?":** o sanitizador cortava a reapresentação em todo turno depois do 1º, e a resposta certa
+  ("aqui é a Bruna, do time da Alves Cury, pode ficar tranquila") virava "Alves Cury, pode ficar
+  tranquilo". Quando o lead pergunta se é robô ou quem está falando (`leadPerguntouIdentidade`), a
+  apresentação não é cortada.
+- **Testes:** `test-h119-eco` 10/10 e `test-message-splitter` 28/28.
