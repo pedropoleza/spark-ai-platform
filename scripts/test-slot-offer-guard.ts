@@ -101,6 +101,14 @@ console.log("\n7) Números que não são horário não disparam nada");
   ok("nada conferido", r.conferidas === 0 && r.invalidas.length === 0, r);
 }
 
+console.log("\n7b) Pergunta sobre a rotina do lead não é oferta");
+{
+  const r = conferirOfertasDeHorario(["Você trabalha sexta às 7 da manhã?"], SLOTS, ET, { agora: AGORA });
+  ok("sem pista de oferta: não confere", r.conferidas === 0, r);
+  const r2 = conferirOfertasDeHorario(["Quinta às 3 da tarde ou sexta às 8 da noite, qual funciona melhor?"], SLOTS, ET, { agora: AGORA });
+  ok("oferta sem 'tenho' mas com 'qual funciona': confere", r2.conferidas === 2, r2);
+}
+
 console.log("\n8) Oferta determinística");
 {
   const o = ofertaDeterministica(SLOTS, ET, { agora: AGORA, preferirTardeNoite: true });

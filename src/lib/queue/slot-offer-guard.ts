@@ -74,6 +74,11 @@ const RE_HORA =
 const RE_NEGACAO =
   /\b(n[ãa]o\s+(est[áa]|tenho|tem|temos|h[áa]|consigo|fica|d[áa]|vai\s+dar)|indispon[íi]ve|ocupad|lotad|j[áa]\s+(foi|est[áa]\s+(tomad|ocupad|preenchid))|sem\s+vaga|n[ãa]o\s+abriu)/iu;
 
+// Frase que OFERECE ou CONFIRMA horário. Sem uma destas pistas a menção de dia
+// + hora não é conferida ("você trabalha sexta às 7?" é pergunta sobre o lead).
+const RE_PISTA_OFERTA =
+  /\b(tenho|temos|tem\s|consigo|posso|prefere|preferir|qual\s+(funciona|fica|encaixa|prefere|hor[áa]rio|melhor|dos)|pode\s+ser|dispon[íi]ve|livre|vaga|agend|marc(a|o|ar|ado|amos)\b|confirm|reserv|encaix|fechado|combinado|op[çc][ãa]o|hor[áa]rio)/iu;
+
 const RE_SEU_HORARIO = /\b(no\s+)?seu\s+(hor[áa]rio|fuso)(?![\p{L}])|\bhor[áa]rio\s+(de\s+)?a[íi](?![\p{L}])|\bhor[áa]rio\s+local(?![\p{L}])/iu;
 
 interface MencaoDia {
@@ -263,6 +268,9 @@ export function conferirOfertasDeHorario(
     for (const f of frases) {
       const dias = lerDias(f.txt);
       if (dias.length === 0) continue;
+      // Só frase de oferta/confirmação (pista na frase ou em outra frase da mesma bolha
+      // terminando em pergunta: "Tem quinta às 3. Qual funciona melhor?").
+      if (!RE_PISTA_OFERTA.test(f.txt) && !RE_PISTA_OFERTA.test(bolha)) continue;
       const horas = lerHoras(f.txt);
       for (const h of horas) {
         // dia: o último antes da hora; sem nenhum antes, o 1º depois ("às 10h na quinta")
