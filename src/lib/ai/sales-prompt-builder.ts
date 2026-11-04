@@ -1,6 +1,7 @@
 import type { AgentConfig, DataField } from "@/types/agent";
 import { getTimezoneFromState, getCurrentTimeInTimezone } from "@/lib/utils/timezone";
 import { diferencaMinutos, mesmoFuso, siglaDoFuso } from "@/lib/queue/lead-timezone";
+import { rotuloDoSlot } from "@/lib/queue/lead-day-guard";
 import { buildCalendarGrounding } from "@/lib/account-assistant/calendar-grounding";
 import { composePersonalityProfile } from "@/lib/ai/behavior-blocks";
 import { isHumanOutboundSource } from "@/lib/ghl/message-sources";
@@ -1160,7 +1161,8 @@ ${instructions}`;
 export function buildLeadHistorySection(ctx: PromptContext): string {
   const h = ctx.leadHistory;
   const form = h?.formulario;
-  if (!h || (h.recent_messages.length === 0 && h.opportunities.length === 0 && h.notes.length === 0 && h.contact.tags.length === 0 && !form)) {
+  const reunioes = h?.reunioes || [];
+  if (!h || (h.recent_messages.length === 0 && h.opportunities.length === 0 && h.notes.length === 0 && h.contact.tags.length === 0 && !form && reunioes.length === 0)) {
     return "";
   }
   const lines: string[] = ["## HISTÓRICO ANTERIOR DESSE LEAD (do Spark Leads)"];
@@ -1171,6 +1173,22 @@ export function buildLeadHistorySection(ctx: PromptContext): string {
   // H114: o formulário que trouxe o lead. É o ASSUNTO da conversa (ex.: um lead
   // de aposentadoria não é abordado como lead de seguro) e as respostas dele
   // não se perguntam de novo.
+  // H116 (caso Ricardo): reuniões com dia, hora e distância calculados pelo
+  // código. A IA não faz conta de data: lê "FUTURA, daqui a 4 horas".
+  if (reunioes.length > 0) {
+    const agora = Date.now();
+    lines.push("**Reuniões deste lead no calendário** (use exatamente estes dias e horas; reunião FUTURA já está marcada: não ofereça outra e não pergunte se ele participou):");
+    for (const r of reunioes) {
+      const t = Date.parse(r.inicioIso);
+      const rot = rotuloDoSlot(r.inicioIso, ctx.timezone) || r.inicioIso;
+      const h = Math.round(Math.abs(t - agora) / 3600_000);
+      const dist = h < 48 ? `${h} hora${h === 1 ? "" : "s"}` : `${Math.round(h / 24)} dias`;
+      const quando = t > agora ? `FUTURA, daqui a ${dist}` : `PASSADA, há ${dist}`;
+      lines.push(`  - ${rot} (${siglaDoFuso(ctx.timezone)}), ${quando}${r.titulo ? `: ${sanitize(r.titulo, 80)}` : ""}`);
+    }
+    lines.push("");
+  }
+
   if (form) {
     lines.push("**Formulário que o lead preencheu** (é o assunto que trouxe ele até nós; fale DESTE assunto e não pergunte de novo o que ele já respondeu aqui):");
     if (form.nome) lines.push(`  - Formulário: ${sanitize(form.nome, 120)}`);

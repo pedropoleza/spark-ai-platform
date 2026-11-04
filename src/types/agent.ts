@@ -368,6 +368,8 @@ export interface LeadContext {
    * pergunta como rótulo). Ausente quando o contato não tem nada disso.
    */
   formulario?: import("@/lib/queue/lead-form").FormularioDoLead | null;
+  /** H116: reuniões do contato no calendário (ISO com offset), em ordem. */
+  reunioes?: Array<{ inicioIso: string; titulo?: string; status?: string }>;
 }
 
 export type ShouldRespondDecision =

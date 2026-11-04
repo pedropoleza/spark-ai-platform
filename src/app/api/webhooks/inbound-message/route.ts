@@ -499,7 +499,24 @@ export async function POST(request: NextRequest) {
           // é raro; o rep sempre pode pausar manual no pill.) Mata a auto-pausa que
           // mutou 39 leads.
           const aiSentRecently = aiTexts.length > 0;
-          const isHumanMessage = isHuman && !aiSentRecently;
+          // H117 (caso Adriel, Alves Cury 17/10): a resposta da IA pelo WhatsApp
+          // volta neste webhook carimbada "app + dono do lead" ANTES de o
+          // send_message ser gravado (ele é gravado depois de todas as bolhas).
+          // Sem envio recente no log, o eco virava "humano" e a IA se pausava no
+          // meio do próprio turno; a escolha de horário do lead ficou 12 h sem
+          // resposta. Turno da IA em andamento para este contato = é o eco.
+          let turnoDaIaEmAndamento = false;
+          if (isHuman && !aiSentRecently) {
+            const { count: emAndamento } = await supabaseAdmin
+              .from("message_queue")
+              .select("id", { count: "exact", head: true })
+              .eq("location_id", locationId)
+              .eq("contact_id", contactId)
+              .eq("status", "processing")
+              .gte("updated_at", new Date(Date.now() - 5 * 60_000).toISOString());
+            turnoDaIaEmAndamento = (emAndamento ?? 0) > 0;
+          }
+          const isHumanMessage = isHuman && !aiSentRecently && !turnoDaIaEmAndamento;
 
           console.log(`[Webhook:outbound] isHuman=${isHumanMessage} | autoPause=${autoPauseEnabled} | agent=${outboundAgent.id}`);
 

@@ -7,6 +7,7 @@ import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from 
 import { formatAvailableSlots, filterSlotsToBusinessHours } from "@/lib/ai/slots-format";
 import { extractSlotIsoList } from "@/lib/ai/slot-guard";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
+import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
@@ -112,13 +113,32 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Agente nao encontrado" }, { status: 404 });
   }
 
-  const config = Array.isArray(agent.agent_configs)
+  const configSalva = Array.isArray(agent.agent_configs)
     ? agent.agent_configs[0]
     : agent.agent_configs;
 
-  if (!config) {
+  if (!configSalva) {
     return NextResponse.json({ error: "Agente sem configuracao" }, { status: 400 });
   }
+
+  // H116 (Alves Cury 04/11/2026): testar instruções ANTES de salvar. O teste só
+  // conseguia rodar a config gravada, e gravar instrução nova para testar é
+  // testar em lead real. `config_override` vale só nesta chamada, nunca é
+  // persistido, e só para o laboratório da conta ou admin. Campos de TEXTO do
+  // agente apenas (nada de agenda, gatilho ou canal).
+  const overrideBruto = (body as { config_override?: unknown }).config_override;
+  const podeSobrescrever = session.userId === "alves-lab" || session.userId === "marina-lab" || !!session.isAdmin;
+  const config = (() => {
+    if (!podeSobrescrever || !overrideBruto || typeof overrideBruto !== "object") return configSalva;
+    const o = overrideBruto as Record<string, unknown>;
+    const out = { ...configSalva } as typeof configSalva & Record<string, unknown>;
+    if (typeof o.custom_instructions === "string") out.custom_instructions = o.custom_instructions;
+    if (typeof o.conversation_examples === "string") out.conversation_examples = o.conversation_examples;
+    if (o.personality && typeof o.personality === "object") {
+      out.personality = { ...((configSalva.personality as Record<string, unknown>) || {}), ...(o.personality as Record<string, unknown>) } as typeof configSalva.personality;
+    }
+    return out as typeof configSalva;
+  })();
 
   // ==========================================================================
   // 1. RESOLVER SESSÃO: usar a fornecida ou criar uma nova.
@@ -432,7 +452,7 @@ export async function POST(request: NextRequest) {
   if (sessionContactId) invalidateLeadHistoryCache(sessionContactId);
   const leadHistoryTeste =
     leadHistoryCfgTeste.enabled && sessionContactId
-      ? await loadLeadHistory(sessionContactId, session.companyId, session.locationId, leadHistoryCfgTeste).catch(() => undefined)
+      ? await loadLeadHistory(sessionContactId, session.companyId, session.locationId, leadHistoryCfgTeste, locationTz).catch(() => undefined)
       : undefined;
   const cacheOptimizedTeste = process.env.LEAD_CACHE_OPTIMIZED === "1";
 
@@ -582,6 +602,18 @@ export async function POST(request: NextRequest) {
         agendamento_retirado: g.agendamentoRetirado,
       };
     }
+  }
+
+  // H118: link repetido (paridade com o processor).
+  if (result.response) {
+    const bolhasLink = Array.isArray(result.response.message)
+      ? result.response.message.filter((m): m is string => typeof m === "string")
+      : result.response.message
+        ? [String(result.response.message)]
+        : [];
+    const anteriores = conversationTurns.filter((t) => t.role === "assistant").map((t) => t.content);
+    const lr = tirarLinkRepetido(bolhasLink, anteriores, message || "");
+    if (lr.removidos.length > 0) result.response.message = lr.messages;
   }
 
   // ==========================================================================
