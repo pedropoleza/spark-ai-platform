@@ -1027,3 +1027,19 @@ lead do Pacífico, "2 PM ET" é 11 da manhã. Agora a guarda de agenda olha os h
 (`validas` do slot-offer-guard) no fuso do lead. Se o lead não pediu manhã e o turno não agenda, oferta de
 manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no horário DELE. Testes:
 `test-h114-h115-alves` 39/39.
+
+## H122 (2026-11-04): nota interna fora do chat e guarda do follow-up enxergando tudo (Alves Cury, SIS-15/SIS-21)
+
+- **Nota interna (TYPE_INTERNAL_COMMENT) não é mensagem de chat.** Entrava no histórico como fala da IA e
+  contava como "humano escreveu": o `stale_human_outbound_ignored` da Izolismaria apontava para a nota "não
+  tem interesse, clicou por engano".
+- **A guarda de repetição do follow-up enxerga as falas inteiras.** Uma resposta de 2 bolhas chega como
+  "AGENTE: bolha1\n\nbolha2", e só a 1ª linha contava. A pergunta ignorada da 2ª bolha ("você está em qual
+  estado?") era repetida no toque (Âna).
+- **Toque de follow-up com dia e hora específicos é refeito.** O roteiro proíbe, e a guarda não pegava
+  oferta sem a palavra "horário" (Lorena).
+- **Testes:**
+  - `test-h122-followup` 7/7.
+  - `test-followup-repeat-guard` 34/34.
+  - Também passaram `test-human-takeover`, `test-equipe-assumiu`, `test-activity-not-human` e
+    `test-lead-awareness`.

@@ -86,5 +86,9 @@ export function isChatMessageType(messageType?: string | null): boolean {
   if (!mt) return true; // sem tipo → assume mensagem (comportamento legado)
   if (mt.startsWith("TYPE_ACTIVITY")) return false; // registro do CRM, não msg
   if (mt.includes("CALL") || mt.includes("VOICEMAIL")) return false; // ligação ≠ chat
+  // H122 (revisão Alves Cury 04/11, SIS-21): nota interna não é conversa com o
+  // lead. Entrava no histórico como fala da IA e contava como "humano escreveu"
+  // (a nota "não tem interesse, clicou por engano" da Izolismaria).
+  if (mt.includes("INTERNAL_COMMENT")) return false;
   return true;
 }

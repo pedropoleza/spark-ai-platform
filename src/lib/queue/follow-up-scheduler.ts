@@ -30,7 +30,7 @@ import { ajustarParaJanela } from "@/lib/queue/janela-de-envio";
 // Caso Alves Cury 2026-08-31: guardas determinísticas do follow-up (pergunta
 // repetida + rótulo de dia relativo). Regra em prompt não segurou — ver
 // _planning/alves-cury-feedbacks-2026-08/RELATORIO-CHURN-2026-08-31.md.
-import { isRepeatedAsk, agentLinesFromHistory } from "@/lib/queue/followup-repeat-guard";
+import { isRepeatedAsk, agentLinesFromHistory, toqueOfereceHorario } from "@/lib/queue/followup-repeat-guard";
 import { aplicarGuardaDeDataLead } from "@/lib/queue/lead-day-guard";
 
 /**
@@ -1089,7 +1089,14 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             // repetida" pelo próprio roteiro dele. O passo 3 dela era lido como
             // repetição do passo 2 e o 3º toque não saía desde 31/08.
             const textoDoAdmin = (followUp.custom_message as string | null) || null;
-            const veredito = isRepeatedAsk(msgText, priorAi, { textoDoAdmin });
+            const vereditoPergunta = isRepeatedAsk(msgText, priorAi, { textoDoAdmin });
+            // H122: re-oferta de dia + hora específicos também refaz (o roteiro proíbe).
+            const horarioNoToque = textoDoAdmin ? null : toqueOfereceHorario(msgText);
+            const veredito = vereditoPergunta.repeated
+              ? vereditoPergunta
+              : horarioNoToque
+                ? { ...vereditoPergunta, repeated: true, matched: horarioNoToque }
+                : vereditoPergunta;
             if (veredito.repeated) {
               const constraint =
                 `\n\n## PERGUNTA JÁ FEITA (PROIBIDO REPETIR — regra dura)\n` +
