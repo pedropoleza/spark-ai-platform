@@ -111,6 +111,8 @@ const followUpConfigSchema = z.object({
   // H110: follow-up abre na entrada pela automação (opt-in). Fora do zod, o PUT
   // descartava a chave no Salvar (achado do test-salvar-config-agentes em 03/11).
   start_on_entry: z.boolean().optional(),
+  // H123: toque pelo SMS da conta depois da janela de 24 h do WhatsApp (opt-in).
+  fallback_sms_after_window: z.boolean().optional(),
 });
 
 // Working hours

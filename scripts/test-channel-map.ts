@@ -4,7 +4,7 @@
 // Fonte única em src/lib/ghl/channel.ts (antes duplicado). Trava o roteamento
 // de canal — inclui o caso IG que validamos ao vivo (Alves Cury).
 
-import { channelToMessageType, detectChannel } from "@/lib/ghl/channel";
+import { canalHabilitado, channelToMessageType, detectChannel } from "@/lib/ghl/channel";
 
 let pass = 0;
 let fail = 0;
@@ -32,7 +32,11 @@ console.log("\n— detectChannel (inbound) —");
 eq("type IG → Instagram", detectChannel("IG"), "Instagram");
 eq("type TYPE_IG → Instagram", detectChannel("TYPE_IG"), "Instagram");
 eq("type INSTAGRAM → Instagram", detectChannel("INSTAGRAM"), "Instagram");
-eq("type FB → Instagram", detectChannel("FB"), "Instagram");
+// H123 (SIS-18): Messenger tem canal próprio; quem tem Instagram habilitado continua atendendo.
+eq("type FB → Facebook", detectChannel("FB"), "Facebook");
+eq("Facebook → reply type FB", channelToMessageType("Facebook"), "FB");
+eq("Facebook habilitado via Instagram", String(canalHabilitado("Facebook", ["SMS", "Instagram"])), "true");
+eq("Facebook sem Instagram nem Facebook: não", String(canalHabilitado("Facebook", ["SMS", "WhatsApp"])), "false");
 eq("type WHATSAPP → WhatsApp", detectChannel("WHATSAPP"), "WhatsApp");
 eq("type EMAIL → Email", detectChannel("EMAIL"), "Email");
 eq("type SMS → SMS", detectChannel("SMS"), "SMS");

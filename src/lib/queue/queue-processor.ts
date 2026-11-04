@@ -184,6 +184,7 @@ import {
 // bloqueada — regra de prompt não segurou (juiz venda-evasiva 31/08).
 import { turnRepeatVerdict, stripRepeatedAsks } from "@/lib/queue/followup-repeat-guard";
 import { isChatMessageType, isHumanOutboundSource } from "@/lib/ghl/message-sources";
+import { canalHabilitado } from "@/lib/ghl/channel";
 import type { TargetingRules } from "@/types/agent";
 // F27.D (Pedro 2026-05-29): detecção de trigger reativo (msg sintética
 // enfileirada pelo reactive-trigger.ts quando tag/stage muda no GHL).
@@ -712,7 +713,7 @@ async function tentarReRotearTargeting(
     const rules = cfg?.targeting_rules ?? null;
     if (!normalizeTargeting(rules)) continue; // catch-all não entra: o webhook já teria escolhido
     const canais = cfg?.enabled_channels || ["SMS", "WhatsApp"];
-    if (group.channel && !canais.includes(group.channel)) continue;
+    if (group.channel && !canalHabilitado(group.channel, canais)) continue;
     const match = await checkContactMatchesTargeting(
       group.contactId,
       rules,

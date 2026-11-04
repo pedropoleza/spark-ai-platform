@@ -1043,3 +1043,20 @@ manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no hor
   - `test-followup-repeat-guard` 34/34.
   - Também passaram `test-human-takeover`, `test-equipe-assumiu`, `test-activity-not-human` e
     `test-lead-awareness`.
+
+## H123 (2026-11-04): follow-up no relógio do lead, SMS depois da janela e Messenger com canal próprio (Alves Cury, SIS-16/17/18)
+
+- **Janela de envio do follow-up no fuso do lead.** O fuso sai do estado em `conversation_state.collected_data`
+  (`fusoDoEstado`). A Simone, da Califórnia, recebeu um toque às 5 da manhã porque o adiamento noturno usava
+  o fuso da conta.
+- **`follow_up_config.fallback_sms_after_window` (opt-in, preservado no Salvar).** Com a janela de 24 h do
+  WhatsApp fechada, o toque sai pelo SMS da conta em vez de cancelar a sequência. Na Alves Cury o SMS é um
+  provedor que entrega no WhatsApp sem a janela. O cancelamento da janela agora vai para o `execution_log`
+  (`followup_skipped`, `janela_24h_fechada`); antes ficava só no console.
+- **Messenger do Facebook = canal "Facebook" (reply `FB`), não mais "Instagram".** A resposta ao Romi falhava
+  com "Contact has no Instagram id". `canalHabilitado` mantém o Messenger atendido por quem tem Instagram
+  habilitado. A janela de 24 h vale para o Messenger.
+- **Testes:**
+  - `test-channel-map` 20/20.
+  - `test-salvar-config-agentes`: 36 agentes, nenhum perde config.
+  - Também passaram `test-h114-h115-alves`, `test-h122-followup` e `test-followup-repeat-guard`.

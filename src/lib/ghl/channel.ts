@@ -18,6 +18,8 @@ export function channelToMessageType(channel?: string): string {
       return "WhatsApp";
     case "Instagram":
       return "IG";
+    case "Facebook":
+      return "FB";
     case "Email":
       return "Email";
     default:
@@ -38,6 +40,19 @@ export function detectChannel(messageType: string, customChannel?: string): stri
   if (mt.includes("WHATSAPP")) return "WhatsApp";
   if (mt.includes("INSTAGRAM") || mt === "TYPE_IG" || mt === "IG") return "Instagram";
   if (mt.includes("EMAIL")) return "Email";
-  if (mt.includes("FB") || mt.includes("FACEBOOK")) return "Instagram";
+  // H123 (revisão Alves Cury 04/11, SIS-18, caso Romi): Messenger do Facebook não é
+  // Instagram. Mapeado como Instagram, a resposta saía como "IG" e falhava ("Contact
+  // has no Instagram id"). Quem tem Instagram habilitado continua atendendo o
+  // Messenger (`canalHabilitado`).
+  if (mt.includes("FB") || mt.includes("FACEBOOK")) return "Facebook";
   return "SMS";
+}
+
+/**
+ * O canal está habilitado no agente? "Facebook" (Messenger) vale para quem tem
+ * "Instagram" habilitado, como era antes de o Messenger ganhar canal próprio.
+ */
+export function canalHabilitado(canal: string, habilitados: string[]): boolean {
+  if (habilitados.includes(canal)) return true;
+  return canal === "Facebook" && habilitados.includes("Instagram");
 }

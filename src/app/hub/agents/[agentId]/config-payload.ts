@@ -178,6 +178,8 @@ export function makeSeed(c: Record<string, any>): Editable {
       // carregar aqui, o 1º Salvar do painel apagava a chave e os toques voltavam a
       // nunca começar pra quem não responde a boas-vindas.
       ...(fu.start_on_entry === true ? { start_on_entry: true } : {}),
+      // H123: toque pelo SMS da conta depois da janela de 24 h do WhatsApp (opt-in).
+      ...((fu as { fallback_sms_after_window?: boolean }).fallback_sms_after_window === true ? { fallback_sms_after_window: true } : {}),
     },
     post_booking: { behavior: pb.behavior === "continue_until_appointment" ? "continue_until_appointment" : "stop_and_handoff", handoff_message: str(pb.handoff_message), allow_reschedule: bool(pb.allow_reschedule, true), require_contact_before_booking: pb.require_contact_before_booking === true },
     specialist_name: str(c.specialist_name),
