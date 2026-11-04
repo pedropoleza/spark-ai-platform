@@ -84,6 +84,8 @@ interface Diagnostico {
   correcoes: string[];
   invalidas: Array<{ bolha: number; trecho: string }>;
   fusoErrado: FusoErrado | null;
+  /** Horários válidos oferecidos de MANHÃ no fuso do lead, quando ele não pediu manhã. */
+  manhaDoLead: string[];
 }
 
 /**
@@ -115,6 +117,7 @@ function diagnosticar(r: AIResponse, input: AgendaGuardInput): Diagnostico {
   let messages = msgs;
   let correcoes: string[] = [];
   let invalidas: Array<{ bolha: number; trecho: string }> = [];
+  let manhaDoLead: string[] = [];
   const agendando = acoesDeAgenda(r).length > 0;
   if (input.slotsIso !== undefined && (!input.pularOferta || agendando)) {
     const g = conferirOfertasDeHorario(msgs, input.slotsIso, input.fusoLista, {
@@ -124,8 +127,14 @@ function diagnosticar(r: AIResponse, input: AgendaGuardInput): Diagnostico {
     messages = g.messages;
     correcoes = g.correcoes;
     invalidas = g.invalidas;
+    // H121 (laboratório 04/11, lead da Califórnia): "tarde ou noite" vale no relógio
+    // do LEAD. Oferta de manhã no fuso dele, sem ele ter pedido manhã, refaz 1x.
+    const pediuManha = /manh[ãa]|cedo|am|\d\s*a\.?m\.?/i.test(input.mensagemDoLead || "");
+    if (input.preferirTardeNoite && input.fusoLead && !pediuManha && !agendando) {
+      manhaDoLead = g.validas.filter((iso) => (horaMinutoNoFuso(iso, input.fusoLead!)?.h ?? 12) < 12);
+    }
   }
-  return { messages, correcoes, invalidas, fusoErrado: fusoDoAgendamento(r, input) };
+  return { messages, correcoes, invalidas, fusoErrado: fusoDoAgendamento(r, input), manhaDoLead };
 }
 
 /** A hora que o lead disse, no fuso dele, convertida para o fuso da lista. */
@@ -159,8 +168,13 @@ export async function aplicarGuardasDeAgenda(input: AgendaGuardInput): Promise<A
   resposta.message = diag.messages;
 
   let regenerou = false;
-  if (diag.invalidas.length > 0 || diag.fusoErrado) {
+  if (diag.invalidas.length > 0 || diag.fusoErrado || diag.manhaDoLead.length > 0) {
     const partes: string[] = [];
+    if (diag.manhaDoLead.length > 0 && diag.invalidas.length === 0) {
+      partes.push(
+        `você ofereceu horário de MANHÃ no horário do lead (${diag.manhaDoLead.length} opção ou opções). Ofereça 2 horários de TARDE ou NOITE no horário DELE (o que está entre parênteses na lista), sem pedir preferência.`,
+      );
+    }
     if (diag.invalidas.length > 0) {
       const semHorario = (input.slotsIso || []).length === 0;
       partes.push(
@@ -180,7 +194,7 @@ export async function aplicarGuardasDeAgenda(input: AgendaGuardInput): Promise<A
     if (nova) {
       regenerou = true;
       const d2 = diagnosticar(nova, input);
-      notas.push(`refeito: ${diag.invalidas.length} oferta(s) inválida(s)${diag.fusoErrado ? " + fuso do agendamento" : ""}`);
+      notas.push(`refeito: ${diag.invalidas.length} oferta(s) inválida(s)${diag.fusoErrado ? " + fuso do agendamento" : ""}${diag.manhaDoLead.length ? " + manhã no horário do lead" : ""}`);
       resposta = { ...nova, message: d2.messages };
       if (d2.correcoes.length > 0) notas.push(...d2.correcoes.map((c) => `oferta (refeito): ${c}`));
       diag = d2;

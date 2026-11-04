@@ -112,6 +112,8 @@ export interface SlotOfferGuardResult {
   invalidas: OfertaInvalida[];
   /** Quantas menções dia + hora foram conferidas. */
   conferidas: number;
+  /** ISO dos horários oferecidos que existem na agenda (para regras de período). */
+  validas: string[];
 }
 
 function lerDias(frase: string): MencaoDia[] {
@@ -218,7 +220,7 @@ function existe(
   fusoTexto: string,
   fusoLista: string,
   agora: Date,
-): boolean {
+): string | null {
   const delta = mesmoFuso(fusoTexto, fusoLista, agora) ? 0 : diferencaMinutos(fusoTexto, fusoLista, agora);
   for (const h of leituras) {
     let total = h * 60 + min + delta;
@@ -230,9 +232,10 @@ function existe(
       total -= 1440;
       d = somarDias(dia, 1);
     }
-    if (idx.has(chave(d, Math.floor(total / 60), total % 60))) return true;
+    const iso = idx.get(chave(d, Math.floor(total / 60), total % 60));
+    if (iso) return iso;
   }
-  return false;
+  return null;
 }
 
 /**
@@ -252,6 +255,7 @@ export function conferirOfertasDeHorario(
   const idx = indexarSlots(slotsIso, fusoLista);
   const correcoes: string[] = [];
   const invalidas: OfertaInvalida[] = [];
+  const validas: string[] = [];
   let conferidas = 0;
 
   const messages = bolhas.map((bolha, bi) => {
@@ -285,22 +289,31 @@ export function conferirOfertasDeHorario(
         conferidas++;
 
         const candData = dia.data ? resolverData(dia.data, hoje) : null;
-        const okData = candData ? existe(idx, candData, h.leituras, h.min, fusoTexto, fusoLista, agora) : false;
-        if (okData) continue;
+        const isoData = candData ? existe(idx, candData, h.leituras, h.min, fusoTexto, fusoLista, agora) : null;
+        if (isoData) {
+          validas.push(isoData);
+          continue;
+        }
         const candSemana =
           dia.diaSemana !== null
             ? proximasComDia(dia.diaSemana, hoje).find((c) => existe(idx, c, h.leituras, h.min, fusoTexto, fusoLista, agora)) ?? null
             : null;
         const okSemana = !!candSemana;
+        const isoSemana = candSemana ? existe(idx, candSemana, h.leituras, h.min, fusoTexto, fusoLista, agora) : null;
         const candRel = dia.relativo !== null ? somarDias(hoje, dia.relativo) : null;
-        const okRel = candRel ? existe(idx, candRel, h.leituras, h.min, fusoTexto, fusoLista, agora) : false;
+        const isoRel = candRel ? existe(idx, candRel, h.leituras, h.min, fusoTexto, fusoLista, agora) : null;
+        const okRel = !!isoRel;
 
-        if (!dia.data && (okSemana || okRel)) continue;
+        if (!dia.data && (okSemana || okRel)) {
+          validas.push((isoSemana || isoRel)!);
+          continue;
+        }
         if (dia.data && okSemana && candSemana && dia.dataInicio >= 0) {
           // a data estava errada e o nome do dia certo: corrige a DATA
           const novo = `${String(candSemana.d).padStart(2, "0")}/${String(candSemana.m).padStart(2, "0")}`;
           trocas.push({ ini: f.ini + dia.dataInicio, fim: f.ini + dia.dataFim, novo });
           correcoes.push(`data "${f.txt.slice(dia.dataInicio, dia.dataFim)}" → "${novo}" (o dia da semana dito existe na agenda com essa hora)`);
+          if (isoSemana) validas.push(isoSemana);
           continue;
         }
         invalidas.push({ bolha: bi, trecho: f.txt.slice(Math.min(dia.inicio, h.inicio), Math.max(dia.fim, h.fim)).trim() });
@@ -316,7 +329,7 @@ export function conferirOfertasDeHorario(
     return texto;
   });
 
-  return { messages, correcoes, invalidas, conferidas };
+  return { messages, correcoes, invalidas, conferidas, validas };
 }
 
 /**
