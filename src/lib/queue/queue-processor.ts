@@ -199,6 +199,7 @@ import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-hi
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
 import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
+import { tirarMetaLinguagem } from "@/lib/queue/meta-guard";
 import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
@@ -2938,6 +2939,29 @@ async function processGroup(
         conversation_id: group.conversationId,
         action_type: "link_repeat_removed",
         action_payload: { links: lr.removidos.slice(0, 3) },
+        success: true,
+      });
+    }
+  }
+
+  // H120: frase que explica a engrenagem ("o sistema ainda não registrou") sai.
+  {
+    const bolhasMeta = Array.isArray(aiResult.response.message)
+      ? aiResult.response.message.filter((m): m is string => typeof m === "string")
+      : aiResult.response.message
+        ? [String(aiResult.response.message)]
+        : [];
+    const meta = tirarMetaLinguagem(bolhasMeta);
+    if (meta.removidas.length > 0) {
+      aiResult.response.message = meta.messages;
+      log("log", `H120: frase de meta-linguagem removida ("${meta.removidas[0].slice(0, 60)}")`);
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "meta_language_removed",
+        action_payload: { frases: meta.removidas.slice(0, 3).map((f) => f.slice(0, 160)) },
         success: true,
       });
     }

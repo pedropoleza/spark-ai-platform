@@ -1007,3 +1007,15 @@ Achados da bateria de laboratório e da revisão adversarial (NAT-20, NAT-08, NE
   tranquilo". Quando o lead pergunta se é robô ou quem está falando (`leadPerguntouIdentidade`), a
   apresentação não é cortada.
 - **Testes:** `test-h119-eco` 10/10 e `test-message-splitter` 28/28.
+
+## H120 (2026-11-04): meta-linguagem fora do texto do lead (Alves Cury, laboratório)
+
+"O sistema ainda não registrou a visualização do vídeo" saiu no laboratório e "o sistema não registrou"
+já tinha saído em produção. O próprio texto de runtime da agenda travada (H112) dizia "a agenda só abre
+quando o sistema registra", e o modelo copiava.
+
+- **Runtime:** o texto foi reescrito sem "sistema" nem "registro", com o exemplo do que dizer.
+- **Trava:** `tirarMetaLinguagem` tira a FRASE que fala da engrenagem ("o sistema... registrou",
+  "não registrou", "do meu lado", "etiqueta", "tag"). Os padrões são estreitos: "registrada como
+  auxiliar" e "sistema de saúde" ficam. Auditoria: `meta_language_removed`.
+- **Testes:** `test-h120-meta` 6/6 e `test-booking-tag-gate` 17/17.

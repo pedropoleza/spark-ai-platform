@@ -9,6 +9,7 @@ import { extractSlotIsoList } from "@/lib/ai/slot-guard";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
 import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
+import { tirarMetaLinguagem } from "@/lib/queue/meta-guard";
 import { splitLeadOutbound } from "@/lib/ai/message-splitter";
 import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
 import { processWithAI } from "@/lib/ai/openai-client";
@@ -625,7 +626,7 @@ export async function POST(request: NextRequest) {
       : result.response.message
         ? [String(result.response.message)]
         : [];
-    const eco = tirarEcoDoInicio(bolhasH119, message || "");
+    const eco = tirarEcoDoInicio(tirarMetaLinguagem(bolhasH119).messages, message || "");
     const capped = splitLeadOutbound(eco.messages, (config.personality as { max_bubbles?: number | null } | null)?.max_bubbles ?? null);
     result.response.message = capped.messages;
   }
