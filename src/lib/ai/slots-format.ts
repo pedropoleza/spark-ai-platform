@@ -20,7 +20,16 @@ export function formatAvailableSlots(
   slotsResp: Record<string, unknown>,
   tz: string,
   maxPerDay = 30,
+  /**
+   * H115: fuso do lead. Quando é outro, cada horário sai com o equivalente dele
+   * entre parênteses ("2:00 PM ET (1:00 PM CT)"): o modelo copia a conversão em
+   * vez de fazer conta de fuso de cabeça (foi a conta que errou na Izolismaria).
+   */
+  fusoLead?: string | null,
 ): string {
+  const anotar = !!fusoLead && fusoLead !== tz;
+  const siglaLista = anotar ? siglaDoFuso(tz) : "";
+  const siglaLead = anotar ? siglaDoFuso(fusoLead!) : "";
   const lines: string[] = [];
   for (const [key, value] of Object.entries(slotsResp)) {
     if (key === "traceId" || !value) continue;
@@ -39,13 +48,19 @@ export function formatAvailableSlots(
       day: "numeric",
       timeZone: tz,
     });
-    const fmt = (s: string) =>
+    const fmtTz = (s: string, zona: string) =>
       new Date(s).toLocaleTimeString("en-US", {
         hour: "numeric",
         minute: "2-digit",
         hour12: true,
-        timeZone: tz,
+        timeZone: zona,
       });
+    const fmt = (s: string) => {
+      const base = fmtTz(s, tz);
+      if (!anotar) return base;
+      const local = fmtTz(s, fusoLead!);
+      return local === base ? base : `${base} ${siglaLista} (${local} ${siglaLead})`;
+    };
 
     let body: string;
     if (slots.length <= maxPerDay) {
@@ -65,6 +80,7 @@ export function formatAvailableSlots(
 // ---------------------------------------------------------------------------
 
 import { horaLocal, EXPEDIENTE_PADRAO, type JanelaExpediente } from "@/lib/ai/booking-guard";
+import { siglaDoFuso } from "@/lib/queue/lead-timezone";
 
 /**
  * Corta os horários fora do expediente ANTES de o modelo ver.

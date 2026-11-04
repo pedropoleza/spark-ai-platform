@@ -4,7 +4,10 @@ import { getSession } from "@/lib/auth/sso";
 import { createServerClient } from "@/lib/supabase/server";
 import { GHLClient } from "@/lib/ghl/client";
 import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from "@/lib/ai/sales-prompt-builder";
-import { formatAvailableSlots } from "@/lib/ai/slots-format";
+import { formatAvailableSlots, filterSlotsToBusinessHours } from "@/lib/ai/slots-format";
+import { extractSlotIsoList } from "@/lib/ai/slot-guard";
+import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
+import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import { withRetry } from "@/lib/utils/retry";
@@ -292,13 +295,21 @@ export async function POST(request: NextRequest) {
   // Processar slots
   let availableSlots = "";
   let slotsFetchFailed = false;
+  let slotsNaJanelaTeste: Record<string, unknown> | null = null;
+  let offeredSlotsIsoTeste: string[] | undefined;
   if (shouldFetchSlots) {
     if (slotsSettled.status === "fulfilled" && slotsSettled.value) {
       // F48: mesmo formatter do runtime de prod (paridade) — dia inteiro,
       // sempre com o último horário real (sem o slice(0,8) que fazia o agente
       // mentir sobre disponibilidade da noite).
-      availableSlots = formatAvailableSlots(slotsSettled.value as Record<string, unknown>, locationTz);
+      // H115: paridade com o processor. Mesmo filtro de expediente e a lista ISO
+      // que alimenta a guarda de agenda; a formatação sai mais abaixo, quando o
+      // fuso do lead já é conhecido.
+      slotsNaJanelaTeste = filterSlotsToBusinessHours(slotsSettled.value as Record<string, unknown>, locationTz);
+      offeredSlotsIsoTeste = extractSlotIsoList(slotsNaJanelaTeste);
+      availableSlots = formatAvailableSlots(slotsNaJanelaTeste, locationTz);
     } else {
+      offeredSlotsIsoTeste = [];
       slotsFetchFailed = true;
       console.error(`[Test FreeSlots] All retries failed:`,
         slotsSettled.status === "rejected"
@@ -319,6 +330,7 @@ export async function POST(request: NextRequest) {
     if (!veredito.liberada) {
       agendaTravadaTeste = true;
       availableSlots = "";
+      offeredSlotsIsoTeste = [];
     }
   }
 
@@ -424,6 +436,17 @@ export async function POST(request: NextRequest) {
       : undefined;
   const cacheOptimizedTeste = process.env.LEAD_CACHE_OPTIMIZED === "1";
 
+  // H115: fuso do lead (paridade com o processor).
+  let fusoLeadTeste: { tz: string; origem: string } | null = null;
+  if ((config as { timezone_config?: { auto_detect_from_state?: boolean } | null }).timezone_config?.auto_detect_from_state) {
+    const estado =
+      mergedCollectedData["contact.state"] || mergedCollectedData["state"] || mergedCollectedData["estado_onde_mora"] || mergedCollectedData["estado"] || "";
+    fusoLeadTeste = fusoDoEstado(estado) ?? detectarFusoNoTexto(message || "");
+  }
+  if (slotsNaJanelaTeste && !agendaTravadaTeste && fusoLeadTeste) {
+    availableSlots = formatAvailableSlots(slotsNaJanelaTeste, locationTz, 30, fusoLeadTeste.tz);
+  }
+
   const promptCtx = {
     config,
     // custom_agent testa no caminho de lead provado, com framing NEUTRO (C2-4) —
@@ -442,6 +465,7 @@ export async function POST(request: NextRequest) {
     availableSlots,
     slotsUnavailable: slotsFetchFailed,
     agendaTravada: agendaTravadaTeste,
+    fusoLead: fusoLeadTeste,
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     priorTurnCount: effectivePriorTurnCount,
@@ -522,6 +546,44 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // H115: guardas de agenda (paridade com o processor; ver agenda-guard.ts).
+  let agendaGuardTeste: { notas: string[]; regenerou: boolean; oferta_substituida: boolean; agendamento_retirado: boolean } | null = null;
+  if (!result.parse_failed && result.response) {
+    const g = await aplicarGuardasDeAgenda({
+      resposta: result.response,
+      slotsIso: shouldFetchSlots ? (offeredSlotsIsoTeste ?? []) : undefined,
+      fusoLista: locationTz,
+      fusoLead: fusoLeadTeste?.tz ?? null,
+      mensagemDoLead: message || "",
+      // Paridade: em prod, conversa já agendada não confere oferta (citar a
+      // reunião marcada é legítimo). O teste não grava agendamento, então confere sempre.
+      pularOferta: false,
+      preferirTardeNoite: (config as { preferred_time_slot?: string | null }).preferred_time_slot === "afternoon_evening",
+      regenerar: async (diretiva) => {
+        const r = await processWithAI({
+          systemPrompt,
+          runtimeContext,
+          conversationMessages: conversationTurns,
+          conversationHistory: "",
+          newMessages: message + "\n\n" + diretiva,
+          model: config.ai_model || "claude-sonnet-4-6",
+          responseSchema,
+          priorTurnCount: effectivePriorTurnCount,
+        });
+        return r.success && r.response && !r.parse_failed ? r.response : null;
+      },
+    });
+    if (g.notas.length > 0) {
+      result.response = g.resposta;
+      agendaGuardTeste = {
+        notas: g.notas,
+        regenerou: g.regenerou,
+        oferta_substituida: g.ofertaSubstituida,
+        agendamento_retirado: g.agendamentoRetirado,
+      };
+    }
+  }
+
   // ==========================================================================
   // 6. SALVAR A AGENT MSG NO DB. Próximo turno vai vê-la automaticamente.
   // ==========================================================================
@@ -590,6 +652,8 @@ export async function POST(request: NextRequest) {
             collectedData: result.response?.collected_data || {},
             forbiddenTerms: resolveForbiddenTerms(agent_id, config.forbidden_terms),
             timezone: locationTz, // paridade H66 com o processor
+            offeredSlotsIso: offeredSlotsIsoTeste,
+            fusoLead: fusoLeadTeste?.tz ?? undefined,
             agentLabel: (config.personality as { name?: string } | null)?.name || undefined,
           });
         } catch (error) {
@@ -623,6 +687,9 @@ export async function POST(request: NextRequest) {
     duration_ms: result.duration_ms,
     actions_scheduled: actionsScheduled,
     available_slots: availableSlots || null,
+    // H115: o que a guarda de agenda fez neste turno (null = nada).
+    agenda_guard: agendaGuardTeste,
+    model_used: result.model_used ?? null,
   });
 }
 

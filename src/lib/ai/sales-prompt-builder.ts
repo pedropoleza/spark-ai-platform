@@ -1,5 +1,6 @@
 import type { AgentConfig, DataField } from "@/types/agent";
 import { getTimezoneFromState, getCurrentTimeInTimezone } from "@/lib/utils/timezone";
+import { diferencaMinutos, mesmoFuso, siglaDoFuso } from "@/lib/queue/lead-timezone";
 import { buildCalendarGrounding } from "@/lib/account-assistant/calendar-grounding";
 import { composePersonalityProfile } from "@/lib/ai/behavior-blocks";
 import { isHumanOutboundSource } from "@/lib/ghl/message-sources";
@@ -14,6 +15,10 @@ import { CUSTOM_INSTRUCTIONS_CAP, CONVERSATION_EXAMPLES_CAP } from "@/lib/ai/pro
  * Sanitiza texto para prevenir prompt injection.
  * Remove caracteres que poderiam quebrar o prompt ou injetar instruções.
  */
+function sanitizeInline(text: string): string {
+  return sanitize(text, 80);
+}
+
 function sanitize(text: string, maxLength = 200): string {
   return text
     .replace(/[#\n\r]/g, " ")  // Remove headers markdown e quebras de linha
@@ -93,6 +98,12 @@ export interface PromptContext {
    * no lugar dos horários e o modelo não recebe nenhum.
    */
   agendaTravada?: boolean;
+  /**
+   * H115: fuso do lead (estado coletado/do contato ou o que ele citou no turno).
+   * Quando difere do fuso da lista, a lista sai com o horário dele entre
+   * parênteses e o runtime manda falar no horário DELE e converter.
+   */
+  fusoLead?: { tz: string; origem: string } | null;
   feedback?: FeedbackItem[];
   knowledgeBase?: KnowledgeBaseItem[];
   /**
@@ -326,6 +337,8 @@ NÃO invente horários. NÃO inclua action book_appointment neste turno.`);
       if (tzConfig && !tzConfig.use_location_default && tzConfig.custom_timezone) {
         effectiveTimezone = tzConfig.custom_timezone;
       }
+      // H115: o detector novo entende "Texas (Austin)", "Flórida", cidade etc.
+      if (ctx.fusoLead?.tz) effectiveTimezone = ctx.fusoLead.tz;
 
       const currentTime = getCurrentTimeInTimezone(effectiveTimezone);
       // H67 (2026-08-04): o modelo mapeia dia-da-semana ↔ data pelo calendário
@@ -341,7 +354,18 @@ ${calLead.block}
 ${ctx.availableSlots}
 
 Ao PROPOR, ofereça 2 opções ESPAÇADAS da lista (datas OU horários diferentes) — nunca duas coladas tipo "11:30 ou 12:00". Se a lista só tiver 1 opção, ofereça 1 (não invente uma segunda).
+Copie da lista o dia da semana, a data e a hora JUNTOS, da mesma linha: o horário de um dia não vale para outro dia. Todo horário que você oferecer é conferido com a agenda antes de sair.
 Se o lead perguntar "qual o último horário?" ou um horário específico, responda SEMPRE com base na lista acima (ela já mostra o último horário real de cada dia). Nunca diga que um horário não existe sem checar a lista.`);
+      const siglaLista = siglaDoFuso(ctx.timezone);
+      if (ctx.fusoLead?.tz && !mesmoFuso(ctx.fusoLead.tz, ctx.timezone)) {
+        const siglaLead = siglaDoFuso(ctx.fusoLead.tz);
+        const dif = diferencaMinutos(ctx.timezone, ctx.fusoLead.tz) / 60;
+        parts.push(`### FUSO DO LEAD
+O lead está em ${sanitizeInline(ctx.fusoLead.origem)} (${siglaLead}), ${Math.abs(dif)}h ${dif < 0 ? "a menos" : "a mais"} que o ${siglaLista}. Na lista acima, cada horário está no ${siglaLista} e, entre parênteses, no horário DELE.
+- Ao oferecer ou confirmar, fale no horário do lead com o ${siglaLista} entre parênteses, ex.: "sexta, 06/11, às 1 da tarde no seu horário (2 PM ${siglaLista})".
+- Quando o lead disser um horário, entenda no fuso DELE e procure o equivalente na lista.
+- O start_time do book_appointment é SEMPRE o horário ${siglaLista} da lista (o que está FORA dos parênteses).`);
+      }
     } else if (ctx.slotsEmpty) {
       // Agenda CONSULTADA com sucesso porém SEM dias livres (cheia/bloqueada) —
       // anti-stalling (Pedro 2026-06-28): sem isto caía no bloco "AGENDA AINDA
@@ -944,6 +968,8 @@ Timezone padrão: ${tzLabel} (${effectiveTimezone})
 REGRA DE TIMEZONE:
 - Presuma que o lead esta no ${tzLabel}. NAO pergunte o timezone — mencione naturalmente (ex: "2 PM ${tzLabel}")
 - Se o lead corrigir o timezone, ajuste
+- Se o CONTEXTO ATUAL trouxer "FUSO DO LEAD", ela manda: fale no horário do lead e converta
+- Horário dito junto do estado ou da cidade do lead ("2 PM de Austin") é no fuso DELE: converta para ${tzLabel} antes de agendar
 - start_time DEVE usar offset ${tzOffset}
 
 FLUXO DE AGENDAMENTO (rapido e fluido):
@@ -1133,13 +1159,28 @@ ${instructions}`;
  */
 export function buildLeadHistorySection(ctx: PromptContext): string {
   const h = ctx.leadHistory;
-  if (!h || (h.recent_messages.length === 0 && h.opportunities.length === 0 && h.notes.length === 0 && h.contact.tags.length === 0)) {
+  const form = h?.formulario;
+  if (!h || (h.recent_messages.length === 0 && h.opportunities.length === 0 && h.notes.length === 0 && h.contact.tags.length === 0 && !form)) {
     return "";
   }
   const lines: string[] = ["## HISTÓRICO ANTERIOR DESSE LEAD (do Spark Leads)"];
   lines.push("");
   lines.push("USE este contexto pra responder coerente. NÃO pergunte coisas já respondidas. Reconheça continuidade — esse contato pode já ter conversado com humanos ou ter histórico.");
   lines.push("");
+
+  // H114: o formulário que trouxe o lead. É o ASSUNTO da conversa (ex.: um lead
+  // de aposentadoria não é abordado como lead de seguro) e as respostas dele
+  // não se perguntam de novo.
+  if (form) {
+    lines.push("**Formulário que o lead preencheu** (é o assunto que trouxe ele até nós; fale DESTE assunto e não pergunte de novo o que ele já respondeu aqui):");
+    if (form.nome) lines.push(`  - Formulário: ${sanitize(form.nome, 120)}`);
+    if (form.conteudo) lines.push(`  - Anúncio: ${sanitize(form.conteudo, 120)}`);
+    if (form.campanha) lines.push(`  - Campanha: ${sanitize(form.campanha, 120)}`);
+    for (const r of form.respostas) {
+      lines.push(`  - ${sanitize(r.pergunta, 120)} ${sanitize(r.resposta, 160)}`);
+    }
+    lines.push("");
+  }
 
   // Defense-in-depth 2026-06-10: sanitize() em todo campo controlável pelo lead
   // (tags, nomes de opp/stage, corpo de msg/nota) — mesma proteção anti-injection

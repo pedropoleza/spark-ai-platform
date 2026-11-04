@@ -28,6 +28,7 @@ import { buscaBookingRecente } from "@/lib/ai/booking-recente";
 // Caso Alves Cury 2026-08-31: guardas determinísticas de data e de recap de
 // agendamento no texto lead-facing (RELATORIO-CHURN-2026-08-31.md).
 import { aplicarGuardaDeDataLead, aplicarGuardaDeRecapAgendado } from "@/lib/queue/lead-day-guard";
+import { siglaDoFuso } from "@/lib/queue/lead-timezone";
 
 /** Fuso + slots do turno, pra ler os horários que o Spark Leads devolve sem offset (H73). */
 function zonaDoTurno(ctx: ExecutionContext): { timeZone?: string; offeredSlotsIso?: string[] } {
@@ -137,6 +138,8 @@ interface ExecutionContext {
    * outro fuso, ex. -03:00 Brasília). Ausente = America/New_York.
    */
   timezone?: string;
+  /** H115: fuso do lead, quando conhecido e diferente: a confirmação sai no horário dele. */
+  fusoLead?: string;
   /**
    * Caso Alves Cury 2026-08-31: nome da persona (title default do appointment
    * "Zoom - <agente> - <lead>") e nome do lead, quando o caller souber.
@@ -397,6 +400,8 @@ export async function executeActions(
     const tzConta = ctx.timezone || "America/New_York";
     const recap = aplicarGuardaDeRecapAgendado(messages, bookedStartIso, tzConta, {
       sufixoFuso: tzConta === "America/New_York" ? "horário do leste" : undefined,
+      fusoLead: ctx.fusoLead,
+      siglaConta: siglaDoFuso(tzConta),
     });
     if (recap.changed) {
       messages = recap.messages;

@@ -196,6 +196,8 @@ import { reportError } from "@/lib/admin-signals/report-error";
 import { normalizePhone, resolveLocationDefaultCountry } from "@/lib/account-assistant/identity";
 // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
 import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
+import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
+import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
 import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
@@ -216,7 +218,7 @@ import { withRetry } from "@/lib/utils/retry";
 import type { GHLMessage } from "@/types/ghl";
 import type { AutomationRule, TargetingRule } from "@/types/agent";
 
-interface QueuedMessage {
+export interface QueuedMessage {
   id: string;
   agent_id: string | null;
   location_id: string;
@@ -229,9 +231,11 @@ interface QueuedMessage {
   media_attachments?: MediaAttachment[] | null;
   /** H90: quando a mensagem entrou na fila — o gate de entrada conta inbounds anteriores. */
   received_at?: string | null;
+  /** inbound (lead), system (gatilho reativo) etc. O claim lê a linha inteira. */
+  message_direction?: string | null;
 }
 
-interface MessageGroup {
+export interface MessageGroup {
   agentId: string | null;
   locationId: string;
   contactId: string;
@@ -250,6 +254,48 @@ interface MessageGroup {
   // agente, o processGroup pula o turno (o workflow de welcome é dono do 1º
   // toque). Qualquer texto real/mídia do lead no grupo → false.
   adContextOnly?: boolean;
+  /**
+   * H114: o que o LEAD escreveu no lote (texto, placeholders de mídia e contexto
+   * de anúncio), guardado mesmo quando o gatilho reativo troca o aggregatedBody
+   * pela instrução proativa. Se o processGroup decidir que o lote é turno normal,
+   * é isto que volta a ser o corpo do turno.
+   */
+  leadBody?: string;
+  /** H114: o lote do lead tinha só o contexto de anúncio (mesma regra do adContextOnly). */
+  leadSoAnuncio?: boolean;
+}
+
+/**
+ * Agrupa as linhas da fila por (agente, contato). Sales e recrutamento NUNCA
+ * se misturam, mesmo quando o mesmo contato falou com os dois.
+ *
+ * H114: o gatilho reativo entra sem conversa e com o canal padrão (SMS, que na
+ * Alves Cury é o provedor custom que espelha no WhatsApp). Se a mensagem real
+ * do lead cai no mesmo lote, o turno responde na conversa e no canal DELE.
+ * Antes, a 1ª linha do lote mandava, e a 1ª era o gatilho.
+ */
+export function agruparMensagensDaFila(pendingMessages: QueuedMessage[]): Map<string, MessageGroup> {
+  const groups = new Map<string, MessageGroup>();
+  for (const msg of pendingMessages) {
+    const key = `${msg.agent_id || msg.location_id}:${msg.contact_id}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        agentId: msg.agent_id || null,
+        locationId: msg.location_id,
+        contactId: msg.contact_id,
+        conversationId: msg.conversation_id,
+        channel: msg.channel || "SMS",
+        messages: [],
+        aggregatedBody: "",
+        processedMedia: [],
+      });
+    }
+    const g = groups.get(key)!;
+    g.messages.push(msg);
+    if (!g.conversationId && msg.conversation_id) g.conversationId = msg.conversation_id;
+    if (msg.message_direction === "inbound" && msg.channel) g.channel = msg.channel;
+  }
+  return groups;
 }
 
 /**
@@ -357,24 +403,7 @@ export async function processMessageQueue(opts?: {
   // 3. Agrupar por (agent_id, contact_id) — crucial: sales e recrutamento
   // NAO podem ser agrupados juntos mesmo quando o mesmo contato mandou
   // mensagem para os dois.
-  const groups = new Map<string, MessageGroup>();
-
-  for (const msg of pendingMessages) {
-    const key = `${msg.agent_id || msg.location_id}:${msg.contact_id}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
-        agentId: msg.agent_id || null,
-        locationId: msg.location_id,
-        contactId: msg.contact_id,
-        conversationId: msg.conversation_id,
-        channel: msg.channel || "SMS",
-        messages: [],
-        aggregatedBody: "",
-        processedMedia: [],
-      });
-    }
-    groups.get(key)!.messages.push(msg);
-  }
+  const groups = agruparMensagensDaFila(pendingMessages as QueuedMessage[]);
 
   // MC-6 (review Marcia 2026-07-28): rajada de inbound virava turnos PARALELOS.
   // O debounce só empurra process_after de msgs 'pending'; msg que chega com um
@@ -467,6 +496,8 @@ export async function processMessageQueue(opts?: {
     if (group.syntheticTrigger?.origem === "opportunity_create" && (realParts > 0 || hasRawMedia)) {
       group.syntheticTrigger = undefined;
     }
+    group.leadBody = parts.join("\n");
+    group.leadSoAnuncio = adContextParts > 0 && realParts === 0 && !hasRawMedia;
     group.adContextOnly = adContextParts > 0 && realParts === 0 && !hasRawMedia && !group.syntheticTrigger;
     if (group.syntheticTrigger) {
       // Substitui aggregatedBody por instrução clara que o LLM lê como "primeira
@@ -762,6 +793,36 @@ async function processGroup(
   if (!config) {
     log("log", `SKIP no config for agent ${agent.id}`);
     return;
+  }
+
+  // H114 (caso Alves Cury 03-04/11/2026, Ronaldo, Izolismaria, Sergio): gatilho
+  // reativo e mensagem REAL do lead no mesmo lote. O gatilho agora espera a 1ª
+  // mensagem (GATILHO_ESPERA_MS no reactive-trigger), então isso virou o caso
+  // comum do lead de formulário. O F27.D tratava o lote inteiro como proativo e
+  // ENGOLIA o que o lead escreveu; sem a espera, eram dois turnos e a mesma
+  // pergunta duas vezes. Agora o lote é turno normal: responde o lead, com o
+  // formulário dele no contexto. Agente com entrada pela automação segue no H113
+  // (mais abaixo), que além disso cuida do silêncio da entrada.
+  if (
+    group.syntheticTrigger &&
+    (config as { entry_by_automation?: boolean | null }).entry_by_automation !== true &&
+    loteTemMensagemDoLead(group.messages, isReactiveTriggerBody)
+  ) {
+    const t = group.syntheticTrigger;
+    log("log", `H114: gatilho (${t.kind}:${t.key}) e mensagem do lead no mesmo lote, o turno responde o lead`);
+    const { error: mergeLogErr } = await supabase.from("execution_log").insert({
+      agent_id: agent.id,
+      conversation_id: group.conversationId,
+      contact_id: group.contactId,
+      location_id: group.locationId,
+      action_type: "trigger_merged_with_lead_message",
+      action_payload: { kind: t.kind, key: t.key, origem: t.origem ?? null },
+      success: true,
+    });
+    if (mergeLogErr) console.warn("[Processor] falha ao auditar H114:", mergeLogErr.message);
+    group.syntheticTrigger = undefined;
+    group.aggregatedBody = group.leadBody ?? "";
+    group.adContextOnly = !!group.leadSoAnuncio;
   }
 
   // Gate de handoff manual + fetch full convState for later use (conversationId cache, collected_data)
@@ -2041,6 +2102,18 @@ async function processGroup(
   const previousCollectedData = (convState?.collected_data as Record<string, string>) || {};
   const collectedData = { ...contactData, ...previousCollectedData };
 
+  // H115 (caso Alves Cury 03/11/2026): fuso do lead. Estado coletado ou do
+  // contato primeiro ("Texas (Austin)", "Flórida", "FL"); sem estado, o que ele
+  // citou na mensagem deste turno ("2 PM de Austin"). Só com auto_detect ligado.
+  let fusoLead: { tz: string; origem: string } | null = null;
+  if ((config as { timezone_config?: { auto_detect_from_state?: boolean } | null }).timezone_config?.auto_detect_from_state) {
+    const estado =
+      collectedData["contact.state"] || collectedData["state"] || collectedData["estado_onde_mora"] || collectedData["estado"] || "";
+    fusoLead =
+      fusoDoEstado(estado) ??
+      (!group.syntheticTrigger ? detectarFusoNoTexto(separarTextoDoLead(group.aggregatedBody || "").proprio) : null);
+  }
+
   // 5. Processar slots (e detectar fail irrecuperável para guardrail)
   let availableSlots = "";
   let slotsFetchFailed = false;
@@ -2064,7 +2137,7 @@ async function processGroup(
       // Como o slot-guard valida o booking contra ESTA lista, o filtro também
       // impede que um start_time fora da janela seja aceito.
       const slotsNaJanela = filterSlotsToBusinessHours(slotsSettled.value, tz);
-      availableSlots = formatAvailableSlots(slotsNaJanela, tz);
+      availableSlots = formatAvailableSlots(slotsNaJanela, tz, 30, fusoLead?.tz ?? null);
       offeredSlotsIso = extractSlotIsoList(slotsNaJanela);
       const dayCount = availableSlots ? availableSlots.split("\n").length : 0;
       console.log(`[FreeSlots] Formatted ${dayCount} days`);
@@ -2295,6 +2368,8 @@ async function processGroup(
     slotsEmpty: shouldFetchSlots && !slotsFetchFailed && !agendaTravada && availableSlots.trim() === "",
     // H112: agenda travada por etiqueta (o runtime avisa no lugar dos horários).
     agendaTravada,
+    // H115: fuso do lead (lista anotada + seção FUSO DO LEAD no runtime).
+    fusoLead,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     priorTurnCount: conversationTurns.length,
@@ -2537,6 +2612,58 @@ async function processGroup(
     throw new Error(aiResult.error || "Falha no processamento AI");
   }
 
+  // H115 (caso Alves Cury 03/11/2026, Izolismaria): guardas de agenda. Cada
+  // "dia + hora" oferecido tem que existir na agenda do turno (data errada com o
+  // dia certo é corrigida; oferta inventada refaz o turno 1x e, se insistir, vira
+  // a oferta determinística), e o agendamento tem que cair no horário que o lead
+  // disse no fuso DELE ("2 PM de Austin" não é 2 PM ET). Ver agenda-guard.ts.
+  if (!aiResult.parse_failed) {
+    const guardaAgenda = await aplicarGuardasDeAgenda({
+      resposta: aiResult.response,
+      slotsIso: offeredSlotsIso,
+      fusoLista: locationTz,
+      fusoLead: fusoLead?.tz ?? null,
+      mensagemDoLead: group.syntheticTrigger ? "" : separarTextoDoLead(group.aggregatedBody || "").proprio,
+      pularOferta: convState?.status === "booked" || !!modoRemarcacao,
+      preferirTardeNoite: (config as { preferred_time_slot?: string | null }).preferred_time_slot === "afternoon_evening",
+      regenerar: async (diretiva) => {
+        const r = await processWithAI({
+          systemPrompt,
+          runtimeContext,
+          conversationMessages: compressed.turns,
+          conversationHistory: "",
+          newMessages: safeNewMessages + "\n\n" + diretiva,
+          model: config.ai_model || "claude-sonnet-4-6",
+          images: imageInputs.length > 0 ? imageInputs : undefined,
+          responseSchema,
+          priorTurnCount: conversationTurns.length,
+          cacheTtl: cacheOptimized ? "1h" : undefined,
+        });
+        return r.success && r.response && !r.parse_failed ? r.response : null;
+      },
+    });
+    if (guardaAgenda.notas.length > 0) {
+      aiResult.response = guardaAgenda.resposta;
+      log("warn", `H115 agenda: ${guardaAgenda.notas.join(" · ")}`);
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "agenda_guard",
+        action_payload: {
+          notas: guardaAgenda.notas.slice(0, 8),
+          regenerou: guardaAgenda.regenerou,
+          oferta_substituida: guardaAgenda.ofertaSubstituida,
+          agendamento_retirado: guardaAgenda.agendamentoRetirado,
+          ofertas_invalidas: guardaAgenda.ofertasInvalidas.slice(0, 4),
+          fuso_lead: fusoLead?.tz ?? null,
+        },
+        success: true,
+      });
+    }
+  }
+
   // 6b. Detectar loop de parse failure: se a IA retornou JSON inválido duas
   // vezes seguidas nesta conversa, pausa e alerta em vez de ficar mandando
   // "desculpa, tive um problema técnico" repetidamente.
@@ -2614,14 +2741,19 @@ async function processGroup(
     action_type: "ai_processing",
     action_payload: {
       request_id: reqId,
-      model: config.ai_model,
+      // Modelo que DE FATO respondeu (04/11/2026). Antes era o configurado, e o
+      // log não distinguia um turno do Claude de um turno salvo pela reserva.
+      model: aiResult.model_used || config.ai_model,
+      ...(aiResult.model_used && aiResult.model_used !== config.ai_model
+        ? { model_configured: config.ai_model, fallback: true }
+        : {}),
       prompt_tokens: aiResult.prompt_tokens,
       completion_tokens: aiResult.completion_tokens,
       cached_tokens: aiResult.cached_tokens,
       cache_hit_ratio: aiResult.cache_hit_ratio,
       parse_failed: aiResult.parse_failed || false,
     },
-    ai_model_used: config.ai_model,
+    ai_model_used: aiResult.model_used || config.ai_model,
     prompt_tokens: aiResult.prompt_tokens,
     completion_tokens: aiResult.completion_tokens,
     duration_ms: aiResult.duration_ms,
@@ -2712,6 +2844,8 @@ async function processGroup(
     silenceDecision: silenceDecisionDoTurno,
     offeredSlotsIso, // H58: gate de slot real no book/reschedule
     timezone: locationTz, // H66: corrige offset do start_time pro fuso da conta
+    // H115: confirmação do agendamento no horário do lead (com o da conta entre parênteses).
+    fusoLead: fusoLead?.tz ?? undefined,
     // C8 (caso Alves Cury 2026-08-31): title default do appointment legível.
     agentLabel: ((config as { personality?: { name?: string } | null }).personality)?.name || undefined,
     leadName: contactName && contactName !== group.contactId ? contactName : undefined,

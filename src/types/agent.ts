@@ -363,6 +363,11 @@ export interface LeadContext {
   has_closed_opp: boolean;
   /** Quanto tempo levou pra carregar (debug). */
   fetch_ms: number;
+  /**
+   * H114: formulário que o lead preencheu (nome, campanha e as respostas, com a
+   * pergunta como rótulo). Ausente quando o contato não tem nada disso.
+   */
+  formulario?: import("@/lib/queue/lead-form").FormularioDoLead | null;
 }
 
 export type ShouldRespondDecision =

@@ -36,4 +36,10 @@ export interface AIProcessingResult {
    * genérico. Usado pelo processor para detectar loops e pausar conversa.
    */
   parse_failed?: boolean;
+  /**
+   * Modelo que DE FATO respondeu (o da cadeia de fallback que deu certo). Até
+   * 04/11/2026 o log gravava só o modelo configurado, então não dava para saber
+   * se um turno saiu do Claude ou da reserva (hipótese do Pedro no caso Alves Cury).
+   */
+  model_used?: string;
 }
