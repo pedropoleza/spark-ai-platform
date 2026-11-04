@@ -1019,3 +1019,11 @@ quando o sistema registra", e o modelo copiava.
   "não registrou", "do meu lado", "etiqueta", "tag"). Os padrões são estreitos: "registrada como
   auxiliar" e "sistema de saúde" ficam. Auditoria: `meta_language_removed`.
 - **Testes:** `test-h120-meta` 6/6 e `test-booking-tag-gate` 17/17.
+
+## H121 (2026-11-04): "tarde ou noite" no relógio do lead (laboratório, lead da Califórnia)
+
+A preferência do agente (`preferred_time_slot = afternoon_evening`) era seguida no fuso da LISTA (ET). Para
+lead do Pacífico, "2 PM ET" é 11 da manhã. Agora a guarda de agenda olha os horários válidos oferecidos
+(`validas` do slot-offer-guard) no fuso do lead. Se o lead não pediu manhã e o turno não agenda, oferta de
+manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no horário DELE. Testes:
+`test-h114-h115-alves` 39/39.

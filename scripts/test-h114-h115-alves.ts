@@ -174,6 +174,25 @@ async function main() {
     ok("insistiu sem agenda: a frase com horário sai", m.length === 1 && m[0] === "Antes de marcar, assiste o vídeo?", m);
   }
 
+  {
+    // H121: lead da Califórnia, preferência tarde/noite no relógio DELE
+    const PT = "America/Los_Angeles";
+    const slotsPT = ["2026-11-05T14:00:00-05:00", "2026-11-05T17:00:00-05:00", "2026-11-06T16:00:00-05:00"];
+    let chamou = false;
+    const r = await aplicarGuardasDeAgenda({
+      resposta: resp(["Tenho quinta, 05/11, às 11 da manhã no seu horário (2 PM ET) ou às 2 da tarde no seu horário (5 PM ET)."]),
+      slotsIso: slotsPT, fusoLista: ET, fusoLead: PT, mensagemDoLead: "Sou dona de casa", pularOferta: false, agora: AGORA, preferirTardeNoite: true,
+      regenerar: async (d) => { chamou = true; ok("diretiva pede tarde/noite no horário do lead", d.includes("TARDE ou NOITE")); return resp(["Tenho quinta, 05/11, às 2 da tarde no seu horário (5 PM ET) ou sexta, 06/11, à 1 da tarde no seu horário (4 PM ET)."]); },
+    });
+    ok("manhã no fuso do lead refaz", chamou && r.regenerou, r.notas);
+    const r2 = await aplicarGuardasDeAgenda({
+      resposta: resp(["Tenho quinta, 05/11, às 11 da manhã no seu horário (2 PM ET)."]),
+      slotsIso: slotsPT, fusoLista: ET, fusoLead: PT, mensagemDoLead: "prefiro de manhã", pularOferta: false, agora: AGORA, preferirTardeNoite: true,
+      regenerar: async () => { throw new Error("não devia refazer: o lead pediu manhã"); },
+    });
+    ok("lead pediu manhã: não refaz", !r2.regenerou, r2.notas);
+  }
+
   console.log("\n6) Confirmação do agendamento no horário do lead");
   {
     const certo = aplicarGuardaDeRecapAgendado(["Fechado! Sexta, 06/11, às 2 da tarde no seu horário (3 PM ET)."], "2026-11-06T15:00:00-05:00", ET, { fusoLead: CT, siglaConta: "ET" });
