@@ -156,6 +156,8 @@ const personalitySchema = z.object({
   farewell_style: z.string().max(500),
   language: z.string().max(50),
   persona_description: z.string().max(2000),
+  // H119: teto de bolhas por agente (sem campo no painel; o Salvar preserva).
+  max_bubbles: z.number().int().min(1).max(5).optional(),
 });
 
 /**

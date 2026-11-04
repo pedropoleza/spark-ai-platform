@@ -85,6 +85,8 @@ export interface Editable {
   identity_mode: "assistant" | "human";
   persona_description: string;
   pers_greeting: string;
+  /** H119: teto de bolhas (fora do painel; preservado no Salvar). */
+  pers_max_bubbles: number | null;
   pers_farewell: string;
   pers_language: string;
   tone_creativity: number; tone_formality: number; tone_naturalness: number; tone_aggressiveness: number;
@@ -148,6 +150,7 @@ export function makeSeed(c: Record<string, any>): Editable {
     identity_mode: p.identity_mode === "human" ? "human" : "assistant",
     persona_description: str(p.persona_description),
     pers_greeting: str(p.greeting_style),
+    pers_max_bubbles: typeof p.max_bubbles === "number" ? p.max_bubbles : null,
     pers_farewell: str(p.farewell_style),
     pers_language: str(p.language) || "pt-BR",
     tone_creativity: num(c.tone_creativity, 60),
@@ -251,7 +254,7 @@ export function buildConfigPayload(e: Editable, enabled: Set<string>) {
   const cleanDeact = e.deactivation_rules.filter((d) => d.tag || d.field_key);
   const cleanAutos = e.automations.filter((a) => a.actions.length > 0);
   return {
-    personality: { name: e.identity_name, identity_mode: e.identity_mode, greeting_style: e.pers_greeting, farewell_style: e.pers_farewell, language: e.pers_language || "pt-BR", persona_description: e.persona_description },
+    personality: { name: e.identity_name, identity_mode: e.identity_mode, greeting_style: e.pers_greeting, farewell_style: e.pers_farewell, language: e.pers_language || "pt-BR", persona_description: e.persona_description, ...(e.pers_max_bubbles ? { max_bubbles: e.pers_max_bubbles } : {}) },
     tone_creativity: e.tone_creativity, tone_formality: e.tone_formality, tone_naturalness: e.tone_naturalness, tone_aggressiveness: e.tone_aggressiveness,
     custom_instructions: e.custom_instructions, conversation_examples: e.conversation_examples, confirmation_mode: e.confirmation_mode, objective: e.objective,
     // flags de on/off derivados do estado do módulo (fonte única).
