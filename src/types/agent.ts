@@ -184,6 +184,7 @@ export interface AgentPersonality {
   farewell_style: string;          // Como se despede
   language: string;                // Idioma principal (pt-BR, en-US, es)
   persona_description: string;     // Descricao livre da personalidade
+  max_bubbles?: number;            // H119: teto de bolhas por resposta (ex.: 2 na Alves Cury)
 }
 
 export interface AgentConfig {
