@@ -206,6 +206,7 @@ import {
   entradaJaPassouPeloGate,
   entradaVaiPelaAutomacao,
   etiquetaDaEntrada,
+  loteTemMensagemDoLead,
 } from "@/lib/queue/entry-by-automation";
 import { agendaLiberadaPorEtiqueta, etiquetasDoContato } from "@/lib/queue/booking-tag-gate";
 import type { FollowUpConfig } from "@/types/agent";
@@ -1216,6 +1217,34 @@ async function processGroup(
     }
     return vale;
   };
+
+  if (
+    (config as { entry_by_automation?: boolean | null }).entry_by_automation === true &&
+    group.syntheticTrigger &&
+    !manuallyResumed &&
+    (await entradaValeAqui()) &&
+    loteTemMensagemDoLead(group.messages, isReactiveTriggerBody)
+  ) {
+    // H113: a mensagem do lead caiu no mesmo lote do gatilho. O gatilho sai e o lote
+    // segue como a 1ª mensagem do lead (o bloco abaixo silencia, registra a entrada e
+    // abre os follow-ups da entrada, H110).
+    log("log", `entrada pela automação: gatilho (${group.syntheticTrigger.kind}:${group.syntheticTrigger.key}) e 1ª mensagem do lead no mesmo lote, o lote segue como entrada`);
+    const { error: logErr } = await supabase.from("execution_log").insert({
+      agent_id: agent.id,
+      conversation_id: group.conversationId,
+      contact_id: group.contactId,
+      location_id: group.locationId,
+      action_type: "proactive_dropped_entry_by_automation",
+      action_payload: { kind: group.syntheticTrigger.kind, key: group.syntheticTrigger.key, lote_com_mensagem_do_lead: true },
+      success: true,
+    });
+    if (logErr) console.warn("[Processor] falha ao auditar descarte de proativo:", logErr.message);
+    group.syntheticTrigger = undefined;
+    group.aggregatedBody = group.messages
+      .map((m) => (m.message_body || "").trim())
+      .filter((b) => b && !isReactiveTriggerBody(b))
+      .join("\n");
+  }
 
   if (
     (config as { entry_by_automation?: boolean | null }).entry_by_automation === true &&

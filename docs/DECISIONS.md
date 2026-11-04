@@ -872,3 +872,20 @@ fim ganha também `lp carreira - video completo`.
   falhar, libera (fail-open, a regra continua no prompt). O laboratório (`/api/agents/test`) aplica igual.
 - **Escopo:** sem config, nada muda para a frota.
 - **Testes:** `scripts/test-booking-tag-gate.ts` (17/17); paridades 5/5, 10/10 e 7/7; salvar-config 36 limpos.
+
+## H113 (2026-11-04): gatilho e 1ª mensagem do lead no mesmo lote (entrada pela automação)
+
+Bug observado em prod 2026-11-04 01:12 UTC, no 1º lead real do fluxo da landing da Alves Cury. O formulário
+do Facebook cria o contato e a mensagem automática do WhatsApp chega 2 s depois. O gatilho do campo "AI" e
+essa mensagem caíram no MESMO lote (debounce de 15 s), e o descarte do turno proativo (H90) engoliu o lote
+inteiro. Com isso a entrada não foi registrada (`entry_suppressed_at`) e os follow-ups da entrada (H110)
+não nasceram. O lead ainda seria atendido na resposta (já havia inbound anterior na fila e o campo casa),
+mas quem não respondesse à saudação ficava sem toque. No teste de ponta a ponta o problema não aparecia,
+porque as duas coisas chegaram com 18 s de diferença, em lotes separados.
+
+- **Regra** (`loteTemMensagemDoLead`): se o lote do gatilho também traz mensagem do lead (texto que não
+  é o corpo sintético, áudio ou anexo), o gatilho sai e o lote segue como a 1ª mensagem do lead.
+- **Resultado:** o lote passa pelo bloco da entrada pela automação, que silencia, registra a entrada e
+  abre os follow-ups. É o mesmo princípio do H102: o gatilho não pode engolir o que o lead disse.
+- **Auditoria:** `proactive_dropped_entry_by_automation` com `lote_com_mensagem_do_lead: true`.
+- **Testes:** `test-entry-by-automation` 23/23.
