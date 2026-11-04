@@ -72,6 +72,19 @@ interface ProcessMessageInput {
   cacheTtl?: "5m" | "1h";
 }
 
+/**
+ * Modelos Claude que ainda aceitam parâmetros de amostragem (temperature).
+ * Sonnet 5, Sonnet 5.5, Opus 4.7+, Opus 5/5.5, Fable e Haiku 5.5 recusam com 400
+ * ("`temperature` is deprecated for this model") e o turno caía INTEIRO na
+ * reserva (Haiku) em silêncio: era o que acontecia com todo agente configurado
+ * em claude-sonnet-5 (Raquel e Sofia, medido em 04/11/2026). Lista de quem
+ * ACEITA, não de quem recusa: modelo novo nasce sem temperature.
+ */
+export function claudeAceitaTemperatura(model: string): boolean {
+  if (/^claude-3/.test(model)) return true;
+  return /^claude-(sonnet|opus|haiku)-4(-[0-6])?(-\d{8})?$/.test(model);
+}
+
 function isClaude(model: string): boolean {
   return model.startsWith("claude-");
 }
@@ -180,6 +193,7 @@ export async function processWithAI(input: ProcessMessageInput): Promise<AIProce
     try {
       const result = await runOneModel({ ...input, model }, startTime);
       if (result.success) {
+        result.model_used = model;
         if (i > 0) {
           // Caiu pro fallback — loga qual tier salvou e por quê (telemetria de
           // degradação; o erro do tier primário não pode sumir).
@@ -478,7 +492,7 @@ async function processWithClaude(
         max_tokens: 2500,
         system: systemBlocks,
         messages,
-        temperature: 0.8,
+        ...(claudeAceitaTemperatura(input.model) ? { temperature: 0.8 } : {}),
         tools: [
           {
             name: "agent_response",
@@ -528,7 +542,7 @@ async function processWithClaude(
       max_tokens: 2500,
       system: systemBlocks,
       messages,
-      temperature: 0.8,
+      ...(claudeAceitaTemperatura(input.model) ? { temperature: 0.8 } : {}),
     });
   }
 

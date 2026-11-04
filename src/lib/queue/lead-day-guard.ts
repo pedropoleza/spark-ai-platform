@@ -261,13 +261,22 @@ export function aplicarGuardaDeRecapAgendado(
   bubbles: string[],
   bookedIso: string,
   tz: string,
-  opts: { sufixoFuso?: string } = {},
+  opts: { sufixoFuso?: string; fusoLead?: string; siglaConta?: string } = {},
 ): RecapGuardResult {
   const notes: string[] = [];
   const booked = partesNoFuso(bookedIso, tz);
   const label = rotuloDoSlot(bookedIso, tz);
   if (!booked || !label) return { messages: bubbles, changed: false, notes };
-  const confirmacao = `Fechado: ${label}${opts.sufixoFuso ? `, ${opts.sufixoFuso}` : ""}. A confirmação chega por aqui.`;
+  // H115: lead em outro fuso. A confirmação vale no horário DELE ou no da conta
+  // ("2 da tarde no seu horário (3 PM ET)"), e o rótulo determinístico fala os dois.
+  const bookedLead = opts.fusoLead && opts.fusoLead !== tz ? partesNoFuso(bookedIso, opts.fusoLead) : null;
+  const labelLead = bookedLead && opts.fusoLead ? rotuloDoSlot(bookedIso, opts.fusoLead) : null;
+  const outroFuso = !!bookedLead && !!labelLead && (bookedLead.hh !== booked.hh || bookedLead.mi !== booked.mi);
+  const horaConta = `${booked.hh % 12 || 12}${booked.mi ? `:${String(booked.mi).padStart(2, "0")}` : ""} ${booked.hh < 12 ? "AM" : "PM"}`;
+  const confirmacao = outroFuso
+    ? `Fechado: ${labelLead} no seu horário (${horaConta}${opts.siglaConta ? ` ${opts.siglaConta}` : ""}). A confirmação chega por aqui.`
+    : `Fechado: ${label}${opts.sufixoFuso ? `, ${opts.sufixoFuso}` : ""}. A confirmação chega por aqui.`;
+  const alvos = outroFuso && bookedLead ? [booked, bookedLead] : [booked];
 
   let algumaCitaHora = false;
   const messages = bubbles.map((b) => {
@@ -284,7 +293,22 @@ export function aplicarGuardaDeRecapAgendado(
       const marcador = m[3] || m[6] || m[9];
       if (isNaN(h) || h > 23) continue;
       algumaCitaHora = true;
-      const ok = leituras(h, marcador).some((hh) => hh === booked.hh) && min === booked.mi;
+      // H115: rótulo de fuso logo depois da hora decide contra qual leitura
+      // conferir ("2 PM ET" é do fuso da conta; "2 da tarde no seu horário", do lead).
+      let candidatos = alvos;
+      if (outroFuso && bookedLead) {
+        const depois = semDatas.slice(re.lastIndex, re.lastIndex + 28);
+        const sigla = /^\s*\(?\s*(ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT)\b/.exec(depois)?.[1];
+        const ehDoLead = /^\s*(no\s+)?(seu\s+(hor[áa]rio|fuso)|hor[áa]rio\s+(daí|dai|de\s+a[íi]|local))/i.test(depois);
+        const ehDaConta = /^\s*(,\s*)?(no\s+)?hor[áa]rio\s+do\s+leste/i.test(depois) && opts.siglaConta === "ET";
+        if (ehDoLead) candidatos = [bookedLead];
+        else if (ehDaConta) candidatos = [booked];
+        else if (sigla) {
+          const s3 = sigla.slice(0, 1) + "T";
+          candidatos = opts.siglaConta && s3 === opts.siglaConta ? [booked] : [bookedLead];
+        }
+      }
+      const ok = candidatos.some((a) => leituras(h, marcador).some((hh) => hh === a.hh) && min === a.mi);
       if (!ok) ofende = true;
     }
     // 2. Data explícita diferente da agendada.
@@ -293,14 +317,14 @@ export function aplicarGuardaDeRecapAgendado(
     while ((dm = reData.exec(b)) !== null) {
       const d = parseInt(dm[1], 10);
       const mo = parseInt(dm[2], 10);
-      if (d === booked.d && mo === booked.m) continue;
+      if (alvos.some((a) => d === a.d && mo === a.m)) continue;
       if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) ofende = true;
     }
     // 3. Dia-da-semana nomeado diferente do agendado.
     const wdMatch = RE_DIA_NOME.exec(b);
     if (wdMatch) {
       const dito = parseWeekdayPt(wdMatch[1]);
-      if (dito !== null && dito !== weekdayDeYmd(booked)) ofende = true;
+      if (dito !== null && !alvos.some((a) => dito === weekdayDeYmd(a))) ofende = true;
     }
 
     if (ofende) {

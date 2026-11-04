@@ -104,6 +104,14 @@ function extractConfig(agent: AgentRow) {
  *    (valor vazio na regra = "qualquer valor")
  *  - rules vazias / nenhum match -> null
  */
+/**
+ * H114: quanto o gatilho reativo espera pela 1ª mensagem do lead antes de rodar
+ * sozinho. A mensagem do formulário do Facebook chega 6 a 25 s depois do gatilho
+ * (medido na Alves Cury em 03/11/2026); 45 s cobre com folga e, quando o lead
+ * não escreve, só atrasa a abertura proativa em menos de um minuto.
+ */
+export const GATILHO_ESPERA_MS = 45_000;
+
 export function matchedTriggerKey(rules: TargetingRule[], ev: ReactiveTriggerContext): string | null {
   if (!rules || rules.length === 0) return null;
   for (const rule of rules) {
@@ -531,12 +539,48 @@ export async function triggerReactiveAgents(ev: ReactiveTriggerContext): Promise
     // e, ao responder, esperava até a manhã seguinte pela 2ª mensagem. Schedule
     // impossível (null) = fail-open, como no webhook (H52). Os gatilhos que já
     // existiam (tag, campo, movimentação) seguem imediatos, como sempre foram.
-    let processAfter = nowIso;
+    // H114 (caso Alves Cury 03-04/11/2026): o gatilho ESPERA a 1ª mensagem do
+    // lead. O formulário do Facebook liga o campo AI e, 6 a 25 s depois, chega a
+    // mensagem do formulário. Com process_after = agora, eram dois turnos (a
+    // mesma pergunta duas vezes) e o 1º abria sem saber o tema do lead. Se o lead
+    // escrever na espera, o webhook dele puxa esta linha para o mesmo lote e o
+    // processor responde a mensagem real (H114 no queue-processor). Sem
+    // mensagem, o gatilho roda sozinho depois da espera, como antes.
+    let processAfter = new Date(Date.now() + GATILHO_ESPERA_MS).toISOString();
     if (ev.origem === "opportunity_create") {
       const wh = cfgRow?.working_hours;
       if (wh?.enabled && !isWithinWorkingHours(wh)) {
-        processAfter = nextWorkingHourStart(wh) ?? nowIso;
+        processAfter = nextWorkingHourStart(wh) ?? processAfter;
       }
+    }
+    // H114: mensagem do lead que JÁ está na fila deste agente (chegou antes do
+    // gatilho) entra no mesmo lote. Se ela ia rodar antes, o gatilho vai junto;
+    // se ia rodar depois (o recheck de 120 s do lead novo sem etiqueta), ela é
+    // puxada para a hora do gatilho, que prova que o lead agora casa o agente.
+    try {
+      const { data: pendentes } = await supabase
+        .from("message_queue")
+        .select("id, process_after")
+        .eq("agent_id", a.id)
+        .eq("contact_id", ev.contactId)
+        .eq("status", "pending");
+      const linhas = (pendentes || []).filter((r) => r.process_after);
+      if (linhas.length > 0) {
+        const maisCedo = linhas
+          .map((r) => r.process_after as string)
+          .sort((x, y) => Date.parse(x) - Date.parse(y))[0];
+        if (Date.parse(maisCedo) <= Date.parse(processAfter)) {
+          processAfter = maisCedo;
+        }
+        await supabase
+          .from("message_queue")
+          .update({ process_after: processAfter })
+          .eq("agent_id", a.id)
+          .eq("contact_id", ev.contactId)
+          .eq("status", "pending");
+      }
+    } catch {
+      /* alinhamento é melhor esforço: sem ele, o comportamento é o anterior */
     }
     const { error: queueErr } = await supabase.from("message_queue").insert({
       agent_id: a.id,

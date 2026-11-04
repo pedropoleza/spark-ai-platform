@@ -889,3 +889,57 @@ porque as duas coisas chegaram com 18 s de diferença, em lotes separados.
   abre os follow-ups. É o mesmo princípio do H102: o gatilho não pode engolir o que o lead disse.
 - **Auditoria:** `proactive_dropped_entry_by_automation` com `lote_com_mensagem_do_lead: true`.
 - **Testes:** `test-entry-by-automation` 23/23.
+
+## H114 (2026-11-04): o gatilho espera a 1ª mensagem do lead (Alves Cury: Ronaldo, Izolismaria, Sergio, Âna)
+
+Bug observado em prod 03-04/11. O formulário do Facebook liga o campo "AI" e, 6 a 25 s depois, chega a
+mensagem do formulário. Como o gatilho entrava na fila com `process_after = agora`, rodava em uns 5 s e a
+mensagem do formulário virava OUTRO turno. O lead recebia a mesma pergunta duas vezes no mesmo minuto
+(Ronaldo, Izolismaria). A 1ª resposta saía pelo canal padrão SMS, que na Alves Cury é o provedor custom
+que espelha no WhatsApp, daí o par `CUSTOM_SMS` + `WHATSAPP` no CRM. E abria sem saber o tema do lead: lead
+de aposentadoria ouviu "proteção financeira" (Âna, Sergio). Quando os dois caíam no MESMO lote, o F27.D
+trocava o corpo pela instrução proativa e engolia a mensagem do lead (só o H102 e o H113 tratavam isso).
+
+- **Espera:** `GATILHO_ESPERA_MS = 45 s` em todo gatilho reativo. Se o lead escreve na espera, o debounce
+  do webhook puxa as duas linhas para o mesmo lote. Inbound que já estava na fila é alinhado com o gatilho.
+- **Lote misto vira turno normal:** para agente sem entrada pela automação, `trigger_merged_with_lead_message`.
+  Com entrada pela automação, segue o H113.
+- **Canal e conversa do lead:** `agruparMensagensDaFila` pega a conversa e o canal da mensagem real do lead.
+- **Formulário no contexto:** `lead-form.ts` monta o nome do formulário, a campanha e as respostas (campos
+  cujo nome é a pergunta), e o histórico do lead mostra isso mesmo quando ele nunca escreveu.
+- **Testes:** `test-h114-h115-alves`.
+
+## H115 (2026-11-04): horário oferecido conferido com a agenda e fuso do lead (Alves Cury: Izolismaria)
+
+Bug observado em prod 03/11 20:38 ET.
+- A IA quis oferecer "quarta 04/11 3 PM" e "quinta 05/11 8 PM", os dois livres, mas escreveu as datas com
+  um dia a mais.
+- O `outbound_day_guard` conserta o NOME do dia pela DATA, e a mensagem saiu como "quinta 05/11 3 PM" e
+  "sexta 06/11 8 PM", que não existiam.
+- A lead disse "sexta 2 PM DE AUSTIN" (central) e a IA agendou 2 PM ET. As instruções mandavam "nunca
+  converta, diga horário do leste", e o slot-guard deixou passar porque 14:00 ET também estava livre.
+- O dono: "o fuso o robô não arruma, né?".
+
+**Oferta** (`slot-offer-guard.ts` + `agenda-guard.ts`): cada "dia + hora" em frase de oferta ou
+confirmação tem que existir na agenda do turno.
+- Data errada com o dia da semana certo: corrige a DATA.
+- Horário inventado: refaz 1x com a lista. Se insistir, a bolha vira a oferta determinística, ou a frase
+  sai quando o turno não tem horário (agenda travada).
+- Negação ("não está disponível") não conta.
+
+**Fuso** (`lead-timezone.ts`):
+- O fuso do lead vem do estado (entende "Texas (Austin)", "Flórida", siglas e cidades) ou do que ele
+  citou no turno. Só com `timezone_config.auto_detect_from_state`.
+- A lista sai com o horário dele entre parênteses ("2:00 PM ET (1:00 PM CT)"), e o runtime ganha a seção
+  FUSO DO LEAD.
+- O agendamento é conferido: hora que bate com o número do lead lido no fuso da LISTA e não no DELE refaz
+  1x. Se insistir, NÃO agenda e pergunta confirmando os dois fusos.
+- O recap aceita "2 da tarde no seu horário (3 PM ET)".
+
+**Modelo:** `claudeAceitaTemperatura`. Sonnet 5, 5.5, Opus 4.7+ e Fable recusam `temperature`, e todo
+turno de agente em claude-sonnet-5 caía no Haiku (Raquel e Sofia). O log `ai_processing` passa a gravar o
+modelo que DE FATO respondeu (`model_used`).
+
+**Laboratório:** `/api/agents/test` com as mesmas guardas e o mesmo filtro de expediente (paridade).
+
+**Testes:** `test-slot-offer-guard` e `test-h114-h115-alves`.

@@ -22,8 +22,33 @@ import { isHumanOutboundSource, isChatMessageType } from "@/lib/ghl/message-sour
 import { isAiEcho, extractAiSentTexts, extractAiSentIds, hasUnfilledMergeField } from "@/lib/queue/human-takeover";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { LeadContext, LeadHistoryConfig } from "@/types/agent";
+import { extrairFormularioDoLead } from "@/lib/queue/lead-form";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+
+// H114: nomes dos campos personalizados da conta (id → nome). O nome do campo de
+// formulário é a própria pergunta, que é o que dá sentido à resposta no prompt.
+// Muda raramente: 1 h de cache por location; falha = mapa vazio (fail-open).
+const NOMES_CAMPOS_TTL_MS = 60 * 60 * 1000;
+const nomesCamposCache = new Map<string, { value: Map<string, string>; expiresAt: number }>();
+
+async function nomesDosCampos(client: GHLClient, locationId: string): Promise<Map<string, string>> {
+  const hit = nomesCamposCache.get(locationId);
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
+  const mapa = new Map<string, string>();
+  try {
+    const r = await client.get<{ customFields?: Array<{ id?: string; name?: string }> }>(
+      `/locations/${locationId}/customFields`,
+    );
+    for (const f of r?.customFields || []) {
+      if (f?.id && f?.name) mapa.set(f.id, f.name);
+    }
+    nomesCamposCache.set(locationId, { value: mapa, expiresAt: Date.now() + NOMES_CAMPOS_TTL_MS });
+  } catch {
+    /* sem os nomes, o bloco do formulário sai só com o nome do formulário */
+  }
+  return mapa;
+}
 type CacheEntry = { value: LeadContext; expiresAt: number };
 const cache = new Map<string, CacheEntry>();
 
@@ -46,6 +71,8 @@ interface GhlContactResp {
     customFields?: Array<{ id?: string; key?: string; fieldKey?: string; value?: unknown }>;
     customField?: Array<{ id?: string; key?: string; fieldKey?: string; value?: unknown }>;
     assignedTo?: string;
+    attributionSource?: Record<string, unknown> | null;
+    lastAttributionSource?: Record<string, unknown> | null;
   };
 }
 
@@ -392,6 +419,16 @@ export async function loadLeadHistory(
 
     const fullName = contact.name || `${contact.firstName || ""} ${contact.lastName || ""}`.trim();
 
+    // H114: formulário do lead (nome + respostas). Só busca os nomes dos campos
+    // quando o contato tem campo preenchido.
+    const temCampo = (contact.customFields || contact.customField || []).some(
+      (f) => f && f.value != null && String(f.value).trim() !== "",
+    );
+    const formulario = extrairFormularioDoLead(
+      contact,
+      temCampo ? await nomesDosCampos(client, locationId) : new Map<string, string>(),
+    );
+
     const result: LeadContext = {
       contact: {
         id: contactId,
@@ -409,6 +446,7 @@ export async function loadLeadHistory(
       last_inbound_at: lastInbound?.dateAdded || null,
       has_closed_opp,
       fetch_ms: Date.now() - start,
+      formulario,
     };
 
     cache.set(cacheKey, { value: result, expiresAt: Date.now() + CACHE_TTL_MS });
