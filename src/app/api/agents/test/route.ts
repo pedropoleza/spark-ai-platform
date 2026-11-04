@@ -7,6 +7,7 @@ import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from 
 import { formatAvailableSlots, filterSlotsToBusinessHours } from "@/lib/ai/slots-format";
 import { extractSlotIsoList } from "@/lib/ai/slot-guard";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
+import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
@@ -601,6 +602,18 @@ export async function POST(request: NextRequest) {
         agendamento_retirado: g.agendamentoRetirado,
       };
     }
+  }
+
+  // H118: link repetido (paridade com o processor).
+  if (result.response) {
+    const bolhasLink = Array.isArray(result.response.message)
+      ? result.response.message.filter((m): m is string => typeof m === "string")
+      : result.response.message
+        ? [String(result.response.message)]
+        : [];
+    const anteriores = conversationTurns.filter((t) => t.role === "assistant").map((t) => t.content);
+    const lr = tirarLinkRepetido(bolhasLink, anteriores, message || "");
+    if (lr.removidos.length > 0) result.response.message = lr.messages;
   }
 
   // ==========================================================================

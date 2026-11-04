@@ -197,6 +197,7 @@ import { normalizePhone, resolveLocationDefaultCountry } from "@/lib/account-ass
 // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
 import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
+import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
@@ -2863,6 +2864,82 @@ async function processGroup(
       overridden: null,
       gateOn: true,
     };
+  }
+
+  // H118 (casos Antonio 21/10 e Adriel 16/10, Alves Cury): o lead mandou OUTRA
+  // mensagem enquanto este turno pensava. Responder agora é responder pela
+  // metade, e o turno seguinte responde de novo (Antonio: 4 turnos e 7 balões em
+  // 77 s, com duas ofertas de horário diferentes). O turno desiste UMA vez: as
+  // mensagens dele voltam para a fila no mesmo horário da nova e o próximo turno
+  // responde tudo junto. Nada foi executado nem enviado ainda. Não desiste duas
+  // vezes em 3 min: quem não para de digitar ainda recebe resposta.
+  if (!group.syntheticTrigger && !modoRemarcacao) {
+    const recebidasNoLote = group.messages.map((m) => m.received_at).filter((x): x is string => !!x).sort();
+    const ultimaDoLote = recebidasNoLote[recebidasNoLote.length - 1];
+    if (ultimaDoLote) {
+      const { data: novas } = await supabase
+        .from("message_queue")
+        .select("id, process_after")
+        .eq("agent_id", agent.id)
+        .eq("contact_id", group.contactId)
+        .eq("status", "pending")
+        .eq("message_direction", "inbound")
+        .gt("received_at", ultimaDoLote)
+        .limit(10);
+      if (novas && novas.length > 0) {
+        const { count: desistiuAgora } = await supabase
+          .from("execution_log")
+          .select("id", { count: "exact", head: true })
+          .eq("agent_id", agent.id)
+          .eq("contact_id", group.contactId)
+          .eq("action_type", "turn_superseded")
+          .gte("created_at", new Date(Date.now() - 3 * 60_000).toISOString());
+        if (!desistiuAgora) {
+          const alvo = novas.map((n) => n.process_after as string).filter(Boolean).sort().pop() || new Date().toISOString();
+          await supabase
+            .from("message_queue")
+            .update({ status: "pending", process_after: alvo })
+            .in("id", group.messages.map((m) => m.id))
+            .eq("status", "processing");
+          await supabase.from("execution_log").insert({
+            agent_id: agent.id,
+            location_id: group.locationId,
+            contact_id: group.contactId,
+            conversation_id: group.conversationId,
+            action_type: "turn_superseded",
+            action_payload: { novas: novas.length, reprocessa_em: alvo },
+            success: true,
+          });
+          log("log", `H118: ${novas.length} mensagem(ns) nova(s) do lead durante o turno; o turno desiste e responde tudo junto em ${alvo}`);
+          return;
+        }
+      }
+    }
+  }
+
+  // H118: link que a IA já mandou em uma das 2 últimas respostas não sai de novo
+  // (Bruno mandou o link do vídeo em 3 respostas seguidas no teste de 03/11).
+  {
+    const bolhasLink = Array.isArray(aiResult.response.message)
+      ? aiResult.response.message.filter((m): m is string => typeof m === "string")
+      : aiResult.response.message
+        ? [String(aiResult.response.message)]
+        : [];
+    const anteriores = conversationTurns.filter((t) => t.role === "assistant").map((t) => t.content);
+    const lr = tirarLinkRepetido(bolhasLink, anteriores, group.syntheticTrigger ? "" : group.aggregatedBody || "");
+    if (lr.removidos.length > 0) {
+      aiResult.response.message = lr.messages;
+      log("log", `H118: link repetido removido (${lr.removidos.join(", ")})`);
+      await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        location_id: group.locationId,
+        contact_id: group.contactId,
+        conversation_id: group.conversationId,
+        action_type: "link_repeat_removed",
+        action_payload: { links: lr.removidos.slice(0, 3) },
+        success: true,
+      });
+    }
   }
 
   // 8. Executar acoes (enviar mensagem, atualizar campos, etc.)

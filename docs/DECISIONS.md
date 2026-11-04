@@ -943,3 +943,51 @@ modelo que DE FATO respondeu (`model_used`).
 **Laboratório:** `/api/agents/test` com as mesmas guardas e o mesmo filtro de expediente (paridade).
 
 **Testes:** `test-slot-offer-guard` e `test-h114-h115-alves`.
+
+## H116 (2026-11-04): reuniões no contexto e gatilho em contato com história (Alves Cury: Ricardo, lote de 02/11)
+
+A ativação em lote de 02/11 (campo AI trocado para "Venda" em leads que a equipe já tinha aberto) fez a IA
+abordar como 1º contato quem já conversava com a equipe:
+- reperguntou estado já respondido (Jorginho, Selis e Walter);
+- se reapresentou (Silvio);
+- perguntou ao Ricardo "conseguiu participar?" 4 h ANTES do Zoom dele.
+
+A IA não recebia as reuniões do contato.
+
+- **Histórico:** `loadLeadHistory` lê `/contacts/{id}/appointments`. O prompt mostra cada reunião com dia
+  e hora no fuso da conta e "FUTURA, daqui a N horas" ou "PASSADA, há N horas", calculados pelo código.
+- **Gatilho com reunião futura (até 21 dias):** o turno proativo é descartado
+  (`proactive_skipped_future_appointment`).
+- **Gatilho em contato com conversa anterior:** o turno vira RETOMADA. Não se apresenta, não repergunta e
+  continua da última mensagem.
+- **Testes:** `test-h116-reunioes`.
+
+## H117 (2026-11-04): pausa falsa por espelho e por eco da própria IA (Alves Cury: Ma, Antonio, Adriel)
+
+- **Espelho:** na Alves Cury o canal "SMS" é um provedor custom que entrega pelo WhatsApp e registra uma
+  cópia (WHATSAPP, source "app", sem user) com o mesmo texto.
+  - Quando o original é a confirmação automática do CRM, a cópia passava por "a equipe escreveu", e a IA
+    se pausava logo depois de agendar (Ma, Antonio).
+  - Regra: saída com o mesmo texto de uma saída de automação ou da API até 3 min antes é espelho
+    (`ehEspelhoDeEnvio`). Vale no F52 e no modo estrito.
+- **Eco com turno em andamento:** a resposta da IA pelo WhatsApp volta no webhook como "app + dono do
+  lead" antes de o `send_message` ser gravado.
+  - Com turno da IA em andamento para o contato (`message_queue` em processing), o F51 não pausa.
+  - Era a pausa do Adriel, que ficou 12 h sem resposta.
+- **Testes:** `test-h117-espelho`. Também passaram `test-human-takeover` 44/44, `test-equipe-assumiu` 47/47
+  e `test-activity-not-human` 27/27.
+
+## H118 (2026-11-04): lead escreveu durante o turno; link repetido (Alves Cury: Antonio, Bruno/vídeo)
+
+- **Turno desiste uma vez:** se chega inbound novo enquanto o turno pensa, o turno não executa nem envia.
+  - As mensagens dele voltam para a fila no horário da nova (`turn_superseded`) e o próximo turno
+    responde tudo junto.
+  - Não desiste 2 vezes em 3 min.
+  - Antes, o Antonio recebeu 4 turnos e 7 balões em 77 s, com duas ofertas diferentes.
+- **Link repetido:** link que a IA mandou em uma das 2 últimas respostas sai, a frase inteira com ele,
+  salvo se o lead pediu o link de novo (`link_repeat_removed`).
+- **Testes:** `test-h118-link`.
+
+**Laboratório (`/api/agents/test`):** `config_override` de texto (instruções, exemplos, saudação). Vale só
+na chamada, nunca é persistido, e só para o laboratório da conta ou admin. Serve para testar instrução
+nova antes de gravar.
