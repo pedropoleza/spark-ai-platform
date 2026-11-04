@@ -266,7 +266,7 @@ export function conferirOfertasDeHorario(
       const horas = lerHoras(f.txt);
       for (const h of horas) {
         // dia: o último antes da hora; sem nenhum antes, o 1º depois ("às 10h na quinta")
-        let dia = [...dias].reverse().find((d) => d.fim <= h.inicio) ?? dias.find((d) => d.inicio >= h.fim);
+        const dia = [...dias].reverse().find((d) => d.fim <= h.inicio) ?? dias.find((d) => d.inicio >= h.fim);
         if (!dia) continue;
         // a hora não pode estar DENTRO da menção de dia (a data já foi mascarada, mas por garantia)
         if (h.inicio >= dia.inicio && h.fim <= dia.fim) continue;
