@@ -7,6 +7,7 @@ import {
   deveSilenciarEntrada,
   entradaVaiPelaAutomacao,
   etiquetaDaEntrada,
+  loteTemMensagemDoLead,
   type EntradaInput,
 } from "@/lib/queue/entry-by-automation";
 import { buildSystemPrompt } from "@/lib/ai/sales-prompt-builder";
@@ -66,6 +67,15 @@ ok("com id: o link sai com o cid do contato", comId.includes("?cid=kwK96WGnSUE7e
 ok("com id: nenhum {contact.id} literal", !comId.includes("{contact.id}"));
 const semId = buildSystemPrompt(ctxBase);
 ok("sem id: vira vazio (a landing abre sem medir), nunca o literal", semId.includes("?cid=#video") && !semId.includes("{contact.id}"));
+
+console.log("\n6) H113: gatilho e 1ª mensagem do lead no mesmo lote");
+const sint = (b: string) => b.startsWith("__reactive_trigger__:");
+const G = { message_body: "__reactive_trigger__:custom_field_changed:activated" };
+ok("só o gatilho: não tem mensagem do lead (descarta como antes)", !loteTemMensagemDoLead([G], sint));
+ok("gatilho + mensagem do formulário: tem mensagem do lead (vira entrada)", loteTemMensagemDoLead([G, { message_body: "Hello! I filled out your form" }], sint));
+ok("gatilho + áudio sem texto: tem mensagem do lead", loteTemMensagemDoLead([G, { message_body: "", audio_url: "https://x/a.ogg" }], sint));
+ok("gatilho + anexo: tem mensagem do lead", loteTemMensagemDoLead([G, { message_body: "", media_attachments: [{}] }], sint));
+ok("corpo vazio não conta", !loteTemMensagemDoLead([G, { message_body: "   " }], sint));
 
 console.log(`\n${pass}/${pass + fail} passaram`);
 process.exit(fail === 0 ? 0 : 1);

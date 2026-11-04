@@ -113,3 +113,32 @@ export function etiquetaDaEntrada(config: { entry_by_automation_tag?: string | n
 function normalizarEtiqueta(t: string | null | undefined): string {
   return (t ?? "").trim().toLowerCase();
 }
+
+/**
+ * H113 (bug observado em prod 2026-11-04 01:12 UTC, 1º lead real do fluxo da landing
+ * da Alves Cury): o formulário do Facebook cria o contato e a mensagem automática do
+ * WhatsApp chega 2 s depois. O gatilho do campo "AI" e essa mensagem caíram no MESMO
+ * lote (debounce de 15 s), e o descarte do turno proativo engoliu o lote inteiro: a
+ * entrada não foi registrada (entry_suppressed_at) e os follow-ups da entrada (H110)
+ * não nasceram. No teste de ponta a ponta não aparecia porque as duas coisas chegaram
+ * com 18 s de diferença, em lotes separados.
+ *
+ * Regra: se o lote do gatilho também traz mensagem DO LEAD (texto que não é o corpo
+ * sintético, áudio ou anexo), o gatilho sai e o lote segue como a 1ª mensagem do lead,
+ * pelo caminho normal da entrada pela automação. É o mesmo princípio do H102 para o
+ * lead novo: o gatilho não pode engolir o que o lead disse.
+ */
+export function loteTemMensagemDoLead(
+  mensagens: ReadonlyArray<{
+    message_body?: string | null;
+    audio_url?: string | null;
+    media_attachments?: unknown[] | null;
+  }>,
+  ehCorpoSintetico: (corpo: string) => boolean,
+): boolean {
+  return mensagens.some((m) => {
+    const corpo = (m.message_body ?? "").trim();
+    if (corpo && !ehCorpoSintetico(corpo)) return true;
+    return !!m.audio_url || (Array.isArray(m.media_attachments) && m.media_attachments.length > 0);
+  });
+}
