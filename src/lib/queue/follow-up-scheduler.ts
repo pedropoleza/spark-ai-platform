@@ -27,6 +27,7 @@ import { isWalletBlocked } from "@/lib/billing/wallet-block";
 import { executeReactionRules } from "@/lib/ai/reaction-engine";
 import type { FollowUpConfig, AutomationRule } from "@/types/agent";
 import { ajustarParaJanela } from "@/lib/queue/janela-de-envio";
+import { fusoDoEstado } from "@/lib/queue/lead-timezone";
 // Caso Alves Cury 2026-08-31: guardas determinísticas do follow-up (pergunta
 // repetida + rótulo de dia relativo). Regra em prompt não segurou — ver
 // _planning/alves-cury-feedbacks-2026-08/RELATORIO-CHURN-2026-08-31.md.
@@ -222,7 +223,24 @@ export async function scheduleFollowUps(params: {
       .eq("location_id", locationId)
       .maybeSingle();
     const tzConta = (locFuso?.timezone as string) || "America/New_York";
-    const emJanela = (d: Date) => ajustarParaJanela(d, tzConta).toISOString();
+    // H123 (revisão Alves Cury 04/11, SIS-17): a janela de envio vale no relógio
+    // do LEAD quando o estado dele é conhecido. A Simone (Califórnia) recebeu um
+    // toque às 5 da manhã porque o adiamento noturno usava o fuso da conta (ET).
+    let tzJanela = tzConta;
+    try {
+      const { data: estadoConv } = await supabase
+        .from("conversation_state")
+        .select("collected_data")
+        .eq("agent_id", agentId)
+        .eq("contact_id", contactId)
+        .maybeSingle();
+      const cd = (estadoConv?.collected_data || {}) as Record<string, string>;
+      const fuso = fusoDoEstado(cd["state"] || cd["contact.state"] || cd["estado"] || cd["estado_onde_mora"] || "");
+      if (fuso?.tz) tzJanela = fuso.tz;
+    } catch {
+      /* sem o estado, a janela segue no fuso da conta */
+    }
+    const emJanela = (d: Date) => ajustarParaJanela(d, tzJanela).toISOString();
 
     // Monta a sequência nova e insere em LOTE (era N inserts separados).
     const rows: Array<Record<string, unknown>> = [];
@@ -341,7 +359,7 @@ function calculateCumulativeDelay(
  * proativa até 24h depois da ÚLTIMA mensagem do lead. SMS/Email não têm janela.
  */
 function channelHasSessionWindow(channel?: string): boolean {
-  return channel === "Instagram" || channel === "WhatsApp";
+  return channel === "Instagram" || channel === "WhatsApp" || channel === "Facebook";
 }
 
 /**
@@ -761,7 +779,7 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
         (lastInbound?.channel as string | undefined) ||
         (Array.isArray(config.enabled_channels) ? (config.enabled_channels[0] as string) : undefined) ||
         "SMS";
-      const outboundType = channelToMessageType(channel);
+      let outboundType = channelToMessageType(channel);
       // Email exige `subject` no GHL (os outros canais não); sem ele o POST
       // type:"Email" cai no vácuo. Follow-up não tem assunto próprio → genérico
       // de retomada. (Regressão pega na review 2026-06-16: o fix de canal expôs
@@ -772,9 +790,22 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
       // some no vácuo. Cancela a sequência pendente — um novo inbound do lead
       // re-agenda do zero (re-ancorando a janela). Sem isso, o modo ai_auto com
       // maxDelay de 7 dias dispararia direto numa janela já fechada.
+      // H123 (SIS-16): agente com `follow_up_config.fallback_sms_after_window` (Alves
+      // Cury: o canal "SMS" da conta é um provedor que entrega no WhatsApp, sem a
+      // janela de 24 h) manda o toque pelo SMS em vez de cancelar a sequência. Os
+      // toques 2 e 3 de quem respondeu pelo WhatsApp sumiam em silêncio.
+      let canalDoToque = channel;
+      const fallbackSms =
+        (config.follow_up_config as { fallback_sms_after_window?: boolean } | null)?.fallback_sms_after_window === true &&
+        Array.isArray(config.enabled_channels) &&
+        (config.enabled_channels as string[]).includes("SMS");
       if (channelHasSessionWindow(channel) && lastInbound?.received_at) {
         const ageMs = Date.now() - new Date(lastInbound.received_at as string).getTime();
-        if (ageMs >= 24 * 60 * 60 * 1000) {
+        if (ageMs >= 24 * 60 * 60 * 1000 && fallbackSms && channel === "WhatsApp") {
+          canalDoToque = "SMS";
+          outboundType = channelToMessageType(canalDoToque);
+          console.log(`[FollowUp] H123: janela 24h fechada no WhatsApp, toque vai pelo SMS da conta (contact=${followUp.contact_id})`);
+        } else if (ageMs >= 24 * 60 * 60 * 1000) {
           console.log(
             `[FollowUp] Janela 24h fechada (${channel}) pra contact=${followUp.contact_id} — cancelando sequência pendente.`,
           );
@@ -784,6 +815,15 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             .eq("agent_id", followUp.agent_id)
             .eq("contact_id", followUp.contact_id)
             .in("status", ["pending", "processing"]);
+          // H123 (SIS-16): o cancelamento só aparecia no console.
+          await supabase.from("execution_log").insert({
+            agent_id: followUp.agent_id,
+            location_id: followUp.location_id,
+            contact_id: followUp.contact_id,
+            action_type: "followup_skipped",
+            action_payload: { reason: "janela_24h_fechada", channel, attempt_number: followUp.attempt_number },
+            success: true,
+          });
           continue;
         }
       }

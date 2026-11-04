@@ -4,7 +4,7 @@ import { waitUntil } from "@vercel/functions";
 export const maxDuration = 60;
 import { createAdminClient } from "@/lib/supabase/admin";
 import { captureInboundWebhookSample } from "@/lib/account-assistant/inbound-webhook-capture";
-import { detectChannel } from "@/lib/ghl/channel";
+import { detectChannel, canalHabilitado } from "@/lib/ghl/channel";
 import {
   isProactiveEventsEnabled,
   isProactiveEventType,
@@ -835,7 +835,7 @@ export async function POST(request: NextRequest) {
     const enabledChannels: string[] = config?.enabled_channels || ["SMS", "WhatsApp"];
 
     // ===== FILTRO: Canal habilitado =====
-    if (!enabledChannels.includes(channel)) {
+    if (!canalHabilitado(channel, enabledChannels)) {
       console.log(`[Webhook] Skipped: channel_not_enabled (${channel} not in [${enabledChannels}])`);
       // Sweep 2026-06-17: lead mandou por um canal que o agente não tem
       // habilitado (ex: Instagram DM). O agente fica mudo nesse canal. MEDIUM —
