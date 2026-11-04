@@ -213,11 +213,39 @@ export function isRepeatedAsk(
  */
 export function agentLinesFromHistory(recentHistory: string): string[] {
   if (!recentHistory) return [];
-  return recentHistory
-    .split("\n")
-    .filter((l) => l.startsWith("AGENTE:"))
-    .map((l) => l.slice("AGENTE:".length).trim())
-    .filter(Boolean);
+  // H122 (revisão Alves Cury 04/11, SIS-15): a mensagem da IA com 2 bolhas vem
+  // como "AGENTE: bolha1\n\nbolha2". Antes só a linha com o prefixo contava, e a
+  // pergunta da 2ª bolha ("você está em qual estado?") ficava invisível para a
+  // guarda; o follow-up repetia a pergunta ignorada. Linha sem prefixo continua
+  // a fala anterior.
+  const out: string[] = [];
+  let atual: string[] | null = null;
+  for (const linha of recentHistory.split("\n")) {
+    if (linha.startsWith("AGENTE:")) {
+      if (atual) out.push(atual.join(" ").trim());
+      atual = [linha.slice("AGENTE:".length).trim()];
+      continue;
+    }
+    if (/^[A-ZÀ-Ý ()]{3,30}:/.test(linha)) {
+      if (atual) out.push(atual.join(" ").trim());
+      atual = null;
+      continue;
+    }
+    if (atual && linha.trim()) atual.push(linha.trim());
+  }
+  if (atual) out.push(atual.join(" ").trim());
+  return out.filter(Boolean);
+}
+
+/**
+ * H122 (SIS-15/INS-10): o toque de follow-up re-oferecendo DIA + HORA ("segunda
+ * às 7 da noite ou terça às 6 da tarde"). O roteiro proíbe ("convide sem citar
+ * dia, hora nem período") e a guarda de pergunta repetida não pegava, porque a
+ * oferta não tem a palavra "horário". Puro.
+ */
+export function toqueOfereceHorario(texto: string): string | null {
+  const m = /(?<![\p{L}])(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)(-feira)?[^.!?\n]{0,25}?(?<![\p{L}])([àa]s|as)\s+\d{1,2}/iu.exec(texto || "");
+  return m ? m[0] : null;
 }
 
 // ============================================================================
