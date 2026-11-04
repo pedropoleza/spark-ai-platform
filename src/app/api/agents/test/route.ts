@@ -8,6 +8,8 @@ import { formatAvailableSlots, filterSlotsToBusinessHours } from "@/lib/ai/slots
 import { extractSlotIsoList } from "@/lib/ai/slot-guard";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
 import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
+import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
+import { splitLeadOutbound } from "@/lib/ai/message-splitter";
 import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
@@ -614,6 +616,18 @@ export async function POST(request: NextRequest) {
     const anteriores = conversationTurns.filter((t) => t.role === "assistant").map((t) => t.content);
     const lr = tirarLinkRepetido(bolhasLink, anteriores, message || "");
     if (lr.removidos.length > 0) result.response.message = lr.messages;
+  }
+
+  // H119: eco no começo e teto de bolhas (paridade com o processor e o executor).
+  if (result.response) {
+    const bolhasH119 = Array.isArray(result.response.message)
+      ? result.response.message.filter((m): m is string => typeof m === "string")
+      : result.response.message
+        ? [String(result.response.message)]
+        : [];
+    const eco = tirarEcoDoInicio(bolhasH119, message || "");
+    const capped = splitLeadOutbound(eco.messages, (config.personality as { max_bubbles?: number | null } | null)?.max_bubbles ?? null);
+    result.response.message = capped.messages;
   }
 
   // ==========================================================================

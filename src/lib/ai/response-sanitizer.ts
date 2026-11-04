@@ -135,10 +135,15 @@ export function stripDashes(msg: string): string {
 export function sanitizeAgentMessage(
   message: string | string[],
   priorTurnCount: number | undefined,
+  opts: { manterApresentacao?: boolean } = {},
 ): string | string[] {
   const applyBoth = (s: string): string => {
     let out = stripDashes(s);
-    if (priorTurnCount && priorTurnCount > 0) {
+    // H119 (Alves Cury, laboratório 04/11 e NEG-15 da revisão): quando o lead
+    // pergunta se é robô ou quem está falando, a resposta CERTA é se apresentar
+    // ("aqui é a Bruna, do time da Alves Cury, pode ficar tranquila"). Cortar a
+    // apresentação nesse turno deixava um fragmento: "Alves Cury, pode ficar tranquilo".
+    if (priorTurnCount && priorTurnCount > 0 && !opts.manterApresentacao) {
       out = stripLeadingGreetings(out);
     }
     return out;
@@ -152,4 +157,16 @@ export function sanitizeAgentMessage(
   }
 
   return applyBoth(message);
+}
+
+
+/**
+ * H119: o lead perguntou se fala com robô/IA ou quem está do outro lado? Nesse
+ * turno a apresentação NÃO é cortada (ver sanitizeAgentMessage).
+ */
+export function leadPerguntouIdentidade(texto: string | null | undefined): boolean {
+  // Lookarounds unicode no lugar de \b: "robô" termina em "ô" e o \b do JS é ASCII.
+  return /(?<![\p{L}])(rob[oô]s?|bot|chatbot|intelig[eê]ncia\s+artificial|uma\s+ia|[eé]\s+(uma\s+)?ia|humano|humana|pessoa\s+(de\s+verdade|real)|gente\s+de\s+verdade|quem\s+([eé]|est[aá]|ta)\s+(voc[eê]|vc|falando|escrevendo|a[ií])|com\s+quem\s+(eu\s+)?(falo|estou\s+falando))(?![\p{L}])/iu.test(
+    String(texto || ""),
+  );
 }

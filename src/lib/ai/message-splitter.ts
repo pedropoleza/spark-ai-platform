@@ -139,7 +139,10 @@ export interface SplitOutboundResult {
  * Normaliza um array de bolhas lead-facing: quebra as longas e aplica o teto de
  * bolhas (excedente fundido na última). NUNCA descarta conteúdo.
  */
-export function splitLeadOutbound(messages: string[]): SplitOutboundResult {
+export function splitLeadOutbound(messages: string[], maxBolhas?: number | null): SplitOutboundResult {
+  // H119: teto por agente (`personality.max_bubbles`, ex.: Alves Cury = 2, regra do
+  // dono). Sem config, o teto anti-spam de sempre.
+  const teto = maxBolhas && maxBolhas >= 1 && maxBolhas <= MAX_BUBBLES ? Math.floor(maxBolhas) : MAX_BUBBLES;
   const expanded: string[] = [];
   let didSplit = false;
 
@@ -151,10 +154,10 @@ export function splitLeadOutbound(messages: string[]): SplitOutboundResult {
 
   // Teto de bolhas: funde o excedente na última (H52 no-loss), nunca corta.
   let capped = expanded;
-  if (expanded.length > MAX_BUBBLES) {
+  if (expanded.length > teto) {
     capped = [
-      ...expanded.slice(0, MAX_BUBBLES - 1),
-      expanded.slice(MAX_BUBBLES - 1).join("\n\n"),
+      ...expanded.slice(0, teto - 1),
+      expanded.slice(teto - 1).join("\n\n"),
     ];
   }
 

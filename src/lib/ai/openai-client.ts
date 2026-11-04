@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { AIResponse, AIProcessingResult } from "@/types/ai";
-import { sanitizeAgentMessage } from "@/lib/ai/response-sanitizer";
+import { sanitizeAgentMessage, leadPerguntouIdentidade } from "@/lib/ai/response-sanitizer";
 import { reportError } from "@/lib/admin-signals/report-error";
 
 const OPENAI_VISION_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"];
@@ -389,6 +389,7 @@ async function processWithOpenAI(
     startTime,
     Boolean(useStrictSchema),
     input.priorTurnCount,
+    leadPerguntouIdentidade(input.newMessages),
   );
 }
 
@@ -572,6 +573,7 @@ async function processWithClaude(
     startTime,
     Boolean(toolJson), // structured via tool-use? (só pra log/telemetria)
     input.priorTurnCount,
+    leadPerguntouIdentidade(input.newMessages),
   );
 }
 
@@ -585,6 +587,7 @@ function buildResult(
   startTime: number,
   strictSchemaUsed: boolean,
   priorTurnCount: number | undefined,
+  identidadePerguntada = false,
 ): AIProcessingResult {
   let parsed = parseAIResponse(responseText);
   let parseFailed = false;
@@ -606,7 +609,7 @@ function buildResult(
   //   - Remoção de saudação/apresentação: só em turnos > 1
   // Garantia mecânica contra o modelo ignorar as regras do prompt.
   const before = Array.isArray(parsed.message) ? parsed.message[0] : parsed.message;
-  parsed.message = sanitizeAgentMessage(parsed.message, priorTurnCount);
+  parsed.message = sanitizeAgentMessage(parsed.message, priorTurnCount, { manterApresentacao: identidadePerguntada });
   const after = Array.isArray(parsed.message) ? parsed.message[0] : parsed.message;
   if (before !== after) {
     console.log(`[AI sanitize] turn=${(priorTurnCount ?? 0) + 1} before="${String(before).substring(0, 80)}" after="${String(after).substring(0, 80)}"`);
