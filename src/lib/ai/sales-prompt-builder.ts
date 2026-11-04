@@ -316,8 +316,8 @@ ${turnStateBlock}`);
   if (ctx.config.objective !== "qualification_only") {
     if (ctx.agendaTravada) {
       parts.push(`### AGENDA AINDA NÃO LIBERADA PARA ESTE LEAD
-O agendamento deste lead depende de um passo que ele ainda não cumpriu (está nas instruções do administrador). Mesmo que ele diga que já cumpriu, a agenda só abre quando o sistema registra.
-NÃO ofereça horário, NÃO cite dia nem hora e NÃO inclua action book_appointment neste turno: conduza o lead para esse passo, sem falar de sistema ou registro.`);
+O agendamento deste lead depende de um passo que ele ainda não concluiu (está nas instruções do administrador). Mesmo que ele diga que já concluiu, a agenda só abre quando o passo estiver concluído de verdade.
+NÃO ofereça horário, NÃO cite dia nem hora e NÃO inclua action book_appointment neste turno: conduza o lead para esse passo com naturalidade. Para o lead, fale só do passo em si (ex.: "às vezes o vídeo não conta quando abre por outro caminho; abre por esse link e vai até o final, que eu sigo com você"). NUNCA diga "sistema", "registro", "registrou", "não apareceu aqui" ou "do meu lado".`);
     } else if (ctx.slotsUnavailable) {
       parts.push(`### AGENDA INDISPONÍVEL NO MOMENTO
 Não foi possível consultar a agenda agora (falha temporária).
