@@ -1079,7 +1079,15 @@ manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no hor
 - **`follow_up_config.disqualify_after_final` entrou no zod e no `makeSeed`.** Estava só no tipo e no runner;
   o primeiro Salvar do painel apagava a chave em silêncio, como foi com `start_on_entry` (H110).
 - **Painel:** o evento aparece como "Sem resposta aos follow-ups" nas automações.
+- **Trava de etapa de origem (`only_from_stage_ids`, PR seguinte).** Vale para `move_pipeline` e
+  `create_opportunity`.
+  - A automação só mexe na oportunidade que está numa das etapas listadas do funil alvo.
+  - Sem oportunidade, o `create_opportunity` cria.
+  - Oportunidade de outro funil não é puxada.
+  - Sem a lista, nada muda.
+  - Motivo: 1 dos 43 leads que receberam o 3º toque estava em "Qualified" e voltaria para "Follow-up".
+  - `findContactOpportunity` devolve a etapa atual; o `findContactOpportunityId` virou um atalho dele.
 - **Testes:**
-  - `test-h124-sem-resposta` 12/12.
+  - `test-h124-sem-resposta` 19/19, com 7 casos da trava.
   - `test-salvar-config-agentes`: 38 agentes, nenhum perde config.
   - `test-h122-followup` 7/7.

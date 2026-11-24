@@ -395,6 +395,9 @@ export interface AutomationAction {
   stage_id?: string;
   // create_opportunity: nome da oportunidade criada (default "Novo lead")
   opportunity_name?: string;
+  // H124: move_pipeline / create_opportunity só mexem na opp que está numa destas
+  // etapas (ids) do funil alvo. Vazio = sem trava. Sem opp, create_opportunity cria.
+  only_from_stage_ids?: string[];
   // update_field
   field_key?: string;
   field_value?: string;

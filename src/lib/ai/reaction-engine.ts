@@ -17,13 +17,30 @@ import { alertarAtendimento } from "@/lib/queue/alerta-atendimento";
 import { GHLClient } from "@/lib/ghl/client";
 import { channelToMessageType } from "@/lib/ghl/channel";
 import {
-  findContactOpportunityId,
+  findContactOpportunity,
   updateOpportunity,
   createOpportunity,
   resolvePipelineStage,
 } from "@/lib/ghl/operations";
 import { resolveTagsForWrite, resolveTagsForRemoval } from "@/lib/ghl/tag-resolver";
 import type { AutomationRule, AutomationAction } from "@/types/agent";
+
+/**
+ * H124: trava `only_from_stage_ids` de move_pipeline/create_opportunity. A opp só
+ * é movida se estiver numa das etapas listadas do funil alvo. Sem lista = sem
+ * trava (comportamento de antes). Sem opp = livre (create_opportunity cria).
+ * Opp de outro funil com a trava ligada = bloqueia (não puxa lead de outro funil).
+ */
+export function bloqueadoPelaEtapa(
+  action: Pick<AutomationAction, "only_from_stage_ids">,
+  opp: { pipelineId: string; pipelineStageId: string } | null,
+  alvoPipelineId: string,
+): boolean {
+  const lista = (action.only_from_stage_ids ?? []).filter(Boolean);
+  if (lista.length === 0 || !opp) return false;
+  if (opp.pipelineId !== alvoPipelineId) return true;
+  return !lista.includes(opp.pipelineStageId);
+}
 
 const BUCKET = "agent-media";
 
@@ -189,19 +206,23 @@ async function executeOne(
       // Fix bug observado em prod 2026-06-10: move_pipeline fazia
       // PUT /opportunities/ sem oppId → 4xx → etapa NUNCA mudava. A GHL
       // exige o oppId no path; resolvemos a opp do contato antes do PUT.
-      const oppId = await findContactOpportunityId(
+      const opp = await findContactOpportunity(
         client,
         ctx.locationId,
         ctx.contactId,
         resolved.pipelineId,
       );
-      if (!oppId) {
+      if (!opp) {
         console.warn(
           `[ReactionEngine] move_pipeline: contato ${ctx.contactId} sem opportunity no Spark Leads — skip`,
         );
         return;
       }
-      await updateOpportunity(client, oppId, {
+      if (bloqueadoPelaEtapa(action, opp, resolved.pipelineId)) {
+        console.log(`[ReactionEngine] move_pipeline: contato ${ctx.contactId} fora das etapas de origem — skip (H124)`);
+        return;
+      }
+      await updateOpportunity(client, opp.id, {
         pipelineId: resolved.pipelineId,
         pipelineStageId: resolved.stageId,
       });
@@ -229,14 +250,20 @@ async function executeOne(
       }
       // Dedup: se o contato JÁ tem opp nessa pipeline, move em vez de criar uma
       // segunda — automação de funil não pode gerar oportunidade duplicada.
-      const existente = await findContactOpportunityId(
+      const existente = await findContactOpportunity(
         client,
         ctx.locationId,
         ctx.contactId,
         alvo.pipelineId,
       );
+      // H124: com a trava ligada, lead que já avançou no funil (ex.: Qualified) não
+      // volta de etapa só porque a automação disparou.
+      if (bloqueadoPelaEtapa(action, existente, alvo.pipelineId)) {
+        console.log(`[ReactionEngine] create_opportunity: contato ${ctx.contactId} fora das etapas de origem — skip (H124)`);
+        return;
+      }
       if (existente) {
-        await updateOpportunity(client, existente, {
+        await updateOpportunity(client, existente.id, {
           pipelineId: alvo.pipelineId,
           pipelineStageId: alvo.stageId,
         });

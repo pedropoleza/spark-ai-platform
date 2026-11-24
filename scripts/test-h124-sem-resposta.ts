@@ -6,6 +6,7 @@
 import { isFinalNoReplyEvent, NO_REPLY_AFTER_FOLLOWUPS_EVENT } from "@/lib/queue/follow-up-scheduler";
 import { makeSeed, buildConfigPayload } from "@/app/hub/agents/[agentId]/config-payload";
 import { updateAgentConfigSchema } from "@/lib/utils/validation";
+import { bloqueadoPelaEtapa } from "@/lib/ai/reaction-engine";
 
 let pass = 0, fail = 0;
 const ok = (n: string, c: boolean, x?: unknown) => { if (c) { pass++; console.log(`  ✅ ${n}`); } else { fail++; console.log(`  ❌ ${n}`, x !== undefined ? JSON.stringify(x) : ""); } };
@@ -23,7 +24,7 @@ ok("nenhum status do turno da IA casa com o evento novo", !statusDoTurno.include
 const regra = {
   id: "fu-sem-resposta-video",
   trigger: { kind: "event", event: NO_REPLY_AFTER_FOLLOWUPS_EVENT, event_label: "Sem resposta aos follow-ups" },
-  actions: [{ type: "create_opportunity", pipeline_id: "P1", stage_id: "S-followup", opportunity_name: "Novo lead" }],
+  actions: [{ type: "create_opportunity", pipeline_id: "P1", stage_id: "S-followup", opportunity_name: "Novo lead", only_from_stage_ids: ["S-new", "S-sem-retorno"] }],
 };
 const linha = {
   follow_up_config: {
@@ -46,6 +47,16 @@ ok("Salvar preserva a ação de mover pra etapa", salva?.actions?.[0]?.type === 
 
 const semFlag = buildConfigPayload(makeSeed({ follow_up_config: { ...linha.follow_up_config, disqualify_after_final: undefined } }), new Set()) as Record<string, any>;
 ok("sem a opção ligada, o payload não inventa a chave", semFlag.follow_up_config?.disqualify_after_final === undefined, semFlag.follow_up_config);
+
+// Trava de etapa de origem (only_from_stage_ids)
+const trava = { only_from_stage_ids: ["S-new", "S-sem-retorno"] };
+ok("lead em New Lead é movido", !bloqueadoPelaEtapa(trava, { pipelineId: "P1", pipelineStageId: "S-new" }, "P1"));
+ok("lead em Sem retorno é movido", !bloqueadoPelaEtapa(trava, { pipelineId: "P1", pipelineStageId: "S-sem-retorno" }, "P1"));
+ok("lead em Qualified NÃO volta de etapa", bloqueadoPelaEtapa(trava, { pipelineId: "P1", pipelineStageId: "S-qualified" }, "P1"));
+ok("opp de outro funil não é puxada com a trava", bloqueadoPelaEtapa(trava, { pipelineId: "P2", pipelineStageId: "S-new" }, "P1"));
+ok("sem opp, a trava deixa criar", !bloqueadoPelaEtapa(trava, null, "P1"));
+ok("sem trava, comportamento de antes (move de qualquer etapa)", !bloqueadoPelaEtapa({}, { pipelineId: "P1", pipelineStageId: "S-qualified" }, "P1"));
+ok("Salvar preserva a trava de etapa", JSON.stringify(salva?.actions?.[0]?.only_from_stage_ids) === JSON.stringify(["S-new", "S-sem-retorno"]), salva?.actions?.[0]);
 
 console.log(`\n${pass} ok · ${fail} falhas`);
 process.exit(fail > 0 ? 1 : 0);
