@@ -1091,3 +1091,32 @@ manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no hor
   - `test-h124-sem-resposta` 19/19, com 7 casos da trava.
   - `test-salvar-config-agentes`: 38 agentes, nenhum perde config.
   - `test-h122-followup` 7/7.
+
+## H125 (2026-11-24): a etiqueta que chega depois da 1ª mensagem abre a entrada (Márcia, Five Star Ricos)
+
+- **A corrida.**
+  - O lead manda a mensagem do anúncio e a IA espera o debounce (20 s).
+  - O targeting é avaliado antes de o workflow pôr a etiqueta de ativação ("ai qualification active"): `targeting_skip`.
+  - A etiqueta chega segundos ou minutos depois, e o turno dela era descartado (H90, quem abre é o workflow).
+  - A entrada nunca era registrada, e os follow-ups da entrada (H110) não nasciam para quem não respondia à
+    boas-vindas.
+  - Medido em 30 dias: 27 de 31 leads de anúncio pulados ficaram sem resposta da IA e sem follow-up (21 a
+    equipe pegou à mão, 6 ninguém).
+- **O conserto.** No descarte do turno da etiqueta, a entrada é registrada (`entry_suppressed_at`) e os
+  follow-ups abrem, sem a IA falar. Só vale quando:
+  - a entrada ainda não passou pelo gate;
+  - o agente tem `start_on_entry` (`etiquetaAbreEntrada`).
+  - Sem o opt-in, nada muda.
+  - O registro virou `registrarEntradaSilenciada(via)`, usado pelos dois caminhos; o da 1ª mensagem ficou igual.
+- **Na Márcia.** `entry_by_automation_tag = "ai qualification active"`, para o evento da etiqueta entrar na
+  fila (H111) em vez de ser descartado no reactive-trigger.
+  - A regra de ativação "mensagem contém 'Veio de anúncio (instagram)'" virou a etiqueta `anuncio`, que o
+    motor do WhatsApp põe em 100% dos leads de anúncio, com a exclusão `divulgação matheus`.
+  - A folha `message` só vale no 1º contato. Na entrada pela automação, o turno da IA é a resposta do lead à
+    boas-vindas, que nunca tem a frase do anúncio. E os leads do Facebook chegam com "(facebook)".
+- **Testes:**
+  - `test-h125-entrada-etiqueta` 6/6;
+  - `test-entry-by-automation` 23/23;
+  - `test-h124-sem-resposta` 19/19;
+  - `test-h122-followup` 7/7;
+  - `test-salvar-config-agentes`: 38 agentes limpos.
