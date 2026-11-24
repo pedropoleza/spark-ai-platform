@@ -1733,6 +1733,8 @@ function CatKnowledge({ e, patch, agentId }: { e: Editable; patch: (p: Partial<E
 const EVENT_OPTS: { v: string; l: string }[] = [
   { v: "qualified", l: "Lead qualificado" }, { v: "booked", l: "Reunião agendada" },
   { v: "handed_off", l: "Passou pra humano" }, { v: "disqualified", l: "Lead desqualificado" },
+  // H124: só o último follow-up sem resposta (nunca o "não quero" do lead).
+  { v: "no_reply_after_followups", l: "Sem resposta aos follow-ups" },
 ];
 const ACTION_OPTS: { v: AutomationAction["type"]; l: string }[] = [
   { v: "add_tag", l: "Adicionar tag" }, { v: "remove_tag", l: "Remover tag" },

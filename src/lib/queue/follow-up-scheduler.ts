@@ -46,9 +46,25 @@ function plannedFollowUpCount(cfg: FollowUpConfig | undefined | null): number {
 }
 
 /**
+ * H124 (Márcia, 24/11/2026): evento só do fim da sequência sem resposta.
+ * "disqualified" também dispara quando a IA marca o lead que disse "não quero" ou
+ * "para de mandar" (queue-processor, evento = status final do turno). Uma
+ * automação de nutrição (mover pra etapa que manda vídeo) nesse evento mandaria
+ * conteúdo justo pra quem pediu pra parar. Este evento o turno da IA nunca emite
+ * (o conversation_status não tem esse valor): só este runner, no toque terminal.
+ */
+export const NO_REPLY_AFTER_FOLLOWUPS_EVENT = "no_reply_after_followups";
+
+/** Eventos que o toque terminal sem resposta dispara (exportado para teste). */
+export function isFinalNoReplyEvent(event: string | undefined): boolean {
+  return event === "disqualified" || event === NO_REPLY_AFTER_FOLLOWUPS_EVENT;
+}
+
+/**
  * Depois do ÚLTIMO follow-up sair sem o lead responder, marca a conversa como
  * `disqualified` e dispara as automações de evento "disqualified" (tag / mover
- * no funil) que o admin configurou.
+ * no funil) que o admin configurou, mais as de "no_reply_after_followups" (H124),
+ * que só existem para este caso.
  *
  * NÃO seta `ai_paused_at` — é reversível de propósito: um inbound tardio do lead
  * volta a ser processado normalmente (o should-respond não bloqueia por status
@@ -96,7 +112,7 @@ async function disqualifyAfterFinalFollowUp(params: {
     const eventRules = rules.filter(
       (r) =>
         (!r.trigger || r.trigger.kind === "event") &&
-        (r.trigger?.kind === "event" ? r.trigger.event : r.event) === "disqualified" &&
+        isFinalNoReplyEvent(r.trigger?.kind === "event" ? r.trigger.event : r.event) &&
         !already.has(r.id),
     );
     if (eventRules.length === 0) return;
