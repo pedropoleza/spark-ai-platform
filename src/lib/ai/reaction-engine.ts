@@ -165,6 +165,40 @@ export async function executeReactionRules(
   return { executedRuleIds: executed };
 }
 
+/** H126: validade do link assinado da mídia enviada por automação (7 dias). */
+export const MEDIA_URL_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/**
+ * H126 (Márcia, 24/11/2026): mensagem mandada por automação (texto fixo ou mídia)
+ * entra no execution_log como `send_message`, com o messageId do Spark Leads.
+ * Sem isso, o anti-eco (F52/H56) não reconhece a mensagem como NOSSA quando o eco
+ * volta carimbado "app + dono do lead" (WhatsApp custom) e a IA se pausa achando
+ * que um humano assumiu. Mesmo shape do envio da IA e do follow-up.
+ */
+export async function registrarEnvioDaAutomacao(
+  supabase: ReturnType<typeof createAdminClient>,
+  ctx: ReactionContext,
+  textos: string[],
+  resposta: { messageId?: string; conversationId?: string } | null | undefined,
+  acao: "send_text_fixed" | "send_media",
+): Promise<void> {
+  const { error } = await supabase.from("execution_log").insert({
+    agent_id: ctx.agentId,
+    location_id: ctx.locationId,
+    contact_id: ctx.contactId,
+    conversation_id: ctx.conversationId || resposta?.conversationId || "",
+    action_type: "send_message",
+    action_payload: {
+      message: textos,
+      ...(resposta?.messageId ? { message_ids: [resposta.messageId] } : {}),
+      source: "automation",
+      automation_action: acao,
+    },
+    success: true,
+  });
+  if (error) console.warn(`[ReactionEngine] falha ao registrar envio da automação (${acao}):`, error.message);
+}
+
 async function executeOne(
   action: AutomationAction,
   ctx: ReactionContext,
@@ -293,11 +327,12 @@ async function executeOne(
     }
     case "send_text_fixed": {
       if (!action.text || !action.text.trim()) return;
-      await client.post("/conversations/messages", {
+      const sent = await client.post<{ messageId?: string; conversationId?: string }>("/conversations/messages", {
         type: messageType,
         contactId: ctx.contactId,
         message: action.text,
       });
+      await registrarEnvioDaAutomacao(supabase, ctx, [action.text], sent, "send_text_fixed");
       break;
     }
     case "send_media": {
@@ -311,10 +346,11 @@ async function executeOne(
 
       if (!media) throw new Error(`Midia ${action.media_id} nao encontrada`);
 
-      // URL assinada com TTL de 10 minutos
+      // H126: 7 dias (era 10 min). O WhatsApp da conta passa pela fila do motor,
+      // que baixa o arquivo na hora do envio; com fila, 10 min venciam antes.
       const { data: signed, error: signError } = await supabase.storage
         .from(BUCKET)
-        .createSignedUrl(media.storage_path, 600);
+        .createSignedUrl(media.storage_path, MEDIA_URL_TTL_SECONDS);
 
       if (signError || !signed?.signedUrl) {
         throw new Error(`Falha ao gerar URL assinada: ${signError?.message || "unknown"}`);
@@ -322,12 +358,15 @@ async function executeOne(
 
       // GHL aceita attachments como array de URLs em /conversations/messages.
       // SMS puro nao suporta — o call passa o texto como caption.
-      await client.post("/conversations/messages", {
+      const sentMedia = await client.post<{ messageId?: string; conversationId?: string }>("/conversations/messages", {
         type: messageType,
         contactId: ctx.contactId,
         message: action.media_caption || "",
         attachments: [signed.signedUrl],
       });
+      await registrarEnvioDaAutomacao(
+        supabase, ctx, [action.media_caption || `[mídia] ${media.name}`], sentMedia, "send_media",
+      );
       break;
     }
     case "pause_ai": {
