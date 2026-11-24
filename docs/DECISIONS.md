@@ -1060,3 +1060,26 @@ manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no hor
   - `test-channel-map` 20/20.
   - `test-salvar-config-agentes`: 36 agentes, nenhum perde config.
   - Também passaram `test-h114-h115-alves`, `test-h122-followup` e `test-followup-repeat-guard`.
+
+## H124 (2026-11-24): evento "sem resposta aos follow-ups" para nutrir sem atingir quem pediu para parar (Márcia, Five Star Ricos)
+
+- **O caso.** A Márcia quer que quem chega e não responde receba o vídeo novo de depoimento.
+  - O vídeo mora no workflow do GHL "Follow-up Prospects (Português)", que começa quando o lead entra na
+    etapa "Follow-up" do funil "1- Prospects" e manda 3 vídeos 1, 5 e 10 dias depois.
+  - Medido: os 6 leads movidos à mão em 20/10 receberam nesses dias e horários.
+  - Ninguém movia o lead para essa etapa, então o vídeo novo (trocado em 19/11) nunca saiu.
+  - O follow-up da IA (1 h, 24 h e 3 dias) é só texto.
+- **Por que um evento novo e não "disqualified".** O evento "disqualified" também dispara quando o turno da
+  IA fecha com esse status ("não quero" duas vezes, "para de mandar"), porque o queue-processor dispara a
+  automação cujo evento é igual ao status final. Mover para a etapa do vídeo nesse evento nutriria justamente
+  quem pediu para parar.
+  - `no_reply_after_followups` só sai do `disqualifyAfterFinalFollowUp`, no toque terminal sem resposta.
+  - O status do turno nunca tem esse valor.
+  - O "disqualified" continua disparando ali também (compatível).
+- **`follow_up_config.disqualify_after_final` entrou no zod e no `makeSeed`.** Estava só no tipo e no runner;
+  o primeiro Salvar do painel apagava a chave em silêncio, como foi com `start_on_entry` (H110).
+- **Painel:** o evento aparece como "Sem resposta aos follow-ups" nas automações.
+- **Testes:**
+  - `test-h124-sem-resposta` 12/12.
+  - `test-salvar-config-agentes`: 38 agentes, nenhum perde config.
+  - `test-h122-followup` 7/7.
