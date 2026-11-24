@@ -299,6 +299,8 @@ export const updateAgentConfigSchema = z.object({
         // create_opportunity: sem esta linha o z.object() estriparia o nome e
         // salvar pelo painel trocaria "Lead Carreira" pelo default "Novo lead".
         opportunity_name: z.string().optional(),
+        // H124: trava de etapa de origem (ids). Fora do zod, o Salvar apagava.
+        only_from_stage_ids: z.array(z.string().min(1)).max(50).optional(),
         field_key: z.string().optional(),
         field_value: z.string().optional(),
         media_id: z.string().optional(),

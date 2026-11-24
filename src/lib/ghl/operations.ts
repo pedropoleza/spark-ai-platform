@@ -584,6 +584,20 @@ export async function findContactOpportunityId(
   contactId: string,
   pipelineId: string,
 ): Promise<string | null> {
+  return (await findContactOpportunity(client, locationId, contactId, pipelineId))?.id ?? null;
+}
+
+/**
+ * H124: mesma escolha do findContactOpportunityId, devolvendo também o funil e a
+ * etapa atuais. Serve à trava `only_from_stage_ids` das automações de funil (não
+ * puxar de volta um lead que já avançou, ex.: Qualified → Follow-up).
+ */
+export async function findContactOpportunity(
+  client: GHLClient,
+  locationId: string,
+  contactId: string,
+  pipelineId: string,
+): Promise<{ id: string; pipelineId: string; pipelineStageId: string } | null> {
   const res = await searchOpportunities(client, {
     location_id: locationId,
     contact_id: contactId,
@@ -593,7 +607,12 @@ export async function findContactOpportunityId(
   // Prefere a opp já na pipeline alvo; fallback = primary opp do contato.
   const chosen = opps.find((o) => String(o.pipelineId ?? "") === pipelineId) ?? opps[0];
   const id = chosen.id;
-  return typeof id === "string" && id ? id : null;
+  if (typeof id !== "string" || !id) return null;
+  return {
+    id,
+    pipelineId: String(chosen.pipelineId ?? ""),
+    pipelineStageId: String((chosen as { pipelineStageId?: unknown }).pipelineStageId ?? ""),
+  };
 }
 
 // =====================================================
