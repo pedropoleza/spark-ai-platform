@@ -142,3 +142,23 @@ export function loteTemMensagemDoLead(
     return !!m.audio_url || (Array.isArray(m.media_attachments) && m.media_attachments.length > 0);
   });
 }
+
+/**
+ * H125 (Márcia, 24/11/2026): o turno da ETIQUETA (gatilho sintético) abre a entrada?
+ *
+ * Corrida medida: o lead manda a mensagem do anúncio, a IA espera o debounce e
+ * avalia o targeting antes de o workflow pôr a etiqueta de ativação → targeting_skip.
+ * A etiqueta chega segundos ou minutos depois, e o turno dela era descartado (H90:
+ * quem abre é o workflow). Resultado: a entrada nunca era registrada e os follow-ups
+ * da entrada (H110) nunca nasciam para quem não respondia à boas-vindas. Em 30 dias,
+ * 27 de 31 leads de anúncio pulados ficaram sem resposta da IA e sem follow-up.
+ *
+ * Abre (registra a entrada calada e os follow-ups, sem a IA falar) só quando:
+ *  - a entrada ainda não passou pelo gate (nem conversa ativa, nem entrada registrada);
+ *  - o agente tem o opt-in de follow-up na entrada (sem ele, nada muda).
+ * O resto (entry_by_automation, gatilho sintético, sem "Ativar IA", contato com a
+ * etiqueta, lote sem mensagem do lead) já é condição do bloco que chama.
+ */
+export function etiquetaAbreEntrada(i: { passouPeloGate: boolean; startOnEntry: boolean }): boolean {
+  return !i.passouPeloGate && i.startOnEntry;
+}

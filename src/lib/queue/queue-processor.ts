@@ -208,6 +208,7 @@ import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
 import { regraQueDesliga, descreveRegra } from "@/lib/queue/deactivation";
 import {
   deveIniciarFollowUpsNaEntrada,
+  etiquetaAbreEntrada,
   deveSilenciarEntrada,
   entradaJaPassouPeloGate,
   entradaVaiPelaAutomacao,
@@ -1283,6 +1284,70 @@ async function processGroup(
     return vale;
   };
 
+  // Registra a entrada silenciada (a automação abriu, a IA calou) e, com o opt-in
+  // H110, abre a sequência de follow-ups. `via` = o que fez a entrada: a 1ª
+  // mensagem do lead (caminho de sempre) ou a etiqueta que chegou depois (H125).
+  const registrarEntradaSilenciada = async (via: "mensagem" | "etiqueta"): Promise<void> => {
+    const agoraIso = new Date().toISOString();
+    const { error: upErr } = await supabase
+      .from("conversation_state")
+      .upsert(
+        {
+          agent_id: agent.id,
+          location_id: group.locationId,
+          contact_id: group.contactId,
+          conversation_id: group.conversationId || "",
+          status: "active",
+          entry_suppressed_at: agoraIso,
+          updated_at: agoraIso,
+        },
+        { onConflict: "agent_id,contact_id" },
+      );
+    const { error: logErr } = await supabase.from("execution_log").insert({
+      agent_id: agent.id,
+      conversation_id: group.conversationId,
+      contact_id: group.contactId,
+      location_id: group.locationId,
+      action_type: "entry_suppressed",
+      action_payload:
+        via === "mensagem"
+          ? { messages_swallowed: group.messages.length, body_preview: group.aggregatedBody.slice(0, 120) }
+          : { via: "etiqueta", trigger: group.syntheticTrigger ? `${group.syntheticTrigger.kind}:${group.syntheticTrigger.key}` : null },
+      success: true,
+    });
+    if (upErr || logErr) {
+      reportError({
+        title: "Entrada pela automação: falha ao registrar o silêncio da 1ª mensagem",
+        feature: "entry-by-automation",
+        severity: "medium",
+        error: upErr ?? logErr,
+        metadata: { contactId: group.contactId, agentId: agent.id, locationId: group.locationId, via },
+      });
+    }
+    // H110: a entrada silenciada abre a sequência de follow-ups (opt-in por
+    // agente). Sem isso, o lead que não responde à boas-vindas nunca recebe toque.
+    const fuCfg = (config as { follow_up_config?: FollowUpConfig | null }).follow_up_config;
+    if (!upErr && deveIniciarFollowUpsNaEntrada(fuCfg)) {
+      await scheduleFollowUps({
+        agentId: agent.id,
+        locationId: group.locationId,
+        contactId: group.contactId,
+        conversationId: group.conversationId || "",
+        followUpConfig: fuCfg,
+      });
+      const { error: fuLogErr } = await supabase.from("execution_log").insert({
+        agent_id: agent.id,
+        conversation_id: group.conversationId,
+        contact_id: group.contactId,
+        location_id: group.locationId,
+        action_type: "followups_scheduled_on_entry",
+        action_payload: { mode: fuCfg.mode, steps: fuCfg.mode === "manual" ? fuCfg.manual_steps.length : fuCfg.max_attempts, via },
+        success: true,
+      });
+      if (fuLogErr) console.warn("[Processor] falha ao auditar follow-up na entrada:", fuLogErr.message);
+    }
+  };
+
   if (
     (config as { entry_by_automation?: boolean | null }).entry_by_automation === true &&
     group.syntheticTrigger &&
@@ -1328,6 +1393,17 @@ async function processGroup(
       success: true,
     });
     if (logErr) console.warn("[Processor] falha ao auditar descarte de proativo:", logErr.message);
+    // H125 (Márcia, 24/11/2026): a 1ª mensagem do lead foi avaliada ANTES de o
+    // workflow pôr a etiqueta de ativação (corrida com o debounce) e levou
+    // targeting_skip. Quando a etiqueta chega, este turno é a única chance de
+    // registrar a entrada; sem isso o lead que não responde à boas-vindas nunca
+    // ganha follow-up (medido: 27 de 31 leads de anúncio pulados em 30 dias).
+    // Só com o opt-in de follow-up na entrada e só se a entrada ainda não passou.
+    const fuCfgEntrada = (config as { follow_up_config?: FollowUpConfig | null }).follow_up_config;
+    if (etiquetaAbreEntrada({ passouPeloGate, startOnEntry: deveIniciarFollowUpsNaEntrada(fuCfgEntrada) })) {
+      log("log", `entrada pela automação: a etiqueta chegou depois da 1ª mensagem de ${group.contactId}, registro a entrada e abro os follow-ups (H125)`);
+      await registrarEntradaSilenciada("etiqueta");
+    }
     return;
   }
 
@@ -1362,61 +1438,7 @@ async function processGroup(
     }
     if (silenciar) {
       log("log", `entrada pela automação: 1ª mensagem de ${group.contactId} silenciada — a IA assume na resposta do lead`);
-      const agoraIso = new Date().toISOString();
-      const { error: upErr } = await supabase
-        .from("conversation_state")
-        .upsert(
-          {
-            agent_id: agent.id,
-            location_id: group.locationId,
-            contact_id: group.contactId,
-            conversation_id: group.conversationId || "",
-            status: "active",
-            entry_suppressed_at: agoraIso,
-            updated_at: agoraIso,
-          },
-          { onConflict: "agent_id,contact_id" },
-        );
-      const { error: logErr } = await supabase.from("execution_log").insert({
-        agent_id: agent.id,
-        conversation_id: group.conversationId,
-        contact_id: group.contactId,
-        location_id: group.locationId,
-        action_type: "entry_suppressed",
-        action_payload: { messages_swallowed: group.messages.length, body_preview: group.aggregatedBody.slice(0, 120) },
-        success: true,
-      });
-      if (upErr || logErr) {
-        reportError({
-          title: "Entrada pela automação: falha ao registrar o silêncio da 1ª mensagem",
-          feature: "entry-by-automation",
-          severity: "medium",
-          error: upErr ?? logErr,
-          metadata: { contactId: group.contactId, agentId: agent.id, locationId: group.locationId },
-        });
-      }
-      // H110: a entrada silenciada abre a sequência de follow-ups (opt-in por
-      // agente). Sem isso, o lead que não responde à boas-vindas nunca recebe toque.
-      const fuCfg = (config as { follow_up_config?: FollowUpConfig | null }).follow_up_config;
-      if (!upErr && deveIniciarFollowUpsNaEntrada(fuCfg)) {
-        await scheduleFollowUps({
-          agentId: agent.id,
-          locationId: group.locationId,
-          contactId: group.contactId,
-          conversationId: group.conversationId || "",
-          followUpConfig: fuCfg,
-        });
-        const { error: fuLogErr } = await supabase.from("execution_log").insert({
-          agent_id: agent.id,
-          conversation_id: group.conversationId,
-          contact_id: group.contactId,
-          location_id: group.locationId,
-          action_type: "followups_scheduled_on_entry",
-          action_payload: { mode: fuCfg.mode, steps: fuCfg.mode === "manual" ? fuCfg.manual_steps.length : fuCfg.max_attempts },
-          success: true,
-        });
-        if (fuLogErr) console.warn("[Processor] falha ao auditar follow-up na entrada:", fuLogErr.message);
-      }
+      await registrarEntradaSilenciada("mensagem");
       return;
     }
   }
