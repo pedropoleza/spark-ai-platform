@@ -1120,3 +1120,23 @@ manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no hor
   - `test-h124-sem-resposta` 19/19;
   - `test-h122-followup` 7/7;
   - `test-salvar-config-agentes`: 38 agentes limpos.
+
+## H126 (2026-11-24): mensagem de automação entra no log como envio nosso, e o link da mídia vale 7 dias (Márcia)
+
+- **O caso.** A Márcia quer que o vídeo novo de depoimento (Natal) saia para quem não respondeu aos 3
+  follow-ups. Isso passa pela automação "Sem resposta aos follow-ups" com `send_media`, que nunca tinha sido
+  usada em produção. Tinha dois furos:
+  - **`send_media` e `send_text_fixed` não gravavam `send_message` com `message_ids`.** O WhatsApp custom
+    devolve o eco carimbado "app + dono do lead" (H117). Sem o registro, o anti-eco (F52/H56) não reconhece a
+    mensagem como nossa, e a IA se pausa achando que um humano assumiu. É o mesmo furo do ultra-review de
+    03/08 nos envios de erro de agendamento.
+  - **O link assinado da mídia valia 10 min.** O motor do WhatsApp baixa o arquivo na hora do envio, e com
+    fila o link vencia antes. Agora vale 7 dias (`MEDIA_URL_TTL_SECONDS`).
+- **Registro:** `registrarEnvioDaAutomacao`, mesmo shape do envio da IA e do follow-up, com
+  `source: "automation"`.
+- **Testes:**
+  - `test-h126-midia-automacao` 8/8;
+  - `test-h124-sem-resposta` 19/19;
+  - `test-h125-entrada-etiqueta` 6/6;
+  - `test-entry-by-automation` 23/23;
+  - `test-salvar-config-agentes`: 38 limpos.
