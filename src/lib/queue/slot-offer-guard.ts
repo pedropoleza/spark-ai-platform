@@ -22,6 +22,7 @@
  */
 
 import { parseWeekdayPt } from "@/lib/account-assistant/weekday-guard";
+import { DATA_EXTENSO_SRC, diaEMes, mascararDatas, numeroDoMes } from "@/lib/queue/datas-lead";
 import { rotuloDoSlot } from "@/lib/queue/lead-day-guard";
 import { detectarFusoNoTexto, diferencaMinutos, horaFalada, horaEmIngles, horaMinutoNoFuso, mesmoFuso, siglaDoFuso } from "@/lib/queue/lead-timezone";
 
@@ -63,9 +64,16 @@ export function indexarSlots(isoList: readonly string[], tz: string): Map<string
   return idx;
 }
 
-// "quinta-feira, 05/11" · "sexta" · "dia 06/11" · "amanhã" · "segunda (09/11)"
-const RE_DIA =
-  /\b(?:(depois\s+de\s+amanh[ãa]|amanh[ãa]|hoje)|((?:segunda|ter[çc]a|quarta|quinta|sexta)(?:-feira)?|s[áa]bado|domingo)(?:\s*,?\s*(?:dia\s+)?\(?(\d{1,2})\/(\d{1,2})\)?)?|(?:dia\s+)?(\d{1,2})\/(\d{1,2}))(?![\p{L}\d])/giu;
+// "quinta-feira, 05/11" · "quinta, 5 de novembro" · "sexta" · "dia 06/11" · "amanhã" · "segunda (09/11)"
+// Grupos: 1 relativo · 2 dia da semana · 3/4 data com barra · 5/6 data por extenso
+// (colada no dia da semana) · 7/8 e 9/10 as mesmas, sozinhas.
+const RE_DIA = new RegExp(
+  "\\b(?:(depois\\s+de\\s+amanh[ãa]|amanh[ãa]|hoje)" +
+    "|((?:segunda|ter[çc]a|quarta|quinta|sexta)(?:-feira)?|s[áa]bado|domingo)" +
+    `(?:\\s*,?\\s*(?:dia\\s+)?\\(?(?:(\\d{1,2})\\/(\\d{1,2})|${DATA_EXTENSO_SRC})\\)?)?` +
+    `|(?:dia\\s+)?(?:(\\d{1,2})\\/(\\d{1,2})|${DATA_EXTENSO_SRC}))(?![\\p{L}\\d])`,
+  "giu",
+);
 
 // "às 3 da tarde" · "8 da noite" · "2 PM" · "2:30 PM" · "15h" · "15h30" · "15:30" · "meio-dia"
 const RE_HORA =
@@ -123,21 +131,19 @@ function lerDias(frase: string): MencaoDia[] {
   while ((m = re.exec(frase)) !== null) {
     const rel = m[1] ? (/depois/i.test(m[1]) ? 2 : /amanh/i.test(m[1]) ? 1 : 0) : null;
     const wd = m[2] ? parseWeekdayPt(m[2]) : null;
-    const dd = m[3] ?? m[5];
-    const mm = m[4] ?? m[6];
+    const numerica = { dd: m[3] ?? m[7], mm: m[4] ?? m[8] };
+    const extenso = { dd: m[5] ?? m[9], mes: m[6] ?? m[10] };
     let data: { d: number; m: number } | null = null;
     let dataInicio = -1;
     let dataFim = -1;
-    if (dd && mm) {
-      const d = parseInt(dd, 10);
-      const mo = parseInt(mm, 10);
-      if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) {
-        data = { d, m: mo };
-        const txt = `${dd}/${mm}`;
-        const rel0 = m[0].lastIndexOf(txt);
-        dataInicio = m.index + rel0;
-        dataFim = dataInicio + txt.length;
-      }
+    const dd = numerica.dd ?? extenso.dd;
+    const d = dd ? parseInt(dd, 10) : 0;
+    const mo = numerica.mm ? parseInt(numerica.mm, 10) : extenso.mes ? numeroDoMes(extenso.mes) ?? 0 : 0;
+    if (dd && d >= 1 && d <= 31 && mo >= 1 && mo <= 12) {
+      data = { d, m: mo };
+      // a data é a última coisa da menção (fora um parêntese): vai do dia até o fim
+      dataInicio = m.index + m[0].search(/\d/);
+      dataFim = m.index + m[0].replace(/\)+$/, "").length;
     }
     if (rel === null && wd === null && !data) continue;
     out.push({ inicio: m.index, fim: m.index + m[0].length, relativo: rel, diaSemana: wd, data, dataInicio, dataFim });
@@ -147,7 +153,7 @@ function lerDias(frase: string): MencaoDia[] {
 
 function lerHoras(frase: string): MencaoHora[] {
   // Datas viram "#" do MESMO tamanho (posições preservadas; "06/11" não vira hora).
-  const semDatas = frase.replace(/\b\d{1,2}\/\d{1,2}(?:\/\d{2,4})?\b/g, (s) => "#".repeat(s.length));
+  const semDatas = mascararDatas(frase, "#", true);
   const out: MencaoHora[] = [];
   const re = new RegExp(RE_HORA.source, "giu");
   let m: RegExpExecArray | null;
@@ -310,7 +316,7 @@ export function conferirOfertasDeHorario(
         }
         if (dia.data && okSemana && candSemana && dia.dataInicio >= 0) {
           // a data estava errada e o nome do dia certo: corrige a DATA
-          const novo = `${String(candSemana.d).padStart(2, "0")}/${String(candSemana.m).padStart(2, "0")}`;
+          const novo = diaEMes(candSemana);
           trocas.push({ ini: f.ini + dia.dataInicio, fim: f.ini + dia.dataFim, novo });
           correcoes.push(`data "${f.txt.slice(dia.dataInicio, dia.dataFim)}" → "${novo}" (o dia da semana dito existe na agenda com essa hora)`);
           if (isoSemana) validas.push(isoSemana);
@@ -336,7 +342,7 @@ export function conferirOfertasDeHorario(
  * Oferta determinística de 2 horários reais, espaçados (dias diferentes quando
  * dá), para quando a IA insiste em horário que não existe. Prefere tarde/noite
  * se `preferirTardeNoite`. Fala no fuso do lead quando ele é conhecido e
- * diferente do da lista: "quinta-feira, 05/11, às 1 da tarde no seu horário (2 PM ET)".
+ * diferente do da lista: "quinta-feira, 5 de novembro, às 1 da tarde no seu horário (2 PM ET)".
  */
 export function ofertaDeterministica(
   slotsIso: readonly string[],

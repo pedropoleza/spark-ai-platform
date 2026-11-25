@@ -355,7 +355,7 @@ ${calLead.block}
 ${ctx.availableSlots}
 
 Ao PROPOR, ofereça 2 opções ESPAÇADAS da lista (datas OU horários diferentes) — nunca duas coladas tipo "11:30 ou 12:00". Se a lista só tiver 1 opção, ofereça 1 (não invente uma segunda).
-Copie da lista o dia da semana, a data e a hora JUNTOS, da mesma linha: o horário de um dia não vale para outro dia. Todo horário que você oferecer é conferido com a agenda antes de sair.
+Copie da lista o dia da semana, a data e a hora JUNTOS, da mesma linha: o horário de um dia não vale para outro dia. Todo horário que você oferecer é conferido com a agenda antes de sair. Escreva a data por extenso ("terça, 10 de novembro"), nunca com barra.
 Se o lead perguntar "qual o último horário?" ou um horário específico, responda SEMPRE com base na lista acima (ela já mostra o último horário real de cada dia). Nunca diga que um horário não existe sem checar a lista.`);
       const siglaLista = siglaDoFuso(ctx.timezone);
       if (ctx.fusoLead?.tz && !mesmoFuso(ctx.fusoLead.tz, ctx.timezone)) {
@@ -363,7 +363,7 @@ Se o lead perguntar "qual o último horário?" ou um horário específico, respo
         const dif = diferencaMinutos(ctx.timezone, ctx.fusoLead.tz) / 60;
         parts.push(`### FUSO DO LEAD
 O lead está em ${sanitizeInline(ctx.fusoLead.origem)} (${siglaLead}), ${Math.abs(dif)}h ${dif < 0 ? "a menos" : "a mais"} que o ${siglaLista}. Na lista acima, cada horário está no ${siglaLista} e, entre parênteses, no horário DELE.
-- Ao oferecer ou confirmar, fale no horário do lead com o ${siglaLista} entre parênteses, ex.: "sexta, 06/11, às 1 da tarde no seu horário (2 PM ${siglaLista})".
+- Ao oferecer ou confirmar, fale no horário do lead com o ${siglaLista} entre parênteses, ex.: "sexta, 6 de novembro, às 1 da tarde no seu horário (2 PM ${siglaLista})".
 - Quando o lead disser um horário, entenda no fuso DELE e procure o equivalente na lista.
 - O start_time do book_appointment é SEMPRE o horário ${siglaLista} da lista (o que está FORA dos parênteses).`);
       }

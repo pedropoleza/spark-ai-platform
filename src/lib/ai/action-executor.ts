@@ -388,8 +388,9 @@ export async function executeActions(
   // vazou em produção em 27/08 — determinístico agora.
   if (messages.length > 0) {
     const dg = aplicarGuardaDeDataLead(messages, ctx.timezone || "America/New_York");
-    if (dg.changed) {
-      messages = dg.messages;
+    // H127: a data por extenso muda o texto sem virar nota; só correção é auditada.
+    if (dg.changed) messages = dg.messages;
+    if (dg.notes.length > 0) {
       console.log(`[DayGuard] ${dg.notes.join(" · ")}`);
       await logExecution(supabase, ctx, "outbound_day_guard", { notes: dg.notes.slice(0, 6) });
     }
