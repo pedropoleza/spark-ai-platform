@@ -1031,10 +1031,12 @@ function buildRescheduleInstructions(ctx: PromptContext): string {
 
   const calendarId = ctx.config.calendar_id || "";
 
+  // H129 (chamado 527): a linha antiga ("se o lead pedir para mudar, use a action") fazia o
+  // modelo mover a reunião no mesmo turno do aviso, para um horário que ele escolheu sozinho.
   return `REAGENDAMENTO:
-- Se o lead pedir para mudar horario, use action "reschedule_appointment"
+- Se o lead pedir para mudar horario ou avisar que nao vai, NAO mexa na agenda ainda: diga que tudo bem e pergunte, propondo ate 2 opcoes da lista de horarios disponiveis
+- So use action "reschedule_appointment" quando ELE disser o dia e a hora que quer (ou aceitar uma opcao sua), com esse horario
 - SEMPRE inclua calendar_id: "${calendarId}"
-- Proponha opcoes da lista de horarios disponiveis
 - Exemplo: { "type": "reschedule_appointment", "calendar_id": "${calendarId}", "start_time": "2026-04-09T15:00:00-04:00" }`;
 }
 

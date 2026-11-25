@@ -122,8 +122,8 @@ const RE_DIA_SEMANA_ANTES = new RegExp(
 );
 const RE_DIA_SEMANA_DEPOIS = new RegExp(`^\\*{0,2}\\s*[,(]\\s*(${DIA_SEMANA_SRC})(?![\\p{L}])`, "iu");
 const RE_DIA_ANTES = /(?<![\p{L}])d[ií]a\s+\(?$/iu;
-/** "às 7/8": é hora, não data. */
-const RE_HORA_ANTES = /(?<![\p{L}])[àa]s?\s+$/iu;
+/** "às 7/8" é hora e "nota 10/10" é nota: não são data. */
+const RE_HORA_ANTES = /(?<![\p{L}])(?:[àa]s?|notas?)\s+$/iu;
 /** "7/8 da noite", "10/20 anos", "2/3 pessoas": não é data. */
 const RE_NAO_E_DATA_DEPOIS =
   /^\s*(?:%|am\b|pm\b|a\.m|p\.m|h\b|horas?\b|anos?\b|meses\b|m[êe]s(?![\p{L}])|dias\b|semanas?\b|x\b|vezes\b|pessoas?\b|filhos?\b|da\s+(?:manh|tarde|noite|renda|sua|minha))/iu;

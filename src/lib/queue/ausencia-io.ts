@@ -29,7 +29,7 @@ export function juntarFalas(falas: readonly FalaDaConversa[]): FalaDaConversa[] 
     const repetida = out.some((x) => x.de === f.de && x.norm === norm && Date.parse(f.em) - Date.parse(x.em) < 5 * 60_000);
     if (!repetida) out.push({ ...f, norm });
   }
-  return out.map(({ norm: _norm, ...f }) => f);
+  return out.map((f) => ({ de: f.de, texto: f.texto, em: f.em }));
 }
 
 /** Falas da conversa: histórico do CRM + fila (30 dias) + o turno. Falha da fila é silenciosa. */
