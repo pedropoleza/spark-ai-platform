@@ -65,6 +65,7 @@ caso("Boa tarde !!Estamos em viajem , amanhã chego em casa , te retorno .", "20
 caso("Já sai pra viajar a trabalho, retorno na quarta aí assino ok?", "2026-09-28T18:00:00Z", "até quarta-feira, 30 de setembro");
 caso("So posso participar desse encontro depois do dia 7 de Agosto, estou de ferias. Obrigada.", "2026-07-22T12:00:00Z", "até sexta-feira, 7 de agosto");
 caso("Estou viajando e somente após 08/11", "2026-10-31T20:00:00Z", "até domingo, 8 de novembro");
+caso("Amanhã nao consigo pode ser a partir de terça eu poderia agora", "2026-11-07T15:00:00Z", "até segunda-feira, 9 de novembro");
 caso("Só a partir de terça-feira", "2026-11-07T15:00:00Z", "até segunda-feira, 9 de novembro");
 caso("Oi estou viajando só semana que vem eu consigo falar ! Depois marcamos melhor", "2026-07-08T14:00:00Z", "até domingo, 12 de julho");
 caso("Olá querida podemos agendar na semana que vem estou de férias ainda", "2026-09-02T21:00:00Z", "até domingo, 6 de setembro");
@@ -75,6 +76,11 @@ caso("Próxima semana estou viajando a trabalho. Posso falar com vcs no dia 5 de
 caso("Essa semana não consigo. Na próxima terça tenho disponibilidade às 10h", "2026-09-22T14:00:00Z", "até domingo, 27 de setembro");
 caso("Essa semana nao posso", "2026-11-21T22:10:00Z", "até domingo, 29 de novembro"); // sábado: é a semana que vai começar
 caso("vou estar fora de segunda à noite a sábado", EM, "de segunda-feira, 9 de novembro (à noite) a sábado, 14 de novembro");
+caso("Vou viajar segunda\nVolto sábado", EM, "de segunda-feira, 9 de novembro a sábado, 14 de novembro");
+caso("Viajo segunda. Volto sábado.", EM, "de segunda-feira, 9 de novembro a sábado, 14 de novembro");
+caso("eu e meu esposo vamos viajar segunda e voltamos sábado", EM, "de segunda-feira, 9 de novembro a sábado, 14 de novembro");
+caso("não consigo de segunda a quinta", EM, "de segunda-feira, 9 de novembro a quinta-feira, 12 de novembro");
+caso("Estou de férias. Até dia 27.", "2026-08-19T16:00:00Z", "até quinta-feira, 27 de agosto");
 caso("só volto sábado", EM, "até sábado, 7 de novembro");
 caso("estou fora, volto 11/14", EM, "até sábado, 14 de novembro"); // formato americano
 
@@ -122,6 +128,10 @@ for (const [t, em] of [
   ["Agora estou fora de casa", "2026-09-25T21:00:00Z"],
   ["Trabalho de segunda a sábado", "2026-09-09T06:32:00Z"],
   ["trabalho de segunda a sexta das 9 às 5", "2026-09-09T14:00:00Z"],
+  ["Não posso falar agora, trabalho de segunda a sexta", "2026-11-06T14:55:12Z"],
+  ["meu marido vai viajar segunda e volta sexta e eu fico sozinha", "2026-11-06T14:55:12Z"],
+  ["não posso depois de sexta", "2026-11-06T14:55:12Z"],
+  ["Só vi sua mensagem hoje", "2026-11-06T14:55:12Z"],
   ["Eu fumo só fds", "2026-07-21T14:00:00Z"],
   ["Eu recebo só na sexta kkkk", "2026-08-18T14:00:00Z"],
   ["Estou na Flórida a 3 meses mas volto para o Brasil dia 14 estou na correria", "2026-07-12T14:00:00Z"],

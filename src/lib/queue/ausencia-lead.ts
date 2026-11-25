@@ -126,59 +126,74 @@ interface Modelo {
   exprs: Expr[];
 }
 
+const PREFIXO_NOME = `(?:(?:${NOME_ALT})(?:[\\s-]*feira)?,?\\s+)?`;
+const PARTE = "(inicio|comeco|meio|metade|fim|final)";
+/** Da mais específica para a mais solta; compiladas uma vez (a conversa inteira passa por aqui). */
+const RE_DATA = {
+  depoisDeAmanha: /\bdepois de amanha\b/g,
+  diaDeMes: new RegExp(`\\b${PREFIXO_NOME}(?:dia\\s+)?(\\d{1,2})\\s+de\\s+(${MES})(?:\\s+de\\s+\\d{4})?\\b`, "g"),
+  barra: new RegExp(`\\b${PREFIXO_NOME}(?:dia\\s+)?(\\d{1,2})\\/(\\d{1,2})(?:\\/\\d{2,4})?\\b`, "g"),
+  diaN: new RegExp(`\\b${PREFIXO_NOME}dia\\s+(\\d{1,2})\\b(?!\\s*(?:hora|:|h\\b))(?:\\s+d[eo]\\s+(?:mes que vem|proximo mes))?`, "g"),
+  ordinal: new RegExp(`\\b${PREFIXO_NOME}(\\d{1,2})(?:st|nd|rd|th)\\b`, "g"),
+  nome: new RegExp(
+    `\\b((?:proxim[ao]|ess[ae]|est[ae]|ness[ae]|nest[ae])\\s+)?(${NOME_ALT})(?:[\\s-]*feira)?\\b(?!\\s+(?:opcao|vez|alternativa))(\\s+(?:que vem|da semana que vem|da proxima semana|da outra semana|dessa semana|desta semana))?`,
+    "g",
+  ),
+  semanaQueVem: /\b(?:semana que vem|proxima semana|semana seguinte|outra semana)\b/g,
+  essaSemana: /\b(?:n|d)?(?:ess|est)a\s+semana\b/g,
+  fds: /\b(?:(?:n?o|ness?e|est?e|proximo)\s+)?(?:(?:final|fim)\s+de\s+semana|fds)\b/g,
+  mesQueVem: new RegExp(`\\b(?:${PARTE}\\s+d[eo]\\s+)?(?:mes que vem|proximo mes)\\b`, "g"),
+  parteDesteMes: new RegExp(`\\b${PARTE}\\s+d[eo]\\s+mes\\b`, "g"),
+  parteDeMes: new RegExp(`\\b${PARTE}\\s+de\\s+(${MES})\\b`, "g"),
+  mes: new RegExp(`(?<=\\b(?:em|ate|apos|para|mes de|depois de)\\s)(${MES})\\b`, "g"),
+  duracao: new RegExp(`\\b(?:daqui(?:\\s+a)?|por|durante|mais)\\s+(${NUM_ALT})\\s+(dia|semana|mes)(?:e?s)?\\b`, "g"),
+  amanha: /\bamanha\b/g,
+  hoje: /\bhoje\b/g,
+};
+
 /** Troca as datas do texto (já normalizado) por marcas e guarda o que cada uma quer dizer. */
 function marcarDatas(texto: string, d0: Dia): Modelo {
   const exprs: Expr[] = [];
-  const marca = (e: Expr | null, original: string): string => {
-    if (!e || exprs.length >= 26) return original;
-    exprs.push(e);
-    return `⟦${String.fromCharCode(96 + exprs.length)}⟧`;
+  let t = texto;
+  const trocar = (re: RegExp, f: (m: string[]) => Expr | null) => {
+    t = t.replace(re, (...args) => {
+      const e = exprs.length < 26 ? f(args as string[]) : null;
+      if (!e) return args[0] as string;
+      exprs.push(e);
+      return `⟦${String.fromCharCode(96 + exprs.length)}⟧`;
+    });
   };
   const seg = segundaDaSemana(d0);
   const fimDeSemana = diaDaSemana(d0) === 0 || diaDaSemana(d0) === 6;
-  const prefixoNome = `(?:(?:${NOME_ALT})(?:[\\s-]*feira)?,?\\s+)?`;
   const dia = (x: Dia | null): Expr | null => (x === null ? null : { tipo: "dia", dia: x });
-  const parteDoMes = (p: string | undefined) => (!p ? null : /inic|comec/.test(p) ? "inicio" : /mei|metad/.test(p) ? "meio" : "fim");
-  const regras: Array<[RegExp, (m: string[]) => Expr | null]> = [
-    [/\bdepois de amanha\b/g, () => dia(d0 + 2)],
-    [new RegExp(`\\b${prefixoNome}(?:dia\\s+)?(\\d{1,2})\\s+de\\s+(${MES})(?:\\s+de\\s+\\d{4})?\\b`, "g"), (m) => dia(proximoDia(+m[1], MESES.indexOf(m[2]) + 1, d0 - 1))],
-    [new RegExp(`\\b${prefixoNome}(?:dia\\s+)?(\\d{1,2})\\/(\\d{1,2})(?:\\/\\d{2,4})?\\b`, "g"), (m) => dia(diaComBarra(+m[1], +m[2], d0))],
-    [new RegExp(`\\b${prefixoNome}dia\\s+(\\d{1,2})\\b(?!\\s*(?:hora|:|h\\b))(?:\\s+d[eo]\\s+(?:mes que vem|proximo mes))?`, "g"), (m) => dia(proximoDia(+m[1], null, d0))],
-    [new RegExp(`\\b${prefixoNome}(\\d{1,2})(?:st|nd|rd|th)\\b`, "g"), (m) => dia(proximoDia(+m[1], null, d0))],
-    [
-      new RegExp(
-        `\\b((?:proxim[ao]|ess[ae]|est[ae]|ness[ae]|nest[ae])\\s+)?(${NOME_ALT})(?:[\\s-]*feira)?\\b(?!\\s+(?:opcao|vez|alternativa))(\\s+(?:que vem|da semana que vem|da proxima semana|da outra semana|dessa semana|desta semana))?`,
-        "g",
-      ),
-      (m) => ({
-        tipo: "nome",
-        wd: NOMES[m[2]],
-        quando: /proxim|que vem|outra/.test(`${m[1] || ""}${m[3] || ""}`) ? "proxima" : m[1] || m[3] ? "desta" : "solto",
-      }),
-    ],
-    [/\b(?:semana que vem|proxima semana|semana seguinte|outra semana)\b/g, () => ({ tipo: "semana", n: 1, ini: seg + 7, fim: seg + 13 })],
-    // "essa semana" dita no sábado ou no domingo é a que vai começar.
-    [/\b(?:n|d)?(?:ess|est)a\s+semana\b/g, () => ({ tipo: "semana", n: 0, ini: d0, fim: fimDeSemana ? seg + 13 : seg + 6 })],
-    [/\b(?:(?:n?o|ness?e|est?e|proximo)\s+)?(?:(?:final|fim)\s+de\s+semana|fds)\b/g, () => {
-      const sab = diaDaSemana(d0) === 0 ? d0 - 1 : seg + 5;
-      return { tipo: "fds", ini: Math.max(sab, d0), fim: sab + 1 };
-    }],
-    [new RegExp(`\\b(?:(inicio|comeco|meio|metade|fim|final)\\s+d[eo]\\s+)?(?:mes que vem|proximo mes)\\b`, "g"), (m) => {
-      const prox = (partes(d0).m % 12) + 1;
-      return { tipo: "mes", ...mesDe(prox, d0), parte: parteDoMes(m[1]) };
-    }],
-    [/\b(inicio|comeco|meio|metade|fim|final)\s+d[eo]\s+mes\b/g, (m) => ({ tipo: "mes", ...mesDe(partes(d0).m, d0), parte: parteDoMes(m[1]) })],
-    [new RegExp(`\\b(inicio|comeco|meio|metade|fim|final)\\s+de\\s+(${MES})\\b`, "g"), (m) => ({ tipo: "mes", ...mesDe(MESES.indexOf(m[2]) + 1, d0), parte: parteDoMes(m[1]) })],
-    [new RegExp(`(?<=\\b(?:em|ate|apos|para|mes de|depois de)\\s)(${MES})\\b`, "g"), (m) => ({ tipo: "mes", ...mesDe(MESES.indexOf(m[1]) + 1, d0), parte: null })],
-    [new RegExp(`\\b(?:daqui(?:\\s+a)?|por|durante|mais)\\s+(${NUM_ALT})\\s+(dia|semana|mes)(?:e?s)?\\b`, "g"), (m) => {
-      const n = numero(m[1]);
-      return n > 0 ? { tipo: "duracao", dias: n * (m[2] === "dia" ? 1 : m[2] === "semana" ? 7 : 30) } : null;
-    }],
-    [/\bamanha\b/g, () => dia(d0 + 1)],
-    [/\bhoje\b/g, () => dia(d0)],
-  ];
-  let t = texto;
-  for (const [re, f] of regras) t = t.replace(re, (...args) => marca(f(args as string[]), args[0] as string));
+  const parte = (p: string | undefined) => (!p ? null : /inic|comec/.test(p) ? "inicio" : /mei|metad/.test(p) ? "meio" : "fim");
+  trocar(RE_DATA.depoisDeAmanha, () => dia(d0 + 2));
+  trocar(RE_DATA.diaDeMes, (m) => dia(proximoDia(+m[1], MESES.indexOf(m[2]) + 1, d0 - 1)));
+  trocar(RE_DATA.barra, (m) => dia(diaComBarra(+m[1], +m[2], d0)));
+  trocar(RE_DATA.diaN, (m) => dia(proximoDia(+m[1], null, d0)));
+  trocar(RE_DATA.ordinal, (m) => dia(proximoDia(+m[1], null, d0)));
+  trocar(RE_DATA.nome, (m) => ({
+    tipo: "nome",
+    wd: NOMES[m[2]],
+    quando: /proxim|que vem|outra/.test(`${m[1] || ""}${m[3] || ""}`) ? "proxima" : m[1] || m[3] ? "desta" : "solto",
+  }));
+  trocar(RE_DATA.semanaQueVem, () => ({ tipo: "semana", n: 1, ini: seg + 7, fim: seg + 13 }));
+  // "essa semana" dita no sábado ou no domingo é a que vai começar.
+  trocar(RE_DATA.essaSemana, () => ({ tipo: "semana", n: 0, ini: d0, fim: fimDeSemana ? seg + 13 : seg + 6 }));
+  trocar(RE_DATA.fds, () => {
+    const sab = diaDaSemana(d0) === 0 ? d0 - 1 : seg + 5;
+    return { tipo: "fds", ini: Math.max(sab, d0), fim: sab + 1 };
+  });
+  trocar(RE_DATA.mesQueVem, (m) => ({ tipo: "mes", ...mesDe((partes(d0).m % 12) + 1, d0), parte: parte(m[1]) }));
+  trocar(RE_DATA.parteDesteMes, (m) => ({ tipo: "mes", ...mesDe(partes(d0).m, d0), parte: parte(m[1]) }));
+  trocar(RE_DATA.parteDeMes, (m) => ({ tipo: "mes", ...mesDe(MESES.indexOf(m[2]) + 1, d0), parte: parte(m[1]) }));
+  trocar(RE_DATA.mes, (m) => ({ tipo: "mes", ...mesDe(MESES.indexOf(m[1]) + 1, d0), parte: null }));
+  trocar(RE_DATA.duracao, (m) => {
+    const n = numero(m[1]);
+    return n > 0 ? { tipo: "duracao", dias: n * (m[2] === "dia" ? 1 : m[2] === "semana" ? 7 : 30) } : null;
+  });
+  trocar(RE_DATA.amanha, () => dia(d0 + 1));
+  trocar(RE_DATA.hoje, () => dia(d0));
   return { t, exprs };
 }
 
@@ -233,7 +248,9 @@ const NAO_E_VIAGEM =
   /\b(?:cheguei|voltei|chegamos|voltamos|estava|fui|voltando) (?:de |da )?(?:viaj\w+|viagem|ferias)|\b(?:quero|gosto de|queria|sonho em|planejar|posso|poder|autorizacao|permissao|horas? de) (?:\S+ ){0,3}?(?:viaj\w+|viagem)|\bnao posso viajar|\btodo ano\b|\bagencia de viagem|\bferias acabaram/;
 const TERCEIRO =
   /\b(?:meu|minha|o|a)\s+(?:esposo|marido|esposa|mulher|filh\w+|pai|mae|irma|irmao|chefe|patra\w*|namorad\w+|cunhad\w+|prim[oa]|amig[oa])\b|\b(?:ele|ela|eles|elas)\b/;
-const PRIMEIRA = /\b(?:eu|vou|estou|to|tou|estarei|estamos|estaremos|vamos|irei|volto|retorno|viajo|posso|consigo|nos)\b/;
+/** Quem viaja é o lead ("eu e meu esposo vamos viajar"), e não só o marido dele. */
+const PRIMEIRA_VIAGEM =
+  /\b(?:vou|vamos|estou|to|tou|estamos|estarei|estaremos|irei|iremos)\b(?:\s+\S+){0,3}?\s+(?:viaj\w+|ferias|viagem|fora)\b|\b(?:viajo|viajamos|minha viagem|nossa viagem)\b/;
 /** "Estou viajando", "vou viajar", sem dizer quando: só vira aviso para a IA perguntar. */
 const VIAJANDO_AGORA =
   /\b(?:estou|to|tou|estamos|estarei|vou estar|vou|irei|vamos)\s+(?:\S+\s+){0,2}?(?:viajando|viajar|de ferias|em viagem|fora d[oae]s? (?:pais|brasil|estado|cidade|eua))\b/;
@@ -258,8 +275,10 @@ const SIM_DEPOIS = /^\s*(?:a (?:noite|tarde|manha)|de (?:manha|tarde|noite)|pela
 
 const D = "⟦([a-z])⟧";
 const PERIODO = "(?:\\s+(?:a|de|pela|no periodo da)?\\s*(manha|tarde|noite)\\b)?";
+const RE_MARCA = new RegExp(D, "g");
+const RE_MARCA_COM_PERIODO = new RegExp(`${D}${PERIODO}`, "g");
 const IDA_E_VOLTA = new RegExp(
-  `\\b(?:viaj\\w+|viagem|ferias|fora|saio|saindo|embarco)\\b[^.!?\\n⟦]{0,40}?${D}${PERIODO}[^.!?\\n⟦]{0,40}?\\b(?:volt\\w+|retorn\\w+|regress\\w+|cheg\\w+)\\b[^.!?\\n⟦]{0,30}?${D}`,
+  `\\b(?:viaj\\w+|viagem|ferias|fora|saio|saindo|embarco)\\b[^.!?⟦]{0,40}?${D}${PERIODO}[.!?]?[^.!?⟦]{0,40}?\\b(?:volt\\w+|retorn\\w+|regress\\w+|cheg\\w+)\\b[^.!?\\n⟦]{0,30}?${D}`,
 );
 const INTERVALO = new RegExp(`\\b(?:de|da|do|entre|desde)\\s+(?:a\\s+|o\\s+)?${D}${PERIODO}\\s+(?:a|ate|ao|e)\\s+(?:a\\s+|o\\s+)?${D}`);
 const ATE = new RegExp(`\\bate\\s+(?:o\\s+|a\\s+|la\\s+)?${D}`);
@@ -272,11 +291,11 @@ const DEIXAR_PARA = new RegExp(
   `\\b(?:agendar|marcar|remarcar|falar|conversar|combinar|retomar|fazer|deix(?:ar|a))\\b(?:\\s+\\w+){0,2}?\\s+(?:para|na|no|em)\\s+(?:a\\s+|o\\s+)?${D}`,
 );
 const SO_DEPOIS = new RegExp(
-  `\\b(?:so|somente|apenas|posso|podemos|consigo|disponive\\w+)\\b[^.!?\\n⟦]{0,60}?\\b(depois|apos|a partir)\\s+(?:d[eoa]s?\\s+)?(?:o\\s+|a\\s+)?${D}`,
+  `(?<!\\bnao )\\b(?:so|somente|apenas|posso|podemos|pode ser|consigo|disponive\\w+)\\b[^.!?\\n⟦]{0,60}?\\b(depois|apos|a partir)\\s+(?:d[eoa]s?\\s+)?(?:o\\s+|a\\s+)?${D}`,
 );
 const A_PARTIR_POSSO = new RegExp(`\\ba partir\\s+d[eoa]\\s+${D}[^.!?\\n⟦]{0,25}?\\b(?:posso|consigo|estou|estarei|fico|vou estar)\\b`);
 const SO_EM = new RegExp(
-  `\\b(?:so|somente|apenas)\\s+(?:(?:a|na|no|em|para|la|eu|posso|consigo|vou|poder|conseguir|tenho|disponibilidade|horario|estarei|disponivel)\\s+){0,5}?${D}`,
+  `(?<!\\bnao )\\b(?:so|somente|apenas)\\s+(?:(?:a|na|no|em|para|la|eu|posso|consigo|vou|poder|conseguir|tenho|disponibilidade|horario|estarei|disponivel)\\s+){0,5}?${D}`,
 );
 
 interface LeituraDaMensagem {
@@ -290,10 +309,10 @@ interface LeituraDaMensagem {
 function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Dia[]): LeituraDaMensagem {
   const vazio: LeituraDaMensagem = { ausencias: [], possiveis: [], viagemSemData: false };
   const { proprio } = separarTextoDoLead(bruto);
-  if (!proprio || proprio.length > 700) return vazio;
+  if (!proprio || proprio.length > 900) return vazio;
   const { t, exprs } = marcarDatas(normalizarFala(proprio), d0);
   const frases = t.split(/[.!?\n]+/).filter((s) => s.trim());
-  const viaja = frases.some((f) => VIAGEM.test(f) && !NAO_E_VIAGEM.test(f) && !(TERCEIRO.test(f) && !PRIMEIRA.test(f)));
+  const viaja = frases.some((f) => VIAGEM.test(f) && !NAO_E_VIAGEM.test(f) && (!TERCEIRO.test(f) || PRIMEIRA_VIAGEM.test(f)));
   const nega = frases.some((f) => NEGA.test(f) && !OUTRO_ASSUNTO.test(f));
   const ausencias: Ausencia[] = [];
   const usadas = new Set<string>();
@@ -305,6 +324,9 @@ function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Di
     return true;
   };
   const livre = (...ls: string[]) => ls.every((l) => l && !usadas.has(l));
+  const fraseDe = (l: string) => frases.find((f) => f.includes(`⟦${l}⟧`)) ?? t;
+  /** A recusa vale para a frase dela; a viagem, para a mensagem. */
+  const foraNaFrase = (l: string) => viaja || (NEGA.test(fraseDe(l)) && !OUTRO_ASSUNTO.test(fraseDe(l)));
 
   let m = IDA_E_VOLTA.exec(t);
   if (m && viaja && livre(m[1], m[3])) {
@@ -312,17 +334,17 @@ function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Di
     guardar(ini, ultimoDiaFora(expr(m[3]), d0, ini), "ida_e_volta", [m[1], m[3]], INICIO_DO_PERIODO[m[2]] ?? 0);
   }
   m = INTERVALO.exec(t);
-  if (m && (viaja || nega) && livre(m[1], m[3])) {
+  // "não posso falar agora, trabalho de segunda a sexta" é rotina, não ausência
+  if (m && foraNaFrase(m[1]) && !/\btrabalh\w*\s+$/.test(t.slice(0, m.index)) && livre(m[1], m[3])) {
     const ini = primeiro(expr(m[1]), d0);
     guardar(ini, ultimo(expr(m[3]), d0, ini), "intervalo", [m[1], m[3]], INICIO_DO_PERIODO[m[2]] ?? 0);
   }
   m = ATE.exec(t);
-  if (m && (viaja || nega) && livre(m[1])) guardar(d0, ate(expr(m[1]), d0), "ate", [m[1]]);
+  if (m && foraNaFrase(m[1]) && livre(m[1])) guardar(d0, ate(expr(m[1]), d0), "ate", [m[1]]);
   m = VOLTA.exec(t);
   if (m && livre(m[4])) {
     const e = expr(m[4]);
-    const frase = frases.find((f) => f.includes(`⟦${m![4]}⟧`)) ?? t;
-    const rotina = /\b(?:licenca|servico|trabalh\w+|escola|aulas?)\b/.test(frase) && !viaja;
+    const rotina = /\b(?:licenca|servico|trabalh\w+|escola|aulas?)\b/.test(fraseDe(m[4])) && !viaja;
     const longe = e.tipo !== "dia" || e.dia - d0 >= 2;
     if (!rotina && (viaja || m[1] || (longe && !/^(?:cheg|de volta)/.test(m[2])))) {
       guardar(d0, /\b(?:depois|apos)\b/.test(m[3]) ? depois(e, d0) : ultimoDiaFora(e, d0), "volta", [m[4]]);
@@ -350,7 +372,7 @@ function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Di
 
   // "Estou de férias agora. Daqui uma semana."
   if (viaja) {
-    for (const x of t.matchAll(new RegExp(D, "g"))) {
+    for (const x of t.matchAll(RE_MARCA)) {
       const e = expr(x[1]);
       if (livre(x[1]) && e.tipo === "duracao") guardar(d0, ultimo(e, d0), "duracao", [x[1]]);
     }
@@ -361,7 +383,7 @@ function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Di
   for (const o of t.split(/[.!?;\n]+|(?<!⟧\s?),(?!\s*(?:e\s+)?⟦)|\b(?:mas|porem|so que|entretanto)\b/)) {
     const neg = OUTRO_ASSUNTO.test(o) ? null : NEGA.exec(o);
     const via = viaja ? VIAGEM.exec(o) : null;
-    for (const x of o.matchAll(new RegExp(`${D}${PERIODO}`, "g"))) {
+    for (const x of o.matchAll(RE_MARCA_COM_PERIODO)) {
       const e = expr(x[1]);
       if (!e || usadas.has(x[1])) continue;
       const ini = x.index!;
@@ -377,12 +399,13 @@ function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Di
       const porNegar = perto(neg);
       const porViajar = perto(via);
       if ((porNegar || porViajar) && !pediu && e.tipo !== "duracao") {
+        if (/\b(?:depois|antes|a partir) d[eoa]s?\s+$|\bapos\s+$/.test(antes)) continue; // "não posso depois de sexta"
         if (!porViajar && (SO_A_HORA.test(o) || frases.some((f) => f.includes(`⟦${x[1]}⟧`) && SO_DEPOIS_DAS.test(f)))) continue;
         guardar(
           primeiro(e, d0), ultimo(e, d0), porViajar ? "viagem_no_dia" : "recusa_do_dia", [x[1]],
           x[2] ? INICIO_DO_PERIODO[x[2]] : 0, x[2] && !porViajar ? FIM_DO_PERIODO[x[2]] : MIN_DIA,
         );
-      } else if ((e.tipo === "dia" || e.tipo === "nome") && (pediu || !(neg || via))) {
+      } else if ((e.tipo === "dia" || e.tipo === "nome") && (pediu || !(neg || via || OCUPADO_NELES.test(o)))) {
         possiveis.push({ dia: primeiro(e, d0), wd: e.tipo === "nome" ? e.wd : null, pediu });
       }
     }
