@@ -507,8 +507,11 @@ function resolver(x: MencaoDia, d0: Dia): Dia | null {
   return dia;
 }
 
-/** Aceite de um dia que a gente ofereceu DEPOIS da ausência (a equipe, por exemplo). "Ok, obrigada" é despedida. */
-const ACEITE_CURTO = /^(?:(?:mas )?(?:ta|esta) tudo bem|sim|pode|podemos|isso|perfeito|otimo|combinado|fechado|confirmo|confirmado|aceito|serve|funciona)\b(?!.*\bobrigad)/;
+/**
+ * Aceite de um dia que a gente ofereceu DEPOIS da ausência (a equipe, por exemplo). "Ok, obrigada" e
+ * "mas tá tudo bem" são despedida.
+ */
+const ACEITE_CURTO = /^(?:(?:ta|esta) tudo bem|sim|pode|podemos|isso|perfeito|otimo|combinado|fechado|confirmo|confirmado|aceito|serve|funciona)\b(?!.*\bobrigad)/;
 
 /**
  * Lê as ausências ditas na conversa, em ordem. `tz` é o fuso do lead (ou o da conta,

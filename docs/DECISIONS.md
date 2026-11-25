@@ -1188,11 +1188,12 @@ manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no hor
   eram essa lead. Agora só corrige quando a data não cai no dia dito.
 - **Medido:** 139 de 32.719 mensagens de lead têm ausência com data, conferidas uma a uma. Nas conversas com
   ausência, 16 mensagens da IA em 13 conversas ofereceram dia dentro dela. Nos 1.055 agendamentos reais desde
-  20/07, nenhum seria barrado na hora de agendar.
-- **O custo, medido:** 3 desses 1.055 nasceram de um dia que a guarda não ofereceria, todos da Marina (agenda de
-  poucos dias): lead de férias no Brasil que topou a reunião online, e um "só na quarta" e um "só no sábado" que
-  cederam depois. Com a guarda a oferta começa na volta; o dia entra de novo se o lead citar.
-- **Testes:** `test-h128-ausencia` 171/171.
+  20/07, 1 seria barrado, com razão: o lead disse "só no sábado" e "esse horário tô no trabalho", a IA insistiu
+  e agendou na terça com um "Ok".
+- **O custo, medido:** 2 desses 1.055 nasceram de um dia que a guarda não ofereceria (Marina, agenda de poucos
+  dias): lead de férias no Brasil que topou a reunião online e um "só na quarta" que cedeu depois. Com a guarda
+  a oferta começa na volta; o dia entra de novo se o lead citar.
+- **Testes:** `test-h128-ausencia` 172/172.
 
 ## H129 (2026-11-25): reunião marcada só se move quando o lead escolheu (Alves Cury, chamado 527)
 

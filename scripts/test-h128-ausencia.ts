@@ -212,9 +212,12 @@ console.log("\n7) A conversa: vale para as ofertas seguintes, e o lead muda de i
   eq("já voltei", depois([lead("Oi, já voltei de viagem", "2026-11-12T15:00:00Z")], "2026-11-12T15:00:00Z"), "");
   eq("a equipe oferece quarta e ele aceita", depois([nos("Consegue quarta, 11/11, às 6?", "2026-11-07T15:00:00Z"), lead("Sim", "2026-11-07T15:01:00Z")], "2026-11-07T15:01:00Z"), "de segunda-feira, 9 de novembro (à noite) a terça-feira, 10 de novembro; de quinta-feira, 12 de novembro a sábado, 14 de novembro");
   eq("'ok, obrigada' é despedida, não aceite", depois([nos("Consegue quarta, 11/11, às 6?", "2026-11-07T15:00:00Z"), lead("Ok, obrigada", "2026-11-07T15:01:00Z")], "2026-11-07T15:01:00Z"), "de segunda-feira, 9 de novembro (à noite) a sábado, 14 de novembro");
-  eq("'só no sábado... mas tá tudo bem' aceita o que foi oferecido", rotuloDasAusencias(lerAusencias([
-    nos("Ela tem terça 13/10 ou quinta 15/10, às 8pm. Qual fica melhor?", "2026-10-12T00:55:00Z"), lead("Pra min só no sábado", "2026-10-12T00:56:00Z"), lead("Mas tá tudo bem", "2026-10-12T00:57:00Z"),
-  ], ET, new Date("2026-10-12T00:58:00Z")).ausencias, ET, new Date("2026-10-12T00:58:00Z")).includes("terça"), false);
+  eq("'só no sábado', 'esse horário tô no trabalho', 'mas tá tudo bem' é despedida, não aceite (real: foi agendada na terça)", rotuloDasAusencias(lerAusencias([
+    nos("Ela tem terça 13/10 ou quinta 15/10, às 8pm. Qual fica melhor?", "2026-10-12T00:54:00Z"), lead("Nenhuma vou está trabalhando", "2026-10-12T00:55:28Z"),
+    lead("Mas tá de boa obrigado", "2026-10-12T00:55:50Z"), lead("Pra min só no sábado", "2026-10-12T00:56:20Z"), lead("Obrigado", "2026-10-12T00:56:27Z"),
+    nos("Sábado não está disponível na agenda, mas posso te oferecer segunda 19 ou terça 20, ambos às 8pm de Nova York (ET).", "2026-10-12T00:56:50Z"), lead("Esse horário to no trabalho", "2026-10-12T00:57:19Z"), lead("Mas tá tudo bem", "2026-10-12T00:57:31Z"),
+  ], ET, new Date("2026-10-12T00:58:00Z")).ausencias, ET, new Date("2026-10-12T00:58:00Z")), "até sexta-feira, 16 de outubro");
+  eq("'tá tudo bem' sozinho segue aceitando", depois([nos("Consegue quarta, 11/11, às 6?", "2026-11-07T15:00:00Z"), lead("Tá tudo bem", "2026-11-07T15:01:00Z")], "2026-11-07T15:01:00Z"), "de segunda-feira, 9 de novembro (à noite) a terça-feira, 10 de novembro; de quinta-feira, 12 de novembro a sábado, 14 de novembro");
   eq("'domingo pode' devolve o domingo que a gente ofereceu", rotuloDasAusencias(lerAusencias([
     nos("Então domingo dia 20/09 fica perfeito", "2026-09-09T06:32:43Z"), lead("Vou estar no trabalho estes dias", "2026-09-09T06:33:25Z"), lead("Domingo pode!!", "2026-09-09T06:33:43Z"),
   ], ET, new Date("2026-09-09T06:34:00Z")).ausencias, ET, new Date("2026-09-09T06:34:00Z")), "");
