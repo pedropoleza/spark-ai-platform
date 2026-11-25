@@ -7,11 +7,14 @@ import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from 
 import { formatAvailableSlots, filterSlotsToBusinessHours } from "@/lib/ai/slots-format";
 import { extractSlotIsoList } from "@/lib/ai/slot-guard";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
+import { agruparFalas } from "@/lib/queue/escolha-de-horario";
+import { agendaComAusencia, juntarFalas, type AgendaComAusencia } from "@/lib/queue/ausencia-io";
+import { separarTextoDoLead } from "@/lib/queue/remarcacao-pos-handoff";
 import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
 import { tirarMetaLinguagem } from "@/lib/queue/meta-guard";
 import { splitLeadOutbound } from "@/lib/ai/message-splitter";
-import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
+import { fusoDoEstado, fusoNaFalaDoLead } from "@/lib/queue/lead-timezone";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import { withRetry } from "@/lib/utils/retry";
@@ -200,7 +203,7 @@ export async function POST(request: NextRequest) {
   // ==========================================================================
   const { data: dbMessages } = await supabase
     .from("agent_test_messages")
-    .select("role, content")
+    .select("role, content, metadata, created_at")
     .eq("session_id", sessionId)
     .order("created_at", { ascending: true });
 
@@ -464,10 +467,33 @@ export async function POST(request: NextRequest) {
   if ((config as { timezone_config?: { auto_detect_from_state?: boolean } | null }).timezone_config?.auto_detect_from_state) {
     const estado =
       mergedCollectedData["contact.state"] || mergedCollectedData["state"] || mergedCollectedData["estado_onde_mora"] || mergedCollectedData["estado"] || "";
-    fusoLeadTeste = fusoDoEstado(estado) ?? detectarFusoNoTexto(message || "");
+    fusoLeadTeste = fusoDoEstado(estado) ?? fusoNaFalaDoLead(message || "");
   }
-  if (slotsNaJanelaTeste && !agendaTravadaTeste && fusoLeadTeste) {
-    availableSlots = formatAvailableSlots(slotsNaJanelaTeste, locationTz, 30, fusoLeadTeste.tz);
+  // H128: dias em que o lead disse que está fora (paridade com o processor).
+  let agendaAusenciaTeste: AgendaComAusencia | null = null;
+  if (slotsNaJanelaTeste && !agendaTravadaTeste) {
+    const agoraAus = new Date();
+    agendaAusenciaTeste = await agendaComAusencia({
+      slots: slotsNaJanelaTeste,
+      falas: juntarFalas([
+        ...priorMessages.map((m) => ({ de: m.role === "user" ? ("lead" as const) : ("nos" as const), texto: m.content, em: m.created_at })),
+        { de: "lead", texto: message || "", em: agoraAus.toISOString() },
+      ]),
+      tzLead: fusoLeadTeste?.tz ?? locationTz,
+      tzConta: locationTz,
+      agora: agoraAus,
+      fimDaJanela: new Date(Number(slotsEndDate)),
+      buscarDesde: (desde) =>
+        ghlClient.get<SlotsResp>(`/calendars/${config.calendar_id}/free-slots`, {
+          startDate: String(desde.getTime()),
+          endDate: String(desde.getTime() + slotWindowDays(config as { slot_window_days?: number | null }) * 24 * 60 * 60 * 1000),
+        }),
+    });
+    if (agendaAusenciaTeste.ausencias.length > 0 || fusoLeadTeste) {
+      slotsNaJanelaTeste = agendaAusenciaTeste.slots;
+      offeredSlotsIsoTeste = extractSlotIsoList(slotsNaJanelaTeste);
+      availableSlots = formatAvailableSlots(slotsNaJanelaTeste, locationTz, 30, fusoLeadTeste?.tz ?? null);
+    }
   }
 
   const promptCtx = {
@@ -489,6 +515,10 @@ export async function POST(request: NextRequest) {
     slotsUnavailable: slotsFetchFailed,
     agendaTravada: agendaTravadaTeste,
     fusoLead: fusoLeadTeste,
+    ausenciaLead: agendaAusenciaTeste
+      ? { rotulo: agendaAusenciaTeste.rotulo || null, semVolta: agendaAusenciaTeste.semVolta }
+      : null,
+    slotsEmpty: !!agendaAusenciaTeste?.rotulo && availableSlots.trim() === "",
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     priorTurnCount: effectivePriorTurnCount,
@@ -581,6 +611,26 @@ export async function POST(request: NextRequest) {
       // Paridade: em prod, conversa já agendada não confere oferta (citar a
       // reunião marcada é legítimo). O teste não grava agendamento, então confere sempre.
       pularOferta: false,
+      // H129: o laboratório não grava reunião, então a "marcada" é o último
+      // agendamento desta sessão (ou a real do contato escolhido para o teste).
+      ausencia:
+        agendaAusenciaTeste && agendaAusenciaTeste.ausencias.length > 0
+          ? { ausencias: agendaAusenciaTeste.ausencias, tz: fusoLeadTeste?.tz ?? locationTz, rotulo: agendaAusenciaTeste.rotulo }
+          : null,
+      citadoPeloLead: separarTextoDoLead(message || "").citado,
+      falasAnteriores: agruparFalas(
+        priorMessages.map((m) => ({ direction: m.role === "user" ? "inbound" : "outbound", body: m.content, dateAdded: m.created_at })),
+      ),
+      reuniaoMarcada: async () => {
+        const futura = (iso: string | null | undefined) => !!iso && Date.parse(iso) > Date.now();
+        const real = leadHistoryTeste?.reunioes?.find((r) => futura(r.inicioIso));
+        if (real) return { inicioIso: real.inicioIso };
+        const daSessao = [...priorMessages]
+          .reverse()
+          .flatMap((m) => ((m.metadata as { actions?: Array<{ type?: string; start_time?: string }> } | null)?.actions || []))
+          .find((a) => (a.type === "book_appointment" || a.type === "reschedule_appointment") && futura(a.start_time));
+        return daSessao?.start_time ? { inicioIso: daSessao.start_time } : null;
+      },
       preferirTardeNoite: (config as { preferred_time_slot?: string | null }).preferred_time_slot === "afternoon_evening",
       regenerar: async (diretiva) => {
         const r = await processWithAI({

@@ -1140,3 +1140,99 @@ manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no hor
   - `test-h125-entrada-etiqueta` 6/6;
   - `test-entry-by-automation` 23/23;
   - `test-salvar-config-agentes`: 38 limpos.
+
+## H127 (2026-11-25): data por extenso no texto do lead (Alves Cury, chamado 492)
+
+- **O caso (06/11).** "Coloca o mês primeiro e o dia depois, porque aqui é ao contrário." O lead nos EUA lê
+  "terça, 10/11" como 11 de outubro. Com barra, DD/MM e MM/DD são a mesma coisa sempre que os dois números
+  vão até 12.
+- **Decisão: por extenso, escrito pelo código.** "terça, 10 de novembro" não tem como ser lido errado, e não
+  depende de escolher entre os dois formatos. `datas-lead.ts` troca a barra na saída (turno, follow-up e
+  laboratório). As instruções de cada agente podem continuar pedindo DD/MM.
+- **Os leitores entendem os dois formatos**, porque o modelo copia a própria fala do histórico: dia relativo,
+  par dia/data (`corrigirDiaPelaData`), confirmação do agendamento e conferência da oferta.
+- **Fica como está:** data com ano (nascimento, que o lead pode ter digitado em MM/DD), fração, "24/7", hora
+  ("às 7/8"), link e texto em inglês. Em espanhol o mês sai em espanhol. O SparkBot não muda: o
+  `fixWeekdayDatePairs` continua igual.
+- **Sem auditoria a cada troca.** Formatar a data muda o texto (`changed`) sem virar nota. O
+  `outbound_day_guard` continua só para correção.
+- **Medido:** 3.536 envios reais com data desde 01/08. 3.552 de 3.596 bolhas com barra passam a extenso; as
+  44 que ficam são nascimentos ou data já passada. Contra a guarda anterior, 8.508 bolhas iguais a menos do
+  formato e 11 diferentes, 10 delas data em MM/DD que a guarda antiga lia como DD/MM.
+- **Testes:** `test-h127-data-por-extenso` 50/50. 13 expectativas de formato em `test-lead-day-guard`,
+  `test-slot-offer-guard` e `test-h114-h115-alves` passaram de DD/MM para extenso.
+
+## H128 (2026-11-25): dia em que o lead disse que está fora não é oferecido (Alves Cury, chamado 492)
+
+- **O caso (06/11).** "Esses dias não estarei disponíveis, irei viajar na segunda à noite e retorno no
+  sábado." A IA ofereceu terça 10 e quinta 12 ("algum desses funciona depois que você voltar?"). A guarda de
+  oferta só pergunta se o horário existe na agenda.
+- **Onde:** na entrada, como o expediente do H58. `ausencia-lead.ts` (puro) lê as falas do lead com a data de
+  cada uma, e os horários do período saem da lista antes de o modelo ver. A mesma lista alimenta a conferência
+  da oferta e o slot-guard, então oferecer ou agendar dentro da ausência deixa de ser possível.
+- **O que lê:** ida e volta ("viajo segunda e volto sábado"), até, depois de, a partir de, "só volto",
+  "só consigo quinta", "essa semana não", dia ou turno recusado, e "esses dias não" (os que acabamos de
+  oferecer). Pede data ou período. "Estou viajando" sem data só vira aviso no runtime.
+- **O que não é ausência:** condicional ("se não for quarta, só semana que vem": a quarta fica), a exceção da
+  recusa ("essa semana não, só na quarta"), pergunta sobre a nossa agenda ("só terça e quinta, né?"), recusa só
+  da hora, viagem de outra pessoa. "Essa semana estou ocupada" e "tenho compromisso na quinta" também ficam de
+  fora: em 20 mensagens reais assim, a IA só ofereceu dentro do período em 1.
+- **O que devolve:** dia que o lead cita como possível, aceite de um dia oferecido depois, viagem cancelada,
+  "já voltei". O dia da volta ainda é de viagem.
+- **A janela cresce.** Com menos de 2 dias sobrando, uma 2ª busca de horários começa na volta do lead (até 60
+  dias). Com a janela fixa de 7 dias a IA não teria o que oferecer.
+- **Falha = segue como antes.** Auditoria: `lead_absence` (período, regra, trecho, horários retirados).
+- **Achado junto: a correção de data do H115 desfazia a vontade do lead.** Caso real de 21/11 (Jussara): a
+  lead disse "segunda 30th" e "essa semana não posso"; o modelo ofereceu "segunda, 30/11" (par certo, fora da
+  janela) e a guarda "corrigiu" para 23/11, a semana recusada. As 4 notas de correção em produção até hoje
+  eram essa lead. Agora só corrige quando a data não cai no dia dito.
+- **Medido:** 139 de 32.719 mensagens de lead têm ausência com data, conferidas uma a uma. Nas conversas com
+  ausência, 16 mensagens da IA em 13 conversas ofereceram dia dentro dela. Nos 1.055 agendamentos reais desde
+  20/07, 1 seria barrado, com razão: o lead disse "só no sábado" e "esse horário tô no trabalho", a IA insistiu
+  e agendou na terça com um "Ok".
+- **O custo, medido:** 2 desses 1.055 nasceram de um dia que a guarda não ofereceria (Marina, agenda de poucos
+  dias): lead de férias no Brasil que topou a reunião online e um "só na quarta" que cedeu depois. Com a guarda
+  a oferta começa na volta; o dia entra de novo se o lead citar.
+- **Testes:** `test-h128-ausencia` 172/172.
+
+## H129 (2026-11-25): reunião marcada só se move quando o lead escolheu (Alves Cury, chamado 527)
+
+- **O caso (19/11, 11:20 ET).** Com reunião às 17h: "infelizmente não poderei participar do nosso encontro,
+  obrigado e desculpe". A IA chamou `reschedule_appointment` para sexta 14h e disse "Fechado".
+- **Causa.** A instrução de reagendamento mandava usar a action "se o lead pedir para mudar horário", e os
+  guardas só perguntavam se o horário existe. Nenhum perguntava quem escolheu.
+- **Regra.** Se a ação (`book` ou `reschedule`) mudaria uma reunião FUTURA, o horário novo tem que ter saído do
+  lead (`escolha-de-horario.ts`): hora dita fora de frase de recusa e no dia certo, aceite de uma oferta nossa,
+  o dia que só tem aquele horário, "no mesmo horário", ou resposta citando a oferta. Sem isso a ação sai.
+- **O texto.** Se já pergunta ou só cita a reunião que existe, fica (em 9 dos 14 casos reais o texto estava
+  certo e só a ação errava). Se afirma a mudança, refaz 1 vez; se insistir, a afirmação vira pergunta.
+- **Por que não o detector de "não vou" (H103).** Das 10 falas reais de quem não ia e teve a reunião movida, ele
+  pega 7 ("não terei como parar", "tenho um compromisso às 5" e "pode me ligar amanhã ou sábado" escapam). A
+  escolha é um fato do texto e tem bem menos formas.
+- **Não passa por aqui:** primeiro agendamento, repetição do mesmo horário (offset errado incluso), turno
+  proativo. A reunião vem do histórico do lead; o CRM só é consultado se o histórico não basta. CRM fora do ar
+  = comportamento de antes.
+- **Medido:** 53 mudanças reais de reunião (26/06 a 25/11). As 34 que o lead escolheu passam. Das 19 barradas,
+  14 eram a IA mudando sozinha e 5 custariam uma pergunta a mais. A leitura da escolha reconhece 324 dos 333
+  primeiros agendamentos da Márcia.
+- **Auditoria:** `agenda_guard.movimento_retirado` (reunião e o que o modelo tentou).
+- **Testes:** `test-h129-mover-reuniao` 92/92.
+
+## H130 (2026-11-25): conversão de fuso da oferta conferida pelo código (Alves Cury, chamado 548)
+
+- **O caso (23/11).** Lead de Utah: "às 9h30 da manhã ou às 2 da tarde no seu horário (10:30 AM ET ou 3 PM
+  ET)". 1 h de diferença em vez de 2. A confirmação, conferida com o slot (H115), saiu certa.
+- **Causa.** Texto livre. A guarda de oferta só olha frase com dia e hora juntos (aqui o dia estava na frase
+  anterior), e as duas leituras existiam na agenda. O log não guardava o fuso usado; agora o `ai_processing`
+  grava `fuso_lead`.
+- **Regra (`conversao-fuso-guard.ts`).** Cada par "X no seu horário (Y ET)" é conferido com a diferença real do
+  DIA da reunião. Não bateu: vale a hora da conta (a da lista, a que é agendada) e a do lead é recalculada, sem
+  refazer o turno. Só se a da conta não existe na agenda e a do lead existe é que a da conta muda.
+- **Na dúvida não se afirma.** Sem fuso do lead, ou com o cadastro dizendo um estado e o lead citando outro,
+  fica só a hora da conta com o nome do fuso.
+- **"CT" do lead é Connecticut.** `detectarFusoNoTexto` lia "Moramos em CT" como fuso central, e o lead de
+  Connecticut recebia "8:00 AM no seu horário (9:00 AM ET)" (16 e 17/11, Márcia). Nas 93 mensagens de lead com
+  sigla, todo "CT" solto é o estado; fuso vem colado na hora ("5pm PT"). `fusoNaFalaDoLead` só lê sigla assim.
+- **Medido:** de 04 a 25/11, 17 mensagens com as duas horas, 5 com a conta errada (Utah 2, Havaí 1, Connecticut
+  2). Todas corrigidas; as certas não mudam.
+- **Testes:** `test-h130-conversao-fuso` 71/71.

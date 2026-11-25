@@ -4,6 +4,21 @@ Histórico organizado por feature/bugfix. Versionamento semântico informal — 
 
 ---
 
+## [2026-11-25] Guardas de agenda (Alves Cury, chamados 492, 527 e 548)
+
+### Fixed
+- **Horário em dia que o lead disse que estava fora** (H128, #492): viagem, "essa semana não", "só volto
+  sábado" e "esses dias não" tiram os horários do período da lista do turno. A agenda é buscada a partir da
+  volta quando a janela fica curta.
+- **Data que o lead lê ao contrário** (H127, #492): "10/11" sai "10 de novembro", escrito pelo código; os
+  guardas leem os dois formatos.
+- **Reunião movida sem o lead escolher** (H129, #527): quem já tem reunião só tem a agenda mexida quando disse
+  o horário novo ou aceitou uma oferta. A instrução de reagendamento também mudou.
+- **Conversão de fuso errada na oferta** (H130, #548): cada "X no seu horário (Y ET)" é conferido e corrigido.
+  "CT" escrito pelo lead é Connecticut, não fuso central.
+- **Correção de data que trazia de volta a semana recusada** (H128): par certo fora da janela não é mais
+  "corrigido".
+
 ## [2026-10-26] SparkBot: cadastro e agendamento (caso Ana Gusmão, #456)
 
 ### Fixed

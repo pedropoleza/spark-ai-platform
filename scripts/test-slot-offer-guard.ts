@@ -37,8 +37,8 @@ console.log("\n1) Izolismaria: datas +1 com o dia da semana certo → corrige a 
     SLOTS, ET, { agora: AGORA },
   );
   ok("nenhuma oferta inválida", r.invalidas.length === 0, r);
-  ok("quarta 05/11 → 04/11", r.messages[0].includes("quarta, 04/11, às 3 da tarde"), r.messages[0]);
-  ok("quinta 06/11 → 05/11", r.messages[0].includes("quinta, 05/11, às 8 da noite"), r.messages[0]);
+  ok("quarta 05/11 → 4 de novembro", r.messages[0].includes("quarta, 4 de novembro, às 3 da tarde"), r.messages[0]);
+  ok("quinta 06/11 → 5 de novembro", r.messages[0].includes("quinta, 5 de novembro, às 8 da noite"), r.messages[0]);
   ok("2 correções registradas", r.correcoes.length === 2, r.correcoes);
 }
 
@@ -112,7 +112,7 @@ console.log("\n7b) Pergunta sobre a rotina do lead não é oferta");
 console.log("\n8) Oferta determinística");
 {
   const o = ofertaDeterministica(SLOTS, ET, { agora: AGORA, preferirTardeNoite: true });
-  ok("duas opções em dias diferentes, com ET", !!o && /quarta-feira, 04\/11, às 1 da tarde ET/.test(o) && /quinta-feira, 05\/11/.test(o), o);
+  ok("duas opções em dias diferentes, com ET", !!o && /quarta-feira, 4 de novembro, às 1 da tarde ET/.test(o) && /quinta-feira, 5 de novembro/.test(o), o);
   const o2 = ofertaDeterministica(SLOTS, ET, { agora: AGORA, preferirTardeNoite: true, fusoLead: CT });
   ok("com o fuso do lead: 'no seu horário (... ET)'", !!o2 && /às 12 da tarde no seu horário \(1 PM ET\)/.test(o2), o2);
   ok("sem horários: null", ofertaDeterministica([], ET, { agora: AGORA }) === null);

@@ -134,7 +134,7 @@ async function main() {
       regenerar: async () => resp(["Oi!", "Tenho sexta-feira, 06/11, às 8 da noite ET. Pode ser?"]),
     });
     const m = r.resposta.message as string[];
-    ok("insistiu: vira a oferta determinística, a 1ª bolha fica", r.ofertaSubstituida && m[0] === "Oi!" && /^Tenho quinta-feira, 05\/11, às 8 da noite ET ou sexta-feira, 06\/11/.test(m[1]), m);
+    ok("insistiu: vira a oferta determinística, a 1ª bolha fica", r.ofertaSubstituida && m[0] === "Oi!" && /^Tenho quinta-feira, 5 de novembro, às 8 da noite ET ou sexta-feira, 6 de novembro/.test(m[1]), m);
   }
   {
     const r = await aplicarGuardasDeAgenda({

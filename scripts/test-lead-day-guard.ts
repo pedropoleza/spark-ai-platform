@@ -1,6 +1,8 @@
 // Teste do lead-day-guard (caso Alves Cury 2026-08-31). Replay das strings
 // REAIS de produção (regra H85: detector só está pronto depois de rodar contra
 // o corpus real). Rodar: npx tsx scripts/test-lead-day-guard.ts
+// H127 (2026-11-25): a saída esperada passou de "28/08" para "28 de agosto"; as
+// entradas continuam com barra, que é o que o modelo escreve.
 import {
   aplicarGuardaDeDataLead,
   corrigirDiaRelativo,
@@ -36,7 +38,7 @@ console.log("— envio real Cleidmar 27/08 (quinta): hoje absolutiza, amanhã co
   caso(
     "cleidmar-27",
     r.messages[0],
-    "Deixa eu ver a agenda aqui. Tem quinta-feira, 27/08, às 7 da noite ou amanhã, sexta 28/08, às 2 da tarde, horário do leste. Qual funciona melhor para você?",
+    "Deixa eu ver a agenda aqui. Tem quinta-feira, 27 de agosto, às 7 da noite ou amanhã, sexta, 28 de agosto, às 2 da tarde, horário do leste. Qual funciona melhor para você?",
   );
 }
 
@@ -50,7 +52,7 @@ console.log("— mesmo texto dito NA sexta 28/08: amanhã vira mentira e cai —
   caso(
     "cleidmar-28",
     r.messages[0],
-    "Tem sexta-feira, 28/08, às 7 da noite ou sexta 28/08, às 2 da tarde.",
+    "Tem sexta-feira, 28 de agosto, às 7 da noite ou sexta, 28 de agosto, às 2 da tarde.",
   );
 }
 
@@ -70,14 +72,14 @@ console.log("— follow-up 18:52 re-oferecendo slot: os dois absolutizam —");
   caso(
     "followup-recycle",
     r.messages[0],
-    "Cleidmar, qual dos dois horários funciona melhor para você: quinta-feira, 27/08, às 7 da noite ou sexta-feira, 28/08, às 2 da tarde?",
+    "Cleidmar, qual dos dois horários funciona melhor para você: quinta-feira, 27 de agosto, às 7 da noite ou sexta-feira, 28 de agosto, às 2 da tarde?",
   );
 }
 
 console.log("— par dia↔data errado (H85 reuso) + relativo correto —");
 {
   const r = aplicarGuardaDeDataLead(["Tem amanhã, quinta 28/08, às 2 da tarde."], TZ, QUINTA_27);
-  caso("par-errado-corrigido", r.messages[0], "Tem amanhã, sexta-feira 28/08, às 2 da tarde.");
+  caso("par-errado-corrigido", r.messages[0], "Tem amanhã, sexta-feira, 28 de agosto, às 2 da tarde.");
 }
 
 console.log("— usos que NÃO podem mudar —");
@@ -95,7 +97,7 @@ console.log("— usos que NÃO podem mudar —");
 console.log("— depois de amanhã / dia nomeado sem data —");
 {
   const r1 = corrigirDiaRelativo("Consigo depois de amanhã às 10h, funciona?", TZ, QUINTA_27);
-  caso("depois-de-amanha", r1.texto, "Consigo sábado, 29/08, às 10h, funciona?");
+  caso("depois-de-amanha", r1.texto, "Consigo sábado, 29 de agosto, às 10h, funciona?");
   const r2 = corrigirDiaRelativo("Tem amanhã, sexta, às 2 da tarde.", TZ, QUINTA_27);
   caso("amanha-sexta-correto", r2.texto, "Tem amanhã, sexta, às 2 da tarde.");
   const r3 = corrigirDiaRelativo("Tem amanhã, sexta, às 2 da tarde.", TZ, SEXTA_28);
@@ -106,13 +108,13 @@ console.log("— recap de agendamento (C7 — incidente rodada 2: 10 AM × 6 PM)
 {
   const BOOKED = "2026-08-28T18:00:00-04:00"; // sexta 28/08, 6 PM ET
 
-  caso("rótulo do slot", rotuloDoSlot(BOOKED, TZ) || "", "sexta-feira, 28/08, às 6 da noite");
+  caso("rótulo do slot", rotuloDoSlot(BOOKED, TZ) || "", "sexta-feira, 28 de agosto, às 6 da noite");
 
   const r1 = aplicarGuardaDeRecapAgendado(["Perfeito, deixei reservado às 10 da manhã, certo?"], BOOKED, TZ);
   caso(
     "recap 10AM×6PM substituído",
     r1.messages[0],
-    "Fechado: sexta-feira, 28/08, às 6 da noite. A confirmação chega por aqui.",
+    "Fechado: sexta-feira, 28 de agosto, às 6 da noite. A confirmação chega por aqui.",
   );
 
   const certo = "Fechado então: sexta-feira, 28/08, às 6 da noite, horário do leste. A confirmação chega por aqui.";
@@ -120,10 +122,10 @@ console.log("— recap de agendamento (C7 — incidente rodada 2: 10 AM × 6 PM)
   caso("recap correto intacto", r2.messages[0], certo);
 
   const r3 = aplicarGuardaDeRecapAgendado(["Perfeito, combinado!"], BOOKED, TZ);
-  caso("sem horário → rótulo anexado", r3.messages.length === 2 && r3.messages[1].includes("sexta-feira, 28/08"), true);
+  caso("sem horário → rótulo anexado", r3.messages.length === 2 && r3.messages[1].includes("sexta-feira, 28 de agosto"), true);
 
   const r4 = aplicarGuardaDeRecapAgendado(["Confirmado para sexta, 29/08, às 6 da noite."], BOOKED, TZ);
-  caso("data errada substituída", r4.messages[0].startsWith("Fechado: sexta-feira, 28/08"), true);
+  caso("data errada substituída", r4.messages[0].startsWith("Fechado: sexta-feira, 28 de agosto"), true);
 
   const r5 = aplicarGuardaDeRecapAgendado(["Fechado, sexta 28/08 às 18h. Chega confirmação por aqui."], BOOKED, TZ);
   caso("18h correto intacto", r5.messages[0], "Fechado, sexta 28/08 às 18h. Chega confirmação por aqui.");

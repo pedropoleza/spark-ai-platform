@@ -15,10 +15,14 @@
  *       A data é a âncora; o rótulo relativo errado é o que já saiu errado em
  *       produção (bateria v3 17/08 + envio real de 27/08).
  *     - SEM data ao lado (só horário: "hoje às 7 da noite") → vira ABSOLUTO
- *       ("quinta-feira, 27/08, às 7 da noite"). O follow-up recicla texto de
- *       horas atrás; o absoluto nunca envelhece.
+ *       ("quinta-feira, 27 de agosto, às 7 da noite"). O follow-up recicla texto
+ *       de horas atrás; o absoluto nunca envelhece.
  *     - "amanhã" conversacional sem horário por perto fica em paz ("a gente se
  *       fala amanhã" é verdadeiro no momento do envio).
+ *
+ * H127 (chamado 492, 06/11/2026): antes dos dois passes, a data com barra vira
+ * extenso ("sexta 28/08" → "sexta, 28 de agosto"); ver `datas-lead.ts`. Os dois
+ * passes leem qualquer um dos formatos.
  *
  * Puro e testável (sem I/O). Fuso via Intl; aritmética de dias no CALENDÁRIO
  * (Date.UTC), imune a DST.
@@ -26,6 +30,15 @@
 
 import { fixWeekdayDatePairs } from "@/lib/account-assistant/weekday-text-guard";
 import { weekdayNamePt, parseWeekdayPt } from "@/lib/account-assistant/weekday-guard";
+import {
+  DATA_EXTENSO_SRC,
+  diaEMes,
+  escreverDatasPorExtenso,
+  idiomaDoTexto,
+  lerDatas,
+  mascararDatas,
+  numeroDoMes,
+} from "@/lib/queue/datas-lead";
 
 interface Ymd {
   y: number;
@@ -63,10 +76,9 @@ function weekdayDeYmd(ymd: Ymd): number {
   return new Date(Date.UTC(ymd.y, ymd.m - 1, ymd.d)).getUTCDay();
 }
 
-/** "quinta-feira, 27/08" — rótulo absoluto que substitui o relativo. */
+/** "quinta-feira, 27 de agosto": rótulo absoluto que substitui o relativo (H127). */
 function rotuloAbsoluto(ymd: Ymd): string {
-  const nome = weekdayNamePt(weekdayDeYmd(ymd));
-  return `${nome}, ${String(ymd.d).padStart(2, "0")}/${String(ymd.m).padStart(2, "0")}`;
+  return `${weekdayNamePt(weekdayDeYmd(ymd))}, ${diaEMes(ymd)}`;
 }
 
 // ⚠️ \b do JS é ASCII-only: depois de "ã" ele NUNCA casa ("amanhã\b" falha
@@ -77,8 +89,6 @@ const RE_RELATIVO =
 // Horário por perto: "às 7", "as 19h", "7 da noite", "2 PM", "14:30", "19h30".
 const RE_HORA =
   /\b(às?\s+\d{1,2}(?::\d{2}|h\d{0,2})?\b|\d{1,2}\s*(?:am|pm)\b|\d{1,2}(?::\d{2})?\s*(?:da\s+(?:manh[ãa]|tarde|noite)|horas?\b|h\b|h\d{2}\b))/i;
-
-const RE_DATA = /\b(\d{1,2})[\/.](\d{1,2})(?:[\/.](\d{2,4}))?\b/;
 
 const DIA_ALT =
   "domingo|segunda(?:-feira)?|ter[çc]a(?:-feira)?|quarta(?:-feira)?|quinta(?:-feira)?|sexta(?:-feira)?|s[áa]bado|dom|seg|ter|qua|qui|sex|s[áa]b";
@@ -139,7 +149,7 @@ export function corrigirDiaRelativo(
     const contexto = antes + " " + depois;
 
     const temHora = RE_HORA.test(contexto);
-    const dataAdj = RE_DATA.exec(depois) || RE_DATA.exec(antes);
+    const dataAdj = lerDatas(depois)[0] ?? lerDatas(antes)[0] ?? null;
     const diaAdj = RE_DIA_NOME.exec(depois) || RE_DIA_NOME.exec(antes);
 
     // Sem horário nem data/dia por perto: uso conversacional, não mexe.
@@ -150,9 +160,7 @@ export function corrigirDiaRelativo(
     let acao: "manter" | "remover" | "absolutizar" = "manter";
     if (dataAdj) {
       // A data explícita é a âncora: rótulo só sobrevive se apontar pra ela.
-      const d = parseInt(dataAdj[1], 10);
-      const mm = parseInt(dataAdj[2], 10);
-      acao = d === esperado.d && mm === esperado.m ? "manter" : "remover";
+      acao = dataAdj.d === esperado.d && dataAdj.m === esperado.m ? "manter" : "remover";
     } else if (diaAdj) {
       const dito = parseWeekdayPt(diaAdj[1]);
       acao = dito !== null && dito === weekdayDeYmd(esperado) ? "manter" : "remover";
@@ -165,8 +173,8 @@ export function corrigirDiaRelativo(
 
     out += texto.slice(cursor, ini);
     if (acao === "absolutizar") {
-      // Vírgula depois do rótulo ("quinta-feira, 27/08, às 7") — a menos que o
-      // texto seguinte já traga pontuação própria.
+      // Vírgula depois do rótulo ("quinta-feira, 27 de agosto, às 7"), a menos que
+      // o texto seguinte já traga pontuação própria.
       const virgula = /^\s*[,;.]/.test(texto.slice(fim)) ? "" : ",";
       out += rotuloAbsoluto(esperado) + virgula;
       notes.push(`"${rotulo}" → "${rotuloAbsoluto(esperado)}"`);
@@ -223,7 +231,7 @@ function partesNoFuso(iso: string, tz: string): (Ymd & { hh: number; mi: number 
   }
 }
 
-/** "sexta-feira, 28/08, às 2 da tarde" — rótulo falado do slot agendado. */
+/** "sexta-feira, 28 de agosto, às 2 da tarde": rótulo falado do slot agendado. */
 export function rotuloDoSlot(iso: string, tz: string): string | null {
   const p = partesNoFuso(iso, tz);
   if (!p) return null;
@@ -281,7 +289,7 @@ export function aplicarGuardaDeRecapAgendado(
   let algumaCitaHora = false;
   const messages = bubbles.map((b) => {
     // Datas saem antes do scan de hora (senão "28/08" vira menção de hora).
-    const semDatas = b.replace(/\b\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?\b/g, "§");
+    const semDatas = mascararDatas(b, "§");
 
     let ofende = false;
     // 1. Menções de horário incompatíveis com o slot.
@@ -311,14 +319,9 @@ export function aplicarGuardaDeRecapAgendado(
       const ok = candidatos.some((a) => leituras(h, marcador).some((hh) => hh === a.hh) && min === a.mi);
       if (!ok) ofende = true;
     }
-    // 2. Data explícita diferente da agendada.
-    const reData = /\b(\d{1,2})[\/.](\d{1,2})(?:[\/.]\d{2,4})?\b/g;
-    let dm: RegExpExecArray | null;
-    while ((dm = reData.exec(b)) !== null) {
-      const d = parseInt(dm[1], 10);
-      const mo = parseInt(dm[2], 10);
-      if (alvos.some((a) => d === a.d && mo === a.m)) continue;
-      if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) ofende = true;
+    // 2. Data explícita diferente da agendada (com barra ou por extenso).
+    for (const data of lerDatas(b)) {
+      if (!alvos.some((a) => data.d === a.d && data.m === a.m)) ofende = true;
     }
     // 3. Dia-da-semana nomeado diferente do agendado.
     const wdMatch = RE_DIA_NOME.exec(b);
@@ -342,10 +345,55 @@ export function aplicarGuardaDeRecapAgendado(
   return { messages, changed: notes.length > 0, notes };
 }
 
+/** Mantém a caixa do termo original: "Terça" → "Quinta-feira". */
+function naCaixaDe(molde: string, nome: string): string {
+  return /^\p{Lu}/u.test(molde) ? nome.charAt(0).toUpperCase() + nome.slice(1) : nome;
+}
+
 /**
- * Ponto de entrada: passa cada bolha pelos DOIS guards (pares dia↔data do H85 +
- * rótulo relativo). Ordem importa: primeiro o nome do dia é corrigido pela
- * data, depois o rótulo relativo é julgado contra o par já correto.
+ * H85 no formato novo: em "dia da semana + data por extenso" quem manda é a data,
+ * e o nome do dia errado é corrigido. O `fixWeekdayDatePairs` (compartilhado com o
+ * SparkBot) só lê data com barra e continua como estava.
+ */
+export function corrigirDiaPelaData(
+  texto: string,
+  tz: string,
+  now: Date = new Date(),
+): { texto: string; notes: string[] } {
+  const notes: string[] = [];
+  const hoje = hojeNoFuso(now, tz) || hojeNoFuso(now, "America/New_York");
+  if (!texto || !hoje) return { texto, notes };
+  const re = new RegExp(
+    `(?<![\\p{L}])(${DIA_ALT})(?![\\p{L}])(\\*{0,2},?\\s+\\*{0,2}(?:dia\\s+)?\\(?)(${DATA_EXTENSO_SRC})`,
+    "giu",
+  );
+  const hojeMs = Date.UTC(hoje.y, hoje.m - 1, hoje.d);
+  const out = texto.replace(re, (match: string, nome: string, meio: string, data: string, dStr: string, mesNome: string) => {
+    const dito = parseWeekdayPt(nome);
+    const mes = numeroDoMes(mesNome);
+    const d = parseInt(dStr, 10);
+    if (dito === null || mes === null) return match;
+    // Ano omitido: o que deixa a data mais perto de hoje (mesma regra do H85).
+    const candidatas = [hoje.y - 1, hoje.y, hoje.y + 1]
+      .map((y) => ({ y, m: mes, d }))
+      .filter((c) => new Date(Date.UTC(c.y, c.m - 1, c.d)).getUTCDate() === c.d)
+      .sort((a, b) => Math.abs(Date.UTC(a.y, a.m - 1, a.d) - hojeMs) - Math.abs(Date.UTC(b.y, b.m - 1, b.d) - hojeMs));
+    if (candidatas.length === 0) return match;
+    const real = weekdayDeYmd(candidatas[0]);
+    if (real === dito) return match;
+    const certo = `${naCaixaDe(nome, weekdayNamePt(real))}${meio}${data}`;
+    notes.push(`par corrigido: "${match}" → "${certo}"`);
+    return certo;
+  });
+  return { texto: out, notes };
+}
+
+/**
+ * Ponto de entrada: escreve a data por extenso (H127) e passa cada bolha pelos
+ * DOIS guards (pares dia↔data do H85 + rótulo relativo). Ordem importa: primeiro
+ * o nome do dia é corrigido pela data, depois o rótulo relativo é julgado contra
+ * o par já correto. `notes` só fala de correção; trocar o formato da data muda o
+ * texto (`changed`) sem virar nota, senão todo envio com horário viraria auditoria.
  */
 export function aplicarGuardaDeDataLead(
   bubbles: string[],
@@ -353,12 +401,16 @@ export function aplicarGuardaDeDataLead(
   now: Date = new Date(),
 ): LeadDayGuardResult {
   const notes: string[] = [];
+  const idioma = idiomaDoTexto(bubbles.join("\n"));
   const messages = bubbles.map((b) => {
-    const pares = fixWeekdayDatePairs(b, tz, now);
+    const extenso = escreverDatasPorExtenso(b, tz, now, idioma);
+    const pares = fixWeekdayDatePairs(extenso, tz, now);
     for (const c of pares.corrections) notes.push(`par corrigido: "${c.original}" → "${c.fixed}"`);
-    const rel = corrigirDiaRelativo(pares.text, tz, now);
+    const paresExtenso = corrigirDiaPelaData(pares.text, tz, now);
+    notes.push(...paresExtenso.notes);
+    const rel = corrigirDiaRelativo(paresExtenso.texto, tz, now);
     notes.push(...rel.notes);
     return rel.texto;
   });
-  return { messages, changed: notes.length > 0, notes };
+  return { messages, changed: notes.length > 0 || messages.some((m, i) => m !== bubbles[i]), notes };
 }

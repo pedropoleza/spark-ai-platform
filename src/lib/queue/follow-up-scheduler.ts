@@ -1235,10 +1235,8 @@ export async function processScheduledFollowUps(): Promise<{ sent: number; error
             // em horário vira absoluto/é corrigido — follow-up recicla texto de
             // horas atrás e o rótulo relativo envelhece mal.
             const dg = aplicarGuardaDeDataLead([finalMsg], (location.timezone as string) || "America/New_York");
-            if (dg.changed) {
-              finalMsg = dg.messages[0];
-              console.log(`[FollowUp] day-guard: ${dg.notes.join(" · ")}`);
-            }
+            if (dg.changed) finalMsg = dg.messages[0];
+            if (dg.notes.length > 0) console.log(`[FollowUp] day-guard: ${dg.notes.join(" · ")}`);
             // Condensa pro tamanho de follow-up (curto e certeiro) antes de enviar
             // (healthcheck 2026-07-23). No-op pra follow-up já curto (o normal).
             const r = await sendFollowUpMessage(

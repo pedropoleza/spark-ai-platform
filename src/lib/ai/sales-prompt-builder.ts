@@ -105,6 +105,12 @@ export interface PromptContext {
    * parênteses e o runtime manda falar no horário DELE e converter.
    */
   fusoLead?: { tz: string; origem: string } | null;
+  /**
+   * H128: o que o lead disse sobre estar fora. `rotulo` = período (os horários dele já
+   * saíram da lista); `semVolta` = disse que viaja sem dizer até quando. Ausente =
+   * prompt igual ao de sempre.
+   */
+  ausenciaLead?: { rotulo: string | null; semVolta: boolean } | null;
   feedback?: FeedbackItem[];
   knowledgeBase?: KnowledgeBaseItem[];
   /**
@@ -355,7 +361,7 @@ ${calLead.block}
 ${ctx.availableSlots}
 
 Ao PROPOR, ofereça 2 opções ESPAÇADAS da lista (datas OU horários diferentes) — nunca duas coladas tipo "11:30 ou 12:00". Se a lista só tiver 1 opção, ofereça 1 (não invente uma segunda).
-Copie da lista o dia da semana, a data e a hora JUNTOS, da mesma linha: o horário de um dia não vale para outro dia. Todo horário que você oferecer é conferido com a agenda antes de sair.
+Copie da lista o dia da semana, a data e a hora JUNTOS, da mesma linha: o horário de um dia não vale para outro dia. Todo horário que você oferecer é conferido com a agenda antes de sair. Escreva a data por extenso ("terça, 10 de novembro"), nunca com barra.
 Se o lead perguntar "qual o último horário?" ou um horário específico, responda SEMPRE com base na lista acima (ela já mostra o último horário real de cada dia). Nunca diga que um horário não existe sem checar a lista.`);
       const siglaLista = siglaDoFuso(ctx.timezone);
       if (ctx.fusoLead?.tz && !mesmoFuso(ctx.fusoLead.tz, ctx.timezone)) {
@@ -363,10 +369,23 @@ Se o lead perguntar "qual o último horário?" ou um horário específico, respo
         const dif = diferencaMinutos(ctx.timezone, ctx.fusoLead.tz) / 60;
         parts.push(`### FUSO DO LEAD
 O lead está em ${sanitizeInline(ctx.fusoLead.origem)} (${siglaLead}), ${Math.abs(dif)}h ${dif < 0 ? "a menos" : "a mais"} que o ${siglaLista}. Na lista acima, cada horário está no ${siglaLista} e, entre parênteses, no horário DELE.
-- Ao oferecer ou confirmar, fale no horário do lead com o ${siglaLista} entre parênteses, ex.: "sexta, 06/11, às 1 da tarde no seu horário (2 PM ${siglaLista})".
+- Ao oferecer ou confirmar, fale no horário do lead com o ${siglaLista} entre parênteses, ex.: "sexta, 6 de novembro, às 1 da tarde no seu horário (2 PM ${siglaLista})".
 - Quando o lead disser um horário, entenda no fuso DELE e procure o equivalente na lista.
 - O start_time do book_appointment é SEMPRE o horário ${siglaLista} da lista (o que está FORA dos parênteses).`);
       }
+      if (ctx.ausenciaLead?.rotulo) {
+        parts.push(`### O LEAD ESTÁ FORA
+O lead disse que está fora ou indisponível: ${ctx.ausenciaLead.rotulo}. Os horários desse período já saíram da lista acima.
+- Ofereça só o que está na lista. NÃO ofereça, confirme nem pergunte sobre dia dentro desse período.`);
+      } else if (ctx.ausenciaLead?.semVolta) {
+        parts.push(`### O LEAD ESTÁ VIAJANDO
+O lead disse que está viajando ou fora e não disse até quando. Se ele não pediu um dia, não ofereça horário neste turno: pergunte a partir de que dia fica bom para ele.`);
+      }
+    } else if (ctx.slotsEmpty && ctx.ausenciaLead?.rotulo) {
+      // H128: a lista está vazia porque o lead está fora, não porque a agenda encheu.
+      parts.push(`### O LEAD ESTÁ FORA
+O lead disse que está fora ou indisponível: ${ctx.ausenciaLead.rotulo}. Não há horário carregado fora desse período.
+NÃO cite dia nem hora e NÃO diga que a agenda está cheia: diga em 1 frase que tudo bem e pergunte qual dia e período ficam bons depois disso. NÃO inclua action book_appointment neste turno.`);
     } else if (ctx.slotsEmpty) {
       // Agenda CONSULTADA com sucesso porém SEM dias livres (cheia/bloqueada) —
       // anti-stalling (Pedro 2026-06-28): sem isto caía no bloco "AGENDA AINDA
@@ -1012,10 +1031,12 @@ function buildRescheduleInstructions(ctx: PromptContext): string {
 
   const calendarId = ctx.config.calendar_id || "";
 
+  // H129 (chamado 527): a linha antiga ("se o lead pedir para mudar, use a action") fazia o
+  // modelo mover a reunião no mesmo turno do aviso, para um horário que ele escolheu sozinho.
   return `REAGENDAMENTO:
-- Se o lead pedir para mudar horario, use action "reschedule_appointment"
+- Se o lead pedir para mudar horario ou avisar que nao vai, NAO mexa na agenda ainda: diga que tudo bem e pergunte, propondo ate 2 opcoes da lista de horarios disponiveis
+- So use action "reschedule_appointment" quando ELE disser o dia e a hora que quer (ou aceitar uma opcao sua), com esse horario
 - SEMPRE inclua calendar_id: "${calendarId}"
-- Proponha opcoes da lista de horarios disponiveis
 - Exemplo: { "type": "reschedule_appointment", "calendar_id": "${calendarId}", "start_time": "2026-04-09T15:00:00-04:00" }`;
 }
 
