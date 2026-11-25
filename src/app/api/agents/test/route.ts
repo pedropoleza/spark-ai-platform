@@ -7,6 +7,8 @@ import { buildSystemPrompt, buildRuntimeContext, buildResponseJsonSchema } from 
 import { formatAvailableSlots, filterSlotsToBusinessHours } from "@/lib/ai/slots-format";
 import { extractSlotIsoList } from "@/lib/ai/slot-guard";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
+import { agruparFalas } from "@/lib/queue/escolha-de-horario";
+import { separarTextoDoLead } from "@/lib/queue/remarcacao-pos-handoff";
 import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
 import { tirarMetaLinguagem } from "@/lib/queue/meta-guard";
@@ -200,7 +202,7 @@ export async function POST(request: NextRequest) {
   // ==========================================================================
   const { data: dbMessages } = await supabase
     .from("agent_test_messages")
-    .select("role, content")
+    .select("role, content, metadata, created_at")
     .eq("session_id", sessionId)
     .order("created_at", { ascending: true });
 
@@ -581,6 +583,22 @@ export async function POST(request: NextRequest) {
       // Paridade: em prod, conversa já agendada não confere oferta (citar a
       // reunião marcada é legítimo). O teste não grava agendamento, então confere sempre.
       pularOferta: false,
+      // H129: o laboratório não grava reunião, então a "marcada" é o último
+      // agendamento desta sessão (ou a real do contato escolhido para o teste).
+      citadoPeloLead: separarTextoDoLead(message || "").citado,
+      falasAnteriores: agruparFalas(
+        priorMessages.map((m) => ({ direction: m.role === "user" ? "inbound" : "outbound", body: m.content, dateAdded: m.created_at })),
+      ),
+      reuniaoMarcada: async () => {
+        const futura = (iso: string | null | undefined) => !!iso && Date.parse(iso) > Date.now();
+        const real = leadHistoryTeste?.reunioes?.find((r) => futura(r.inicioIso));
+        if (real) return { inicioIso: real.inicioIso };
+        const daSessao = [...priorMessages]
+          .reverse()
+          .flatMap((m) => ((m.metadata as { actions?: Array<{ type?: string; start_time?: string }> } | null)?.actions || []))
+          .find((a) => (a.type === "book_appointment" || a.type === "reschedule_appointment") && futura(a.start_time));
+        return daSessao?.start_time ? { inicioIso: daSessao.start_time } : null;
+      },
       preferirTardeNoite: (config as { preferred_time_slot?: string | null }).preferred_time_slot === "afternoon_evening",
       regenerar: async (diretiva) => {
         const r = await processWithAI({

@@ -198,6 +198,7 @@ import { normalizePhone, resolveLocationDefaultCountry } from "@/lib/account-ass
 // F37 (Pedro 2026-05-29): Lead awareness + handoff inteligente.
 import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
+import { agruparFalas } from "@/lib/queue/escolha-de-horario";
 import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
 import { tirarMetaLinguagem } from "@/lib/queue/meta-guard";
@@ -2683,13 +2684,33 @@ async function processGroup(
   // a oferta determinística), e o agendamento tem que cair no horário que o lead
   // disse no fuso DELE ("2 PM de Austin" não é 2 PM ET). Ver agenda-guard.ts.
   if (!aiResult.parse_failed) {
+    const falaDoLead = separarTextoDoLead(group.aggregatedBody || "");
+    const historicoDoTurno =
+      messagesSettled.status === "fulfilled" ? messagesSettled.value?.messages?.messages || [] : [];
     const guardaAgenda = await aplicarGuardasDeAgenda({
       resposta: aiResult.response,
       slotsIso: offeredSlotsIso,
       fusoLista: locationTz,
       fusoLead: fusoLead?.tz ?? null,
-      mensagemDoLead: group.syntheticTrigger ? "" : separarTextoDoLead(group.aggregatedBody || "").proprio,
+      mensagemDoLead: group.syntheticTrigger ? "" : falaDoLead.proprio,
       pularOferta: convState?.status === "booked" || !!modoRemarcacao,
+      // H129 (chamado 527): a reunião que uma ação de agenda moveria. A do histórico
+      // já veio neste turno; o CRM só é consultado quando ela não basta.
+      citadoPeloLead: falaDoLead.citado,
+      falasAnteriores: agruparFalas(historicoDoTurno.filter((m) => isChatMessageType(m.messageType))),
+      reuniaoMarcada: group.syntheticTrigger
+        ? undefined
+        : async () => {
+            if (modoRemarcacao) return { inicioIso: modoRemarcacao.reuniao.startTime };
+            const futura = leadHistory?.reunioes?.find((r) => Date.parse(r.inicioIso) > Date.now());
+            if (futura) return { inicioIso: futura.inicioIso };
+            if (leadHistory?.reunioes && convState?.status !== "booked") return null;
+            const noCrm = await findExistingAppointment(ghlClient, group.contactId, group.locationId, undefined, {
+              timeZone: locationTz,
+              offeredSlotsIso,
+            });
+            return noCrm ? { inicioIso: noCrm.startTime } : null;
+          },
       preferirTardeNoite: (config as { preferred_time_slot?: string | null }).preferred_time_slot === "afternoon_evening",
       regenerar: async (diretiva) => {
         const r = await processWithAI({
@@ -2721,6 +2742,7 @@ async function processGroup(
           regenerou: guardaAgenda.regenerou,
           oferta_substituida: guardaAgenda.ofertaSubstituida,
           agendamento_retirado: guardaAgenda.agendamentoRetirado,
+          movimento_retirado: guardaAgenda.movimentoRetirado,
           ofertas_invalidas: guardaAgenda.ofertasInvalidas.slice(0, 4),
           fuso_lead: fusoLead?.tz ?? null,
         },
