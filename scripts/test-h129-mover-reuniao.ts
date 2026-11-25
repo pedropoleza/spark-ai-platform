@@ -174,10 +174,47 @@ async function main() {
   }
   {
     const r = await aplicarGuardasDeAgenda(entrada({
+      mensagemDoLead: "Ok, te aguardo",
+      resposta: resp(["Perfeito! A especialista entra em contato na quinta às 5:00 PM (ET). Qualquer dúvida, estou por aqui!"], [{ type: "book_appointment", start_time: "2026-11-20T17:00:00-05:00" }]),
+    }));
+    ok("o texto só fala da reunião que existe: a ação sai e o texto fica (caso real 28/07)", !r.regenerou && r.resposta.actions.length === 0 && (r.resposta.message as string[])[0].startsWith("Perfeito! A especialista") && r.resposta.conversation_status === "booked", r);
+  }
+  {
+    const r = await aplicarGuardasDeAgenda(entrada({
+      mensagemDoLead: "Ok, te aguardo",
+      resposta: resp(["Fechado: sexta, 20 de novembro, às 5 da tarde."], [{ type: "book_appointment", start_time: "2026-11-20T17:00:00-05:00" }]),
+      regenerar: async (d) => { ok("sem recusa, a diretiva não fala em 'não vai'", !d.includes("não vai ou não pode"), d); return resp(["Combinado! Sua reunião está marcada para quinta, 19 de novembro, às 5 da tarde. Até lá!"]); },
+    }));
+    ok("refez confirmando a reunião que existe: fica como está", (r.resposta.message as string[])[0].startsWith("Combinado!") && r.resposta.actions.length === 0, r.resposta.message);
+  }
+  {
+    const r = await aplicarGuardasDeAgenda(entrada({
+      mensagemDoLead: "Ok, te aguardo",
+      resposta: resp(["Fechado: sexta, 20 de novembro, às 5 da tarde."], [{ type: "book_appointment", start_time: "2026-11-20T17:00:00-05:00" }]),
+      regenerar: async () => null,
+    }));
+    ok("sem recusa e sem refazer: pergunta citando a reunião que existe", (r.resposta.message as string[])[0].includes("quinta-feira, 19 de novembro, às 5 da tarde") && r.resposta.conversation_status === "booked", r.resposta);
+  }
+  {
+    const r = await aplicarGuardasDeAgenda(entrada({
+      resposta: resp(["Sem problema!", "A reunião de quinta às 5 da tarde fica em aberto, então. Quer outro dia?"], [MOVE]),
+    }));
+    ok("citar a reunião que ele não vai não é afirmar mudança", !r.regenerou && r.resposta.actions.length === 0 && (r.resposta.message as string[]).length === 2, r);
+  }
+  {
+    const r = await aplicarGuardasDeAgenda(entrada({
       mensagemDoLead: "Sim, confirmado! Obrigada",
       resposta: resp(["Perfeito, te esperamos!"], [{ type: "book_appointment", start_time: "2026-11-19T17:00:00-03:00" }]),
     }));
     ok("repetir o horário que ele já tem (offset errado incluso) não é mover", r.notas.length === 0 && r.resposta.actions.length === 1, r);
+  }
+  {
+    // calendário em outro offset que a conta (H73): "20:00-03:00" na lista é 6 PM ET
+    const r = await aplicarGuardasDeAgenda(entrada({
+      mensagemDoLead: "Hoje não consigo, pode ser amanhã às 6 da noite?", slotsIso: ["2026-11-20T20:00:00-03:00"],
+      resposta: resp(["Fechado: sexta, 20 de novembro, às 6 da noite ET."], [{ type: "reschedule_appointment", start_time: "2026-11-20T20:00:00-03:00" }]),
+    }));
+    ok("calendário com offset diferente da conta: a escolha do lead vale no relógio da conta", r.resposta.actions.length === 1 && !r.movimentoRetirado, r);
   }
   {
     let consultou = 0;

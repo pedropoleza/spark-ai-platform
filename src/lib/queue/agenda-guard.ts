@@ -25,9 +25,9 @@
 import type { AIResponse, AIAction } from "@/types/ai";
 import { datasOferecidasNaAusencia, type Ausencia } from "@/lib/queue/ausencia-lead";
 import { conferirConversaoDeFuso } from "@/lib/queue/conversao-fuso-guard";
-import { falaDeRecusa, horasDitas, leadEscolheuHorario, normalizarFala, type FalaAnterior } from "@/lib/queue/escolha-de-horario";
+import { falaDeRecusa, leadEscolheuHorario, relogioDaConta, relogioNoFuso, type FalaAnterior } from "@/lib/queue/escolha-de-horario";
 import { lerDatas } from "@/lib/queue/datas-lead";
-import { conferirOfertasDeHorario, ofertaDeterministica } from "@/lib/queue/slot-offer-guard";
+import { conferirOfertasDeHorario, lerDias, lerHoras, ofertaDeterministica } from "@/lib/queue/slot-offer-guard";
 import {
   diferencaMinutos,
   fusoNaFalaDoLead,
@@ -196,16 +196,14 @@ interface MoverSemEscolha {
   reuniaoIso: string;
 }
 
-/** Mesmo relógio de parede no fuso da conta (o offset do modelo não vale, H66). */
-function mesmoHorarioDaConta(startIso: string, reuniaoIso: string, tz: string): boolean {
-  const w = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(startIso);
-  const d = new Date(reuniaoIso);
-  if (!w || isNaN(d.getTime())) return false;
-  const p = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
-  }).formatToParts(d);
-  const g = (t: string) => p.find((x) => x.type === t)?.value || "";
-  return w[1] === `${g("year")}-${g("month")}-${g("day")}` && w[2] === `${g("hour")}:${g("minute")}`;
+/** O horário que seria gravado é o da reunião que já existe? (o offset do modelo não vale, H66) */
+function mesmoHorarioDaReuniao(startIso: string, reuniaoIso: string, input: AgendaGuardInput): boolean {
+  const instante = Date.parse(reuniaoIso);
+  if (isNaN(instante)) return false;
+  if (Math.abs(Date.parse(startIso) - instante) < 60_000) return true;
+  const a = relogioDaConta(startIso, input.fusoLista, input.slotsIso);
+  const b = relogioNoFuso(new Date(instante), input.fusoLista);
+  return !!a && a.y === b.y && a.m === b.m && a.d === b.d && a.h === b.h && a.min === b.min;
 }
 
 /**
@@ -223,7 +221,7 @@ async function moverSemEscolha(
   if (!marcada) return null;
   const ruins = acoes.filter(
     (a) =>
-      !mesmoHorarioDaConta(a.start_time!, marcada.inicioIso, input.fusoLista) &&
+      !mesmoHorarioDaReuniao(a.start_time!, marcada.inicioIso, input) &&
       !leadEscolheuHorario({
         mensagem: input.mensagemDoLead,
         citado: input.citadoPeloLead,
@@ -239,27 +237,70 @@ async function moverSemEscolha(
   return ruins.length > 0 ? { acoes: ruins, reuniaoIso: marcada.inicioIso } : null;
 }
 
+const RE_AFIRMA =
+  /(?<![\p{L}])(?:fechad[oa]|fechei|agendad[oa]|marcad[oa]|confirmad[oa]|confirmei|agendei|agendando|marquei|ficou|fica\s+(?:para|pra)|vou\s+(?:confirmar|agendar|registrar|passar|marcar)|prontinho|te\s+coloco)(?![\p{L}])/iu;
 const RE_AFIRMA_MUDANCA =
-  /(?<![\p{L}])(?:fechad[oa]|fechei|remarquei|reagendei|remarcad[oa]|reagendad[oa]|remarco|reagendo|agendad[oa]|marcad[oa]|confirmad[oa]|confirmei|agendei|agendando|marquei|mudei|transferi|adiei|ficou|fica\s+(?:para|pra)|vou\s+(?:remarcar|reagendar|confirmar|agendar|registrar|passar|mudar|marcar)|prontinho|te\s+(?:coloco|reagendo|remarco))(?![\p{L}])/iu;
+  /(?<![\p{L}])(?:remarquei|reagendei|remarcad[oa]|reagendad[oa]|remarco|reagendo|mudei|transferi|adiei|vou\s+(?:remarcar|reagendar|mudar)|te\s+(?:reagendo|remarco))(?![\p{L}])/iu;
 
-function frasesDe(b: string): string[] {
-  return b.match(/[^.!?\n]+[.!?]*/g) || [];
+interface ReuniaoDoLead {
+  iso: string;
+  fusoLista: string;
+  fusoLead: string | null;
+  agora: Date;
+  /** O lead disse que não vai: "pronto, confirmado" já é falar de outra. */
+  recusou: boolean;
 }
 
-const citaHorario = (b: string) => lerDatas(b).length > 0 || horasDitas(normalizarFala(b)).length > 0;
+const frasesDe = (b: string): string[] => b.match(/[^.!?\n]+[.!?]*/g) || [];
+
+const citaHorario = (b: string) => lerDatas(b).length > 0 || lerHoras(b).length > 0;
+
+/** A bolha só cita o dia e a hora da reunião que já existe ("te esperamos na quinta às 4")? */
+function soFalaDaReuniao(b: string, r: ReuniaoDoLead): boolean {
+  const horas = lerHoras(b);
+  const dias = lerDias(b);
+  if (horas.length + dias.length === 0) return false;
+  const relogios = [r.fusoLista, r.fusoLead].filter((x): x is string => !!x).map((tz) => {
+    const hm = horaMinutoNoFuso(r.iso, tz);
+    const p = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(r.iso));
+    const h = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(r.agora);
+    const dia = (q: Intl.DateTimeFormatPart[]) => {
+      const g = (t: string) => parseInt(q.find((x) => x.type === t)?.value || "0", 10);
+      return { utc: Date.UTC(g("year"), g("month") - 1, g("day")), d: g("day"), m: g("month") };
+    };
+    return { hm, dia: dia(p), hoje: dia(h) };
+  });
+  return (
+    horas.every((x) => relogios.some((k) => !!k.hm && x.leituras.includes(k.hm.h) && x.min === k.hm.min)) &&
+    dias.every((x) =>
+      relogios.some((k) =>
+        x.data ? x.data.d === k.dia.d && x.data.m === k.dia.m
+        : x.diaSemana !== null ? x.diaSemana === new Date(k.dia.utc).getUTCDay()
+        : x.relativo === Math.round((k.dia.utc - k.hoje.utc) / 86_400_000),
+      ),
+    )
+  );
+}
 
 /** Alguma frase (que não é pergunta) dá a mudança como feita? */
-function afirmaMudanca(bs: readonly string[]): boolean {
-  if (bs.some((b) => frasesDe(b).some((f) => !f.includes("?") && RE_AFIRMA_MUDANCA.test(f)))) return true;
-  return !bs.some((b) => b.includes("?")) && bs.some(citaHorario);
+function bolhaAfirmaMudanca(b: string, r: ReuniaoDoLead): boolean {
+  if (soFalaDaReuniao(b, r)) return false;
+  return frasesDe(b).some(
+    (f) => !f.includes("?") && (RE_AFIRMA_MUDANCA.test(f) || (RE_AFIRMA.test(f) && (r.recusou || citaHorario(b)))),
+  );
+}
+
+function afirmaMudanca(bs: readonly string[], r: ReuniaoDoLead): boolean {
+  if (bs.some((b) => bolhaAfirmaMudanca(b, r))) return true;
+  return !bs.some((b) => b.includes("?")) && bs.some((b) => citaHorario(b) && !soFalaDaReuniao(b, r));
 }
 
 /** Troca as bolhas que afirmam a mudança pela pergunta; as outras ficam. */
-function perguntarNoLugar(bs: readonly string[], pergunta: string): string[] {
+function perguntarNoLugar(bs: readonly string[], pergunta: string, r: ReuniaoDoLead): string[] {
   const out: string[] = [];
   let posta = false;
   for (const b of bs) {
-    if (!afirmaMudanca([b]) && !(citaHorario(b) && !b.includes("?"))) {
+    if (!bolhaAfirmaMudanca(b, r) && !(citaHorario(b) && !b.includes("?") && !soFalaDaReuniao(b, r))) {
       out.push(b);
       continue;
     }
@@ -301,6 +342,13 @@ export async function aplicarGuardasDeAgenda(input: AgendaGuardInput): Promise<A
   const recusou = falaDeRecusa(input.mensagemDoLead);
   let mover = await moverSemEscolha(resposta, input, reuniao);
   const moverInicial = mover;
+  // Conversa agendada: o horário do texto só foi conferido porque havia ação. Se a ação
+  // vai sair, quem trata o texto é esta guarda (senão sobra oferta nova para quem disse "ok").
+  const semOfertaDaAcao = (d: Diagnostico): Diagnostico => (input.pularOferta ? { ...d, invalidas: [] } : d);
+  if (mover) diag = semOfertaDaAcao(diag);
+  const reuniaoDoLead: ReuniaoDoLead | null = mover
+    ? { iso: mover.reuniaoIso, fusoLista: input.fusoLista, fusoLead: input.fusoLead, agora: input.agora ?? new Date(), recusou }
+    : null;
   const tirarMovimento = () => {
     if (!mover) return;
     const ruins = new Set(mover.acoes);
@@ -308,9 +356,9 @@ export async function aplicarGuardasDeAgenda(input: AgendaGuardInput): Promise<A
     if (recusou && resposta.conversation_status === "booked") resposta.conversation_status = "active";
   };
   // O texto já pergunta ou oferece (só a ação estava errada): a ação sai e o texto fica.
-  if (mover && !afirmaMudanca(bolhas(resposta))) {
+  if (mover && reuniaoDoLead && !afirmaMudanca(bolhas(resposta), reuniaoDoLead)) {
     tirarMovimento();
-    notas.push("reunião não movida: o lead não escolheu o horário (a ação saiu, o texto já perguntava)");
+    notas.push("reunião não movida: o lead não escolheu o horário (a ação saiu, o texto não afirmava a mudança)");
     mover = null;
   }
 
@@ -362,8 +410,8 @@ export async function aplicarGuardasDeAgenda(input: AgendaGuardInput): Promise<A
       resposta = { ...nova, message: d2.messages };
       if (d2.conversoes.length > 0) notas.push(...d2.conversoes.map((c) => `fuso (refeito): ${c}`));
       if (d2.correcoes.length > 0) notas.push(...d2.correcoes.map((c) => `oferta (refeito): ${c}`));
-      diag = d2;
       mover = await moverSemEscolha(resposta, input, reuniao);
+      diag = mover ? semOfertaDaAcao(d2) : d2;
     }
   }
 
@@ -417,16 +465,17 @@ export async function aplicarGuardasDeAgenda(input: AgendaGuardInput): Promise<A
   }
   // H129: insistiu em mover (ou refez sem a ação, mas com "fechado para sexta"): a
   // ação sai e a afirmação vira pergunta.
-  if (moverInicial && (mover || (regenerou && acoesDeAgenda(resposta).length === 0 && afirmaMudanca(bolhas(resposta))))) {
+  const aindaAfirma = () => !!reuniaoDoLead && afirmaMudanca(bolhas(resposta), reuniaoDoLead);
+  if (moverInicial && reuniaoDoLead && (mover || (regenerou && acoesDeAgenda(resposta).length === 0 && aindaAfirma()))) {
     const insistiu = !!mover;
     tirarMovimento();
     const pergunta = recusou
       ? "Você prefere que eu veja outro dia para a nossa conversa ou quer deixar para depois?"
       : `Antes de mexer na sua reunião de ${rotulo(moverInicial.reuniaoIso)}: qual dia e horário ficam melhores para você?`;
-    if (afirmaMudanca(bolhas(resposta))) resposta.message = perguntarNoLugar(bolhas(resposta), pergunta);
+    if (aindaAfirma()) resposta.message = perguntarNoLugar(bolhas(resposta), pergunta, reuniaoDoLead);
     notas.push(
       insistiu
-        ? "reunião não movida: o lead não escolheu o horário (ação retirada e pergunta no lugar)"
+        ? "reunião não movida: o lead não escolheu o horário (ação retirada)"
         : "reunião não movida: o texto refeito ainda afirmava a mudança (pergunta no lugar)",
     );
   }

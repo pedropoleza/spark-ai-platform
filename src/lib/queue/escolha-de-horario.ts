@@ -16,6 +16,7 @@
  */
 
 import { parseWeekdayPt } from "@/lib/account-assistant/weekday-guard";
+import { coerceStartTimeToTimezone } from "@/lib/ai/slot-guard";
 import { lerDatas } from "@/lib/queue/datas-lead";
 import { diferencaMinutos } from "@/lib/queue/lead-timezone";
 
@@ -52,7 +53,7 @@ export type ViaDaEscolha =
   | "citado"
   | "sem_texto";
 
-interface Relogio {
+export interface Relogio {
   y: number;
   m: number;
   d: number;
@@ -63,18 +64,29 @@ interface Relogio {
 const wd = (r: Pick<Relogio, "y" | "m" | "d">) => new Date(Date.UTC(r.y, r.m - 1, r.d)).getUTCDay();
 const mesmoDia = (a: Pick<Relogio, "y" | "m" | "d">, b: Pick<Relogio, "y" | "m" | "d">) => a.y === b.y && a.m === b.m && a.d === b.d;
 
-/** O relógio de parede do ISO (H66: é a intenção; o offset do modelo não vale). */
-function parede(iso: string): Relogio | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ""));
-  return m ? { y: +m[1], m: +m[2], d: +m[3], h: +m[4], min: +m[5] } : null;
+/**
+ * O horário que vai ser gravado, no relógio da conta: a mesma correção de offset do
+ * executor (H66/H73), para julgar o que o lead de fato teria na agenda.
+ */
+export function relogioDaConta(startIso: string, fusoLista: string, slotsIso?: readonly string[]): Relogio | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(startIso || ""))) return null;
+  const d = new Date(coerceStartTimeToTimezone(startIso, fusoLista, slotsIso ? [...slotsIso] : undefined).iso);
+  return isNaN(d.getTime()) ? null : relogioNoFuso(d, fusoLista);
 }
+
+/** Reunião do CRM (instante certo), no relógio da conta. */
+const relogioDaReuniao = (iso: string, fusoLista: string): Relogio | null => {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : relogioNoFuso(d, fusoLista);
+};
 
 function somaMinutos(r: Relogio, delta: number): Relogio {
   const t = new Date(Date.UTC(r.y, r.m - 1, r.d, r.h, r.min + delta));
   return { y: t.getUTCFullYear(), m: t.getUTCMonth() + 1, d: t.getUTCDate(), h: t.getUTCHours(), min: t.getUTCMinutes() };
 }
 
-function relogioNoFuso(instante: Date, tz: string): Relogio {
+/** Relógio de parede de um instante num fuso. */
+export function relogioNoFuso(instante: Date, tz: string): Relogio {
   const p = new Intl.DateTimeFormat("en-US", {
     timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
   }).formatToParts(instante);
@@ -260,8 +272,9 @@ function horaBate(hs: HoraDita[], alvos: Relogio[], oferecido: boolean): boolean
  * se aplica).
  */
 export function leadEscolheuHorario(p: EscolhaInput): { escolheu: boolean; via: ViaDaEscolha | null } {
-  const conta = parede(p.startIso);
+  const conta = relogioDaConta(p.startIso, p.fusoLista, p.slotsIso);
   if (!conta) return { escolheu: true, via: "sem_texto" };
+  const reuniao = p.reuniaoIso ? relogioDaReuniao(p.reuniaoIso, p.fusoLista) : null;
   const instante = new Date(Date.UTC(conta.y, conta.m - 1, conta.d, conta.h, conta.min));
   const noLead =
     p.fusoLead && p.fusoLead !== p.fusoLista ? somaMinutos(conta, diferencaMinutos(p.fusoLista, p.fusoLead, instante)) : null;
@@ -292,7 +305,6 @@ export function leadEscolheuHorario(p: EscolhaInput): { escolheu: boolean; via: 
   // 1. Hora dita por ele, no dia que ele disse; sem dia dito, no dia da reunião
   //    que já existe ou num dia que a gente ofereceu (nunca num dia inventado).
   if (citaHora && (!citaOutroDia || ultimaOferta)) {
-    const reuniao = p.reuniaoIso ? parede(p.reuniaoIso) : null;
     const diaDaReuniao = !!reuniao && alvos.some((a) => mesmoDia(a, reuniao));
     const mesmaHora = !!reuniao && reuniao.h === conta.h && reuniao.min === conta.min;
     if (citaDia || (diaDaReuniao && !mesmaHora) || falas.slice(0, 3).some(ofereceDia) || !reuniao) {
@@ -321,9 +333,8 @@ export function leadEscolheuHorario(p: EscolhaInput): { escolheu: boolean; via: 
     if (doDia.size === 1 && doDia.has(`${conta.h}:${conta.min}`)) return { escolheu: true, via: "unico_horario_do_dia" };
   }
   // 6. "No mesmo horário", no dia que ele disse.
-  if (citaDia && p.reuniaoIso && /\bmesm[oa]s?\s+(?:hora|horario)/.test(fala)) {
-    const r = parede(p.reuniaoIso);
-    if (r && r.h === conta.h && r.min === conta.min) return { escolheu: true, via: "mesmo_horario" };
+  if (citaDia && reuniao && reuniao.h === conta.h && reuniao.min === conta.min && /\bmesm[oa]s?\s+(?:hora|horario)/.test(fala)) {
+    return { escolheu: true, via: "mesmo_horario" };
   }
   // 7. Respondeu citando a nossa mensagem com este horário.
   if (p.citado) {
