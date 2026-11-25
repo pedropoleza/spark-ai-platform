@@ -14,19 +14,23 @@
  *    que cair nessa hora NAQUELE fuso. Senão, refaz 1 vez explicando a
  *    conversão; se insistir, NÃO agenda e pergunta ao lead confirmando os dois
  *    fusos. Agendar errado é pior que confirmar.
- * 3. Mover reunião (H129, chamado 527): quem já tem reunião marcada só tem a
+ * 3. Conversão de fuso na oferta (H130, chamado 548): "X no seu horário (Y ET)" é
+ *    conferido par a par e corrigido (ver conversao-fuso-guard.ts), antes de 1.
+ * 4. Mover reunião (H129, chamado 527): quem já tem reunião marcada só tem a
  *    agenda mexida quando ELE escolheu o horário novo (escolha-de-horario.ts). Sem
  *    escolha a ação sai do turno; se o texto afirma a mudança, refaz 1 vez e, se
  *    insistir, vira pergunta.
  */
 
 import type { AIResponse, AIAction } from "@/types/ai";
+import { conferirConversaoDeFuso } from "@/lib/queue/conversao-fuso-guard";
 import { falaDeRecusa, horasDitas, leadEscolheuHorario, normalizarFala, type FalaAnterior } from "@/lib/queue/escolha-de-horario";
 import { lerDatas } from "@/lib/queue/datas-lead";
 import { conferirOfertasDeHorario, ofertaDeterministica } from "@/lib/queue/slot-offer-guard";
 import {
-  detectarFusoNoTexto,
   diferencaMinutos,
+  fusoNaFalaDoLead,
+  lugarNaFalaDoLead,
   horaEmIngles,
   horaFalada,
   horaMinutoNoFuso,
@@ -53,7 +57,7 @@ export interface AgendaGuardInput {
   agora?: Date;
   /**
    * H129: reunião FUTURA do lead, a que uma ação de agenda moveria. Só é consultada
-   * quando o turno traz ação de agenda. Ausente = guarda 3 desligada.
+   * quando o turno traz ação de agenda. Ausente = guarda 4 desligada.
    */
   reuniaoMarcada?: () => Promise<{ inicioIso: string } | null>;
   /** O que saiu para o lead antes deste turno, da mais nova para a mais velha. */
@@ -98,6 +102,8 @@ interface FusoErrado {
 
 interface Diagnostico {
   messages: string[];
+  /** Conversões de fuso corrigidas no texto (H130). */
+  conversoes: string[];
   correcoes: string[];
   invalidas: Array<{ bolha: number; trecho: string }>;
   fusoErrado: FusoErrado | null;
@@ -112,7 +118,7 @@ interface Diagnostico {
  * bate lido no fuso dele: nada de falso positivo com outras horas da mensagem.
  */
 function fusoDoAgendamento(r: AIResponse, input: AgendaGuardInput): FusoErrado | null {
-  const fuso = detectarFusoNoTexto(input.mensagemDoLead);
+  const fuso = fusoNaFalaDoLead(input.mensagemDoLead);
   if (!fuso || mesmoFuso(fuso.tz, input.fusoLista, input.agora ?? new Date())) return null;
   const horas = horariosCitados(input.mensagemDoLead);
   if (horas.length === 0) return null;
@@ -130,7 +136,16 @@ function fusoDoAgendamento(r: AIResponse, input: AgendaGuardInput): FusoErrado |
 }
 
 function diagnosticar(r: AIResponse, input: AgendaGuardInput): Diagnostico {
-  const msgs = bolhas(r);
+  // O cadastro diz um estado e o lead acabou de citar outro: na dúvida não se afirma conversão.
+  const lugar = lugarNaFalaDoLead(input.mensagemDoLead);
+  const fusoEmDuvida = !!lugar && !!input.fusoLead && !mesmoFuso(lugar.tz, input.fusoLead, input.agora ?? new Date());
+  const fuso = conferirConversaoDeFuso(bolhas(r), {
+    fusoLista: input.fusoLista,
+    fusoLead: fusoEmDuvida ? null : input.fusoLead,
+    slotsIso: input.slotsIso,
+    agora: input.agora,
+  });
+  const msgs = fuso.messages;
   let messages = msgs;
   let correcoes: string[] = [];
   let invalidas: Array<{ bolha: number; trecho: string }> = [];
@@ -151,7 +166,7 @@ function diagnosticar(r: AIResponse, input: AgendaGuardInput): Diagnostico {
       manhaDoLead = g.validas.filter((iso) => (horaMinutoNoFuso(iso, input.fusoLead!)?.h ?? 12) < 12);
     }
   }
-  return { messages, correcoes, invalidas, fusoErrado: fusoDoAgendamento(r, input), manhaDoLead };
+  return { messages, conversoes: fuso.correcoes, correcoes, invalidas, fusoErrado: fusoDoAgendamento(r, input), manhaDoLead };
 }
 
 /** A hora que o lead disse, no fuso dele, convertida para o fuso da lista. */
@@ -264,6 +279,7 @@ export async function aplicarGuardasDeAgenda(input: AgendaGuardInput): Promise<A
   const notas: string[] = [];
   let resposta: AIResponse = { ...input.resposta };
   let diag = diagnosticar(resposta, input);
+  if (diag.conversoes.length > 0) notas.push(...diag.conversoes.map((c) => `fuso: ${c}`));
   if (diag.correcoes.length > 0) notas.push(...diag.correcoes.map((c) => `oferta: ${c}`));
   resposta.message = diag.messages;
 
@@ -327,6 +343,7 @@ export async function aplicarGuardasDeAgenda(input: AgendaGuardInput): Promise<A
         `refeito: ${diag.invalidas.length} oferta(s) inválida(s)${diag.fusoErrado ? " + fuso do agendamento" : ""}${diag.manhaDoLead.length ? " + manhã no horário do lead" : ""}${mover ? " + reunião movida sem o lead escolher" : ""}`,
       );
       resposta = { ...nova, message: d2.messages };
+      if (d2.conversoes.length > 0) notas.push(...d2.conversoes.map((c) => `fuso (refeito): ${c}`));
       if (d2.correcoes.length > 0) notas.push(...d2.correcoes.map((c) => `oferta (refeito): ${c}`));
       diag = d2;
       mover = await moverSemEscolha(resposta, input, reuniao);

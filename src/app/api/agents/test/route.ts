@@ -13,7 +13,7 @@ import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
 import { tirarMetaLinguagem } from "@/lib/queue/meta-guard";
 import { splitLeadOutbound } from "@/lib/ai/message-splitter";
-import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
+import { fusoDoEstado, fusoNaFalaDoLead } from "@/lib/queue/lead-timezone";
 import { processWithAI } from "@/lib/ai/openai-client";
 import type { ConversationTurn } from "@/lib/ai/openai-client";
 import { withRetry } from "@/lib/utils/retry";
@@ -466,7 +466,7 @@ export async function POST(request: NextRequest) {
   if ((config as { timezone_config?: { auto_detect_from_state?: boolean } | null }).timezone_config?.auto_detect_from_state) {
     const estado =
       mergedCollectedData["contact.state"] || mergedCollectedData["state"] || mergedCollectedData["estado_onde_mora"] || mergedCollectedData["estado"] || "";
-    fusoLeadTeste = fusoDoEstado(estado) ?? detectarFusoNoTexto(message || "");
+    fusoLeadTeste = fusoDoEstado(estado) ?? fusoNaFalaDoLead(message || "");
   }
   if (slotsNaJanelaTeste && !agendaTravadaTeste && fusoLeadTeste) {
     availableSlots = formatAvailableSlots(slotsNaJanelaTeste, locationTz, 30, fusoLeadTeste.tz);

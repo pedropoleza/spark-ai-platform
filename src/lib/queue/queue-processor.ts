@@ -202,7 +202,7 @@ import { agruparFalas } from "@/lib/queue/escolha-de-horario";
 import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
 import { tirarMetaLinguagem } from "@/lib/queue/meta-guard";
-import { detectarFusoNoTexto, fusoDoEstado } from "@/lib/queue/lead-timezone";
+import { fusoDoEstado, fusoNaFalaDoLead } from "@/lib/queue/lead-timezone";
 import { evaluateShouldRespond } from "@/lib/queue/should-respond";
 import { notifyRepViaSparkbot, notifyAutoPauseToRep } from "@/lib/queue/handoff-notify";
 import { getLeadHistoryConfig, getHandoffPolicy } from "@/types/agent";
@@ -2138,7 +2138,7 @@ async function processGroup(
       collectedData["contact.state"] || collectedData["state"] || collectedData["estado_onde_mora"] || collectedData["estado"] || "";
     fusoLead =
       fusoDoEstado(estado) ??
-      (!group.syntheticTrigger ? detectarFusoNoTexto(separarTextoDoLead(group.aggregatedBody || "").proprio) : null);
+      (!group.syntheticTrigger ? fusoNaFalaDoLead(separarTextoDoLead(group.aggregatedBody || "").proprio) : null);
   }
 
   // 5. Processar slots (e detectar fail irrecuperável para guardrail)
@@ -2839,6 +2839,8 @@ async function processGroup(
       cached_tokens: aiResult.cached_tokens,
       cache_hit_ratio: aiResult.cache_hit_ratio,
       parse_failed: aiResult.parse_failed || false,
+      // H130: o fuso do lead que este turno usou (no chamado 548 não dava para saber).
+      fuso_lead: fusoLead?.tz ?? null,
     },
     ai_model_used: aiResult.model_used || config.ai_model,
     prompt_tokens: aiResult.prompt_tokens,

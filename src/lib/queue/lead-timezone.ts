@@ -134,6 +134,7 @@ const SIGLAS: Array<[RegExp, string]> = [
  * estado ("Texas", "Flórida") ou cidade ("Austin", "Orlando"). Siglas só em
  * MAIÚSCULAS (em PT "pt" e "et" seriam ruído). Devolve o 1º achado na ordem
  * rótulo > cidade > estado, que é a ordem do mais específico para o mais amplo.
+ * É a leitura do texto da IA; a fala do lead passa por `fusoNaFalaDoLead`.
  */
 export function detectarFusoNoTexto(texto: string | null | undefined): FusoDetectado | null {
   if (!texto) return null;
@@ -149,6 +150,44 @@ export function detectarFusoNoTexto(texto: string | null | undefined): FusoDetec
   }
   for (const [re, tz, nome] of ESTADOS) if (re.test(norm)) return { tz, origem: nome };
   return null;
+}
+
+// "2 PM CT", "às 8:00 ET", "5 da tarde (PT)": sigla colada numa hora é fuso.
+const SIGLA_COLADA_NA_HORA =
+  /(?:\d{1,2}(?::\d{2})?\s*(?:[aApP]\.?[mM]\.?|[hH](?:[rR][sS]?|oras?)?)|\d{1,2}:\d{2}|[àaÀA]s\s+\d{1,2}|manh[ãa]|tarde|noite)\s*[(,]?\s*(ET|EST|EDT|CT|CST|CDT|MT|MST|MDT|PT|PST|PDT)\b/;
+// Estas não são estado nem palavra: valem mesmo sem hora ("estou no PST").
+const SIGLA_INEQUIVOCA = /\b(EST|EDT|CST|CDT|MST|MDT|PST|PDT)\b/;
+
+/**
+ * Fuso pelo que o LEAD escreveu (H130). No texto da IA "CT" depois da hora é o fuso
+ * central; na fala do lead, "CT" solto é Connecticut: nas 93 mensagens de lead da
+ * frota com sigla de fuso, toda ocorrência solta de "CT" era o estado ("Moro em CT",
+ * "Danbury CT", "CT" respondendo onde mora), e os fusos vinham colados na hora
+ * ("5pm PT"). Com a leitura única, lead de Connecticut recebia o horário 1 h a menos
+ * ("8:00 AM no seu horário (9:00 AM ET)", 16 e 17/11/2026).
+ */
+export function fusoNaFalaDoLead(texto: string | null | undefined): FusoDetectado | null {
+  if (!texto) return null;
+  const norm = semAcento(texto);
+  for (const [re, tz, nome] of ROTULOS) if (re.test(norm)) return { tz, origem: nome };
+  const sigla = SIGLA_COLADA_NA_HORA.exec(texto)?.[1] ?? SIGLA_INEQUIVOCA.exec(texto)?.[1];
+  if (sigla) {
+    const achada = SIGLAS.find(([re]) => re.test(sigla));
+    if (achada) return { tz: achada[1], origem: sigla };
+  }
+  return lugarNaFalaDoLead(texto);
+}
+
+/** Só o LUGAR que o lead citou (cidade, estado, "CT"): sigla e "horário do leste" não contam. */
+export function lugarNaFalaDoLead(texto: string | null | undefined): FusoDetectado | null {
+  if (!texto) return null;
+  const norm = semAcento(texto);
+  for (const [re, tz, nome] of CIDADES) {
+    const m = re.exec(norm);
+    if (m) return { tz, origem: `${titulo(m[1])}, ${nome}` };
+  }
+  for (const [re, tz, nome] of ESTADOS) if (re.test(norm)) return { tz, origem: nome };
+  return /(?<![\p{L}\d])CT(?![\p{L}\d])/u.test(texto) && !SIGLA_COLADA_NA_HORA.test(texto) ? { tz: ET, origem: "Connecticut" } : null;
 }
 
 function titulo(s: string): string {
@@ -306,7 +345,7 @@ export function horariosCitados(texto: string | null | undefined): Array<{ h: nu
  */
 export function horarioCitadoComFuso(texto: string | null | undefined): HorarioCitado | null {
   if (!texto) return null;
-  const fuso = detectarFusoNoTexto(texto);
+  const fuso = fusoNaFalaDoLead(texto);
   if (!fuso) return null;
   // Datas fora antes de procurar hora (senão "06/11" vira "6").
   const semDatas = texto.replace(/\b\d{1,2}[\/.]\d{1,2}(?:[\/.]\d{2,4})?\b/g, " ");

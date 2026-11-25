@@ -87,9 +87,9 @@ const RE_NEGACAO =
 const RE_PISTA_OFERTA =
   /\b(tenho|temos|tem\s|consigo|posso|prefere|preferir|qual\s+(funciona|fica|encaixa|prefere|hor[áa]rio|melhor|dos)|pode\s+ser|dispon[íi]ve|livre|vaga|agend|marc(a|o|ar|ado|amos)\b|confirm|reserv|encaix|fechado|combinado|op[çc][ãa]o|hor[áa]rio)/iu;
 
-const RE_SEU_HORARIO = /\b(no\s+)?seu\s+(hor[áa]rio|fuso)(?![\p{L}])|\bhor[áa]rio\s+(de\s+)?a[íi](?![\p{L}])|\bhor[áa]rio\s+local(?![\p{L}])/iu;
+export const RE_SEU_HORARIO = /\b(no\s+)?seu\s+(hor[áa]rio|fuso)(?![\p{L}])|\bhor[áa]rio\s+(de\s+)?a[íi](?![\p{L}])|\bhor[áa]rio\s+local(?![\p{L}])/iu;
 
-interface MencaoDia {
+export interface MencaoDia {
   inicio: number;
   fim: number;
   relativo: number | null;
@@ -100,7 +100,7 @@ interface MencaoDia {
   dataFim: number;
 }
 
-interface MencaoHora {
+export interface MencaoHora {
   inicio: number;
   fim: number;
   leituras: number[];
@@ -124,7 +124,7 @@ export interface SlotOfferGuardResult {
   validas: string[];
 }
 
-function lerDias(frase: string): MencaoDia[] {
+export function lerDias(frase: string): MencaoDia[] {
   const out: MencaoDia[] = [];
   const re = new RegExp(RE_DIA.source, "giu");
   let m: RegExpExecArray | null;
@@ -151,7 +151,7 @@ function lerDias(frase: string): MencaoDia[] {
   return out;
 }
 
-function lerHoras(frase: string): MencaoHora[] {
+export function lerHoras(frase: string): MencaoHora[] {
   // Datas viram "#" do MESMO tamanho (posições preservadas; "06/11" não vira hora).
   const semDatas = mascararDatas(frase, "#", true);
   const out: MencaoHora[] = [];
