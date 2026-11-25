@@ -255,8 +255,9 @@ const PRIMEIRA_VIAGEM =
 const VIAJANDO_AGORA =
   /\b(?:estou|to|tou|estamos|estarei|vou estar|vou|irei|vamos)\s+(?:\S+\s+){0,2}?(?:viajando|viajar|de ferias|em viagem|fora d[oae]s? (?:pais|brasil|estado|cidade|eua))\b/;
 
+/** "Se não for quarta", "se não der nessa data": condicional não é recusa. E o "não" não atravessa vírgula. */
 const NEGA =
-  /\bnao\s+(?!sei\b|so\b)(?:\S+\s+){0,3}?(?:posso|consigo|podemos|conseguimos|poderei|conseguirei|poderemos|poderia|conseguiria|vou (?:poder|conseguir|estar)|vamos (?:poder|conseguir|estar)|vai (?:dar|rolar)|da|dao|dara|daria|tenho (?:como|disponibilidade|horario|tempo)|terei (?:como|disponibilidade|horario|tempo)|estarei dispon\w*|estou dispon\w*|rola|funcionam?|servem?)\b|\bindisponive\w*/;
+  /(?<!\b(?:se|caso)\s+(?:(?:eu|voce|a gente|nos|ele|ela)\s+)?)\bnao\s+(?!sei\b|so\b)(?:[^\s,;]+\s+){0,3}?(?:posso|consigo|podemos|conseguimos|poderei|conseguirei|poderemos|poderia|conseguiria|vou (?:poder|conseguir?|estar)|vamos (?:poder|conseguir|estar)|vai (?:dar|rolar)|da|dao|dara|daria|tenho (?:como|disponibilidade|horario|tempo)|terei (?:como|disponibilidade|horario|tempo)|estarei dispon\w*|estou dispon\w*|rola|funcionam?|servem?)\b|\bindisponive\w*/;
 /** "Não posso pagar hoje", "não consigo assistir hoje": a negação é de outro assunto. */
 const OUTRO_ASSUNTO =
   /\b(?:pagar|gastar|contratar|comprar|baixar|abrir|acessar|ouvir|investir|mandar|enviar|responder|assistir|preencher|ver o|ver a|entrar no|entrar na)\b/;
@@ -297,11 +298,25 @@ const A_PARTIR_POSSO = new RegExp(`\\ba partir\\s+d[eoa]\\s+${D}[^.!?\\n⟦]{0,2
 const SO_EM = new RegExp(
   `(?<!\\bnao )\\b(?:so|somente|apenas)\\s+(?:(?:a|na|no|em|para|la|eu|posso|consigo|vou|poder|conseguir|tenho|disponibilidade|horario|estarei|disponivel)\\s+){0,5}?${D}`,
 );
+/** "…terça e quinta": os outros dias da mesma lista. */
+const MAIS_DIAS = "(?:\\s*(?:,|e|ou)\\s*(?:(?:a|o|na|no)\\s+)?⟦[a-z]⟧)*";
+/** "Só terça e quinta, né?", "só na quinta?": pergunta sobre a NOSSA agenda, não é a disponibilidade dele. */
+const PERGUNTA_DA_AGENDA = new RegExp(
+  `^${MAIS_DIAS}\\s*,?\\s*(?:(?:mesmo|certo|nao e|e isso|que (?:voces?|ela|ele) tem)?\\s*\\?|(?:mesmo\\s+)?ne\\b)`,
+);
+/** "Só segunda e terça que eu tenho aula": é o contrário, nesses ele não pode. */
+const SO_NELES_OCUPADO = new RegExp(
+  `^${MAIS_DIAS}\\s*(?:e\\s+)?que\\s+(?:eu\\s+)?(?:trabalho\\b|nao\\b|tenho\\s+(?!tempo|horario|folga|disponib|livre)|(?:estou|to|tou)\\s+(?!livre|disponiv|de folga|em casa|tranquil))`,
+);
+/** "Essa semana não, a não ser na quarta", "se não for quarta, só semana que vem": a quarta ele pode. */
+const EXCECAO = new RegExp(
+  `\\b(se\\s+(?:(?:eu|voce|a gente)\\s+)?nao\\s+(?:for|der|tiver|tem|houver|puder|conseguir|rolar)|a nao ser|exceto|tirando|salvo|(?<!\\b(?:ou|pelo)\\s)menos)\\b[^.!?,\\n⟦]{0,20}?(${D}${MAIS_DIAS})`,
+);
 
 interface LeituraDaMensagem {
   ausencias: Ausencia[];
-  /** Dias que ele citou fora de recusa. `pediu` = pediu ou disse que consegue. */
-  possiveis: Array<{ dia: Dia; wd: number | null; pediu: boolean }>;
+  /** Dias que ele citou fora de recusa. `pediu` = pediu ou disse que consegue; `excecao` = "só na quarta". */
+  possiveis: Array<{ dia: Dia; wd: number | null; pediu: boolean; excecao?: boolean }>;
   viagemSemData: boolean;
 }
 
@@ -310,7 +325,8 @@ function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Di
   const vazio: LeituraDaMensagem = { ausencias: [], possiveis: [], viagemSemData: false };
   const { proprio } = separarTextoDoLead(bruto);
   if (!proprio || proprio.length > 900) return vazio;
-  const { t, exprs } = marcarDatas(normalizarFala(proprio), d0);
+  // "Volto em⏎Setembro": linha que acaba em preposição continua na de baixo; as outras fecham a frase.
+  const { t, exprs } = marcarDatas(normalizarFala(proprio).replace(/\b(em|na|no|ate|de|do|dia|para|so|e|ou|apos)\s*\n\s*/g, "$1 "), d0);
   const frases = t.split(/[.!?\n]+/).filter((s) => s.trim());
   const viaja = frases.some((f) => VIAGEM.test(f) && !NAO_E_VIAGEM.test(f) && (!TERCEIRO.test(f) || PRIMEIRA_VIAGEM.test(f)));
   const nega = frases.some((f) => NEGA.test(f) && !OUTRO_ASSUNTO.test(f));
@@ -327,8 +343,25 @@ function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Di
   const fraseDe = (l: string) => frases.find((f) => f.includes(`⟦${l}⟧`)) ?? t;
   /** A recusa vale para a frase dela; a viagem, para a mensagem. */
   const foraNaFrase = (l: string) => viaja || (NEGA.test(fraseDe(l)) && !OUTRO_ASSUNTO.test(fraseDe(l)));
+  const possiveis: LeituraDaMensagem["possiveis"] = [];
+  /** O dia (ou a lista) que ele deixou de fora da recusa. */
+  const excetuar = (trecho: string) => {
+    for (const x of trecho.matchAll(RE_MARCA)) {
+      const e = expr(x[1]);
+      if (e?.tipo !== "dia" && e?.tipo !== "nome") continue;
+      usadas.add(x[1]);
+      possiveis.push({ dia: primeiro(e, d0), wd: e.tipo === "nome" ? e.wd : null, pediu: true, excecao: true });
+    }
+  };
 
-  let m = IDA_E_VOLTA.exec(t);
+  let m = EXCECAO.exec(t);
+  if (m) {
+    // "qualquer dia menos quarta", "trabalho todos os dias exceto domingo": serve para os dois lados, não se lê
+    const deTodos = /\b(?:qualquer|todos?)\b/.test(t.slice(0, m.index));
+    if (m[1].startsWith("se") || ((nega || viaja) && !deTodos)) excetuar(m[2]);
+    else if (deTodos) for (const x of m[2].matchAll(RE_MARCA)) usadas.add(x[1]);
+  }
+  m = IDA_E_VOLTA.exec(t);
   if (m && viaja && livre(m[1], m[3])) {
     const ini = primeiro(expr(m[1]), d0);
     guardar(ini, ultimoDiaFora(expr(m[3]), d0, ini), "ida_e_volta", [m[1], m[3]], INICIO_DO_PERIODO[m[2]] ?? 0);
@@ -360,9 +393,14 @@ function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Di
   if (m && livre(m[1])) {
     const antes = t.slice(Math.max(0, m.index - 16), m.index);
     const depoisDele = t.slice(m.index + m[0].length, m.index + m[0].length + 45);
-    // "fumo só fds", "recebo só na sexta", "só na segunda sei minha folga"
-    if (!/\b(?:fumo|fuma|bebo|trabalho|recebo|pago|folgo|seria|era|foi|sera)\s+$/.test(antes) && !/\b(?:pag\w+|recebo|sei)\b/.test(depoisDele)) {
+    const resto = t.slice(m.index + m[0].length);
+    // "fumo só fds", "recebo só na sexta", "só na segunda sei minha folga", "só quarta de manhã, os outros dias às 5"
+    if (
+      !/\b(?:fumo|fuma|bebo|trabalho|recebo|pago|folgo|seria|era|foi|sera|viajo|viajar|viajarei|viajaremos|embarco)\s+$/.test(antes) && !/\b(?:pag\w+|recebo|sei)\b/.test(depoisDele) &&
+      !PERGUNTA_DA_AGENDA.test(resto) && !SO_NELES_OCUPADO.test(resto) && !/\b(?:outros|demais) dias\b/.test(t)
+    ) {
       guardar(d0, vespera(expr(m[1]), d0), "so_em", [m[1]]);
+      excetuar(m[0] + (new RegExp(`^${MAIS_DIAS}`).exec(resto)?.[0] ?? ""));
     }
   }
   m = DEIXAR_PARA.exec(t);
@@ -379,7 +417,6 @@ function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Di
   }
 
   // Dia citado na própria frase da recusa ou da viagem: "segunda eu vou estar em viagem".
-  const possiveis: LeituraDaMensagem["possiveis"] = [];
   for (const o of t.split(/[.!?;\n]+|(?<!⟧\s?),(?!\s*(?:e\s+)?⟦)|\b(?:mas|porem|so que|entretanto)\b/)) {
     const neg = OUTRO_ASSUNTO.test(o) ? null : NEGA.exec(o);
     const via = viaja ? VIAGEM.exec(o) : null;
@@ -391,13 +428,15 @@ function lerMensagem(bruto: string, d0: Dia, em: string, oferecidos: readonly Di
       const antes = o.slice(Math.max(0, ini - 40), ini);
       const pediu = SIM_DEPOIS.test(o.slice(ini + 3, ini + 45)) || PEDE_O_DIA.test(antes);
       // a pista tem que estar perto do dia e sem outra ideia no meio ("amanhã à noite, que hoje não consigo")
-      const perto = (c: RegExpExecArray | null): boolean => {
-        if (!c) return false;
+      const perto = (c: RegExpExecArray | null): string | null => {
+        if (!c) return null;
         const entre = c.index >= fim ? o.slice(fim, c.index) : o.slice(Math.min(c.index + c[0].length, ini), ini);
-        return entre.length <= 45 && !/\b(?:que|pode|podia|sim|melhor|prefiro|nao sei)\b/.test(entre);
+        return entre.length <= 45 && !/\b(?:que|pode|podia|sim|melhor|prefiro|nao sei)\b/.test(entre) ? entre : null;
       };
-      const porNegar = perto(neg);
-      const porViajar = perto(via);
+      // "não tenho tempo de manhã, somente quarta": o que vem depois do "somente" não é o recusado
+      const entreNeg = perto(neg);
+      const porNegar = entreNeg !== null && !/\b(?:so|somente|apenas)\b/.test(entreNeg);
+      const porViajar = perto(via) !== null;
       if ((porNegar || porViajar) && !pediu && e.tipo !== "duracao") {
         if (/\b(?:depois|antes|a partir) d[eoa]s?\s+$|\bapos\s+$/.test(antes)) continue; // "não posso depois de sexta"
         if (!porViajar && (SO_A_HORA.test(o) || frases.some((f) => f.includes(`⟦${x[1]}⟧`) && SO_DEPOIS_DAS.test(f)))) continue;
@@ -441,9 +480,12 @@ function devolverDia(lista: Ausencia[], dia: Dia): Ausencia[] {
 }
 
 /** "Domingo pode!" devolve também o domingo que a gente tinha oferecido, ainda que não seja o próximo. */
-function devolverPossivel(lista: Ausencia[], p: { dia: Dia; wd: number | null }): Ausencia[] {
+function devolverPossivel(lista: Ausencia[], p: { dia: Dia; wd: number | null; excecao?: boolean }): Ausencia[] {
   const semOferecido = p.wd === null ? lista : lista.filter((a) => a.regra !== "dias_oferecidos" || diaDaSemana(Math.floor(a.ini / MIN_DIA)) !== p.wd);
-  return devolverDia(semOferecido, p.dia);
+  // "semana que vem não consigo, exceto quinta": a quinta de dentro da ausência
+  const dentro = (dia: Dia) => semOferecido.some((a) => dia * MIN_DIA < a.fim && (dia + 1) * MIN_DIA > a.ini);
+  const dia = p.excecao && p.wd !== null ? ([0, 7, 14].map((n) => p.dia + n).find(dentro) ?? p.dia) : p.dia;
+  return devolverDia(semOferecido, dia);
 }
 
 /** Dias que uma fala nossa cita, resolvidos a partir do dia em que ela saiu. */
@@ -498,7 +540,7 @@ export function lerAusencias(falas: readonly FalaDaConversa[], tz: string, agora
       semVolta = false;
     }
     const r = lerMensagem(f.texto, d0, f.em, oferecidos);
-    for (const p of r.possiveis) ausencias = devolverPossivel(ausencias, p);
+    for (const p of r.possiveis) ausencias = devolverPossivel(ausencias, { ...p, excecao: false });
     if (r.possiveis.length === 0 && r.ausencias.length === 0 && ACEITE_CURTO.test(t) && !NEGA.test(t) && !t.includes("?")) {
       for (const dia of oferecidos) ausencias = devolverDia(ausencias, dia);
     }

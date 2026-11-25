@@ -1173,6 +1173,10 @@ manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no hor
 - **O que lê:** ida e volta ("viajo segunda e volto sábado"), até, depois de, a partir de, "só volto",
   "só consigo quinta", "essa semana não", dia ou turno recusado, e "esses dias não" (os que acabamos de
   oferecer). Pede data ou período. "Estou viajando" sem data só vira aviso no runtime.
+- **O que não é ausência:** condicional ("se não for quarta, só semana que vem": a quarta fica), a exceção da
+  recusa ("essa semana não, só na quarta"), pergunta sobre a nossa agenda ("só terça e quinta, né?"), recusa só
+  da hora, viagem de outra pessoa. "Essa semana estou ocupada" e "tenho compromisso na quinta" também ficam de
+  fora: em 20 mensagens reais assim, a IA só ofereceu dentro do período em 1.
 - **O que devolve:** dia que o lead cita como possível, aceite de um dia oferecido depois, viagem cancelada,
   "já voltei". O dia da volta ainda é de viagem.
 - **A janela cresce.** Com menos de 2 dias sobrando, uma 2ª busca de horários começa na volta do lead (até 60
@@ -1182,10 +1186,13 @@ manhã no horário dele faz o turno ser refeito 1x pedindo tarde ou noite no hor
   lead disse "segunda 30th" e "essa semana não posso"; o modelo ofereceu "segunda, 30/11" (par certo, fora da
   janela) e a guarda "corrigiu" para 23/11, a semana recusada. As 4 notas de correção em produção até hoje
   eram essa lead. Agora só corrige quando a data não cai no dia dito.
-- **Medido:** 141 de 32.719 mensagens de lead têm ausência com data. Nas conversas com ausência, 17 mensagens
-  da IA em 13 conversas ofereceram dia dentro dela. Nos 1.055 agendamentos reais desde 20/07, nenhum cairia
-  numa ausência lida (é o que mediria bloqueio de ação certa).
-- **Testes:** `test-h128-ausencia` 136/136.
+- **Medido:** 139 de 32.719 mensagens de lead têm ausência com data, conferidas uma a uma. Nas conversas com
+  ausência, 16 mensagens da IA em 13 conversas ofereceram dia dentro dela. Nos 1.055 agendamentos reais desde
+  20/07, nenhum seria barrado na hora de agendar.
+- **O custo, medido:** 3 desses 1.055 nasceram de um dia que a guarda não ofereceria, todos da Marina (agenda de
+  poucos dias): lead de férias no Brasil que topou a reunião online, e um "só na quarta" e um "só no sábado" que
+  cederam depois. Com a guarda a oferta começa na volta; o dia entra de novo se o lead citar.
+- **Testes:** `test-h128-ausencia` 171/171.
 
 ## H129 (2026-11-25): reunião marcada só se move quando o lead escolheu (Alves Cury, chamado 527)
 

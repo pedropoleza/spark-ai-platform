@@ -57,6 +57,7 @@ caso("Desculpa, amanhã não vai dar. Estou de férias até quinta que vêm", "2
 caso("Bom dia, Estamos de férias até semana que vem. Depois pode sim por favor.", "2026-08-15T15:00:00Z", "até domingo, 23 de agosto");
 caso("Eu estou em Portugal agora Volto dia 08 de setembro Podemos nos falar depois desse dia?", "2026-08-27T20:00:00Z", "até terça-feira, 8 de setembro");
 caso("Volto em Setembro .", "2026-08-21T22:18:00Z", "até segunda-feira, 31 de agosto");
+caso("Volto em\nSetembro .", "2026-08-21T22:18:17Z", "até segunda-feira, 31 de agosto"); // como chegou
 caso("Eu to de férias no Brasil e volto no meio do mês que vem. Eu moro na Flórida", "2026-09-29T23:00:00Z", "até quinta-feira, 15 de outubro");
 caso("Tudo bem? Estou viajando, deve ter sido por isso. Volto semana que vem e combinamos. Abs", "2026-08-31T15:00:00Z", "até domingo, 6 de setembro");
 caso("Eu estou na Alemanha agora mas vou estar de volta na próxima semana", "2026-09-30T14:00:00Z", "até domingo, 4 de outubro");
@@ -87,6 +88,7 @@ caso("estou fora, volto 11/14", EM, "até sábado, 14 de novembro"); // formato 
 console.log("\n3) Dia ou turno recusado");
 caso("Segunda não posso", "2026-09-11T14:00:00Z", "segunda-feira, 14 de setembro");
 caso("hoje não consigo só amanhã", "2026-08-06T16:00:00Z", "quinta-feira, 6 de agosto");
+caso("Oi me Desculpa não vou consegui amanhã meu esposo vai está trabalhando e eu também.", "2026-08-28T14:00:00Z", "sábado, 29 de agosto");
 caso("Hj a tarde eu não posso", "2026-07-23T14:00:00Z", "quinta-feira, 23 de julho (à tarde) (até o fim da tarde)");
 caso("Quinta não posso, sexta sim", "2026-11-17T14:00:00Z", "quinta-feira, 19 de novembro");
 caso("Só consigo na sexta", "2026-11-16T14:00:00Z", "até quinta-feira, 19 de novembro");
@@ -147,6 +149,43 @@ for (const [t, em] of [
   ["Não tenho nada na quinta, estou livre", "2026-11-17T14:00:00Z"],
 ] as Array<[string, string]>) caso(t, em, "");
 
+console.log("\n5b) Condicional, exceção e pergunta: o dia que ele deixou em aberto fica (revisão das 141 leituras reais)");
+const SEG28 = "2026-09-28T23:02:30Z"; // segunda, 19:02 da Flórida
+const SO_A_QUARTA = "até terça-feira, 29 de setembro; de quinta-feira, 1º de outubro a domingo, 4 de outubro";
+caso("Eu não posso nesses dias e horários. Se não for quarta, só consigo semana que vem!", SEG28, SO_A_QUARTA); // real
+caso("Essa semana não posso, só na quarta", SEG28, SO_A_QUARTA);
+caso("Essa semana não dá, a não ser na quarta", SEG28, SO_A_QUARTA);
+caso("Não consigo essa semana, exceto quarta", SEG28, SO_A_QUARTA);
+caso("essa semana não posso só quarta", SEG28, SO_A_QUARTA);
+caso("Semana que vem não consigo, exceto quinta", SEG28, "de segunda-feira, 5 de outubro a quarta-feira, 7 de outubro; de sexta-feira, 9 de outubro a domingo, 11 de outubro");
+caso("Essa semana só consigo na quarta", SEG28, "até terça-feira, 29 de setembro");
+caso("Só consigo na quarta, pode ser?", SEG28, "até terça-feira, 29 de setembro");
+caso("Só na quarta, pode ser?", SEG28, "até terça-feira, 29 de setembro");
+caso("Só não posso na quarta", SEG28, "quarta-feira, 30 de setembro");
+caso("Vou viajar só no sábado", SEG28, "sábado, 3 de outubro");
+caso("viajo só na quinta", SEG28, "quinta-feira, 1º de outubro");
+caso("não posso na segunda, terça e quarta", "2026-11-06T14:55:12Z", "de segunda-feira, 9 de novembro a quarta-feira, 11 de novembro");
+caso("Não consigo nem segunda nem terça", "2026-11-06T14:55:12Z", "de segunda-feira, 9 de novembro a terça-feira, 10 de novembro");
+for (const [t, em] of [
+  ["Me avisa se tem interesse e disponibilidade; se não der nessa data, podemos fazer em janeiro. Obrigada!", "2026-11-16T19:07:49Z"], // real
+  ["Não dá\nsegunda às 5?", SEG28],
+  ["Posso qualquer dia, menos quarta", SEG28], // não lê, para não errar nas duas de baixo
+  ["Trabalho, todos os dias exceto aos domingos das 7 às 23 hs", "2026-07-31T14:00:00Z"], // real: o domingo é o livre
+  ["Minhas aulas são todos os dias 7pm do Texas; exceto sexta-feira", "2026-08-26T14:00:00Z"], // real
+  ["Se eu não puder na quarta te aviso", SEG28],
+  ["Se não der na quinta, pode ser sexta", SEG28],
+  ["caso eu não consiga na quarta te falo", SEG28],
+  ["Não trabalho amanhã, posso sim", SEG28],
+  ["Amanhã não trabalho, consigo a qualquer hora", SEG28],
+  ["[Áudio do contato, transcrito] Segunda-feira você não tem expediente, segunda-feira que a segunda-feira eu tô de folga. O horário que você falou, aqui vai ser 5 horas da tarde, eu tô em casa aí, sem preocupação. Segunda-feira você não tem, né? Só terça e quinta, né? Esses dois dias.", "2026-10-29T21:51:31Z"], // real
+  ["Só na quinta?", SEG28],
+  ["só quinta mesmo?", SEG28],
+  ["Ah, é só terça e quinta né", SEG28],
+  ["De quarta, quinta e sexta tá tranquilo a noite pra mim. Só segunda e terça que eu tenho aula. Mas é o horário mesmo.", "2026-08-23T01:14:17Z"], // real
+  ["Só segunda e terça que eu trabalho até tarde", "2026-11-06T14:55:12Z"],
+  ["Eu não tenho tempo p manhã 💁‍♀️ somente quarta feira p amanhã . Os outros dias somente 5 pm a tarde daqui.", "2026-10-12T21:22:41Z"], // real
+] as Array<[string, string]>) caso(t, em, "");
+
 console.log("\n6) Sem data: não tira nada, só avisa");
 caso("Eu vou estar viajando, não terei tempo disponível, mas obrigado de qualquer maneira.", "2026-11-19T16:43:00Z", "[sem volta]");
 caso("Oi estou em viagem, quando eu retornar te chamo ok", "2026-10-30T22:00:00Z", "[sem volta]");
@@ -163,6 +202,12 @@ console.log("\n7) A conversa: vale para as ofertas seguintes, e o lead muda de i
   eq("passou: nada", depois([lead("oi", "2026-11-16T15:00:00Z")], "2026-11-16T15:00:00Z"), "");
   eq("ele escolhe um dia do meio: o dia volta", depois([lead("quarta às 3 eu consigo", "2026-11-07T15:00:00Z")], "2026-11-07T15:00:00Z"), "de segunda-feira, 9 de novembro (à noite) a terça-feira, 10 de novembro; de quinta-feira, 12 de novembro a sábado, 14 de novembro");
   eq("na mesma frase", le("viajo segunda e volto sábado, mas quarta eu consigo", EM), "de segunda-feira, 9 de novembro a terça-feira, 10 de novembro; de quinta-feira, 12 de novembro a sábado, 14 de novembro");
+  eq("'essa semana só na quarta' não abre a quarta da viagem da semana seguinte", rotuloDasAusencias(lerAusencias([
+    lead("Semana que vem estou viajando", SEG28), lead("Essa semana não posso, só na quarta", "2026-09-28T23:05:00Z"),
+  ], ET, new Date("2026-09-28T23:05:00Z")).ausencias, ET, new Date("2026-09-28T23:05:00Z")), "até terça-feira, 29 de setembro; de quinta-feira, 1º de outubro a domingo, 11 de outubro");
+  eq("'qualquer dia menos quarta' não devolve a quarta recusada antes", rotuloDasAusencias(lerAusencias([
+    lead("Quarta não posso", SEG28), lead("Posso qualquer dia, menos quarta", "2026-09-28T23:05:00Z"),
+  ], ET, new Date("2026-09-28T23:05:00Z")).ausencias, ET, new Date("2026-09-28T23:05:00Z")), "quarta-feira, 30 de setembro");
   eq("viagem cancelada", depois([lead("cancelei a viagem, pode marcar", "2026-11-07T15:00:00Z")], "2026-11-07T15:00:00Z"), "");
   eq("já voltei", depois([lead("Oi, já voltei de viagem", "2026-11-12T15:00:00Z")], "2026-11-12T15:00:00Z"), "");
   eq("a equipe oferece quarta e ele aceita", depois([nos("Consegue quarta, 11/11, às 6?", "2026-11-07T15:00:00Z"), lead("Sim", "2026-11-07T15:01:00Z")], "2026-11-07T15:01:00Z"), "de segunda-feira, 9 de novembro (à noite) a terça-feira, 10 de novembro; de quinta-feira, 12 de novembro a sábado, 14 de novembro");
