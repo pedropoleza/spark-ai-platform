@@ -23,6 +23,7 @@
  */
 
 import type { AIResponse, AIAction } from "@/types/ai";
+import { datasOferecidasNaAusencia, type Ausencia } from "@/lib/queue/ausencia-lead";
 import { conferirConversaoDeFuso } from "@/lib/queue/conversao-fuso-guard";
 import { falaDeRecusa, horasDitas, leadEscolheuHorario, normalizarFala, type FalaAnterior } from "@/lib/queue/escolha-de-horario";
 import { lerDatas } from "@/lib/queue/datas-lead";
@@ -64,6 +65,11 @@ export interface AgendaGuardInput {
   falasAnteriores?: readonly FalaAnterior[];
   /** Mensagem nossa que o lead citou ao responder. */
   citadoPeloLead?: string;
+  /**
+   * H128: dias em que o lead disse que está fora. A lista (`slotsIso`) já vem sem
+   * eles; aqui serve para explicar o refazer e pegar data oferecida sem hora.
+   */
+  ausencia?: { ausencias: readonly Ausencia[]; tz: string; rotulo: string } | null;
   /** Refaz o turno com uma diretiva extra; null = falhou. */
   regenerar: (diretiva: string) => Promise<AIResponse | null>;
 }
@@ -159,6 +165,11 @@ function diagnosticar(r: AIResponse, input: AgendaGuardInput): Diagnostico {
     messages = g.messages;
     correcoes = g.correcoes;
     invalidas = g.invalidas;
+    if (input.ausencia) {
+      for (const x of datasOferecidasNaAusencia(messages, input.ausencia.ausencias, input.ausencia.tz, input.agora ?? new Date())) {
+        if (!invalidas.some((i) => i.bolha === x.bolha && i.trecho.includes(x.trecho))) invalidas.push(x);
+      }
+    }
     // H121 (laboratório 04/11, lead da Califórnia): "tarde ou noite" vale no relógio
     // do LEAD. Oferta de manhã no fuso dele, sem ele ter pedido manhã, refaz 1x.
     const pediuManha = /manh[ãa]|cedo|am|\d\s*a\.?m\.?/i.test(input.mensagemDoLead || "");
@@ -313,10 +324,16 @@ export async function aplicarGuardasDeAgenda(input: AgendaGuardInput): Promise<A
     }
     if (diag.invalidas.length > 0) {
       const semHorario = (input.slotsIso || []).length === 0;
+      const citados = `"${diag.invalidas.map((i) => i.trecho).join('", "')}"`;
+      const fora = input.ausencia
+        ? ` O lead disse que está fora ou indisponível ${input.ausencia.rotulo}: não ofereça nem cite horário dentro desse período.`
+        : "";
       partes.push(
         semHorario
-          ? `você citou dia e hora ("${diag.invalidas.map((i) => i.trecho).join('", "')}"), mas NESTE turno não há horário liberado na agenda. NÃO cite dia nem hora; siga as instruções sobre o próximo passo.`
-          : `você ofereceu horário que NÃO existe na agenda: "${diag.invalidas.map((i) => i.trecho).join('", "')}". Ofereça SOMENTE horários da lista HORÁRIOS DISPONÍVEIS, copiando dia da semana, data e hora exatamente. Horários reais: ${opcoesReais(input)}.`,
+          ? `você citou dia e hora (${citados}), mas NESTE turno não há horário liberado na agenda. NÃO cite dia nem hora; ${
+              input.ausencia ? "diga em 1 frase que tudo bem e pergunte qual dia e período ficam bons depois disso." : "siga as instruções sobre o próximo passo."
+            }${fora}`
+          : `você ofereceu horário que NÃO existe na agenda: ${citados}.${fora} Ofereça SOMENTE horários da lista HORÁRIOS DISPONÍVEIS, copiando dia da semana, data e hora exatamente. Horários reais: ${opcoesReais(input)}.`,
       );
     }
     if (diag.fusoErrado) {
@@ -378,6 +395,10 @@ export async function aplicarGuardasDeAgenda(input: AgendaGuardInput): Promise<A
       const resto = frases.join(" ").trim();
       if (resto) novas.push(resto);
     });
+    // H128: sem horário fora da ausência, o turno termina perguntando quando ele volta.
+    if (!oferta && input.ausencia && !novas.some((b) => b.includes("?"))) {
+      novas.push("Qual dia e período ficam bons para você depois disso?");
+    }
     resposta.message = novas.length > 0 ? novas : msgs;
     ofertaSubstituida = true;
     notas.push(`oferta inválida mantida após refazer: ${oferta ? "trocada pela oferta determinística" : "frase com horário removida"}`);

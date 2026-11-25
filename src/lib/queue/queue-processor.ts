@@ -199,6 +199,7 @@ import { normalizePhone, resolveLocationDefaultCountry } from "@/lib/account-ass
 import { loadLeadHistory, invalidateLeadHistoryCache } from "@/lib/queue/lead-history";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
 import { agruparFalas } from "@/lib/queue/escolha-de-horario";
+import { agendaComAusencia, falasDaConversa, type AgendaComAusencia } from "@/lib/queue/ausencia-io";
 import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
 import { tirarMetaLinguagem } from "@/lib/queue/meta-guard";
@@ -2148,6 +2149,8 @@ async function processGroup(
   // start_time de book/reschedule (booking fantasma fora da lista = bloqueado).
   // undefined quando shouldFetchSlots=false (sem calendário → back-compat).
   let offeredSlotsIso: string[] | undefined;
+  // H128: dias em que o lead disse que está fora (null = nada dito).
+  let agendaAusencia: AgendaComAusencia | null = null;
   if (shouldFetchSlots) {
     if (slotsSettled.status === "fulfilled" && slotsSettled.value) {
       const tz = location.timezone || "America/New_York";
@@ -2163,7 +2166,67 @@ async function processGroup(
       // de prompt não conserta dado errado na ENTRADA; filtrar aqui, sim.
       // Como o slot-guard valida o booking contra ESTA lista, o filtro também
       // impede que um start_time fora da janela seja aceito.
-      const slotsNaJanela = filterSlotsToBusinessHours(slotsSettled.value, tz);
+      let slotsNaJanela = filterSlotsToBusinessHours(slotsSettled.value, tz);
+      // H128 (chamado 492): dia em que o lead disse que está fora sai da lista, e com a
+      // lista curta demais buscamos a partir da volta dele. Mesma escola do filtro acima.
+      {
+        const agoraAus = new Date();
+        const recebidas = group.messages.map((m) => m.received_at).filter((x): x is string => !!x).sort();
+        agendaAusencia = await agendaComAusencia({
+          slots: slotsNaJanela,
+          falas: await falasDaConversa({
+            supabase,
+            locationId: group.locationId,
+            contactId: group.contactId,
+            historico:
+              messagesSettled.status === "fulfilled" ? messagesSettled.value?.messages?.messages || [] : [],
+            turno:
+              group.syntheticTrigger || !group.aggregatedBody
+                ? null
+                : {
+                    texto: group.aggregatedBody,
+                    desde: recebidas[0] ?? agoraAus.toISOString(),
+                    em: recebidas[recebidas.length - 1] ?? agoraAus.toISOString(),
+                  },
+            agora: agoraAus,
+          }),
+          tzLead: fusoLead?.tz ?? tz,
+          tzConta: tz,
+          agora: agoraAus,
+          fimDaJanela: new Date(Number(slotsEndDate)),
+          buscarDesde: (desde) =>
+            withRetry(
+              () =>
+                ghlClient.get<SlotsResp>(`/calendars/${config.calendar_id}/free-slots`, {
+                  startDate: String(desde.getTime()),
+                  endDate: String(
+                    desde.getTime() + slotWindowDays(config as { slot_window_days?: number | null }) * 24 * 60 * 60 * 1000,
+                  ),
+                }),
+              { maxRetries: 1, baseDelayMs: 200, label: "free-slots-volta" },
+            ),
+        });
+        slotsNaJanela = agendaAusencia.slots;
+        if (agendaAusencia.ausencias.length > 0) {
+          log("log", `H128 lead fora: ${agendaAusencia.rotulo} (${agendaAusencia.retirados} horários retirados)`);
+          const { error: ausErr } = await supabase.from("execution_log").insert({
+            agent_id: agent.id,
+            location_id: group.locationId,
+            contact_id: group.contactId,
+            conversation_id: group.conversationId,
+            action_type: "lead_absence",
+            action_payload: {
+              periodo: agendaAusencia.rotulo,
+              regras: [...new Set(agendaAusencia.ausencias.map((a) => a.regra))],
+              trecho: agendaAusencia.ausencias[agendaAusencia.ausencias.length - 1].trecho,
+              horarios_retirados: agendaAusencia.retirados,
+              buscou_depois_da_volta: agendaAusencia.buscouMais,
+            },
+            success: true,
+          });
+          if (ausErr) console.warn("[Processor] falha ao auditar ausência do lead:", ausErr.message);
+        }
+      }
       availableSlots = formatAvailableSlots(slotsNaJanela, tz, 30, fusoLead?.tz ?? null);
       offeredSlotsIso = extractSlotIsoList(slotsNaJanela);
       const dayCount = availableSlots ? availableSlots.split("\n").length : 0;
@@ -2436,6 +2499,10 @@ async function processGroup(
     agendaTravada,
     // H115: fuso do lead (lista anotada + seção FUSO DO LEAD no runtime).
     fusoLead,
+    // H128: período em que o lead disse que está fora.
+    ausenciaLead: agendaAusencia
+      ? { rotulo: agendaAusencia.rotulo || null, semVolta: agendaAusencia.semVolta }
+      : null,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     priorTurnCount: conversationTurns.length,
@@ -2694,6 +2761,11 @@ async function processGroup(
       fusoLead: fusoLead?.tz ?? null,
       mensagemDoLead: group.syntheticTrigger ? "" : falaDoLead.proprio,
       pularOferta: convState?.status === "booked" || !!modoRemarcacao,
+      // H128: dias em que o lead disse que está fora (a lista já vem sem eles).
+      ausencia:
+        agendaAusencia && agendaAusencia.ausencias.length > 0
+          ? { ausencias: agendaAusencia.ausencias, tz: fusoLead?.tz ?? locationTz, rotulo: agendaAusencia.rotulo }
+          : null,
       // H129 (chamado 527): a reunião que uma ação de agenda moveria. A do histórico
       // já veio neste turno; o CRM só é consultado quando ela não basta.
       citadoPeloLead: falaDoLead.citado,

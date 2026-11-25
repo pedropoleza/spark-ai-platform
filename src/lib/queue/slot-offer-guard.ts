@@ -12,8 +12,8 @@
  * Aqui cada menção "dia + hora" do texto é conferida contra os horários reais do
  * turno (os mesmos ISO que alimentam o slot-guard):
  *  - a data dita existe na agenda com aquela hora: ok;
- *  - a data não existe, mas o DIA DA SEMANA dito existe com aquela hora: a data
- *    estava errada, e é ela que se corrige (não o nome do dia);
+ *  - a data não existe, mas o DIA DA SEMANA dito existe com aquela hora e a data não
+ *    cai nesse dia: a data estava errada, e é ela que se corrige (não o nome do dia);
  *  - nenhuma leitura existe: a oferta é inventada e vai para o processor, que
  *    refaz o turno com a lista e, se insistir, troca pela oferta determinística.
  * Menção negada ("sexta às 8 não está disponível") não é oferta.
@@ -314,7 +314,12 @@ export function conferirOfertasDeHorario(
           validas.push((isoSemana || isoRel)!);
           continue;
         }
-        if (dia.data && okSemana && candSemana && dia.dataInicio >= 0) {
+        // H128 (caso real 21/11/2026): a lead disse "essa semana não posso", o modelo ofereceu
+        // "segunda, 30/11" (um par CERTO, fora da janela de 7 dias) e esta correção trouxe de
+        // volta para 23/11, a semana recusada. Data que cai mesmo no dia dito não está errada:
+        // ou existe na agenda ou é oferta inválida.
+        const parCerto = !!candData && dia.diaSemana !== null && diaDaSemana(candData) === dia.diaSemana;
+        if (dia.data && okSemana && candSemana && dia.dataInicio >= 0 && !parCerto) {
           // a data estava errada e o nome do dia certo: corrige a DATA
           const novo = diaEMes(candSemana);
           trocas.push({ ini: f.ini + dia.dataInicio, fim: f.ini + dia.dataFim, novo });

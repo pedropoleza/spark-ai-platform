@@ -8,6 +8,7 @@ import { formatAvailableSlots, filterSlotsToBusinessHours } from "@/lib/ai/slots
 import { extractSlotIsoList } from "@/lib/ai/slot-guard";
 import { aplicarGuardasDeAgenda } from "@/lib/queue/agenda-guard";
 import { agruparFalas } from "@/lib/queue/escolha-de-horario";
+import { agendaComAusencia, juntarFalas, type AgendaComAusencia } from "@/lib/queue/ausencia-io";
 import { separarTextoDoLead } from "@/lib/queue/remarcacao-pos-handoff";
 import { tirarLinkRepetido } from "@/lib/queue/link-repeat-guard";
 import { tirarEcoDoInicio } from "@/lib/queue/eco-guard";
@@ -468,8 +469,31 @@ export async function POST(request: NextRequest) {
       mergedCollectedData["contact.state"] || mergedCollectedData["state"] || mergedCollectedData["estado_onde_mora"] || mergedCollectedData["estado"] || "";
     fusoLeadTeste = fusoDoEstado(estado) ?? fusoNaFalaDoLead(message || "");
   }
-  if (slotsNaJanelaTeste && !agendaTravadaTeste && fusoLeadTeste) {
-    availableSlots = formatAvailableSlots(slotsNaJanelaTeste, locationTz, 30, fusoLeadTeste.tz);
+  // H128: dias em que o lead disse que está fora (paridade com o processor).
+  let agendaAusenciaTeste: AgendaComAusencia | null = null;
+  if (slotsNaJanelaTeste && !agendaTravadaTeste) {
+    const agoraAus = new Date();
+    agendaAusenciaTeste = await agendaComAusencia({
+      slots: slotsNaJanelaTeste,
+      falas: juntarFalas([
+        ...priorMessages.map((m) => ({ de: m.role === "user" ? ("lead" as const) : ("nos" as const), texto: m.content, em: m.created_at })),
+        { de: "lead", texto: message || "", em: agoraAus.toISOString() },
+      ]),
+      tzLead: fusoLeadTeste?.tz ?? locationTz,
+      tzConta: locationTz,
+      agora: agoraAus,
+      fimDaJanela: new Date(Number(slotsEndDate)),
+      buscarDesde: (desde) =>
+        ghlClient.get<SlotsResp>(`/calendars/${config.calendar_id}/free-slots`, {
+          startDate: String(desde.getTime()),
+          endDate: String(desde.getTime() + slotWindowDays(config as { slot_window_days?: number | null }) * 24 * 60 * 60 * 1000),
+        }),
+    });
+    if (agendaAusenciaTeste.ausencias.length > 0 || fusoLeadTeste) {
+      slotsNaJanelaTeste = agendaAusenciaTeste.slots;
+      offeredSlotsIsoTeste = extractSlotIsoList(slotsNaJanelaTeste);
+      availableSlots = formatAvailableSlots(slotsNaJanelaTeste, locationTz, 30, fusoLeadTeste?.tz ?? null);
+    }
   }
 
   const promptCtx = {
@@ -491,6 +515,10 @@ export async function POST(request: NextRequest) {
     slotsUnavailable: slotsFetchFailed,
     agendaTravada: agendaTravadaTeste,
     fusoLead: fusoLeadTeste,
+    ausenciaLead: agendaAusenciaTeste
+      ? { rotulo: agendaAusenciaTeste.rotulo || null, semVolta: agendaAusenciaTeste.semVolta }
+      : null,
+    slotsEmpty: !!agendaAusenciaTeste?.rotulo && availableSlots.trim() === "",
     knowledgeBase: knowledgeBase.length > 0 ? knowledgeBase : undefined,
     feedback: feedbackData as { rating: "positive" | "negative"; ai_message: string; suggestion?: string }[] || [],
     priorTurnCount: effectivePriorTurnCount,
@@ -585,6 +613,10 @@ export async function POST(request: NextRequest) {
       pularOferta: false,
       // H129: o laboratório não grava reunião, então a "marcada" é o último
       // agendamento desta sessão (ou a real do contato escolhido para o teste).
+      ausencia:
+        agendaAusenciaTeste && agendaAusenciaTeste.ausencias.length > 0
+          ? { ausencias: agendaAusenciaTeste.ausencias, tz: fusoLeadTeste?.tz ?? locationTz, rotulo: agendaAusenciaTeste.rotulo }
+          : null,
       citadoPeloLead: separarTextoDoLead(message || "").citado,
       falasAnteriores: agruparFalas(
         priorMessages.map((m) => ({ direction: m.role === "user" ? "inbound" : "outbound", body: m.content, dateAdded: m.created_at })),
